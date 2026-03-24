@@ -6,64 +6,62 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-03-23
-- 运行时间：2026-03-23 19:47:22 UTC
+- 最新运行日期：2026-03-24
+- 运行时间：2026-03-24 20:35:29 UTC
 - 运行状态：成功
 - 本次总论文数：14
 - 精读区：3
 - 速读区：11
 
 ### 今日简报（AI）
-今日聚焦人体动态生成的突破，深度解析了从肢体相位控制到人际交互反应的 14 篇前沿成果。
-重点推荐模块化肢体控制技术与互导向反应生成模型，两者分别在动作精准度与交互自然度上达到新高度。
-建议关注 Flow Matching 在物理逆问题及轨迹模拟中的潜力，把握生成式 AI 迈向物理仿真的新趋势。
-- 详情：[/202603/23/README](/202603/23/README)
+今日深度解析 14 篇前沿论文，重点攻克人体运动、视觉理解与多模态生成的统一建模难题。
+- 详情：[/202603/24/README](/202603/24/README)
 
 ### 精读区论文标签
-1. [Controllable Text-to-Motion Generation via Modular Body-Part Phase Control](/202603/23/2603.19795v1-controllable-text-to-motion-generation-via-modular-body-part-phase-control)  
+1. [UniMotion: A Unified Framework for Motion-Text-Vision Understanding and Generation](/202603/24/2603.22282v1-unimotion-a-unified-framework-for-motion-text-vision-understanding-and-generation)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：用于人类运动序列的文本到动作生成
-2. [MuSteerNet: Human Reaction Generation from Videos via Observation-Reaction Mutual Steering](/202603/23/2603.20187v1-musteernet-human-reaction-generation-from-videos-via-observation-reaction-mutual-steering)  
+   evidence：统一的人体动作生成框架
+2. [KHMP: Frequency-Domain Kalman Refinement for High-Fidelity Human Motion Prediction](/202603/24/2603.21327v1-khmp-frequency-domain-kalman-refinement-for-high-fidelity-human-motion-prediction)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：合成对视频做出反应的 3D 人体动作
-3. [Foundations of Schrödinger Bridges for Generative Modeling](/202603/23/2603.18992v1-foundations-of-schrdinger-bridges-for-generative-modeling)  
+   evidence：高保真人体动作预测与生成
+3. [Large-Scale 3D Ground-Motion Synthesis with Physics-Inspired Latent Operator Flow Matching](/202603/24/2603.17403v1-large-scale-3d-ground-motion-synthesis-with-physics-inspired-latent-operator-flow-matching)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：流匹配和扩散模型的理论基础
+   evidence：用于3D地面运动合成的潜算子流匹配
 
 ### 速读区论文标签
-1. [Solving physics-constrained inverse problems with conditional flow matching](/202603/23/2603.14135v1-solving-physics-constrained-inverse-problems-with-conditional-flow-matching)  
+1. [OneWorld: Taming Scene Generation with 3D Unified Representation Autoencoder](/202603/24/2603.16099v1-oneworld-taming-scene-generation-with-3d-unified-representation-autoencoder)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：用于解决逆问题的条件流匹配框架
-2. [Solving physics-constrained inverse problems with conditional flow matching](/202603/23/2603.14135v2-solving-physics-constrained-inverse-problems-with-conditional-flow-matching)  
+   evidence：直接在 3D 表示空间内进行扩散
+2. [Leveling3D: Leveling Up 3D Reconstruction with Feed-Forward 3D Gaussian Splatting and Geometry-Aware Generation](/202603/24/2603.16211v1-leveling3d-leveling-up-3d-reconstruction-with-feed-forward-3d-gaussian-splatting-and-geometry-aware-generation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：用于生成式建模的条件流匹配框架
-3. [TrajFlow: Nation-wide Pseudo GPS Trajectory Generation with Flow Matching Models](/202603/23/2603.15009v1-trajflow-nation-wide-pseudo-gps-trajectory-generation-with-flow-matching-models)  
+   evidence：利用扩散模型进行几何感知生成
+3. [VectorWorld: Efficient Streaming World Model via Diffusion Flow on Vector Graphs](/202603/24/2603.17652v1-vectorworld-efficient-streaming-world-model-via-diffusion-flow-on-vector-graphs)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：基于流匹配的轨迹生成模型
-4. [WiT: Waypoint Diffusion Transformers via Trajectory Conflict Navigation](/202603/23/2603.15132v1-wit-waypoint-diffusion-transformers-via-trajectory-conflict-navigation)  
+   evidence：矢量图上的扩散流用于智能体运动生成
+4. [Few-Step Diffusion Sampling Through Instance-Aware Discretizations](/202603/24/2603.17671v1-few-step-diffusion-sampling-through-instance-aware-discretizations)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：流匹配模型和路径点扩散Transformer
-5. [Tri-Prompting: Video Diffusion with Unified Control over Scene, Subject, and Motion](/202603/23/2603.15614v1-tri-prompting-video-diffusion-with-unified-control-over-scene-subject-and-motion)  
+   evidence：扩散和流匹配采样加速
+5. [Flow Matching Policy with Entropy Regularization](/202603/24/2603.17685v1-flow-matching-policy-with-entropy-regularization)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：具有动作调节控制的视频扩散模型
-6. [EFF-Grasp: Energy-Field Flow Matching for Physics-Aware Dexterous Grasp Generation](/202603/23/2603.16151v1-eff-grasp-energy-field-flow-matching-for-physics-aware-dexterous-grasp-generation)  
+   evidence：通过流匹配参数化策略
+6. [Generative Control as Optimization: Time Unconditional Flow Matching for Adaptive and Robust Robotic Control](/202603/24/2603.17834v1-generative-control-as-optimization-time-unconditional-flow-matching-for-adaptive-and-robust-robotic-control)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：基于流匹配的抓取生成框架
-7. [ReMAP-DP: Reprojected Multi-view Aligned PointMaps for Diffusion Policy](/202603/23/2603.14977v2-remap-dp-reprojected-multi-view-aligned-pointmaps-for-diffusion-policy)  
+   evidence：将流匹配用于机器人动作和行为合成
+7. [GeoNVS: Geometry Grounded Video Diffusion for Novel View Synthesis](/202603/24/2603.14965v1-geonvs-geometry-grounded-video-diffusion-for-novel-view-synthesis)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：用于机器人任务中3D空间感知的扩散策略
-8. [Generative Inverse Design with Abstention via Diagonal Flow Matching](/202603/23/2603.15925v1-generative-inverse-design-with-abstention-via-diagonal-flow-matching)  
+   evidence：基于几何引导的视频扩散以实现3D一致性
+8. [Encoding Predictability and Legibility for Style-Conditioned Diffusion Policy](/202603/24/2603.16368v1-encoding-predictability-and-legibility-for-style-conditioned-diffusion-policy)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：用于生成式逆向设计的对角流匹配
-9. [Cohomological Obstructions to Global Counterfactuals: A Sheaf-Theoretic Foundation for Generative Causal Models](/202603/23/2603.17384v1-cohomological-obstructions-to-global-counterfactuals-a-sheaf-theoretic-foundation-for-generative-causal-models)  
+   evidence：用于轨迹生成和动作的扩散模型
+9. [Search2Motion: Training-Free Object-Level Motion Control via Attention-Consensus Search](/202603/24/2603.16711v1-search2motion-training-free-object-level-motion-control-via-attention-consensus-search)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：扩散模型和流匹配等连续生成模型的理论基础
-10. [AR-CoPO: Align Autoregressive Video Generation with Contrastive Policy Optimization](/202603/23/2603.17461v1-ar-copo-align-autoregressive-video-generation-with-contrastive-policy-optimization)  
+   evidence：视频生成中的对象级动作控制
+10. [Motion-Adaptive Temporal Attention for Lightweight Video Generation with Stable Diffusion](/202603/24/2603.17398v1-motion-adaptive-temporal-attention-for-lightweight-video-generation-with-stable-diffusion)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：自回归视频生成中的流匹配ODE
-11. [AHOY! Animatable Humans under Occlusion from YouTube Videos with Gaussian Splatting and Video Diffusion Priors](/202603/23/2603.17975v1-ahoy-animatable-humans-under-occlusion-from-youtube-videos-with-gaussian-splatting-and-video-diffusion-priors)  
+   evidence：用于视频运动合成的运动自适应时间注意力
+11. [Flow Matching Policy with Entropy Regularization](/202603/24/2603.17685v2-flow-matching-policy-with-entropy-regularization)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：使用扩散模型为人体化身生成密集监督
+   evidence：强化学习中用于生成建模的流匹配
 
 
 <div class="dpr-home-promo-card">
