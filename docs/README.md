@@ -6,67 +6,67 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-03-25
-- 运行时间：2026-03-25 20:01:58 UTC
+- 最新运行日期：2026-03-26
+- 运行时间：2026-03-26 20:25:02 UTC
 - 运行状态：成功
 - 本次总论文数：15
 - 精读区：4
 - 速读区：11
 
 ### 今日简报（AI）
-今日精选 15 篇前沿论文，重点突破长时群舞生成与免训练 VLA 模型适配技术。
-满分论文 ST-GDance++ 实现了可扩展的空间扩散群舞，ProbeFlow 则为机器人动作模型提供了高效的自适应流匹配方案。
-建议深入探索扩散模型在 3D 场景轨迹合成与语义连贯补帧中的跨领域应用。
-- 详情：[/202603/25/README](/202603/25/README)
+今日深度解析人形机器人实时控制与人机交互合成，涵盖 15 篇 AI 前沿研究。
+重点关注 SafeFlow 物理引导的全身控制技术，以及 ViHOI 结合视觉先验的人机交互生成方案。
+建议持续探索扩散模型在具身智能与生物分子表征领域的跨界融合应用。
+- 详情：[/202603/26/README](/202603/26/README)
 
 ### 精读区论文标签
-1. [ST-GDance++: A Scalable Spatial-Temporal Diffusion for Long-Duration Group Choreography](/202603/25/2603.22316v1-st-gdance-a-scalable-spatial-temporal-diffusion-for-long-duration-group-choreography)  
+1. [SafeFlow: Real-Time Text-Driven Humanoid Whole-Body Control via Physics-Guided Rectified Flow and Selective Safety Gating](/202603/26/2603.23983v1-safeflow-real-time-text-driven-humanoid-whole-body-control-via-physics-guided-rectified-flow-and-selective-safety-gating)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：用于群舞动作生成的时空扩散模型
-2. [ProbeFlow: Training-Free Adaptive Flow Matching for Vision-Language-Action Models](/202603/25/2603.17850v1-probeflow-training-free-adaptive-flow-matching-for-vision-language-action-models)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：用于连续机器人动作控制的自适应流匹配
-3. [Warm-Start Flow Matching for Guaranteed Fast Text/Image Generation](/202603/25/2603.19360v1-warm-start-flow-matching-for-guaranteed-fast-textimage-generation)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：用于快速生成建模的热启动流匹配
-4. [FG-Portrait: 3D Flow Guided Editable Portrait Animation](/202603/25/2603.23381v1-fg-portrait-3d-flow-guided-editable-portrait-animation)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：扩散模型中 3D 流引导的动作迁移
+   evidence：通过物理引导的修正流进行文本驱动的人形机器人动作生成
+2. [ViHOI: Human-Object Interaction Synthesis with Visual Priors](/202603/26/2603.24383v1-vihoi-human-object-interaction-synthesis-with-visual-priors)  
+   标签：评分：10.0/10、query:3d-motion-generation
+   evidence：基于扩散的生成模型用于3D人机交互动作生成
+3. [Teacher-Student Diffusion Model for Text-Driven 3D Hand Motion Generation](/202603/26/2603.24407v1-teacher-student-diffusion-model-for-text-driven-3d-hand-motion-generation)  
+   标签：评分：10.0/10、query:3d-motion-generation
+   evidence：用于文本驱动3D手部动作生成的教师-学生扩散框架
+4. [QuadFM: Foundational Text-Driven Quadruped Motion Dataset for Generation and Control](/202603/26/2603.24021v1-quadfm-foundational-text-driven-quadruped-motion-dataset-for-generation-and-control)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：用于文本到动作生成和动作控制的大规模数据集
 
 ### 速读区论文标签
-1. [Anchoring and Rescaling Attention for Semantically Coherent Inbetweening](/202603/25/2603.17651v1-anchoring-and-rescaling-attention-for-semantically-coherent-inbetweening)  
+1. [RiboSphere: Learning Unified and Efficient Representations of RNA Structures](/202603/26/2603.19636v1-ribosphere-learning-unified-and-efficient-representations-of-rna-structures)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：为动作序列合成逼真的中间帧
-2. [GMT: Goal-Conditioned Multimodal Transformer for 6-DOF Object Trajectory Synthesis in 3D Scenes](/202603/25/2603.17993v1-gmt-goal-conditioned-multimodal-transformer-for-6-dof-object-trajectory-synthesis-in-3d-scenes)  
+   evidence：结合矢量量化与流匹配进行3D结构建模
+2. [InjectFlow: Weak Guides Strong via Orthogonal Injection for Flow Matching](/202603/26/2603.20303v1-injectflow-weak-guides-strong-via-orthogonal-injection-for-flow-matching)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：在3D场景中合成6自由度物体轨迹序列
-3. [Points-to-3D: Structure-Aware 3D Generation with Point Cloud Priors](/202603/25/2603.18782v2-points-to-3d-structure-aware-3d-generation-with-point-cloud-priors)  
+   evidence：用于流匹配的InjectFlow方法以解决语义退化
+3. [Uni-Classifier: Leveraging Video Diffusion Priors for Universal Guidance Classifier](/202603/26/2603.20382v1-uni-classifier-leveraging-video-diffusion-priors-for-universal-guidance-classifier)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：基于扩散模型的几何可控 3D 生成框架
-4. [Uncertainty Quantification for Distribution-to-Distribution Flow Matching in Scientific Imaging](/202603/25/2603.21717v1-uncertainty-quantification-for-distribution-to-distribution-flow-matching-in-scientific-imaging)  
+   evidence：视频扩散先验用于引导3D生成任务
+4. [DiT-Flow: Speech Enhancement Robust to Multiple Distortions based on Flow Matching in Latent Space and Diffusion Transformers](/202603/26/2603.21608v1-dit-flow-speech-enhancement-robust-to-multiple-distortions-based-on-flow-matching-in-latent-space-and-diffusion-transformers)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：用于生成模型的随机流匹配
-5. [TrajLoom: Dense Future Trajectory Generation from Video](/202603/25/2603.22606v1-trajloom-dense-future-trajectory-generation-from-video)  
-   标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用基于流的潜空间生成密集轨迹
-6. [FlowMS: Flow Matching for De Novo Structure Elucidation from Mass Spectra](/202603/25/2603.18397v1-flowms-flow-matching-for-de-novo-structure-elucidation-from-mass-spectra)  
+   evidence：潜空间中的流匹配与扩散Transformer
+5. [SHIFT: Motion Alignment in Video Diffusion Models with Adversarial Hybrid Fine-Tuning](/202603/26/2603.17426v1-shift-motion-alignment-in-video-diffusion-models-with-adversarial-hybrid-fine-tuning)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：用于生成建模的离散流匹配
-7. [CAFlow: Adaptive-Depth Single-Step Flow Matching for Efficient Histopathology Super-Resolution](/202603/25/2603.18513v1-caflow-adaptive-depth-single-step-flow-matching-for-efficient-histopathology-super-resolution)  
+   evidence：用于运动对齐和保真度的视频扩散模型
+6. [3DreamBooth: High-Fidelity 3D Subject-Driven Video Generation Model](/202603/26/2603.18524v1-3dreambooth-high-fidelity-3d-subject-driven-video-generation-model)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：用于超分辨率的自适应深度单步流匹配
-8. [Points-to-3D: Structure-Aware 3D Generation with Point Cloud Priors](/202603/25/2603.18782v1-points-to-3d-structure-aware-3d-generation-with-point-cloud-priors)  
+   evidence：具有空间先验的3D主体驱动视频生成
+7. [Agentic Flow Steering and Parallel Rollout Search for Spatially Grounded Text-to-Image Generation](/202603/26/2603.18627v1-agentic-flow-steering-and-parallel-rollout-search-for-spatially-grounded-text-to-image-generation)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：基于扩散的3D资产与场景生成框架
-9. [Few-shot Acoustic Synthesis with Multimodal Flow Matching](/202603/25/2603.19176v1-few-shot-acoustic-synthesis-with-multimodal-flow-matching)  
+   evidence：用于文本到图像生成的流引导机制
+8. [Generation Models Know Space: Unleashing Implicit 3D Priors for Scene Understanding](/202603/26/2603.19235v1-generation-models-know-space-unleashing-implicit-3d-priors-for-scene-understanding)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：用于声学合成的多模态流匹配
-10. [Rethinking Vector Field Learning for Generative Segmentation](/202603/25/2603.19218v1-rethinking-vector-field-learning-for-generative-segmentation)  
+   evidence：利用视频扩散模型提取隐式3D先验和场景理解
+9. [FlowScene: Style-Consistent Indoor Scene Generation with Multimodal Graph Rectified Flow](/202603/26/2603.19598v1-flowscene-style-consistent-indoor-scene-generation-with-multimodal-graph-rectified-flow)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：重新思考生成任务的流匹配目标
-11. [Spectrally-Guided Diffusion Noise Schedules](/202603/25/2603.19222v1-spectrally-guided-diffusion-noise-schedules)  
+   evidence：用于场景生成的多模态图修正流
+10. [OrbitNVS: Harnessing Video Diffusion Priors for Novel View Synthesis](/202603/26/2603.19613v1-orbitnvs-harnessing-video-diffusion-priors-for-novel-view-synthesis)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：用于图像和视频生成的去噪扩散模型
+   evidence：利用视频扩散先验进行3D新视角合成
+11. [Taming Sampling Perturbations with Variance Expansion Loss for Latent Diffusion Models](/202603/26/2603.21085v1-taming-sampling-perturbations-with-variance-expansion-loss-for-latent-diffusion-models)  
+   标签：评分：6.0/10、query:3d-motion-generation
+   evidence：潜扩散模型中采样扰动的鲁棒性
 
 
 <div class="dpr-home-promo-card">
