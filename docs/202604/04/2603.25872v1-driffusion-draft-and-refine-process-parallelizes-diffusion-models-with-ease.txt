@@ -1,0 +1,891 @@
+Title: DRiffusion: Draft-and-Refine Process Parallelizes Diffusion Models with Ease
+
+URL Source: https://arxiv.org/pdf/2603.25872v1
+
+Published Time: Mon, 30 Mar 2026 00:14:05 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# DRiffusion: Draft-and-Refine Process Parallelizes Diffusion Models with Ease 
+
+## Runsheng Bai *
+
+## CSAIL, MIT 
+
+runsheng@mit.edu 
+
+## Chengyu Zhang 
+
+## IST, Nanjing University 
+
+zhangchengyu@smail.nju.edu.cn 
+
+## Yangdong Deng 
+
+## School of Software, Tsinghua University FuturististAI Lab, Shanghai Tsinghua International Innovation Center 
+
+dengyd@tsinghua.edu.cn 
+
+## Abstract 
+
+Diffusion models have achieved remarkable success in gen-erating high-fidelity content but suffer from slow, iterative sampling, resulting in high latency that limits their use in interactive applications. We introduce DRiffusion, a par-allel sampling framework that parallelizes diffusion infer-ence through a draft-and-refine process. DRiffusion em-ploys skip transitions to generate multiple draft states for future timesteps and computes their corresponding noises in parallel, which are then used in the standard denoising pro-cess to produce refined results. Theoretically, our method achieves an acceleration rate of 1 
+
+> n
+
+or 2 
+
+> n+1
+
+, depending on whether the conservative or aggressive mode is used, where 
+
+n denotes the number of devices. Empirically, DRiffusion attains 1.4×–3.7× speedup across multiple diffusion models while incur minimal degradation in generation quality: on MS-COCO dataset, both FID and CLIP remain largely on par with those of the original model, while PickScore and HPSv2.1 show only minor average drops of 0.17 and 0.43, respectively. These results verify that DRiffusion delivers substantial acceleration and preserves perceptual quality. 
+
+## 1. Introduction 
+
+The rise of diffusion models [8, 13, 33] has marked a signifi-cant evolution in generative modeling in recent years. These models have established themselves as a foundational tech-nique and showcased their adaptability in applications rang-ing from image & video generation [1, 2, 9, 26, 28], audio synthesis [11, 15, 20] to molecular discovery [4, 10, 38]. The capability to produce such high-quality results stems from the core idea behind diffusion models: a repeated, iter-ative denoising process. This process typically begins with 
+
+> *Work done while the author was at Tsinghua University.
+> 2.8 × Speed up
+> A cozy living room with a brown leather sofa, a wooden coffee table, photo-realistic style. A dog wearing an astronaut suit floating in outer space, Earth visible behind. A steampunk-style mechanical butterfly resting on grass field.
+
+Figure 1. Comparison across different prompts. Top row: original outputs; bottom row: results of 3-device aggressive parallelization. 
+
+pure noise and progressively removes a fraction of the noise to reveal the underlying data structure more clearly. This iterative refinement ensures remarkable output fidelity but comes at the cost of significantly slower sampling speeds, hindering their broader applicability. Significant efforts have been devoted to addressing this challenge. Approaches such as Rectified Flow [19, 21, 40] and distillation [23, 29] have achieved notable accelera-tion. Yet, when the number of sampling steps is reduced aggressively, these methods often incur noticeable trade-offs in output quality; and distillation, in particular, can substantially reduce generation diversity. Parallelization offers a promising alternative, as well as an orthogonal complement to these methods, yet existing implementa-tions face significant limitations. System-level methods [3, 17], designed from a computational perspective, tend to be constrained by the structural dependencies of the 1
+
+> arXiv:2603.25872v1 [cs.LG] 26 Mar 2026
+
+underlying network, i.e., specific to the models’ architec-tures such as U-Net[27] or Transformers[36]. Mathematical approaches[22, 30, 35], which frame diffusion as Stochastic Differential Equation (SDE) or Ordinary Differential Equa-tion (ODE) formulations and derive alternative solvers, of-ten result in poor compatibility with current frameworks and may deviate from the original model’s sampling distribution significantly. Instead, our investigation begins with a simple yet fun-damental question: why is parallelizing diffusion models so challenging? The answer lies in the inherently sequen-tial nature of the diffusion sampling process. Consequently, system-level methods seek computational elements that can be parallelized outside this sequence, while mathematical approaches attempt to redefine the entire sampling path. This leads us to a critical question: does the original frame-work contain any inherent parallelism at all? We demon-strate that, by leveraging a simple mathematical observa-tion and a creative scheduling pattern, parallelism can be unlocked. Our answer, fortunately, is a definitive yes. In this paper, we present DRiffusion (Draft-and-Refine Diffusion), an innovative method for parallelizing diffusion models that integrates advantages from both system-level and mathematical approaches. Our method starts with skip transitions within the sampling chain, and the core is to leverage these skips to draft approximate future states (e.g., 
+
+xt−2, x t−3), which are then fed into the original pre-trained noise prediction network in parallel to obtain the predicted noises (or initial states). These noises are accurate, as the skip transitions are theoretically valid and the network ex-hibits strong generalization. Therefore, with these noises we can replay the original denoising updates from the cur-rent anchor to get the refined and accurate final outputs. As a result, we successfully unlock the underlying paral-lelism by exploiting skip transitions, thereby consolidating the primary computational bottleneck—the network predic-tion—into a single parallel step. Figure 1 shows that our DRiffusion method generates outputs consistent with original sampler and preserves the fine-grained details: for example, wrinkles on the surface of the leather sofa and natural shading on the dog’s face. The inference speed is also significantly accelerated, as the method achieves nearly 3 × wall-clock speedup with 3 GPUs. In summary, DRiffusion couples a straightforward theoretical property with a practical parallel implementa-tion, delivering high-quality empirical results. 
+
+## 2. Related Works 
+
+Diffusion Models Diffusion probabilistic models were first introduced by Sohl-Dickstein et al. [31], who formal-ized the forward–reverse noising framework. Building on this, Ho et al. [8] introduce a shared noise-prediction de-noiser and a discrete reverse-diffusion sampler in replace of the original variational setup, which then became the stan-dard recipe for diffusion models. Subsequently, DDIM [32] was introduced by Song et al., expanding DDPM’s single stochastic Markov chain into a family of non-Markovian samplers that preserve the same marginals and improve sampling efficiency. In parallel, Song et al. [33] general-ized the framework to continuous-time score-based SDEs and their probability-flow ODE counterparts, providing a unifying lens and tools for analysis. 
+
+Parallelism As previously mentioned, parallelization of diffusion models can be roughly categorized into two dif-ferent paths: systematical and mathematical methods. Sys-tematical methods often spot the parallelizable component of the whole computation process and exploit it for effi-ciency. For example, DistriFusion [17] proposes displaced patch parallelism, which splits the input image into patches and computes the noise for each patch in parallel, with the results from previous steps in replace of heavy com-munication to maintain consistency while minimizing over-head. And in AsyncDiff [3], different components of the noise predicting model are distributed across different de-vices, where a warm-up phase and an asynchronous denois-ing scheme jointly enable its parallel execution. In contrast, mathematical methods often leverage the ODE/SDE formu-lation of the diffusion process and design alternative solvers with intrinsic parallelism. For instance, ParaDiGMS [30] employs Picard iteration to solve the ODE so that paral-lelize sampling by predicting future denoising steps and it-eratively refining them until convergence, enabling multiple diffusion steps to be denoised simultaneously. Important to note, this categorization does not provide a clear delineation but create a more clear landscape of the parallelism world. In our work, we combine a straightforward skip transition from the theoretical side and the system-level parallel im-plementation together, adopting both their advantages. 
+
+## 3. Skip Transitions 
+
+Skip transitions refer to predicting a future (or earlier) diffu-sion state xt−k directly from (xt, ε t) by skipping interme-diate timesteps. From a continuous-time perspective, skip-ping timesteps is a natural operation, since the system dy-namics can be integrated over extended intervals. However, existing frameworks typically exercise this sequential free-dom globally. For ODEs, it is dictated by the global dis-cretization schedule, while for DDIM, it manifests as the re-selection of a timestep subsequence. To employ our Draft-and-Refine pattern, we need to operatorize this action, i.e., formally define this local skipping mechanism as an oper-ator. This requires a derivation analogous to the backward formulas of each respective framework. In this section, we provide three examples: the classical DDPM [8], alongside the widely adopted DDIM [32] and Euler ODE solvers [12]. 2𝐀 𝐀 𝐀 𝐀 −𝐀 𝐀 𝐀 −𝐀 (a) DDPM 𝐀 𝐀 𝐀 𝐀 −𝐀 𝐀 𝐀 −𝐀 (b) DDIM and Euler Solvers 𝐀 𝐀 𝐀 𝐀 −𝐀 𝐀 𝐀 −𝐀 (c) skip transition 
+
+Figure 2. Temporal dependencies of different methods. In DDPM, timesteps are sequential. DDIM and Euler Solvers allow global re-selection, but timestep traverse pattern within the subsequence or discretization remains sequential. The skip transitions allow direct moves between arbitrary pairs of timesteps, offering local temporal flexibility and enabling parallelization. 
+
+3.1. DDPM 
+
+In the reverse process, DDPM denoises by iteratively com-puting qθ (xt−1|xt). At each step, we first estimate ˆεt
+
+using the noise predictor, making our target to compute 
+
+q(xt−1|xt, ε t), or equivalently q(xt−1|xt, x 0), where x0
+
+is given by xt = √αtx0 + √1 − αt ˆεt. This target is tractable due to the availability of Bayes’ rule, and this property holds even if we change it to the skip transition target q(xt−k|xt, x 0), which would be: 
+
+q (xt−k|xt, x 0) = q (xt|xt−k) q (xt−k|x0)
+
+q (xt|x0) . (1) Since all terms on the RHS are Gaussian distributions, we can apply the same algebraic manipulations as in the origi-nal DDPM to obtain the closed-form skip transition: 
+
+xt−k|xt, x 0 ∼ N  μ′(xt, x 0), σ 2
+
+> t,k
+
+I , (2) 
+
+μ′ =
+
+q αt 
+
+> αt−k
+
+(1 − αt−k) xt + √αt−k
+
+
+
+1 − αt
+
+> αt−k
+
+
+
+x0
+
+1 − αt
+
+,σ2 
+
+> t,k
+
+=
+
+
+
+1 − αt
+
+> αt−k
+
+
+
+(1 − αt−k)1 − αt
+
+.
+
+(3) This result shows that the update is the k-step analogue of the one-step rule, following our intuition. Full steps for the derivation are detailed in Section 7. 
+
+3.2. DDIM 
+
+Unlike DDPM, the diffusion process in DDIM is non-Markovian. Therefore, its denoising steps stem not from Bayes’ rule, but rather from marginal consistency, which means composing the forward marginal p(xt|x0) with the reverse transition p(xt−1|xt) must strictly yield the marginal distribution p(xt−1|x0). For a k-step skip tran-sition, the consistency still holds, formally as: 
+
+p(xt−k|x0) = 
+
+Z
+
+p(xt−k|xt) p(xt|x0) d xt. (4) Starting from this constraint, we can derive the result: 
+
+xt−k ∼ N 
+
+√αt−kx0 +
+
+q
+
+1 − αt−k − σ2 
+
+> t,k
+
+ˆεt, σ 2
+
+> t,k
+
+I
+
+
+
+,
+
+(5) where ˆεt = εθ (xt, t ). As in the DDPM case, the update is still a k-step analogue, and full derivation is in Section 7. The variance term, however, slightly differs in interpre-tation: in this notation, the usual DDIM σt corresponds to 
+
+σt, 1, so all σt,k where k > 1 are additional hyperparam-eters. In practice, DDIM typically employs zero variance (deterministic sampling), or alternatively, adopts the vari-ance induced by DDPM; both choices carry over naturally to the skipped setting without ad-hoc tuning. Consequently, this skip transition can be seamlessly applied. 
+
+3.3. Euler ODE Solvers 
+
+The diffusion process can also be modeled as an ODE: dx
+
+dσ = f (x, σ ), (6) where σ is the continuous analog to the discrete timestep 
+
+t, and f (x, σ ) dictates the system dynamics. For instance, 
+
+f (x, σ ) can be the model-predicted velocity vθ (x, σ ) in Flow Matching [19], or (x − ˆx0)/σ in the original EDM [12]. For notational simplicity, we will use vθ (x, σ ) for il-lustration below. Applying first-order Euler method yields: 
+
+∆x = ∆ σ · vθ (x, σ ). (7) Since the ODE formulation operates in continuous time, skipping intermediate steps is mathematically equivalent to taking a larger numerical integration step. This allows us to handle skip transitions identically to standard single-step updates. Given a discretization schedule {σt}Tt=1 , transition from step t to t − k is straightforwardly given by: 
+
+xt−k = xt + ( σt−k − σt) · vθ (xt, σ t), (8) 
+
+Conclusion While the skip transition is a mathematically existing concept, we explicitly formulate it as an operator within the original frameworks without altering their un-derlying mechanics, providing a convenient primitive for subsequent parallelization. As illustrated in Figure 2, our derivations allow us to connect any two diffusion states without redeciding the global timestep schedule. Conse-quently, this skip transition acts as a local operator that can be invoked on demand, significantly enhancing the flexibil-ity of sampling pattern design and unlocking the potential for parallelization, as detailed in the next section. 3𝐀 𝐀 
+
+𝐀 𝐀 
+
+𝐀 𝐀 −𝐀 
+
+𝐀 𝐀 −𝐀 
+
+𝐀 𝐀 −𝐀 
+
+... 
+
+𝐀 𝐀 −𝐀 
+
+𝐀 𝐀 −𝐀 
+
+𝐀 𝐀 −𝐀 
+
+... 
+
+𝐀 𝐀 −𝐀 
+
+𝐀 𝐀 −𝐀 
+
+... 
+
+> 𝐀 𝐀 −𝐀 −𝐀 (a) Computation map of conservative version of DRiffusion.
+
+𝐀 𝐀 
+
+𝐀 𝐀 
+
+𝐀 𝐀 −𝐀 
+
+𝐀 𝐀 −𝐀 
+
+... 
+
+𝐀 𝐀 −𝐀 
+
+𝐀 𝐀 −𝐀 
+
+... 
+
+𝐀 𝐀 −𝐀 
+
+𝐀 𝐀 −𝐀 
+
+...   
+
+> 𝐀 𝐀 −𝐀 −𝐀 𝐀 𝐀 −𝐀 −𝐀 (b) Computation map of aggressive version of DRiffusion.
+> Figure 3. Computation map of different versions. Conservative one takes a standalone timestep for computing the noise for extra steps predicting while aggressive one directly takes the noise computed from draft states.
+
+## 4. DRiffusion 
+
+A natural starting point for parallelizing diffusion models is to ask whether noise predictions at multiple timesteps can be computed simultaneously. In the original computation pipeline, this objective seems infeasible, since it requires access to all corresponding states at those timesteps with-out fully executing the denoising trajectory step by step. However, the perspective of skip transitions makes it pos-sible: when each skip is treated as a local, callable operator, the required intermediate states can be constructed directly, thereby enabling parallel computation across timesteps. Following this intuition, we leverage the flexibility to generate multiple states at subsequent steps concurrently, producing draft estimates of xt−k for several values of k
+
+that remain aligned with the underlying denoising trajec-tory, albeit slightly less precise due to the larger step size. We then feed these drafts into the noise predictor to obtain reasonable noise estimates and proceed with the standard denoising updates to get refined states. In effect, the drafts serve as parallel proposals that are subsequently refined, un-locking substantial temporal acceleration while preserving the original structure of the underlying denoising trajectory. Although previous works [32] have shown that very large step sizes degrade image quality due to imperfect noise pre-diction in practice, our empirical observations suggest two mitigating factors. First, mild perceptual degradation does not imply poor representation: the images or latent vectors often retain most of the underlying semantic and structural information. Second, even though the noise predictor is not exact, it generalizes well enough to map neighborhoods around plausible samples to reasonable outcomes. Build-ing on these observations, we see that even when the draft-and-refine procedure uses larger step sizes, our DRiffusion method can still deliver sufficiently high-quality results. Algorithm 1 presents the aggressive version of our method, using DDIM update as example. At current anchor timestep t, given state-noise pair (xt, ε t), we use skip transi-tions to generate k provisional drafts xdt−1, x dt−2, . . . , x dt−k.We then evaluate the network in parallel at timesteps t −
+
+1, . . . , t − k, taking these drafts as inputs to obtain the cor-responding noise predictions εt−1, ε t−2, . . . , ε t−k. Using these predictions, we can perform the usual denoising up-dates to refine each state and, in particular, obtain a refined 
+
+xt−k paired with εt−k that becomes the next anchor. The 
+
+εt−k is computed during the parallelization, but not used in the updates. Therefore, we cache and carry it forward alongside xt−k to avoid an extra evaluation at the start of the next round, thereby saving one neural network forward pass per block and maximizing the overall sampling throughput.. Initialization requires a single evaluation at t = T to obtain 
+
+εT ; thereafter the loop iterates until x0 is produced. Because the k noise predictions per iteration are fully parallelized in this scheme, this aggressive version admits an ideal wall-clock speedup of up to k× (i.e., runtime re-duced by a factor of 1/k ), ignoring communication and other minor overheads. Figure 3b illustrates the computa-tion map of our aggressive method, with blue elements de-noting draft-related computations and states. However, in this process, not all predicted noises sit in symmetric positions: the one used for computing multiple drafts seems to be more demanding than others, since larger step sizes are covered by this noise. To coordinate with this situation, we further propose the conservative version of our method. In this version, at each anchor timestep t, we only have current state xt, and run a stand-alone noise prediction 4Algorithm 1 Parallelization (Aggressive Version) 
+
+Require: sampled noise xT , total steps T , block size k
+
+Ensure: generated image x0 
+
+> 1:
+
+t ← T 
+
+> 2:
+
+εt ← εθ (xt, t ) 
+
+> 3:
+
+repeat  
+
+> 4:
+
+for i = 1 to k concurrently do ▷ the following k noise prediction can run in parallel  
+
+> 5:
+
+sample z ∼ N (0 , 1)  
+
+> 6:
+
+xt−i ← √αt−i · xt − √1 − αt · εt
+
+√αt
+
++
+
+q
+
+1 − αt−i − σ2 
+
+> t,i
+
+· εt + σt,i · z 
+
+> 7:
+
+εt−i ← εθ (xt−i, t − i) ▷ computation bottleneck  
+
+> 8:
+
+end for  
+
+> 9:
+
+for i = 2 to k do  
+
+> 10:
+
+sample z ∼ N (0 , 1)  
+
+> 11:
+
+xt−i ← √αt−i · xt−i+1 − √1 − αt−i+1 · εt−i+1 
+
+√αt−i+1 
+
++
+
+q
+
+1 − αt−i − σ2 
+
+> t−i+1
+
+· εt−i+1 + σt−i+1 · z 
+
+> 12:
+
+end for  
+
+> 13:
+
+t ← t − k 
+
+> 14:
+
+cache εt−k ▷ ϵ t−k was computed in parallel but it has not been used  
+
+> 15:
+
+until t ≤ 0 
+
+> 16:
+
+return x0
+
+to get current noise. This noise is more accurate, since it is produced from the refined xt instead of the drafted ones, and with it we can replicate the same computation process in aggressive version, and even use εt−k to push xt−k a step further to xt−k−1 since we do not need to cache it for next iteration. This version of method has a speedup of up to  
+
+> k+1 2
+
+×, as the anchor noise is predicted independently and each iteration pushes one step further. Figure 3a illustrates the computation map of our conservative method, and see Algorithm 2 in Appendix for detailed information. 
+
+## 5. Experiments 
+
+5.1. Setups 
+
+Models and Datasets We evaluate our method across a wide range of diffusion models, including Stable Diffusion 2.1 (SD2.1) [26], a relatively small U-Net-based model; Stable Diffusion XL (SDXL) [24], a larger U-Net-based model; and Stable Diffusion 3 (SD3) [5], a Transformer-based flow-matching model. Results on additional mod-els, including Stable Diffusion 1.5 and Stable Diffusion 2.1 base [26], are deferred to Section 9.1. This model cover-age enables fair comparisons with prior methods while also demonstrating the adaptability of our approach across di-verse architectures and model sizes. Unless otherwise spec-ified, the number of samples per generation is set to one, and the number of inference steps follows the default setting of each model (28 steps for SD3, and 50 steps for the others). For benchmarking, we use the MS-COCO 2017 validation set [18], which contains 5,000 images, each paired with five captions. Following common practice, we use only the first caption of each image for generation and text-image align-ment evaluation to ensure a one-to-one correspondence be-tween generated images and reference captions. 
+
+Evaluation Metrics Consistent with prior research, our primary metrics for assessing perceptual generation qual-ity are the Fr´ echet Inception Distance (FID) [7], com-puted on Inception-V3 features [34], and CLIPScore (CLIP) [6, 25], evaluated using the openai/clip-vit-large-patch14 model, which provides more robust measurements than the openai/clip-vit-base-patch32 one. However, since these traditional metrics can lack sensitivity to fine-grained visual preferences, we supplement our evaluation with the more recent PickScore (Pick) [14] and Human Preference Score v2.1 (HPSv2.1) [37] in certain cases. For efficiency evaluation, we measure the average sampling latency across multiple steady-state runs using up to four NVIDIA V100 GPUs. We report the relative speedup compared to a single-GPU diffusion baseline, along with the extra memory over-head (ExtraMem.) incurred by our method. 
+
+Baselines We compare DRiffusion against two represen-tative acceleration approaches: (i) direct skip transitions, in-stantiated as reduced sampling steps, and (ii) AsyncDiff [3], which parallelizes denoising by distributing sub-networks across multiple devices and performing asynchronous sam-pling. To ensure a unified evaluation, we reproduced the AsyncDiff results using its official implementation under our measurement settings. 5Original SD-2.1 N=2, Conservative, 1.5 × Speedup N=3, Conservative, 1.9 × Speedup N=4, Conservative, 2.5 × Speedup       
+
+> Original SD-2.1 N=2, Aggressive, 1.9 ×Speedup N=3, Aggressive, 2.8 ×Speedup N=4, Aggressive, 3.6 ×Speedup
+
+Figure 4. Qualitative comparison at 50 steps on MS-COCO using Stable Diffusion 2.1. The first row displays conservative results and the second row shows aggressive ones. Our parallelization method accelerates the sampling process with minimal impact on sample quality. The prompt used for generation is: A photo of a cat sitting on a wooden table in sunlight. 
+
+5.2. Qualitative Result 
+
+In Figure 4, we present a qualitative comparison of the gen-erated images. Based on Stable Diffusion 2.1 base model, we provide results using both the conservative and the ag-gressive acceleration strategies, along with the correspond-ing speedup ratios, where N denotes the number of GPUs used. Despite being inherently difficult to achieve outputs that are visually identical with the baseline at high speedup ratios, our method consistently produces images that pre-serve the semantic content of the text prompt. This can be observed in fine details such as the texture of the wooden table and the sunlight highlights on the cat’s chest. Interestingly, by moderately skipping parts of the noise sampling process and reusing latent features, the acceler-ated variants may occasionally exhibit stronger local con-trast or sharper details in certain regions than the base-line. For example, the reflections in the cat’s eyes can ap-pear more pronounced. Nevertheless, aggressive accelera-tion may also introduce a slight drop in image fidelity. At speedup ratios approaching 4×, the generated images may show oversaturated colors or subtle artifacts, leading to a less clean appearance while still remaining globally consis-tent with the baseline. Overall, these results demonstrate that our method preserves high generation quality across a wide range of acceleration levels. 
+
+5.3. Quantitative Result 
+
+Table 1 reports the quality and efficiency of DRiffusion un-der different configurations on MS-COCO across three dis-tinct generation models: SD2.1, SDXL, and SD3. We orga-nize our discussion into two key aspects: 
+
+Generation Quality Across all tested settings, DRiffu-sion maintains a generation fidelity that is highly consis-tent with the original single-device baselines. FID generally fluctuates at a comparable level, while the CLIP score drops by at most 0.16 across all cases. In some circumstances, DRiffusion even yields slightly better FID scores, suggest-ing that introducing parallel draft states does not compro-mise semantic alignment or visual realism. However, we attribute these minor gains to statistical variance and the in-herent sensitivity of FID when evaluating subtle variations in our cases, rather than to a genuine improvement. To provide a more robust assessment, we further evaluate the method using PickScore (Pick) and Human Preference Score v2.1 (HPSv2.1). DRiffusion consistently delivers re-sults closely aligned with the original models, evidenced by a marginal average drop of only 0.17 for Pick and 0.43 for HPSv2.1 across all configurations. It is worth noting one exception: SD3 in aggressive mode with 4 devices, where HPSv2.1 drops by 1.50. This steeper decline occurs because SD3 defaults to a much smaller number of sampling steps 6Table 1. Quantitative results of DRiffusion under different models on the MS-COCO dataset. Latency is averaged over steady runs. Speedup is measured against the 1-device original run of the same model. Number of samples per generation is 1. 
+
+Model Mode #Devices Latency (s) Speed Up FID ↓ CLIP ↑ Pick ↑ HPSv2.1 ↑
+
+SD2.1 
+
+original 1 5.96 – 23.63 26.29 21.79 26.62 conservative 2 4.09 1.5 × 23.60 26.32 21.78 26.61 3 3.12 1.9 × 23.50 26.32 21.77 26.56 4 2.42 2.5 × 23.47 26.30 21.75 26.49 aggressive 2 3.06 1.9 × 23.39 26.31 21.77 26.56 3 2.11 2.8 × 23.26 26.29 21.73 26.47 4 1.66 3.6 × 23.24 26.27 21.69 26.34 
+
+SDXL 
+
+original 1 13.23 – 24.02 26.67 22.43 27.50 conservative 2 9.14 1.4 × 23.87 26.60 22.37 27.30 3 6.99 1.9 × 23.87 26.56 22.36 27.23 4 5.38 2.5 × 23.88 26.51 22.33 27.07 aggressive 2 6.86 1.9 × 24.08 26.61 22.33 27.13 3 4.72 2.8 × 24.11 26.59 22.30 27.00 4 3.65 3.6 × 24.14 26.54 22.26 26.84 
+
+SD3 
+
+original 1 11.25 – 31.03 26.56 22.57 29.14 conservative 2 7.60 1.5 × 31.80 26.54 22.44 28.82 3 5.49 2.0 × 30.82 26.51 22.29 28.56 4 4.63 2.4 × 29.94 26.55 22.16 28.32 aggressive 2 5.89 1.9 × 31.32 26.52 22.34 28.66 3 3.81 3.0 × 29.73 26.50 22.12 28.20 4 3.00 3.7 × 29.08 26.46 21.95 27.64 
+
+(only 28); consequently, applying the aggressive method with the largest step size could amplify the approximation error. Nevertheless, because each metric possesses its own sensitivities, a holistic view of the combined stability across all four metrics, alongside the substantial inference acceler-ation, confirms that this remains an efficient and reasonable trade-off. To conclude, our method incurs a negligible per-formance drop in the tested cases while achieving signifi-cant wall-clock speedups. 
+
+Inference Acceleration We report sampling latencies measured on the denoising iterations under different con-figuration in Table 1, excluding fixed overheads. As pre-sented, DRiffusion achieves substantial latency reduction that scales favorably with the number of computational de-vices. The speedup ranges from 1.4× to 3.7× depending on the mode and device count, while maintaining nearly the same total computation per sample. Fig. 5 shows that the aggressive mode approaches its theoretical lower bound of O(1 /N ) latency scaling, whereas the conservative mode closely tracks the expected O(2 /(N + 1)) behavior. These observations demonstrate that DRiffusion provides efficient and scalable parallelism, substantially improving respon-siveness for real-time or interaction-intensive applications. 1 2 3 4
+
+> # Devices (N)
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> Latency (seconds)
+> DRiffusion Latency vs # Devices (50 steps)
+> Basic
+> Aggressive
+> Basic lower bound
+> Aggr. lower bound
+
+Figure 5. Latency scaling of DRiffusion with respect to the num-ber of devices (N) on Stable Diffusion 2.1 base using 50 sampling steps. Both modes closely follow their theoretical lower bounds. 
+
+5.4. Comparison 
+
+Table 2 presents quantitative data comparing DRiffusion with AsyncDiff under Stable Diffusion XL on the MS-COCO dataset. To ensure a fair comparison, we evaluate AsyncDiff using its official codebase, compute metrics fol-lowing standard practices as detailed in Section 5.1, and set its number of warm-up steps to 5 to match our acceleration 7Table 2. Comparison with baselines on MS-COCO dataset using SDXL. Speedups and ExtraMems are measured relatively to the 1-device SDXL baseline, and one sample per generation. We set the number of warm-up steps of AysncDiff to 5 to match our acceleration levels.                                                                                     
+
+> Method Devices SpeedUp ↑ExtraMem. ↓FID ↓CLIP ↑Pick ↑
+> Stable Diffusion 1–+0MB 24.02 26.67 22.43 AsyncDiff (N=2, S=1) 21.6 ×+494MB 24.13 26.60 22.34 DRiffusion (consv., 2 dev) 21.5 ×+186MB 23.87 26.60 22.37
+> Stable Diffusion (step=25) 12.0 ×+0MB 24.51 26.64 22.27 AsyncDiff (N=3, S=1) 32.1 ×+502MB 24.17 26.56 22.30 DRiffusion (aggr., 2 dev) 21.9 ×+186MB 24.08 26.61 22.33 DRiffusion (consv., 3 dev) 31.9 ×+220MB 23.87 26.56 22.36
+> AsyncDiff (N=4, S=1) 42.5 ×+574MB 23.92 26.51 22.20 AsyncDiff (N=2, S=2) 32.7 ×+532MB 23.98 26.58 22.13 DRiffusion (consv., 4 dev) 42.4 ×+226MB 23.88 26.51 22.33
+> DRiffusion (aggr., 3 dev) 32.8 ×+198MB 24.11 26.59 22.30 AsyncDiff (N=3, S=2) 43.4 ×+554MB 24.25 26.54 22.02 DRiffusion (aggr., 4 dev) 43.6 ×+222MB 24.14 26.54 22.26
+
+levels. We group the runs by similar speedups, ranging from 1.5 × to 3.6 ×, to comprehensively demonstrate the perfor-mance across different acceleration regimes. Across all speed up groups, DRiffusion consistently achieves better generative quality relative to both AsyncD-iff and the reduced-step SDXL. While FID and CLIP scores exhibit statistical fluctuations, DRiffusion still maintains a leading edge within the matched groups. And to properly account for these fluctuations, we further adopt PickScore as the more robust and sensitive assessment metric for these acceleration settings. Under PickScore, our method con-sistently outperforms the baselines by a substantial margin. Notably, across all evaluated acceleration regimes, DRiffu-sion reduces the PickScore performance degradation gap by an average of 48.6%, achieving a maximum gap reduction of 58.5% under the most extreme acceleration setting (4-device acceleration). In terms of computational efficiency, DRiffusion scales nearly proportionally with the number of devices, demon-strating its effectiveness. When operating under similar de-vice counts, our method closely matches or consistently sur-passes the speedups of AsyncDiff. Moreover, DRiffusion demonstrates exceptional memory efficiency, a critical fac-tor for high-resolution generation tasks. As shown in Ta-ble 2, AsyncDiff suffers from an escalating memory bur-den, requiring up to +574MB of extra memory as the device count and step sizes increase. In stark contrast, our method introduces a minimal and relatively stable overhead ranging from +186MB to +226MB across all multi-device config-urations. This overhead is negligible, considering that the original SDXL baseline requires around 13004MB of mem-ory. This advantage becomes even more pronounced when increasing the batch size. On a 32GB node, DRiffusion op-erates seamlessly with SDXL at a batch size of 5, while AsyncDiff encounters Out-Of-Memory (OOM) exceptions under the same setting. This is because our method modifies only the iterative sampling process, remaining independent of the model structure and the computations. By decou-pling the memory cost from the acceleration regime, this low footprint prevents potential OOM bottlenecks, making DRiffusion more scalable and practical for deployment. 
+
+## 6. Conclusion 
+
+We introduced DRiffusion , a draft-and-refine parallel sam-pling framework that unlocks inherent parallelism in dif-fusion inference via analytically valid skip transitions . By drafting multiple future states and predicting their noises in parallel—then refining along the original denoising trajec-tory—DRiffusion consolidates the dominant network eval-uations into a single parallel step without modifying the pre-trained model or sampler. We instantiate two modes that of-fer a quality–speed trade-off: an aggressive variant whose ideal latency scales as O(1 /N ) (up to N × speedup), and a conservative variant with latency O(2 /(N + 1)) (up to   
+
+> N+1 2
+
+× speedup). across multiple diffusion models on MS-COCO, DRiffusion achieves 1.4×–3.7× wall-clock accel-eration on up to four GPUs while keeping FID and CLIP es-sentially unchanged, with PickScore and HPSv2.1 remain-ing broadly comparable to the original sampler, at only minimal and controllable memory overhead. Compared with reduced-step sampling and system-level paralleliza-tion (e.g., AsyncDiff), DRiffusion consistently improves perceptual quality at similar acceleration rates, establishing a simpler, more powerful baseline for high-resolution and scalable parallel diffusion inference. 8Acknowledgments. This work was supported in part by the China National Key R&D Program under Grant No. 2023YFB3307201) and Putuo District (Shanghai) Futuris-tistAI Lab Foundation under Grant No. QH2024-03-001. 
+
+## References 
+
+[1] James Betker, Gabriel Goh, Li Jing, Tim Brooks, Jianfeng Wang, Linjie Li, Long Ouyang, Juntang Zhuang, Joyce Lee, Yufei Guo, et al. Improving image generation with better captions. Computer Science. https://cdn. openai. com/papers/dall-e-3. pdf , 2(3):8, 2023. 1 [2] Tim Brooks, Bill Peebles, Connor Holmes, Will DePue, Yufei Guo, Li Jing, David Schnurr, Joe Taylor, Troy Luh-man, Eric Luhman, et al. Video generation models as world simulators. OpenAI Blog , 1(8):1, 2024. 1 [3] Zigeng Chen, Xinyin Ma, Gongfan Fang, Zhenxiong Tan, and Xinchao Wang. Asyncdiff: Parallelizing diffusion mod-els by asynchronous denoising. Advances in Neural Infor-mation Processing Systems , 37:95170–95197, 2024. 1, 2, 5 [4] Gabriele Corso, Hannes St¨ ark, Bowen Jing, Regina Barzi-lay, and Tommi Jaakkola. Diffdock: Diffusion steps, twists, and turns for molecular docking. arXiv preprint arXiv:2210.01776 , 2022. 1 [5] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas M¨ uller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al. Scaling recti-fied flow transformers for high-resolution image synthesis. In Forty-first international conference on machine learning ,2024. 5 [6] Jack Hessel, Ari Holtzman, Maxwell Forbes, Ronan Le Bras, and Yejin Choi. Clipscore: A reference-free evaluation met-ric for image captioning. arXiv preprint arXiv:2104.08718 ,2021. 5 [7] Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter. Gans trained by a two time-scale update rule converge to a local nash equilib-rium. Advances in neural information processing systems ,30, 2017. 5 [8] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising dif-fusion probabilistic models. Advances in neural information processing systems , 33:6840–6851, 2020. 1, 2 [9] Jonathan Ho, Tim Salimans, Alexey Gritsenko, William Chan, Mohammad Norouzi, and David J Fleet. Video dif-fusion models. Advances in neural information processing systems , 35:8633–8646, 2022. 1 [10] Chenqing Hua, Sitao Luan, Minkai Xu, Zhitao Ying, Jie Fu, Stefano Ermon, and Doina Precup. Mudiff: Unified diffusion for complete molecule generation. In Learning on Graphs Conference , pages 33–1. PMLR, 2024. 1 [11] Rongjie Huang, Jiawei Huang, Dongchao Yang, Yi Ren, Luping Liu, Mingze Li, Zhenhui Ye, Jinglin Liu, Xiang Yin, and Zhou Zhao. Make-an-audio: Text-to-audio gen-eration with prompt-enhanced diffusion models. In Inter-national Conference on Machine Learning , pages 13916– 13932. PMLR, 2023. 1 [12] Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine. Elucidating the design space of diffusion-based generative models. Advances in neural information processing systems ,35:26565–26577, 2022. 2, 3 [13] Diederik Kingma, Tim Salimans, Ben Poole, and Jonathan Ho. Variational diffusion models. Advances in neural infor-mation processing systems , 34:21696–21707, 2021. 1 [14] Yuval Kirstain, Adam Polyak, Uriel Singer, Shahbuland Ma-tiana, Joe Penna, and Omer Levy. Pick-a-pic: An open dataset of user preferences for text-to-image generation. Ad-vances in neural information processing systems , 36:36652– 36663, 2023. 5 [15] Zhifeng Kong, Wei Ping, Jiaji Huang, Kexin Zhao, and Bryan Catanzaro. Diffwave: A versatile diffusion model for audio synthesis. arXiv preprint arXiv:2009.09761 , 2020. 1 [16] Yaniv Leviathan, Matan Kalman, and Yossi Matias. Fast in-ference from transformers via speculative decoding. In In-ternational Conference on Machine Learning , pages 19274– 19286. PMLR, 2023. 3 [17] Muyang Li, Tianle Cai, Jiaxin Cao, Qinsheng Zhang, Han Cai, Junjie Bai, Yangqing Jia, Kai Li, and Song Han. Distri-fusion: Distributed parallel inference for high-resolution dif-fusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 7183– 7193, 2024. 1, 2 [18] Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Doll´ ar, and C Lawrence Zitnick. Microsoft coco: Common objects in context. In 
+
+European conference on computer vision , pages 740–755. Springer, 2014. 5 [19] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximil-ian Nickel, and Matt Le. Flow matching for generative mod-eling. arXiv preprint arXiv:2210.02747 , 2022. 1, 3 [20] Haohe Liu, Zehua Chen, Yi Yuan, Xinhao Mei, Xubo Liu, Danilo Mandic, Wenwu Wang, and Mark D Plumbley. Audi-oldm: Text-to-audio generation with latent diffusion models. 
+
+arXiv preprint arXiv:2301.12503 , 2023. 1 [21] Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow straight and fast: Learning to generate and transfer data with rectified flow. arXiv preprint arXiv:2209.03003 , 2022. 1 [22] Jianrong Lu, Zhiyu Zhu, and Junhui Hou. Parasolver: A hi-erarchical parallel integral solver for diffusion models. In 
+
+The Thirteenth International Conference on Learning Rep-resentations , 2025. 2 [23] Simian Luo, Yiqin Tan, Longbo Huang, Jian Li, and Hang Zhao. Latent consistency models: Synthesizing high-resolution images with few-step inference. arXiv preprint arXiv:2310.04378 , 2023. 1, 2 [24] Dustin Podell, Zion English, Kyle Lacey, Andreas Blattmann, Tim Dockhorn, Jonas M¨ uller, Joe Penna, and Robin Rombach. Sdxl: Improving latent diffusion mod-els for high-resolution image synthesis. arXiv preprint arXiv:2307.01952 , 2023. 5 [25] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al. Learning transferable visual models from natural language supervi-sion. In International conference on machine learning , pages 8748–8763. PmLR, 2021. 5 
+
+9[26] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Bj¨ orn Ommer. High-resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 10684–10695, 2022. 1, 5 [27] Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical image segmen-tation. In International Conference on Medical image com-puting and computer-assisted intervention , pages 234–241. Springer, 2015. 2 [28] Chitwan Saharia, William Chan, Saurabh Saxena, Lala Li, Jay Whang, Emily L Denton, Kamyar Ghasemipour, Raphael Gontijo Lopes, Burcu Karagol Ayan, Tim Salimans, et al. Photorealistic text-to-image diffusion models with deep language understanding. Advances in neural information processing systems , 35:36479–36494, 2022. 1 [29] Tim Salimans and Jonathan Ho. Progressive distillation for fast sampling of diffusion models. arXiv preprint arXiv:2202.00512 , 2022. 1 [30] Andy Shih, Suneel Belkhale, Stefano Ermon, Dorsa Sadigh, and Nima Anari. Parallel sampling of diffusion models. Ad-vances in Neural Information Processing Systems , 36:4263– 4276, 2023. 2 [31] Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli. Deep unsupervised learning using nonequilibrium thermodynamics. In International confer-ence on machine learning , pages 2256–2265. pmlr, 2015. 2 [32] Jiaming Song, Chenlin Meng, and Stefano Ermon. Denoising diffusion implicit models. arXiv preprint arXiv:2010.02502 , 2020. 2, 4 [33] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Ab-hishek Kumar, Stefano Ermon, and Ben Poole. Score-based generative modeling through stochastic differential equa-tions. arXiv preprint arXiv:2011.13456 , 2020. 1, 2 [34] Christian Szegedy, Vincent Vanhoucke, Sergey Ioffe, Jon Shlens, and Zbigniew Wojna. Rethinking the inception archi-tecture for computer vision. In Proceedings of the IEEE con-ference on computer vision and pattern recognition , pages 2818–2826, 2016. 5 [35] Zhiwei Tang, Jiasheng Tang, Hao Luo, Fan Wang, and Tsung-Hui Chang. Accelerating parallel sampling of dif-fusion models. In Forty-first International Conference on Machine Learning , 2024. 2 [36] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszko-reit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems , 30, 2017. 2 [37] Xiaoshi Wu, Yiming Hao, Keqiang Sun, Yixiong Chen, Feng Zhu, Rui Zhao, and Hongsheng Li. Human preference score v2: A solid benchmark for evaluating human preferences of text-to-image synthesis. arXiv preprint arXiv:2306.09341 ,2023. 5 [38] Minkai Xu, Lantao Yu, Yang Song, Chence Shi, Stefano Er-mon, and Jian Tang. Geodiff: A geometric diffusion model for molecular conformation generation. arXiv preprint arXiv:2203.02923 , 2022. 1 [39] Runmao Yao, Yi Du, Zhuoqun Chen, Haoze Zheng, and Chen Wang. Airroom: Objects matter in room reidentifi-cation. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 1385–1394, 2025. 3 [40] Yuanzhi Zhu, Xingchao Liu, and Qiang Liu. Slimflow: Training smaller one-step diffusion models with rectified flow. In European Conference on Computer Vision , pages 342–359. Springer, 2024. 1 
+
+10 DRiffusion: Draft-and-Refine Process Parallelizes Diffusion Models with Ease 
+
+# Supplementary Material 
+
+## 7. Derivation for Skip Transition 
+
+For DDPM: 
+
+q (xt−k|xt, x0)= q (xt|xt−k) q (xt−k|x0)
+
+q (xt|x0)=
+
+N
+
+
+
+xt;
+
+qQti=t−k+1 αixt−1,
+
+
+
+1 − Qti=t−k+1 αi
+
+
+
+I
+
+
+
+N  xt−k; √αt−kx0, (1 − αt−k) I
+
+N  xt; √αtx0, (1 − αt) I
+
+∝ exp 
+
+
+
+− 12
+
+
+
+xt − q αt
+
+αt−k xt−1
+
+2
+
+1 − αt
+
+αt−k
+
++
+
+ xt−k − √αt−kx0
+
+2
+
+1 − αt−k
+
+−
+
+ xt − √αtx0
+
+2
+
+1 − αt
+
+
+
+∝ exp 
+
+− 12
+
+−
+
+2q αt
+
+αt−k xtxt−k
+
+1 − αt
+
+αt−k
+
++
+
+αt
+
+αt−k x2
+
+t−k
+
+1 − Qti=t−k+1 αi
+
++ x2
+
+t−k
+
+1 − αt−k
+
+− 2√αt−kxt−kx0
+
+1 − αt−k
+
++ C (xt, x0)
+
+
+
+∝ exp 
+
+− 12
+
+ 1 − αt
+
+
+
+1 − αt
+
+αt−k
+
+
+
+(1 − αt−k)
+
+x2
+
+t−k − 2
+
+q αt
+
+αt−k xt
+
+1 − αt
+
+αt−k
+
++
+
+√αt−kx0
+
+1 − αt−k
+
+ xt−k
+
+
+
+∝ exp 
+
+− 12
+
+ 1 − αt
+
+
+
+1 − αt
+
+αt−k
+
+
+
+(1 − αt−k)
+
+x2
+
+t−k − 2
+
+q αt
+
+αt−k (1 − αt−k) xt + √αt−k
+
+
+
+1 − αt
+
+αt−k
+
+
+
+x0
+
+1 − αt
+
+xt−k
+
+
+
+= exp 
+
+
+
+−
+
+xt−k −
+
+q αtαt−k (1 −αt−k )xt+√αt−k
+
+
+
+1− αtαt−k
+
+
+
+x0
+
+1−αt
+
+!2
+
+2
+
+
+
+1− αtαt−k
+
+
+
+(1 −αt−k )1−αt
+
+!
+
+∝ N 
+
+xt−k;
+
+q αt
+
+αt−k (1 − αt−k) xt + √αt−k
+
+
+
+1 − αt
+
+αt−k
+
+
+
+x0
+
+1 − αt
+
+| {z }
+
+μq (xt,x0)
+
+,
+
+
+
+1 − αt
+
+αt−k
+
+
+
+(1 − αt−k)1 − αt
+
+| {z }
+
+Σq (t)
+
+I
+
+ .
+
+(9) For DDIM, we assume skip transitions are Gaussian distribution with unknown parameters: 
+
+p(xt−1|xt, x0) = N (xt−1; κtxt + λtx0, σ 2
+
+t I). (10) Using forward equations, Marginal consistency Eq. (4) gives the constraints: 
+
+λt,t −k + κt,t −k
+
+√αt = √αt−k, κ2
+
+t,t −k(1 − αt) + σ2
+
+t−k+1 = 1 − αt−k. (11) Solving, we obtain: 
+
+κt,t −k =
+
+p1 − αt−k − σ2
+
+√1 − αt
+
+, λt,t −k = √αt−k −
+
+p1 − αt−k − σ2
+
+√1 − αt
+
+√αt. (12) 1Substituting back yields 
+
+P (xt−1|xt, x 0)= N (xt−1; ( √αt−1 −
+
+p1 − αt−1 − σ2
+
+√1 − αt
+
+√αt)x0 + ( 
+
+p1 − αt−1 − σ2
+
+√1 − αt
+
+)xt, σ 2 
+
+> t
+
+)= N (xt−1; √αt−1x0 + p1 − αt−1 − σ2ϵt, σ 2 
+
+> t
+
+),
+
+(13) and 
+
+xt−k = √αt−k
+
+ xt − √1 − αtϵθ (xt, t )
+
+√αt
+
+| {z } 
+
+> predicted x0
+
++
+
+q
+
+1 − αt−k − σ2 
+
+> t
+
+· ϵθ (xt, t ) + σtzt. (14) 
+
+## 8. Algorithm for Conservative Parallelization 
+
+Algorithm 2 Parallelization (Conservative Version) 
+
+Require: sampled noise xT , total steps T , block size k
+
+Ensure: generated image x0 
+
+> 1:
+
+t ← T 
+
+> 2:
+
+repeat  
+
+> 3:
+
+εt ← εθ (xt, t ) 
+
+> 4:
+
+for i = 1 to k concurrently do ▷ the following k noise prediction can run in parallel  
+
+> 5:
+
+sample z ∼ N (0 , 1)  
+
+> 6:
+
+xt−i ← √αt−i · xt − √1 − αt · εt
+
+√αt
+
++
+
+q
+
+1 − αt−i − σ2 
+
+> t,i
+
+· εt + σt,i · z 
+
+> 7:
+
+εt−i ← εθ (xt−i, t − i) ▷ computation bottleneck  
+
+> 8:
+
+end for  
+
+> 9:
+
+for i = 2 to k + 1 do  
+
+> 10:
+
+sample z ∼ N (0 , 1)  
+
+> 11:
+
+xt−i ← √αt−i · xt−i+1 − √1 − αt−i+1 · εt−i+1 
+
+√αt−i+1 
+
++
+
+q
+
+1 − αt−i − σ2 
+
+> t−i+1
+
+· εt−i+1 + σt−i+1 · z 
+
+> 12:
+
+end for  
+
+> 13:
+
+t ← t − k − 1 
+
+> 14:
+
+until t ≤ 0 
+
+> 15:
+
+return x0
+
+## 9. Additional Experiments 
+
+9.1. Quatitative Results on Other Models 
+
+We provide additional quantitative results on SD1.5 and SD2.1-base in Table 3. The overall trend is consistent with the main-text observations: DRiffusion continues to offer substantial wall-clock acceleration while maintaining quality comparable to the original sampler. On SD1.5, the method achieves up to 3.4 × speedup, with FID, CLIP, Pick, and HPSv2.1 all remaining close to the original setting. A similar pattern is observed on SD2.1-base, where the speedup reaches 3.5 ×. These additional results further confirm that the favorable efficiency–quality trade-off of DRiffusion generalizes across different diffusion backbones. 
+
+9.2. Comparison with Distillation Method 
+
+While parallelization and distillation methods each offer distinct benefits, we highlight the compelling advantages of our approach over distillation. First and foremost, DRiffusion is strictly training-free. Unlike distillation, which necessitates costly and model-specific training, our method serves as a plug-and-play algorithmic acceleration universally applicable to any pre-trained model. Furthermore, our approach excels in preserving both alignment and generation diversity. Distillation techniques, such as LCM [23], often suffer from a noticeable distribution shift from the teacher model, leading to degraded 2Table 3. Quantitative results of DRiffusion under SD1.5 and SD2.1-base on the MS-COCO dataset.                                                                                                   
+
+> Model Mode #Devices Latency (s) Speed Up FID ↓CLIP ↑Pick ↑HPSv2.1 ↑
+> SD1.5
+> original 12.68 –25.91 26.49 21.49 26.07 conservative 22.07 1.3 ×25.95 26.60 21.51 25.98 31.43 1.9 ×25.67 26.60 21.51 25.95 41.10 2.4 ×25.57 26.61 21.50 25.92 aggressive 21.41 1.9 ×26.04 26.55 21.50 25.94 31.00 2.7 ×25.48 26.58 21.49 25.90 40.80 3.4 ×25.36 26.55 21.45 25.81
+> SD2.1 base
+> original 12.48 –25.69 26.19 21.81 27.14 conservative 21.74 1.4 ×25.75 26.26 21.83 27.04 31.32 1.9 ×25.67 26.27 21.82 27.02 41.04 2.4 ×25.56 26.26 21.81 26.99 aggressive 21.35 1.8 ×25.45 26.26 21.82 27.02 30.92 2.7 ×25.46 26.24 21.80 26.96 40.72 3.5 ×25.14 26.21 21.76 26.88
+
+diversity. In contrast, DRiffusion faithfully retains the original model’s behavior. As illustrated in Figure 6, while LCM deviates from the teacher’s sampling trajectory and yields less diverse outputs, our method remains strictly aligned. Therefore, DRiffusion presents a more accessible acceleration paradigm, delivering substantial speedups without compromising the intrinsic quality or diversity of the original diffusion model. 
+
+## 10. Future Works 
+
+On the engineering side, an immediate direction is to extend DRiffusion to other generative modalities, such as video, policy generation, and audio. In these settings, diffusion models can serve as powerful and efficient generators of high-quality data for downstream tasks [39]. On the algorithmic side, future work could further exploit the temporal flexibility of diffusion. Although DRiffusion is studied here in the multi-device setting, it may also accelerate single-device sampling by enabling larger batch sizes. Another important direction is to establish theoretical guarantees that bound the deviation of the draft trajectory from the original one, potentially enabling speculative-decoding-like methods [16] for diffusion sampling. 
+
+Original DRiffusion LCM  
+
+> Figure 6. Comparison with LCM. We apply DRiffusion to LCM’s teacher. A cozy cabin in a snowy forest at night, glowing windows.
+
+3
