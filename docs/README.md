@@ -6,91 +6,89 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-21
-- 运行时间：2026-04-21 20:49:10 UTC
+- 最新运行日期：2026-04-22
+- 运行时间：2026-04-22 20:21:46 UTC
 - 运行状态：成功
 - 本次总论文数：23
 - 精读区：12
 - 速读区：11
 
 ### 今日简报（AI）
-今日深度研读 23 篇论文，聚焦于利用流匹配技术实现高保真的手物交互与人体动作生成。
-满分论文 HO-Flow 与 FlowCoMotion 证明了潜空间流建模在处理复杂动态交互与文本转动作任务中的卓越泛化能力。
-推荐优先阅读这两篇满分佳作，掌握当前多模态动作生成领域最前沿的流式建模范式。
-- 详情：[/202604/21/README](/202604/21/README)
+今日成功处理23篇论文，运动生成与视频合成领域成果突出。运动生成技术的统一框架和文本到动作适配器方向最具看点。建议普通读者关注AI在动态内容创作中的创新应用。
+- 详情：[/202604/22/README](/202604/22/README)
 
 ### 精读区论文标签
-1. [HO-Flow: Generalizable Hand-Object Interaction Generation with Latent Flow Matching](/202604/21/2604.10836v1-ho-flow-generalizable-hand-object-interaction-generation-with-latent-flow-matching)  
+1. [A Unified Conditional Flow for Motion Generation, Editing, and Intra-Structural Retargeting](/202604/22/2604.13427v1-a-unified-conditional-flow-for-motion-generation-editing-and-intra-structural-retargeting)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：利用潜空间流匹配合成逼真的 3D 手部-物体运动序列
-2. [FlowCoMotion: Text-to-Motion Generation via Token-Latent Flow Modeling](/202604/21/2604.11083v1-flowcomotion-text-to-motion-generation-via-token-latent-flow-modeling)  
+   evidence：利用流匹配进行动作生成和重定向
+2. [Motion-Adapter: A Diffusion Model Adapter for Text-to-Motion Generation of Compound Actions](/202604/22/2604.16135v1-motion-adapter-a-diffusion-model-adapter-for-text-to-motion-generation-of-compound-actions)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：通过 Token-Latent 流建模进行文本到动作生成
-3. [FlowCoMotion: Text-to-Motion Generation via Token-Latent Flow Modeling](/202604/21/2604.11083v2-flowcomotion-text-to-motion-generation-via-token-latent-flow-modeling)  
+   evidence：用于文本到动作生成的扩散模型
+3. [Marrying Text-to-Motion Generation with Skeleton-Based Action Recognition](/202604/22/2604.17090v1-marrying-text-to-motion-generation-with-skeleton-based-action-recognition)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：FlowCoMotion 使用流建模进行文本到动作生成，统一了连续和离散表示。
-4. [Learning Long-term Motion Embeddings for Efficient Kinematics Generation](/202604/21/2604.11737v1-learning-long-term-motion-embeddings-for-efficient-kinematics-generation)  
+   evidence：用于动作生成的基于坐标的自回归运动扩散 (CoAMD)
+4. [Re$^2$MoGen: Open-Vocabulary Motion Generation via LLM Reasoning and Physics-Aware Refinement](/202604/22/2604.17807v1-re2mogen-open-vocabulary-motion-generation-via-llm-reasoning-and-physics-aware-refinement)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：使用条件流匹配模型生成长且逼真的动作
-5. [A Unified Conditional Flow for Motion Generation, Editing, and Intra-Structural Retargeting](/202604/21/2604.13427v1-a-unified-conditional-flow-for-motion-generation-editing-and-intra-structural-retargeting)  
+   evidence：用于目标角色行为控制的文本到动作 (T2M) 生成
+5. [EgoMotion: Hierarchical Reasoning and Diffusion for Egocentric Vision-Language Motion Generation](/202604/22/2604.19105v1-egomotion-hierarchical-reasoning-and-diffusion-for-egocentric-vision-language-motion-generation)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：利用流匹配统一运动生成与编辑
-6. [Motion-Adapter: A Diffusion Model Adapter for Text-to-Motion Generation of Compound Actions](/202604/21/2604.16135v1-motion-adapter-a-diffusion-model-adapter-for-text-to-motion-generation-of-compound-actions)  
-   标签：评分：10.0/10、query:3d-motion-generation
-   evidence：用于复合人体动作文本生成动作的扩散模型
-7. [Marrying Text-to-Motion Generation with Skeleton-Based Action Recognition](/202604/21/2604.17090v1-marrying-text-to-motion-generation-with-skeleton-based-action-recognition)  
-   标签：评分：10.0/10、query:3d-motion-generation
-   evidence：基于坐标的自回归动作扩散用于动作生成
-8. [PianoFlow: Music-Aware Streaming Piano Motion Generation with Bimanual Coordination](/202604/21/2604.12856v2-pianoflow-music-aware-streaming-piano-motion-generation-with-bimanual-coordination)  
+   evidence：用于第一人称视语言动作生成的扩散模型
+6. [PianoFlow: Music-Aware Streaming Piano Motion Generation with Bimanual Coordination](/202604/22/2604.12856v1-pianoflow-music-aware-streaming-piano-motion-generation-with-bimanual-coordination)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：用于精确协调的双手钢琴动作合成的流匹配框架
-9. [OneHOI: Unifying Human-Object Interaction Generation and Editing](/202604/21/2604.14062v1-onehoi-unifying-human-object-interaction-generation-and-editing)  
+   evidence：用于钢琴动作合成的流匹配框架
+7. [PianoFlow: Music-Aware Streaming Piano Motion Generation with Bimanual Coordination](/202604/22/2604.12856v2-pianoflow-music-aware-streaming-piano-motion-generation-with-bimanual-coordination)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：用于人机交互生成的统一扩散 Transformer 框架
-10. [Learning Whole-Body Humanoid Locomotion via Motion Generation and Motion Tracking](/202604/21/2604.17335v1-learning-whole-body-humanoid-locomotion-via-motion-generation-and-motion-tracking)  
+   evidence：用于双手钢琴动作合成的流匹配框架
+8. [SocialMirror: Reconstructing 3D Human Interaction Behaviors from Monocular Videos with Semantic and Geometric Guidance](/202604/22/2604.13581v1-socialmirror-reconstructing-3d-human-interaction-behaviors-from-monocular-videos-with-semantic-and-geometric-guidance)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：在重定向的人类动作上训练扩散模型用于类人机器人运动
-11. [Re$^2$MoGen: Open-Vocabulary Motion Generation via LLM Reasoning and Physics-Aware Refinement](/202604/21/2604.17807v1-re2mogen-open-vocabulary-motion-generation-via-llm-reasoning-and-physics-aware-refinement)  
+   evidence：基于扩散模型的3D人体交互重建框架
+9. [OneHOI: Unifying Human-Object Interaction Generation and Editing](/202604/22/2604.14062v1-onehoi-unifying-human-object-interaction-generation-and-editing)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：通过大语言模型推理和物理感知细化进行开放词汇动作生成
-12. [AnyLift: Scaling Motion Reconstruction from Internet Videos via 2D Diffusion](/202604/21/2604.17818v1-anylift-scaling-motion-reconstruction-from-internet-videos-via-2d-diffusion)  
+   evidence：用于 HOI 生成的统一扩散 Transformer 框架
+10. [Learning Whole-Body Humanoid Locomotion via Motion Generation and Motion Tracking](/202604/22/2604.17335v1-learning-whole-body-humanoid-locomotion-via-motion-generation-and-motion-tracking)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：利用 2D 扩散从视频中重建 3D 人体动作
+   evidence：在重定向的人类动作上训练扩散模型用于机器人运动
+11. [ViPS: Video-informed Pose Spaces for Auto-Rigged Meshes](/202604/22/2604.17623v1-vips-video-informed-pose-spaces-for-auto-rigged-meshes)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：从预训练视频扩散模型中提取 3D 网格的动作先验
+12. [DanceCrafter: Fine-Grained Text-Driven Controllable Dance Generation via Choreographic Syntax](/202604/22/2604.18648v1-dancecrafter-fine-grained-text-driven-controllable-dance-generation-via-choreographic-syntax)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：细粒度文本驱动的可控舞蹈生成
 
 ### 速读区论文标签
-1. [Tracking High-order Evolutions via Cascading Low-rank Fitting](/202604/21/2604.10980v1-tracking-high-order-evolutions-via-cascading-low-rank-fitting)  
+1. [Generative Data Augmentation for Skeleton Action Recognition](/202604/22/2604.14933v1-generative-data-augmentation-for-skeleton-action-recognition)  
+   标签：评分：8.5/10、query:3d-motion-generation
+   evidence：用于合成3D骨骼序列的条件生成流水线
+2. [OmniVLA-RL: A Vision-Language-Action Model with Spatial Understanding and Online RL](/202604/22/2604.17706v1-omnivla-rl-a-vision-language-action-model-with-spatial-understanding-and-online-rl)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：在潜在扩散和流匹配中建模高阶动力学
-2. [CLAW: Composable Language-Annotated Whole-body Motion Generation](/202604/21/2604.11251v1-claw-composable-language-annotated-whole-body-motion-generation)  
+   evidence：为具身智能中的动作精度重新构建流匹配
+3. [ReImagine: Rethinking Controllable High-Quality Human Video Generation via Image-First Synthesis](/202604/22/2604.19720v1-reimagine-rethinking-controllable-high-quality-human-video-generation-via-image-first-synthesis)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：CLAW 为人形机器人生成带有语言注释的全身动作数据。
-3. [CLAW: Composable Language-Annotated Whole-body Motion Generation](/202604/21/2604.11251v2-claw-composable-language-annotated-whole-body-motion-generation)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：语言标注全身动作数据的可扩展生成
-4. [CLAW: Composable Language-Annotated Whole-body Motion Generation](/202604/21/2604.11251v3-claw-composable-language-annotated-whole-body-motion-generation)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：CLAW 提供了一个为机器人生成类人 3D 动作序列的流水线。
-5. [LiveGesture Streamable Co-Speech Gesture Generation Model](/202604/21/2604.10927v1-livegesture-streamable-co-speech-gesture-generation-model)  
+   evidence：使用 SMPL-X 动作引导和视频扩散模型生成人体视频
+4. [SubFlow: Sub-mode Conditioned Flow Matching for Diverse One-Step Generation](/202604/22/2604.12273v1-subflow-sub-mode-conditioned-flow-matching-for-diverse-one-step-generation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：全身手势生成与区域协调动作生成
-6. [Probabilistic Prediction of Neural Dynamics via Autoregressive Flow Matching](/202604/21/2604.11178v1-probabilistic-prediction-of-neural-dynamics-via-autoregressive-flow-matching)  
+   evidence：流匹配已成为一种强大的生成框架
+5. [EMGFlow: Robust and Efficient Surface Electromyography Synthesis via Flow Matching](/202604/22/2604.13685v1-emgflow-robust-and-efficient-surface-electromyography-synthesis-via-flow-matching)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：基于自回归流匹配的生成式预测框架
-7. [Any 3D Scene is Worth 1K Tokens: 3D-Grounded Representation for Scene Generation at Scale](/202604/21/2604.11331v1-any-3d-scene-is-worth-1k-tokens-3d-grounded-representation-for-scene-generation-at-scale)  
+   evidence：流匹配 (FM) 和连续时间生成建模的应用
+6. [HiVLA: A Visual-Grounded-Centric Hierarchical Embodied Manipulation System](/202604/22/2604.14125v1-hivla-a-visual-grounded-centric-hierarchical-embodied-manipulation-system)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用扩散模型和3D接地表示进行3D场景生成
-8. [Continuous Adversarial Flow Models](/202604/21/2604.11521v1-continuous-adversarial-flow-models)  
+   evidence：用于电机控制的流匹配扩散 Transformer (DiT) 动作专家
+7. [Mean Flow Policy Optimization](/202604/22/2604.14698v1-mean-flow-policy-optimization)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：采用对抗性目标训练的连续时间流模型，用于改进流匹配
-9. [Dynamical Regimes of Discrete Diffusion Models](/202604/21/2604.10961v1-dynamical-regimes-of-discrete-diffusion-models)  
+   evidence：MeanFlow 模型作为用于策略表示的少步流式生成模型
+8. [Diffusion Crossover: Defining Evolutionary Recombination in Diffusion Models via Noise Sequence Interpolation](/202604/22/2604.14790v1-diffusion-crossover-defining-evolutionary-recombination-in-diffusion-models-via-noise-sequence-interpolation)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：在去噪扩散概率模型 (DDPM) 中定义交叉操作
+9. [Towards Faster Language Model Inference Using Mixture-of-Experts Flow Matching](/202604/22/2604.15009v1-towards-faster-language-model-inference-using-mixture-of-experts-flow-matching)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：离散扩散模型数据生成的理论分析
-10. [ScoRe-Flow: Complete Distributional Control via Score-Based Reinforcement Learning for Flow Matching](/202604/21/2604.10962v1-score-flow-complete-distributional-control-via-score-based-reinforcement-learning-for-flow-matching)  
+   evidence：用于生成建模的混合专家流匹配
+10. [R3D: Revisiting 3D Policy Learning](/202604/22/2604.15281v1-r3d-revisiting-3d-policy-learning)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：用于机器人控制和动作生成的流匹配策略
-11. [Introspective Diffusion Language Models](/202604/21/2604.11035v1-introspective-diffusion-language-models)  
+   evidence：用于3D策略学习的扩散解码器
+11. [Frequency-Aware Flow Matching for High-Quality Image Generation](/202604/22/2604.15521v1-frequency-aware-flow-matching-for-high-quality-image-generation)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：用于并行生成的扩散语言模型
+   evidence：用于高质量图像生成的频率感知流匹配
 
 
 <div class="dpr-home-promo-card">
