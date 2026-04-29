@@ -6,86 +6,73 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-28
-- 运行时间：2026-04-28 20:58:49 UTC
+- 最新运行日期：2026-04-29
+- 运行时间：2026-04-29 21:02:54 UTC
 - 运行状态：成功
-- 本次总论文数：21
-- 精读区：10
+- 本次总论文数：17
+- 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-- 今日共生成 21 篇推荐（精读 10 篇，速读 11 篇）
-- 精读：《DanceCrafter: Fine-Grained Text-Driven Controllable Dance Generation via Choreographic Syntax》（10.0/10）, 《EgoMotion: Hierarchical Reasoning and Diffusion for Egocentric Vision-Language Motion Generation》（10.0/10）
-- 速读：《InHabit: Leveraging Image Foundation Models for Scalable 3D Human Placement》（8.5/10）, 《ViPS: Video-informed Pose Spaces for Auto-Rigged Meshes》（8.0/10）, 《HumanScore: Benchmarking Human Motions in Generated Videos》（8.0/10）
-- 这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。
-- 详情：[/202604/28/README](/202604/28/README)
+今日精选 17 篇前沿成果，深度聚焦第一视角动作生成与高稳定性协同操作技术。
+满分论文 EgoMotion 突破了层级化视觉语言推理，而物理引导的流匹配框架则在 3D 气动力学与生物形态生成中展现出巨大潜力。
+建议重点关注扩散模型与物理约束的跨界融合，探索其在复杂几何推理与人机交互中的落地可能。
+- 详情：[/202604/29/README](/202604/29/README)
 
 ### 精读区论文标签
-1. [DanceCrafter: Fine-Grained Text-Driven Controllable Dance Generation via Choreographic Syntax](/202604/28/2604.18648v2-dancecrafter-fine-grained-text-driven-controllable-dance-generation-via-choreographic-syntax)  
+1. [EgoMotion: Hierarchical Reasoning and Diffusion for Egocentric Vision-Language Motion Generation](/202604/29/2604.19105v1-egomotion-hierarchical-reasoning-and-diffusion-for-egocentric-vision-language-motion-generation)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：使用动作捕捉数据进行文本驱动的可控舞蹈生成
-2. [EgoMotion: Hierarchical Reasoning and Diffusion for Egocentric Vision-Language Motion Generation](/202604/28/2604.19105v1-egomotion-hierarchical-reasoning-and-diffusion-for-egocentric-vision-language-motion-generation)  
-   标签：评分：10.0/10、query:3d-motion-generation
-   evidence：使用扩散模型合成3D人体动作
-3. [Stability-Driven Motion Generation for Object-Guided Human-Human Co-Manipulation](/202604/28/2604.20336v1-stability-driven-motion-generation-for-object-guided-human-human-co-manipulation)  
-   标签：评分：10.0/10、query:3d-motion-generation
-   evidence：用于双人协作操作运动生成的流匹配框架
-4. [MotionHiFlow: Text-to-motion via hierarchical flow matching](/202604/28/2604.23264v1-motionhiflow-text-to-motion-via-hierarchical-flow-matching)  
-   标签：评分：10.0/10、query:3d-motion-generation
-   evidence：用于3D人体动作生成的层级流匹配
-5. [Re$^2$MoGen: Open-Vocabulary Motion Generation via LLM Reasoning and Physics-Aware Refinement](/202604/28/2604.17807v1-re2mogen-open-vocabulary-motion-generation-via-llm-reasoning-and-physics-aware-refinement)  
+   evidence：该论文使用扩散模型，根据第一人称视觉和语言指令合成3D人体动作。
+2. [Stability-Driven Motion Generation for Object-Guided Human-Human Co-Manipulation](/202604/29/2604.20336v1-stability-driven-motion-generation-for-object-guided-human-human-co-manipulation)  
    标签：评分：9.5/10、query:3d-motion-generation
-   evidence：通过文本控制目标角色行为的开放词汇动作生成
-6. [ViPS: Video-informed Pose Spaces for Auto-Rigged Meshes](/202604/28/2604.17623v1-vips-video-informed-pose-spaces-for-auto-rigged-meshes)  
+   evidence：提出了一种用于生成双人协作操纵动作的流匹配框架。
+3. [Sculpt4D: Generating 4D Shapes via Sparse-Attention Diffusion Transformers](/202604/29/2604.21592v1-sculpt4d-generating-4d-shapes-via-sparse-attention-diffusion-transformers)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：从视频扩散模型中蒸馏动作先验
-7. [AnyLift: Scaling Motion Reconstruction from Internet Videos via 2D Diffusion](/202604/28/2604.17818v1-anylift-scaling-motion-reconstruction-from-internet-videos-via-2d-diffusion)  
+   evidence：使用 3D 扩散 Transformer 进行运动动力学生成的 4D 生成框架
+4. [MotionBricks: Scalable Real-Time Motions with Modular Latent Generative Model and Smart Primitives](/202604/29/2604.24833v1-motionbricks-scalable-real-time-motions-with-modular-latent-generative-model-and-smart-primitives)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：通过 2D 扩散进行 3D 人体动作重建
-8. [DanceCrafter: Fine-Grained Text-Driven Controllable Dance Generation via Choreographic Syntax](/202604/28/2604.18648v1-dancecrafter-fine-grained-text-driven-controllable-dance-generation-via-choreographic-syntax)  
+   evidence：生成式动作合成与实时交互动作控制
+5. [IAM: Identity-Aware Human Motion and Shape Joint Generation](/202604/29/2604.25164v1-iam-identity-aware-human-motion-and-shape-joint-generation)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：基于高保真动捕数据的文本驱动可控舞蹈生成
-9. [ReImagine: Rethinking Controllable High-Quality Human Video Generation via Image-First Synthesis](/202604/28/2604.19720v1-reimagine-rethinking-controllable-high-quality-human-video-generation-via-image-first-synthesis)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：使用 SMPL-X 动作引导和视频扩散模型的人体视频生成
-10. [Sculpt4D: Generating 4D Shapes via Sparse-Attention Diffusion Transformers](/202604/28/2604.21592v1-sculpt4d-generating-4d-shapes-via-sparse-attention-diffusion-transformers)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：使用 3D 扩散 Transformer 的原生 4D 生成框架，用于捕捉动作动态
+   evidence：该论文提出了一个身份感知的动作生成框架，用于合成逼真的三维人体动作序列。
+6. [ReImagine: Rethinking Controllable High-Quality Human Video Generation via Image-First Synthesis](/202604/29/2604.19720v1-reimagine-rethinking-controllable-high-quality-human-video-generation-via-image-first-synthesis)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：使用 SMPL-X 运动引导和视频扩散的人体视频生成
 
 ### 速读区论文标签
-1. [InHabit: Leveraging Image Foundation Models for Scalable 3D Human Placement](/202604/28/2604.19673v1-inhabit-leveraging-image-foundation-models-for-scalable-3d-human-placement)  
-   标签：评分：8.5/10、query:3d-motion-generation
-   evidence：用于在 3D 场景中填充交互人类的可扩展数据生成器
-2. [ViPS: Video-informed Pose Spaces for Auto-Rigged Meshes](/202604/28/2604.17623v2-vips-video-informed-pose-spaces-for-auto-rigged-meshes)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：从预训练视频扩散模型中提取动作先验，用于 3D 网格关节运动
-3. [HumanScore: Benchmarking Human Motions in Generated Videos](/202604/28/2604.20157v1-humanscore-benchmarking-human-motions-in-generated-videos)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：对生成视频中的人体动作和动力学进行基准测试
-4. [Exploring the Role of Synthetic Data Augmentation in Controllable Human-Centric Video Generation](/202604/28/2604.21291v1-exploring-the-role-of-synthetic-data-augmentation-in-controllable-human-centric-video-generation)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：基于扩散的可控人体视频生成框架，具有引导动作
-5. [WFM: 3D Wavelet Flow Matching for Ultrafast Multi-Modal MRI Synthesis](/202604/28/2604.21146v1-wfm-3d-wavelet-flow-matching-for-ultrafast-multi-modal-mri-synthesis)  
+1. [Quotient-Space Diffusion Models](/202604/29/2604.21809v1-quotient-space-diffusion-models)  
    标签：评分：7.5/10、query:3d-motion-generation
-   evidence：该论文提出了小波流匹配（WFM）作为一种高效的生成建模方法。
-6. [World-R1: Reinforcing 3D Constraints for Text-to-Video Generation](/202604/28/2604.24764v1-world-r1-reinforcing-3d-constraints-for-text-to-video-generation)  
+   evidence：基于扩散的生成模型，用于具有 SE(3) 对称性的 3D 结构生成
+2. [GeoFunFlow-3D: A Physics-Guided Generative Flow Matching Framework for High-Fidelity 3D Aerodynamic Inference over Complex Geometries](/202604/29/2604.23350v1-geofunflow-3d-a-physics-guided-generative-flow-matching-framework-for-high-fidelity-3d-aerodynamic-inference-over-complex-geometries)  
    标签：评分：7.5/10、query:3d-motion-generation
-   evidence：利用 Flow-GRPO 使视频生成符合 3D 约束
-7. [OmniVLA-RL: A Vision-Language-Action Model with Spatial Understanding and Online RL](/202604/28/2604.17706v1-omnivla-rl-a-vision-language-action-model-with-spatial-understanding-and-online-rl)  
+   evidence：提出了一种用于3D数据生成的物理引导生成流匹配框架。
+3. [PhyloSDF: Phylogenetically-Conditioned Neural Generation of 3D Skull Morphology via Residual Flow Matching](/202604/29/2604.25371v1-phylosdf-phylogenetically-conditioned-neural-generation-of-3d-skull-morphology-via-residual-flow-matching)  
+   标签：评分：7.5/10、query:3d-motion-generation
+   evidence：使用残差条件流匹配进行3D形态生成
+4. [MedFlowSeg: Flow Matching for Medical Image Segmentation with Frequency-Aware Attention](/202604/29/2604.19675v1-medflowseg-flow-matching-for-medical-image-segmentation-with-frequency-aware-attention)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：将流匹配重新表述为随机微分方程以提高动作精度
-8. [OmniVLA-RL: A Vision-Language-Action Model with Spatial Understanding and Online RL](/202604/28/2604.17706v2-omnivla-rl-a-vision-language-action-model-with-spatial-understanding-and-online-rl)  
+   evidence：用于生成建模和传输映射的流匹配框架
+5. [HumanScore: Benchmarking Human Motions in Generated Videos](/202604/29/2604.20157v1-humanscore-benchmarking-human-motions-in-generated-videos)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：在具身智能中重新定义流匹配以提高动作精度
-9. [Statistical Analysis of Markovian Generative Modeling](/202604/28/2604.22712v1-statistical-analysis-of-markovian-generative-modeling)  
+   evidence：评估AI生成内容中人体动作的质量和真实性
+6. [PoseFM: Relative Camera Pose Estimation Through Flow Matching](/202604/29/2604.22350v1-posefm-relative-camera-pose-estimation-through-flow-matching)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：使用流匹配（Flow Matching）将相机运动估计重新表述为生成任务
+7. [GeoRect4D: Geometry-Compatible Generative Rectification for Dynamic Sparse-View 3D Reconstruction](/202604/29/2604.20784v1-georect4d-geometry-compatible-generative-rectification-for-dynamic-sparse-view-3d-reconstruction)  
    标签：评分：6.5/10、query:3d-motion-generation
-   evidence：生成模型中流和扩散的统计分析
-10. [FlowPlace: Flow Matching for Chip Placement](/202604/28/2604.23658v1-flowplace-flow-matching-for-chip-placement)  
+   evidence：动态3D场景的生成式细化与时间一致性
+8. [FlowPlace: Flow Matching for Chip Placement](/202604/29/2604.23658v1-flowplace-flow-matching-for-chip-placement)  
    标签：评分：6.5/10、query:3d-motion-generation
-   evidence：在生成建模任务中使用流匹配进行高效训练和采样
-11. [Grokking of Diffusion Models: Case Study on Modular Addition](/202604/28/2604.17673v1-grokking-of-diffusion-models-case-study-on-modular-addition)  
+   evidence：在物理设计中使用流匹配（Flow Matching）进行生成式建模
+9. [CityRAG: Stepping Into a City via Spatially-Grounded Video Generation](/202604/29/2604.19741v1-cityrag-stepping-into-a-city-via-spatially-grounded-video-generation)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：对使用流匹配目标训练的扩散模型的机制研究
+   evidence：具有复杂运动先验的3D一致性视频生成
+10. [Flow4DGS-SLAM: Optical Flow-Guided 4D Gaussian Splatting SLAM](/202604/29/2604.22339v2-flow4dgs-slam-optical-flow-guided-4d-gaussian-splatting-slam)  
+   标签：评分：6.0/10、query:3d-motion-generation
+   evidence：用于动态区域和运动掩码的4D高斯泼溅
+11. [Accelerating Frequency Domain Diffusion Models with Error-Feedback Event-Driven Caching](/202604/29/2604.22901v1-accelerating-frequency-domain-diffusion-models-with-error-feedback-event-driven-caching)  
+   标签：评分：6.0/10、query:3d-motion-generation
+   evidence：加速用于时间序列生成的频域扩散模型
 
 
 <div class="dpr-home-promo-card">
