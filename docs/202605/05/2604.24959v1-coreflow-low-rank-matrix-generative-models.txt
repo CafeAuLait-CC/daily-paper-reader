@@ -1,0 +1,2949 @@
+Title: CoreFlow: Low-Rank Matrix Generative Models
+
+URL Source: https://arxiv.org/pdf/2604.24959v1
+
+Published Time: Wed, 29 Apr 2026 00:15:37 GMT
+
+Number of Pages: 35
+
+Markdown Content:
+# CoreFlow: Low-Rank Matrix Generative Models 
+
+Dongze Wu, Linglingzhi Zhu, Yao Xie ∗
+
+Abstract 
+
+Learning matrix-valued distributions from high-dimensional and possibly incomplete training data is challenging: ambient-space generative modeling is computationally expensive and statis-tically fragile when the matrix dimension is large but the sample size is limited. We propose 
+
+CoreFlow , a geometry-preserving low-rank flow model that learns shared row/column subspaces across the matrix distribution, and then trains a continuous normalizing flow only on the induced low-dimensional core. CoreFlow is designed for settings where shared low-rank matrix geometry is present, especially in high-dimensional limited-sample regimes. This separates shared matrix geometry from sample-specific variation, preserves matrix structure, and substantially improves training efficiency. The same framework also handles incomplete training matrices through masked Riemannian updates and iterative completion. Across real and synthetic benchmarks, CoreFlow substantially improves spectral and moment-level generation quality in few-sample regimes while remaining competitive in data-rich settings, even under compression to 9% of the ambient dimension and with up to 40% missing training entries. 
+
+## 1 Introduction 
+
+Many modern scientific and engineered datasets are naturally matrix-valued : spatiotemporal fields in geophysics and climate reanalysis [ 18 , 9], sensor grids [ 31 , 40 ], and medical imaging [ 14 , 35 ]are often represented as M ∈ Rm1×m2 arrays whose two modes encode different physical axes (e.g., space ×time, sensor ×frequency). A core modeling goal is to learn a generative distribution over such matrices, enabling realistic synthesis, uncertainty-aware simulation, and downstream tasks such as augmentation, denoising, and imputation. Diffusion models [ 19 , 34 ] and flow-based generative models [ 6, 24 ] have become dominant for high-fidelity synthesis. However, for matrix-valued data, the ambient dimension can be tens of thousands or more, while the number of training samples may be limited. Therefore, training a diffusion or flow model in the original dimension can be not only computationally expensive , but also statistically significantly underdetermined : the model must estimate a complex high-dimensional distribution from too few examples. Many matrix distributions concentrate near approximately low-rank sets: dependencies across the two modes induce shared row and column subspaces, while sample variability is expressed in a much smaller core space [ 17 , 27 , 45 ]. Therefore, the intrinsic dimension can be far smaller than 
+
+m1m2. This motivates learning the shared low-rank geometry and fitting the generator only in the induced low-dimensional coordinates. Concretely, we may model each matrix as Mi ≈ U S iV ⊤,where U and V are shared row/column subspaces, and Si is a sample-specific low-dimensional core. Accordingly, we position our method for settings where shared low-rank matrix geometry is present.  
+
+> ∗H. Milton Stewart School of Industrial and Systems Engineering, Georgia Institute of Technology, Atlanta, GA 30332. <dwu381@gatech.edu> <llzzhu@gatech.edu> <yao.xie@isye.gatech.edu>
+
+1
+
+> arXiv:2604.24959v1 [cs.LG] 27 Apr 2026
+
+Real-world matrix datasets may also be incomplete due to sensor dropouts, irregular sampling, or acquisition constraints. This makes shared-geometry recovery more challenging, and a practical low-rank generative method should remain stable even when training matrices are partially observed. To address these challenges, we propose CoreFlow , a two-stage geometry-preserving generator for matrix distributions with shared low-rank geometry. CoreFlow first learns shared row/column subspaces, and then learns a continuous normalizing flow (CNF) only on the induced low-dimensional core distribution. Our main contributions are: (i) Geometry-preserving low-rank matrix generation. 
+
+CoreFlow learns a shared low-rank coordinate system for the matrix distribution and trains a CNF only in the induced core space. This substantially reduces the effective generative dimension while preserving matrix structure, yielding a strong quality–efficiency tradeoff, especially in high-dimensional few-sample settings. (ii) Robust structure learning from incomplete matrices. We develop a masked (U, V ) subspace estimator with alternating completion, yielding stable subspace recovery and reliable core representations under substantial missingness. 
+
+1.1 Related Works 
+
+Ambient- and latent-space generative modeling. Diffusion [ 19 , 34 ] and flow-based generative models [ 6, 25 ] are powerful tools for high-fidelity synthesis and have been widely applied in areas such as statistical sampling [ 37 , 41 , 42 ], time-series generation [ 23 , 43 ], and image generation [ 30 , 22 ]. Most are trained in the ambient space, which can be computationally expensive and statistically fragile in high dimensions with limited samples. A related line of work improves efficiency by generating in compressed or latent representations, as in latent diffusion models [ 33 , 30 , 47 ], which typically rely on a pre-trained deep VAE. Our setting differs in two key ways: we do not rely on a generic learned latent representation, and we do not pre-train a deep VAE on possibly limited and incomplete matrices. Instead, we learn shared row and column subspaces as the geometric coordinates of the matrix distribution, and generate only in the induced core space. Closest to our setting, Guo et al. [16] studies low-dimensional diffusion through compressed sensing, but does not exploit matrix geometry, and the resulting representation may distort matrix structure. 
+
+Generative modeling with incomplete observations. A second line of work studies generative learning from incomplete data. MissDiff [ 29 ] enables diffusion training by masking the loss on observed entries, while other methods [ 32 , 36 , 48 , 46 ] focus on iterative imputation with diffusion or normalizing flows. These methods are related in spirit, but primarily target missing-data imputation or ambient-space generation. Besides, they typically model the full ambient distribution, which scales poorly to high-dimensional regimes with few samples. 
+
+Generative imputation and matrix completion. Matrix completion is related in that it also exploits low-dimensional structure, but it targets conditional recovery of missing entries. Existing methods include nuclear-norm and optimization approaches [ 5, 4, 21 , 11 , 7, 15 ], as well as probabilistic models with uncertainty quantification [ 2, 27 , 45 , 8]. A representative example is the Singular Matrix-variate Gaussian (SMG) [ 17 , 26 , 27 ], which uses a Gaussian low-dimensional core for completion inference. By contrast, CoreFlow targets unconditional matrix generation: it learns shared low-rank geometry as part of generation, rather than using low-rank structure for completion or imputation. 
+
+## 2 Preliminaries 
+
+2.1 Neural ODE and continuous normalizing flow 
+
+A continuous normalizing flow (CNF) models a sample trajectory in Rd by the Neural ODE [ 6]. Given an initial condition x0 = x(0) at t = 0 , the transformation to the output x1 = x(1) at t = 1 is 2governed by: 
+
+dx (t)
+
+dt = vθ(x(t), t ), t ∈ [0 , 1] , (1) where vθ : Rd × [0 , 1] → Rd is the velocity field parametrized by a neural network. It defines an invertible map between a data distribution p(·, 0) at t = 0 and a base distribution p(·, 1) at t = 1 ,typically q := N (0 , I ). Sampling is performed by drawing x1 ∼ q(·) and integrating (1) backward. We train the CNF using Flow Matching (FM) [ 24 ], which learns vθ by regressing it to a prescribed target velocity field u(x, t ):
+
+LFM = Et∼U [0 ,1] , x ∼p(·,t ) vθ(x(t), t ) − u(x, t ) 22.
+
+Since u(x, t ) is generally intractable in closed form, we use Conditional Flow Matching (CFM), which conditions on a data sample x0 ∼ p(·, 0) and a noise sample x1 ∼ q, and defines an analytic reference path between them. We adopt the standard linear interpolant [24]: 
+
+ϕ(x0, x 1; t) = (1 − t)x0 + tx 1,
+
+whose reference velocity is dϕ dt = x1 − x0.
+
+CFM then trains vθ by matching this reference velocity: 
+
+LCFM = Et∼U [0 ,1] , x 0∼p(·,0) , x 1∼q vθ
+
+ ϕ(x0, x 1; t), t  − (x1 − x0) 22 .
+
+In our method, CNF training is carried out only in the learned low-dimensional core space, substan-tially reducing the generative dimension while preserving geometry-aware transport. 
+
+2.2 Optimization on the Stiefel manifold 
+
+Low-rank matrix methods often represent row and column subspaces by matrices with orthonormal columns. Since standard Euclidean updates do not preserve this constraint, we optimize on the Stiefel manifold [1, 13], St( m, R ) = {W ∈ Rm×R : W ⊤W = IR}.
+
+Given a Euclidean gradient G at W ∈ St (m, R ), we project G onto the tangent space at W , take a first-order step, and retract back to the manifold. We use QR retraction, which is simple and numerically stable. Algorithm 2 summarizes this procedure as StiefelStep (W, G, η ).
+
+## 3 Algorithm 
+
+3.1 Settings and Goal 
+
+Let Mi ∈ Rm1×m2 denote a matrix-valued sample drawn from an unknown data-generating distribution pM (i.e., M ∼ pM ). CoreFlow models each matrix through a shared low-rank parame-terization 
+
+Mi = U S iV ⊤,
+
+where U ∈ St (m1, R ) and V ∈ St (m2, R ) capture row and column subspaces shared across the matrix distribution, and Si ∈ RR×R is a sample-specific core matrix. In the incomplete-data setting, we observe N i.i.d. training instances {(M obs  
+
+> i
+
+, Ωi)}Ni=1 , where 
+
+Ωi ⊆ [m1] × [m2] indexes the observed entries and 
+
+M obs  
+
+> i
+
+= PΩi (Mi), (PΩ(M )) jk =
+
+(
+
+Mjk , (j, k ) ∈ Ω,
+
+0, (j, k ) /∈ Ω.
+
+3U* V*⊤Mi               
+
+> {Si}̂Si
+> U*V*⊤̂Mi
+> Mj
+> p*Sq=N(0, Id)
+> vθ(s(t),t)
+> Si
+> Zi
+> Stage II: Learning vθStage I: Learning (U*,V*)Generation
+
+Figure 1: Overview of CoreFlow. Left: learning shared row/column subspaces (U ∗, V ∗) and constructing induced low-dimensional cores {Si}. Middle: learning a continuous normalizing flow in the induced core space, matching the Stage-I cores {Si} ∼ p∗ 
+
+> S
+
+to a Gaussian base. Right: generation starts from Gaussian noise, reverses the learned flow to obtain a generated core ˆSi, and decodes it with (U ∗, V ∗) to produce a new matrix ˆMi.
+
+The complete-data setting is recovered when Ωi = [ m1] × [m2].
+
+Goal. Our goal is to learn an unconditional generative model for complete matrices that matches pM while avoiding ambient-space training in the full m1m2-dimensional space, which can be computationally costly and statistically fragile in high-dimensions. When training matrices are partially observed, we develop a Stage-I procedure that still recovers the shared matrix geometry. We first estimate (U, V ), and then learn a generative model only on the induced low-dimensional core S.
+
+Notation. Each matrix sample is denoted by Mi ∈ Rm1×m2 . For incomplete data, we observe 
+
+(M obs  
+
+> i
+
+, Ωi), where M obs  
+
+> i
+
+= PΩi (Mi). Let d = R2 denote the core-vector dimension. For a core matrix S ∈ RR×R, we write s = vec (S) ∈ Rd for its vectorization; conversely, for any s ∈ Rd,
+
+mat (s) ∈ RR×R denotes its matricization, i.e., the inverse of vec (·). We use pM and ˆpM to denote the true and the learned generated distribution of the ambient matrix M , respectively. The standard Gaussian base distribution in the core space is denoted by q = N (0 , I d).CoreFlow is trained in two stages. Stage I learns shared row and column subspaces (U, V ) with orthonormal columns that explain the low-rank geometry across the matrix distribution. Stage II then learns a continuous normalizing flow (CNF) only on the induced low-dimensional core coordinates S,which can greatly reduce the learnable dimensions. 
+
+3.2 Stage I: learning shared matrix geometry on the Stiefel manifolds 
+
+Complete matrices. In Stage I, we learn orthonormal factors U ∈ St (m1, R ) and V ∈ St (m2, R )
+
+such that every sample of pM can be well-approximated by the rank-R model Mi = U S iV ⊤. Given 
+
+(U, V ), the core matrix can be re-written as Si := U ⊤MiV ∈ RR×R, so the reconstruction becomes 
+
+U S i V ⊤ = U U ⊤MiV V ⊤. Therefore, we can estimate (U, V ) by minimizing the reconstruction error: 
+
+min    
+
+> U∈St( m1,R ), V ∈St( m2,R )
+
+Lrec (U, V ) := 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+Mi − U U ⊤MiV V ⊤ 2 
+
+> F
+
+. (2) Because U and V must remain orthonormal during optimization, we use Riemannian gradient steps on the Stiefel manifold with a QR retraction (Alg. 2). 
+
+Incomplete matrices. When entries are missing, directly evaluating ∥Mi −U S iV ⊤∥2 
+
+> F
+
+is impossible. Therefore, we introduce a latent filled-in matrix fMi for each training sample and optimize a masked 4objective on observed entries: 
+
+Lmiss (U, V ; { fMi}) := 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+PΩi
+
+
+
+M obs  
+
+> i
+
+− U U ⊤ fMiV V ⊤ 2 
+
+> F
+
+. (3) We then alternate: (i) update (U, V ) using gradients of (3) (holding fMi fixed), and (ii) update 
+
+fMi by keeping observed entries fixed and imputing the missing ones with the current low-rank reconstruction: fMi ← P Ωi (M obs  
+
+> i
+
+) + PΩci
+
+
+
+U U ⊤ fMiV V ⊤
+
+.
+
+Intuitively, Step (ii) produces a completed matrix consistent with observations while staying on the rank-R manifold induced by (U, V ); Step (i) then refines the shared subspaces using only reliable observed entries. The full procedure is summarized in Alg. 3 of Appendix. 
+
+3.3 Stage II: geometry-preserving core-space flow matching 
+
+We denote by (U ∗, V ∗) the shared subspaces learned in Stage I. After Stage I, (U ∗, V ∗) are fixed and each (completed) training matrix is mapped to a low-dimensional core: 
+
+S := U ∗⊤ M V ∗ ∈ RR×R, s := vec( S) ∈ Rd.
+
+Correspondingly, we denote by p∗ 
+
+> S
+
+the distribution of the induced core matrix S after learning the subspaces (U ∗, V ∗), and by p∗ 
+
+> s
+
+:= vec #p∗ 
+
+> S
+
+the induced distribution of the core vector s = vec( S).A continuous normalizing flow (CNF) defines a transformation between a data distribution and a base distribution via a Neural ODE indexed by time t ∈ [0 , 1] . It transports samples from the data distribution at t=0 (i.e., s(0) ∼ p∗ 
+
+> s
+
+) to the base distribution at t=1 (typically N (0 , I d)) according to 
+
+ds (t)
+
+dt = vθ(s(t), t ), t ∈ [0 , 1] , (4) where the trajectory is initialized at a data sample s(0) = s, and ends at s(1) = z with z ∼ N (0 , I d).Flow matching trains a time-dependent velocity field vθ(·, t ) on Rd by matching an analytic reference velocity along a simple coupling between Gaussian noise and data cores, as introduced in Section 2.1. Specifically, we sample s = s(0) ∼ p∗ 
+
+> s
+
+, z = s(1) ∼ N (0 , I d), t ∼ Unif (0 , 1) , and then define the straight-line reference path and its derivative: 
+
+ϕ(s, z ; t) := (1 − t)s + tz, dϕ dt = z − s. 
+
+The flow-matching objective regresses the model velocity to this target: 
+
+LFM (θ) = Et∼U [0 ,1] , s ∼p∗   
+
+> s, z ∼N (0 ,I d)
+
+∥vθ(ϕ(s, z ; t), t ) − (z − s)∥22 .
+
+Generating a new matrix. To generate a new matrix, we draw z ∼ N (0 , I d) and numerically solve the Neural ODE in (4) backward from t = 1 to t = 0 , producing a generated core vector ˆs ∼ ˆps.After that, we project the core vector ˆs back to the ambient matrix space: 
+
+cM = U ∗ mat(ˆ s) V ∗⊤ .
+
+Remark 3.1 (Optional patchification) . CoreFlow is most effective when the input matrices are approximately low-rank. For datasets without strong global low-rank structure but with repeated local patterns, we optionally apply a patchification step before Stage I, inspired by patch-based vision methods [ 3, 10 , 12 ]. Rearranging the matrix into patches can better align local structure, increase row/column correlation, and reduce the effective rank. See details in Appendix C.2. 5Algorithm 1: Two-Stage Training for CoreFlow 
+
+Require: Training set {Mi}Ni=1 ⊂ Rm1×m2 (fully observed); rank R; iterative steps Tsub , T flow ; learning rates ηU , η V , η θ .
+
+Ensure: U ∗ ∈ Rm1×R, V ∗ ∈ Rm2×R (orthonormal columns), flow parameters θ∗. 
+
+> 1:
+
+Initialize U ∈ St( m1, R ) and V ∈ St( m2, R ) via spectral initialization.  
+
+> 2:
+
+Stage I: learn shared subspaces (U ∗, V ∗) 
+
+> 3:
+
+for t = 1 to Tsub do  
+
+> 4:
+
+Sample mini-batch B ⊂ { 1, . . . , N }. 
+
+> 5:
+
+Lrec ← 1
+
+> |B|
+
+P 
+
+> i∈B
+
+∥Mi − U U ⊤MiV V ⊤∥2 
+
+> F
+
+. 
+
+> 6:
+
+Compute GU ← ∇ U Lrec , GV ← ∇ V Lrec . 
+
+> 7:
+
+U ← StiefelStep (U, G U , η U ); V ← StiefelStep (V, G V , η V ). 
+
+> 8:
+
+end for  
+
+> 9:
+
+U ∗ ← U, V ∗ ← V . 
+
+> 10:
+
+Stage II: train CNF on core vectors under fixed (U ∗, V ∗) 
+
+> 11:
+
+for t = 1 to Tflow do  
+
+> 12:
+
+Sample mini-batch B ⊂ { 1, . . . , N }. 
+
+> 13:
+
+for all i ∈ B do  
+
+> 14:
+
+Si ← U ∗⊤ MiV ∗; si ← vec( Si) ∈ Rd. 
+
+> 15:
+
+Sample zi ∼ N (0 , I d), ti ∼ Unif(0 , 1) ; set ϕ(si, z i; ti) ← (1 − ti)si + tizi. 
+
+> 16:
+
+end for  
+
+> 17:
+
+LFM ← 1
+
+> |B|
+
+P 
+
+> i∈B
+
+∥vθ (ϕ(si, z i; ti), t i) − (zi − si)∥22. 
+
+> 18:
+
+θ ← θ − ηθ ∇θ LFM . 
+
+> 19:
+
+end for  
+
+> 20:
+
+θ∗ ← θ; return (U ∗, V ∗, θ ∗).
+
+Algorithm 2: StiefelStep (W, G, η ) with QR retraction (generic) 
+
+Require: W ∈ Rm×R with W ⊤W = IR; Euclidean gradient G; step size η. 
+
+> 1:
+
+Sym( A) ≜ 12 (A + A⊤). 
+
+> 2:
+
+Tangent projection: GR ← G − W Sym( W ⊤G). 
+
+> 3:
+
+Retract via QR: fW ← W − ηG R; compute thin QR fW = QR ; set W ← Q. 
+
+> 4:
+
+return W .
+
+## 4 Theoretical Properties 
+
+Section 4 analyzes the fully observed population model. Our aim is to isolate the geome-try–generation decomposition of CoreFlow: ambient generation error separates into subspace error from empirical geometric recovery, core-generation error from empirical flow matching, and an irreducible approximation error. The incomplete-data Stage-I updates in Section 3.2 and Appendix B should be viewed as practical extensions, motivated by real applications and supported empirically in Section 5. Developing a statistical recovery theory under missing observations is left for future work. 
+
+Assumption 4.1 (Approximate Shared Low-Rank Model) . The data-generating distribution pM
+
+produces matrices M ∈ Rm1×m2 of the form 
+
+M = U0S0V ⊤ 
+
+> 0
+
++ E, 
+
+where (i) True Subspaces: U0 ∈ Rm1×R and V0 ∈ Rm2×R are fixed unknown matrices with orthonormal columns. (ii) Oracle Core Matrix: S0 ∈ RR×R is a random core matrix in the oracle coordinates 
+
+(U0, V 0), with non-degenerate second moments, ΣL := E[S0S⊤ 
+
+> 0
+
+] ≻ 0 and ΣR := E[S⊤ 
+
+> 0
+
+S0] ≻ 0, and 6E∥S0∥2 
+
+> F
+
+≤ RC 2 
+
+> S
+
+. (iii) Perturbation: E ∈ Rm1×m2 is a random perturbation satisfying E[E | S0] = 0 
+
+and E∥E∥22 ≤ τ 2, where ∥ · ∥ 2 denotes the spectral norm. Next, the proposition below states that the Stage I objective (2) has the correct global minima. 
+
+Proposition 4.2. Under Assumption 4.1, if the data is exactly low-rank, the global optimizers of the population reconstruction loss Lrec (U, V ) exactly recover the true subspaces up to orthogonal rotations: 
+
+arg min     
+
+> U⊤U=I, V ⊤V=I
+
+Lrec (U, V ) = {(U0R1, V 0R2) : R1 and R2 are orthonormal }.
+
+Also, Proposition 4.3 shows that the Tucker initialization is provably close to the true subspace. 
+
+Proposition 4.3 (Tucker initialization) . Suppose that Assumption 4.1 holds under the exact low-rank setting. Define the population and empirical left second moments by CL := E[M M ⊤] and 
+
+bCL := 1
+
+> N
+
+PNi=1 MiM ⊤ 
+
+> i
+
+, where Mi i.i.d.
+
+∼ pM . Let U (0) ∈ Rm1×R be the matrix composed of the top-R
+
+eigenvectors of bCL. Suppose ∥ bCL − CL∥2 < λ R(Σ L), then the principal-angle error satisfies: 
+
+sin Θ( U (0) , U 0) :=  I − U0U ⊤
+
+> 0
+
+U (0)  
+
+> 2
+
+≤ ∥ bCL − CL∥2
+
+λR(Σ L) − ∥ bCL − CL∥2
+
+.
+
+Remark 4.4. The same conclusion holds for the right subspace after replacing (CL, bCL, U 0, U (0) , ΣL)
+
+with (CR, bCR, V 0, V (0) , ΣR) in Proposition 4.3, where CR := E[M ⊤M ] and bCR := 1
+
+> N
+
+PNi=1 M ⊤ 
+
+> i
+
+Mi.The Tucker initializer is close to the true subspaces when the empirical second moments are accurate. Algorithm 1 then refines these subspaces through Stiefel-gradient updates. This refinement is particularly useful under missingness, where alternating completion improves the filled-in matrices and leads to more reliable subspace updates. We denote cd := (2 π)−d/ 2 by the normalizing constant of q := N (0 , I d). Let v and ˆv be the target and learned velocity fields on Rd × [0 , 1] , with corresponding density paths ρt and ˆρt, t ∈ [0 , 1] ,both initialized at ρ0 = ˆρ0 = p∗ 
+
+> s
+
+. Note that p∗ 
+
+> s
+
+denotes the core-vector distribution induced by the Stage-I learned subspaces. The target field v transports p∗ 
+
+> s
+
+to q, i.e., ρ1 = q. Let ˆT : Rd → Rd be the flow map induced by the learned ODE ˙x = ˆv(x, t ). We define the terminal density ˆρ1 := ˆT#p∗
+
+> s
+
+and the generated core density ˆps := ˆT −1# q.
+
+Assumption 4.5. There exist constants ε > 0 and C1, C 2, L, L v > 0 such that for all t ∈ [0 , 1] : (i) 
+
+Flow-matching error: The learned velocity field satisfies the global L2 error bound: R 10
+
+R 
+
+> Rd
+
+∥v(x, t ) −
+
+ˆv(x, t )∥2ρt(x)dxdt ≤ ε2. (ii) Velocity regularity: Both velocity fields are Lipschitz in space uniformly in time: ∥v(x, t ) − v(y, t )∥ ≤ Lv∥x − y∥, ∥ˆv(x, t ) − ˆv(y, t )∥ ≤ Lv∥x − y∥, ∀ t ∈ [0 , 1] . (iii) Density bounds: Both density paths are strictly positive and bounded by Gaussian-like tails: 0 < ρ t(x), ˆρt(x) ≤
+
+C1e−∥ x∥2/2. (iv) Score regularity: The score functions of both density paths exhibit at most linear growth: ∥∇ log ρt(x)∥ ≤ L(1 + ∥x∥), ∥∇ log ˆ ρt(x)∥ ≤ L(1 + ∥x∥). (v) Density ratio integrability: 
+
+The density paths satisfy the bounded integral condition: R 
+
+> Rd
+
+(1 + ∥x∥)2 ρt(x)3 
+
+> ˆρt(x)2
+
+dx ≤ C2.
+
+Following the flow-matching analysis of Xu et al. [44] , we work under the same population-level regularity conditions and use their forward χ2 control as the starting point for Proposition 4.6. Under these assumptions, Proposition 4.6 is a conditional population guarantee rather than a finite-sample guarantee for the trained neural CNF. Our contribution is to turn this core-space control into a backward generation bound for the Stage-II core model, and then combine it with the Stage-I subspace recovery analysis to obtain an end-to-end ambient-space error decomposition for the full CoreFlow algorithm in Theorem 4.7. 7Proposition 4.6 (Core-space flow-matching and generation guarantee) . Let Assumption 4.5 hold. Then there exists a constant CF > 0 depending on (C1, C 2, L, d ) such that 
+
+χ2(ˆ ρ1∥q) ≤ CF ε, χ2(p∗ 
+
+> s
+
+∥ˆps) ≤ CF ε. 
+
+Theorem 4.7 (End-to-end geometry–generation guarantee) . Let Assumption 4.1 and Assumption 4.5 hold. Let (U ∗, V ∗) be the learned subspaces. Define the generated ambient distribution ˆpM by sampling 
+
+ˆs ∼ ˆps and forming ˆM = U ∗mat ( ˆs)V ∗⊤ . Then the Wasserstein-2 distance between the true data distribution pM and the generated distribution satisfies: 
+
+W2(ˆ pM , p M ) ≤ √RC S (sin Θ( U ∗, U 0) + sin Θ( V ∗, V 0))   
+
+> |{z }
+> (a)
+
++ eLv   
+
+> p2CFε1/2
+> |{z }
+> (b)
+
++ pmin( m1, m 2) τ  
+
+> |{z }
+> (c)
+
+.
+
+Here, (a) is the geometric error from empirical subspace recovery mismatch, (b) is the generative error from core-space flow matching, and (c) is the irreducible approximation error from data noise. 
+
+Remark 4.8 (Error balancing and bottlenecks) . The core-flow error term is the only term that does not scale with the ambient matrix dimension m1m2, though its constant CF = CF (d) depend on the core dimension d. For efficient training, it suffices to reduce the flow error until it matches the dominant geometric or noise error. From Proposition 4.3, combined with matrix Bernstein bounds [38], the spectral estimator (U ∗, V ∗) satisfies with high probability: 
+
+sin Θ( U ∗, U 0) + sin Θ( V ∗, V 0) ≲ C2 
+
+> S
+
+R(√m1 + √m2)
+
+√N min( λR(Σ L), λ R(Σ R)) .
+
+Balancing the flow term against the other two yields the sufficient flow precision threshold: ε ≲
+
+max (m1, m 2)( N −1 + τ 2)/C F (d). Thus the flow precision is bottlenecked by the core dimension, statistical subspace recovery, and irreducible approximation noise. 
+
+## 5 Experiments 
+
+Goals. Our experiments are designed to demonstrate that CoreFlow improves generative quality while training in a much lower-dimensional space than the original matrices, especially in high-dimensional and limited-sample settings. We additionally evaluate training matrices with substantial missing entries as robustness tests of the same framework. 
+
+Datasets. We consider both real and synthetic matrix-generation benchmarks. For real data, we study two sharply different regimes. Solar and Solar 2 are pseudo-color solar-flare datasets whose samples are 200 × 200 matrices, but only 300 training matrices are available, making ambient-space generative training particularly challenging. We also evaluate on LSPF, an 80 × 80 large-scale precipitation fraction field from ERA5, with 8760 training samples, representing a data-rich regime. To complement the real datasets, where the underlying low-rank structure is unknown, we use four synthetic cases: Blobs (Figure 6), Bands (Figure 7), Waves (Figure 8), and Crosshatch 
+
+(Figure 9), each consisting of 200 × 200 matrices with N = 1000 training samples. These simulations allow controlled evaluation of both distribution matching and subspace recovery. On all datasets, we assess robustness to incomplete observations by masking training entries uniformly at random with 
+
+pmiss ∈ { 0, 20 , 40 }%, while always evaluating generation against the complete matrices. The neural network architecture and hyperparameter settings are provided in Appendix C.4. 
+
+Baselines. We compare against two baseline families. (i) Ambient-space generative models with missingness handling : MissDiff [29 ] and MissFlow , which train diffusion or flow directly in the 8original m1 × m2 space using masked losses, but still operate in the full ambient dimension. (ii) 
+
+Low-dimensional generative models without shared matrix geometry : CSDM [ 16 ], which uses a fixed compression operator and may distort matrix structure, and SMG-Core , a baseline adapted from the matrix completion method BayeSMG [ 45 ], where we fix the Stage I subspaces learned by CoreFlow and fit the core distribution using BayeSMG variance priors; see Appendix C.5 for details. We also report a PCA-Flow ablation in Appendix D.7, replacing Stage I with flattened PCA while keeping the same CNF; since PCA requires complete vectors, it is evaluated only at pmiss = 0 .Notably, VAE-based latent diffusion [ 33 , 30 ] is not well suited here, as it requires pre-training a deep VAE on the same limited and possibly incomplete matrices, introducing a substantially heavier pipeline that is often impossible in the few-sample regime. 
+
+Metrics. We quantify distributional similarity between generated and true matrices using: (i) entrywise moment discrepancies (mean and std), (ii) Frobenius-norm mean and std shifts, (iii) average singular-value discrepancy, and (iv) maximum mean discrepancy (MMD). For Simulation we also evaluate subspace recovery via principal angles. See formal definitions in Appendix C.1. 
+
+5.1 Main results 
+
+To keep the main text focused, we present representative metrics here and defer the remaining quantitative results to Appendix D.1 (Tables 6–14), where the same overall trends continue to hold. Table 1: Comparison with missing-data baselines on real datasets, measured by average singular-value discrepancy (lower is better). Columns report the missing-entry rate pmiss . Entries are ×10 −2 mean ±
+
+standard deviation. CoreFlow uses ρ = 36% for Solar/Solar 2 and ρ = 49% for LSPF, while ambient-space baselines use ρ = 100% . Solar/Solar 2 are few-sample settings ( n = 300 ), and LSPF is data-rich ( n = 8760 ).                                           
+
+> Solar Solar 2 LSPF
+> pmiss 0% 20% 40% 0% 20% 40% 0% 20% 40%
+> MissDiff ( ρ= 100% )9.57 ±0.29 48 .2±0.31 89 .3±0.29 3.75 ±0.12 60 .3±0.15 98 .4±0.25 2.70 ±0.20 36 .2±0.35 48 .7±0.38
+> MissFlow ( ρ= 100% )7.63 ±0.32 37 .3±0.20 75 .7±0.17 2.05 ±0.11 41 .7±0.12 86 .2±0.17 2.71 ±0.22 33 .9±0.42 45 .2±0.31
+> CoreFlow (ρ= 36% /49% )1.27 ±0.49 1.57 ±0.04 2.76 ±0.05 0.77 ±0.25 1.67 ±0.18 1.99 ±0.11 2.88 ±0.19 3.73 ±0.19 5.78 ±0.10
+
+Table 2: Comparison with low-dimensional baselines on the Solar datasets, measured by average singular-value discrepancy (lower is better). Columns report the missing-entry rate pmiss . Entries are shown in ×10 −2
+
+as mean ± standard deviation. Parentheses indicate the learned-dimension ratio ρ.                                    
+
+> Solar Solar 2
+> pmiss 0% 20% 40% 0% 20% 40%
+> CSDM ( ρ= 9% )74 .2±1.179 .1±1.083 .4±0.90 75 .5±1.880 .4±1.485 .2±1.1
+> CSDM ( ρ= 36% )51 .5±1.261 .8±1.271 .5±1.054 .0±1.964 .3±0.15 73 .5±1.2
+> SMG-Core ( ρ= 9% )3.21 ±0.90 4.95 ±1.15.01 ±1.22.51 ±0.98 4.50 ±1.08.43 ±1.3
+> CoreFlow (ρ= 9% )0.87 ±0.10 0.93 ±0.07 1.01 ±0.10 0.56 ±0.16 0.64 ±0.12 0.79 ±0.07
+
+Solar Flare ( 200 ×200 , few-sample). Solar Flare is our most challenging real-data setting, with 
+
+40 ,000 ambient dimensions but only 300 training matrices. Figures 10 and 11 show visual comparisons, while Tables 1, 6, and 7 show that CoreFlow, using ρ = 36% for Solar and ρ = 49% for LSPF, consistently outperforms full-space MissDiff and MissFlow. Compared to low-dimensional baselines ,CoreFlow achieves substantially better metrics than both CSDM and SMG-Core on Solar (Tables 2, 12, and 13). CSDM uses a fixed compression operator that is not geometry-preserving, while SMG-Core models the core with a Gaussian posterior that may underestimate the expressiveness. 9Table 3: Comparison with low-dimensional generative baselines on simulation datasets, measured by average singular-value discrepancy (lower is better). Columns report the missing-entry rate pmiss . Entries are shown in ×10 −2 as mean ± standard deviation. Parentheses indicate the learned-dimension ratio ρ.                                                                                  
+
+> Blobs Bands Waves Crosshatch
+> pmiss 0% 20% 40% 0% 20% 40% 0% 20% 40% 0% 20% 40%
+> CSDM ( ρ= 1 .44% )409 ±7.4484 ±7.9559 ±9.1392 ±7.2461 ±8.3529 ±9.689 .4±3.291 .4±2.593 .5±1.988 .7±2.890 .8±3.292 .9±4.8
+> CSDM ( ρ= 64% )197 ±5.4230 ±6.0261 ±6.3196 ±5.3226 ±6.1254 ±6.543 .3±1.657 .8±1.469 .6±1.741 .7±1.456 .1±1.467 .8±1.6
+> SMG-Core ( ρ= 1 .44% )195 ±4.0219 ±5.1254 ±5.7124 ±3.3179 ±4.0201 ±4.918 .9±1.023 .2±1.227 .7±1.419 .5±0.90 24 .1±1.126 .8±1.3
+> SMG-Core ( ρ= 64% )20 .7±1.228 .3±1.834 .8±2.316 .8±1.319 .7±1.724 .1±2.56.20 ±0.50 10 .8±1.115 .6±1.28.12 ±0.70 12 .9±1.217 .8±1.7
+> CoreFlow (ρ= 1 .44% )0.43 ±0.12 0.63 ±0.14 1.28 ±0.20 4.45 ±0.74 8.87 ±0.68 9.09 ±0.32 3.47 ±0.17 5.25 ±0.07 5.71 ±0.31 3.23 ±0.50 4.33 ±0.21 4.70 ±0.26 True Generated
+
+(a) Solar (9% dim., 40% missing) True Generated (b) LSPF (49% dim., 0% missing) True Generated 
+
+(c) Blobs (1.44% dim., 40% missing) True Generated (d) Crosshatch (1.44% dim., 40% missing) 
+
+Figure 2: True samples (left) and CoreFlow-generated samples (right) on real and synthetic benchmarks. The close visual agreement shows that CoreFlow captures the matrix distributions well even under aggressive dimensionality reduction and substantial training missingness. 
+
+LSPF ( 80 ×80 , data-rich). On LSPF, where training data are abundant, the gap naturally narrows. Nevertheless, Table 1 shows that CoreFlow remains competitive while operating in only 
+
+49% of the ambient dimension, compared with ambient-space baselines trained at full dimension. As missingness increases, its spectral fidelity also degrades more gracefully, with the same pattern reflected in the Frobenius and entry-wise results in Tables 6 and 7. 
+
+Simulation ( 200 × 200 , extreme compression). As shown in Table 3, the simulation study considers an even harsher compression setting, where CoreFlow is trained in only 1.44% of the ambient dimension. Even under this extreme reduction, it preserves the matrix spectrum well across all datasets, while both CSDM and SMG-Core degrade noticeably at the same dimensionality. CSDM and SMG-Core improve only when allowed a much larger compressed space. 
+
+Computational efficiency. Figure 3shows that CoreFlow achieves the best tradeoff between generative-model cost and generation quality by learning only in the geometry-aware core space. On Solar, it uses just 9% of the ambient dimension (about 11 × lower cost proxy than ambient-space models) while still achieving the best spectral fidelity. On LSPF, it reduces the training dimension to 49% (2.1 × lower proxy cost) without sacrificing robustness. Full training times, including Stage I for CoreFlow and converged training times for the baselines, are reported in Appendix C.4. 9% 36% 100%   
+
+> Training cost proxy (% of dimension)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Test SV discrepancy (×10  2)
+> better
+> Solar (no missing)
+> CoreFlow
+> MissFlow
+> MissDiff
+> CSDM
+> 9% 36% 100%
+> Training cost proxy (% of dimension)
+> Test SV discrepancy (×10  2)
+> better
+> Solar (40% missing)
+
+Figure 3: Performance–efficiency tradeoff on Solar among generative models. The horizontal axis is the learned-dimension ratio as a proxy for generative-model cost , and the vertical axis is test singular-value discrepancy (lower is better). Full training times are reported in Appendix C.4. 
+
+10 Robustness to missing entries. Across all benchmarks, CoreFlow degrades only mildly as 
+
+pmiss increases, and substantially less than the baselines. This is because Stage I learns (U, V ) with masked reconstruction and iterative completion (Alg. 3). Table 14 further confirms reliable subspace recovery under missingness in simulations. 
+
+5.2 Discussion 
+
+Structure-aware Stage I matters. CoreFlow learns shared row/column subspaces and models only the induced core distribution, reducing dimension while preserving matrix geometry. This explains its robustness under aggressive compression and missingness, where structure-agnostic compressors such as CSDM degrade. The PCA-Flow ablation in Appendix D.7 further shows that simply replacing Stage I with flattened PCA can be competitive on complete data, but is weaker overall and cannot handle missing entries. This highlights the benefit of our matrix-structured U SV ⊤ representation. 
+
+CoreFlow enables few-sample high-dimensional generation. On Solar Flare, learning a 40 ,000 -dimensional distribution from 300 samples is highly underdetermined. By recovering shared low-rank geometry and learning only the core distribution, we make the generative task more stable. On data-rich LSPF, the gap narrows, but CoreFlow maintains a favorable efficiency–robustness tradeoff. 
+
+## 6 Conclusions 
+
+We presented CoreFlow, a geometry-preserving low-rank generative model for matrix generation that first learns shared row and column subspaces, and then fits a continuous normalizing flow only in the induced core space. This preserves matrix structure while substantially reducing the effective generative dimension. The PCA-Flow ablation further shows that low-dimensional flow modeling is useful, but that the matrix-structure-aware representation is crucial for geometry-preserving generation and for naturally handling incomplete training matrices. Theoretically, we establish an explicit separation between geometric error from subspace recovery and generative error from core-space modeling. Empirically, CoreFlow improves generation quality over ambient-space and geometry-agnostic baselines, especially in high-dimensional few-sample regimes, while remaining robust under substantial compression and missingness. A limitation is that CoreFlow is most effective when shared low-rank matrix geometry is present. While patchification can help reduce the effective rank, extending the method to more heterogeneous matrix distributions remains an important direction. 
+
+## Acknowledgment 
+
+This work is partially supported by NSF CMMI-2112533, Emory Healthcare A1230749, and the Coca-Cola Foundation. 
+
+## References 
+
+[1] P-A Absil, Robert Mahony, and Rodolphe Sepulchre. Optimization Algorithms on Matrix Manifolds . Princeton University Press, 2008. [2] Pierre Alquier, Vincent Cottet, Nicolas Chopin, and Judith Rousseau. Bayesian matrix comple-tion: prior specification. arXiv preprint arXiv:1406.1440 , 2014. 11 [3] Antoni Buades, Bartomeu Coll, and J-M Morel. A non-local algorithm for image denoising. In 2005 IEEE Computer Society Conference on Computer Vision and Pattern Recognition (CVPR’05) , volume 2, pages 60–65. Ieee, 2005. [4] Emmanuel Candes and Benjamin Recht. Exact matrix completion via convex optimization. 
+
+Communications of the ACM , 55(6):111–119, 2012. [5] Emmanuel J Candès and Terence Tao. The power of convex relaxation: Near-optimal matrix completion. IEEE Transactions on Information Theory , 56(5):2053–2080, 2010. [6] Ricky TQ Chen, Yulia Rubanova, Jesse Bettencourt, and David K Duvenaud. Neural ordinary differential equations. Advances in Neural Information Processing Systems , 31, 2018. [7] Yuejie Chi, Yue M Lu, and Yuxin Chen. Nonconvex optimization meets low-rank matrix factorization: An overview. IEEE Transactions on Signal Processing , 67(20):5239–5269, 2019. [8] Jungjun Choi, Hyukjun Kwon, and Yuan Liao. Inference for low-rank completion without sample splitting with application to treatment effect estimation. Journal of Econometrics , 240 (1):105682, 2024. [9] Copernicus Climate Data Store. Era5 hourly data on single levels from 1940 to present. Datos recuperados entre noviembre , 2024. [10] Kostadin Dabov, Alessandro Foi, Vladimir Katkovnik, and Karen Egiazarian. Image denoising by sparse 3-d transform-domain collaborative filtering. IEEE Transactions on Image Processing ,16(8):2080–2095, 2007. [11] Mark A Davenport and Justin Romberg. An overview of low-rank matrix recovery from incomplete observations. IEEE Journal of Selected Topics in Signal Processing , 10(4):608–622, 2016. [12] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al. An image is worth 16x16 words: Transformers for image recognition at scale. arXiv preprint arXiv:2010.11929 , 2020. [13] Alan Edelman, Tomás A Arias, and Steven T Smith. The geometry of algorithms with orthogonality constraints. SIAM journal on Matrix Analysis and Applications , 20(2):303–353, 1998. [14] Christian G Graff and Emil Y Sidky. Compressive sensing in medical imaging. Applied optics ,54(8):C23–C44, 2015. [15] Yuzhou Gu, Zhao Song, Junze Yin, and Lichen Zhang. Low rank matrix completion via robust alternating minimization in nearly linear time. In The Twelfth International Conference on Learning Representations , 2024. [16] Zhengyi Guo, Jiatu Li, Wenpin Tang, and David Yao. Accelerating diffusion via compressed sensing: Applications to imaging and finance. In NeurIPS 2025 Workshop MLxOR: Mathematical Foundations and Operational Integration of Machine Learning for Uncertainty-Aware Decision-Making , 2025. 12 [17] Arjun K Gupta and Daya K Nagar. Matrix variate distributions . Chapman and Hall/CRC, 2018. [18] Dylan Harries and Terence J O’Kane. Applications of matrix factorization methods to climate data. Nonlinear Processes in Geophysics Discussions , 2020:1–27, 2020. [19] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Advances in Neural Information Processing Systems , 33:6840–6851, 2020. [20] Roger A Horn and Charles R Johnson. Matrix Analysis . Cambridge University Press, 2012. [21] Vladimir Koltchinskii, Karim Lounici, and Alexandre B Tsybakov. Nuclear-norm penalization and optimal rates for noisy low-rank matrix completion. The Annals of Statistics , 39(5): 2302–2329, 2011. [22] Tianhong Li and Kaiming He. Back to basics: Let denoising generative models denoise. arXiv preprint arXiv:2511.13720 , 2025. [23] Lequan Lin, Zhengkun Li, Ruikun Li, Xuliang Li, and Junbin Gao. Diffusion models for time-series applications: a survey. Frontiers of Information Technology & Electronic Engineering , 25 (1):19–41, 2024. [24] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow matching for generative modeling. In The Eleventh International Conference on Learning Representations .[25] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow matching for generative modeling. In The Eleventh International Conference on Learning Representations , 2023. [26] Simon Mak and Yao Xie. Maximum entropy low-rank matrix recovery. IEEE Journal of Selected Topics in Signal Processing , 12(5):886–901, 2018. [27] Simon Mak, Henry Shaowu Yushi, and Yao Xie. Information-guided sampling for low-rank matrix completion. arXiv preprint arXiv:1706.08037 , 2017. [28] Felix Otto and Cédric Villani. Generalization of an inequality by Talagrand and links with the logarithmic Sobolev inequality. Journal of Functional Analysis , 173(2):361–400, 2000. [29] Yidong Ouyang, Liyan Xie, Chongxuan Li, and Guang Cheng. Missdiff: Training diffusion models on tabular data with missing values. arXiv preprint arXiv:2307.00467 , 2023. [30] William Peebles and Saining Xie. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 4195–4205, 2023. [31] Bin Ran, Huachun Tan, Yuankai Wu, and Peter J Jin. Tensor based missing traffic data com-pletion with spatial–temporal correlation. Physica A: Statistical Mechanics and its Applications ,446:54–63, 2016. [32] Trevor W Richardson, Wencheng Wu, Lei Lin, Beilei Xu, and Edgar A Bernal. Mcflow: Monte carlo flow models for data imputation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 14205–14214, 2020. 13 [33] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer. High-resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 10684–10695, 2022. [34] Jiaming Song, Chenlin Meng, and Stefano Ermon. Denoising diffusion implicit models. arXiv preprint arXiv:2010.02502 , 2020. [35] Paul Suetens. Fundamentals of Medical Imaging . Cambridge University Press, 2017. [36] Yusuke Tashiro, Jiaming Song, Yang Song, and Stefano Ermon. Csdi: Conditional score-based diffusion models for probabilistic time series imputation. Advances in Neural Information Processing Systems , 34:24804–24816, 2021. [37] Yifeng Tian, Nishant Panda, and Yen Ting Lin. Liouville flow importance sampler. arXiv preprint arXiv:2405.06672 , 2024. [38] Joel A Tropp. An introduction to matrix concentration inequalities. Foundations and Trends ®
+
+in Machine Learning , 8(1-2):1–230, 2015. [39] Cédric Villani. Optimal Transport: Old and New , volume 338 of Grundlehren der mathematischen Wissenschaften . Springer, 2009. [40] Zhiyuan Wang, Felix Bachofer, Jonas Koehler, Juliane Huth, Thorsten Hoeser, Mattia Mar-concini, Thomas Esch, and Claudia Kuenzer. Spatial modelling and prediction with the spatio-temporal matrix: A study on predicting future settlement growth. Land , 11(8):1174, 2022. [41] Dongze Wu and Yao Xie. Annealing flow generative models towards sampling high-dimensional and multi-modal distributions. In Forty-second International Conference on Machine Learning ,2025. [42] Dongze Wu, David I Inouye, and Yao Xie. Po-flow: Flow-based generative models for sampling potential outcomes and counterfactuals. arXiv preprint arXiv:2505.16051 , 2025. [43] Dongze Wu, Feng Qiu, and Yao Xie. Doflow: Flow-based generative models for interven-tional and counterfactual forecasting on time series. In International Conference on Learning Representations , 2026. [44] Chen Xu, Xiuyuan Cheng, and Yao Xie. Local flow matching generative models. IEEE Transactions on Information Theory , 2026. Accepted. [45] Henry Shaowu Yuchi, Simon Mak, and Yao Xie. Bayesian uncertainty quantification for low-rank matrix completion. Bayesian Analysis , 18(2):491–518, 2023. [46] Hengrui Zhang, Liancheng Fang, Qitian Wu, and Philip S Yu. Diffputer: Empowering diffusion models for missing data imputation. arXiv preprint arXiv:2405.20690 , 2024. [47] Boyang Zheng, Nanye Ma, Shengbang Tong, and Saining Xie. Diffusion transformers with representation autoencoders. arXiv preprint arXiv:2510.11690 , 2025. [48] Shuhan Zheng and Nontawat Charoenphakdee. Diffusion models for missing value imputation in tabular data. arXiv preprint arXiv:2210.17128 , 2022. 14 A Proofs 
+
+Proof of Proposition 4.2. Let U ∈ Rm1×R and V ∈ Rm2×R satisfy U ⊤U = IR and V ⊤V = IR.Define the orthogonal projectors 
+
+PU := U U ⊤, PV := V V ⊤.
+
+Note that P ⊤ 
+
+> U
+
+PU = PU and P ⊤ 
+
+> V
+
+PV = PV . The population loss becomes 
+
+L(U, V ) = E∥M − U (U ⊤M V )V ⊤∥2 
+
+> F
+
+= E∥M − PU M P V ∥2 
+
+> F
+
+.
+
+Expanding the Frobenius norm, we have 
+
+∥M − PU M P V ∥2 
+
+> F
+
+= ∥M ∥2 
+
+> F
+
+− 2⟨M, P U M P V ⟩ + ∥PU M P V ∥2 
+
+> F
+
+. (5) Using the cyclic property of the trace and the idempotence of projectors, the inner product term simplifies to 
+
+⟨M, P U M P V ⟩ = tr  M ⊤PU M P V
+
+
+
+= tr  M ⊤P ⊤ 
+
+> U
+
+PU M P ⊤ 
+
+> V
+
+PV
+
+
+
+= tr  (PU M P V )⊤(PU M P V ) = ∥PU M P V ∥2 
+
+> F
+
+.
+
+(6) Substituting (6) into (5), we obtain 
+
+L(U, V ) = E∥M ∥2 
+
+> F
+
+− E∥PU M P V ∥2 
+
+> F
+
+.
+
+Since E∥M ∥2 
+
+> F
+
+is independent of (U, V ), minimizing L(U, V ) is equivalent to maximizing 
+
+J (U, V ) := E∥PU M P V ∥2 
+
+> F
+
+.
+
+Define matrices A := U ⊤U0 ∈ RR×R and B := V ⊤V0 ∈ RR×R. Since M = U0S0V ⊤ 
+
+> 0
+
+(under τ = 0 ), we have 
+
+J (U, V ) = E∥PU U0S0V ⊤ 
+
+> 0
+
+PV ∥2 
+
+> F
+
+= E∥U AS 0B⊤V ⊤∥2 
+
+> F
+
+= E∥AS 0B⊤∥2 
+
+> F
+
+,
+
+where the last equality holds due to the orthogonal invariance of the Frobenius norm. Further defining P := A⊤A = U ⊤ 
+
+> 0
+
+PU U0 and Q := B⊤B = V ⊤ 
+
+> 0
+
+PV V0, we can rewrite the objective as: 
+
+J (U, V ) = E tr( AS 0B⊤BS ⊤ 
+
+> 0
+
+A⊤) = E tr( P S 0QS ⊤ 
+
+> 0
+
+) = tr( P E [S0QS ⊤ 
+
+> 0
+
+]) .
+
+It is immediate that P ⪰ 0 and Q ⪰ 0. Furthermore, for any vector x ∈ RR, since multiplication by 
+
+U ⊤ (where U has orthonormal columns) cannot increase the ℓ2-norm of a vector, we know that 
+
+x⊤P x = x⊤U ⊤ 
+
+> 0
+
+U U ⊤U0x = ∥U ⊤(U0x)∥22 ≤ ∥ U0x∥22 = ∥x∥22.
+
+The identical logic applies to Q. Therefore, the eigenvalues of P and Q are bounded: 
+
+0 ⪯ P ⪯ IR, 0 ⪯ Q ⪯ IR.
+
+Using P ⪯ IR and the fact that E[S0QS ⊤ 
+
+> 0
+
+] ⪰ 0 it follows that 
+
+J (U, V ) = tr( P E[S0QS ⊤ 
+
+> 0
+
+]) ≤ tr( E[S0QS ⊤ 
+
+> 0
+
+]) . (7) Using the cyclicity of the trace and recall that ΣR = E[S⊤ 
+
+> 0
+
+S0], we have 
+
+tr( E[S0QS ⊤ 
+
+> 0
+
+]) = tr( Q E[S⊤ 
+
+> 0
+
+S0]) = tr( QΣR).Similarly, since Q ⪯ IR and ΣR ≻ 0 (by Assumption 4.1), we further bound this by 
+
+tr( QΣR) ≤ tr(Σ R) = E tr( S⊤ 
+
+> 0
+
+S0) = E∥S0∥2 
+
+> F
+
+. (8) Combining (7) and (8) yields the global upper bound J (U, V ) ≤ E∥S0∥2 
+
+> F
+
+.This bound is tight and strictly achievable. If we set (U, V ) = ( U0, V 0), then PU0 M P V0 =
+
+U0U ⊤ 
+
+> 0
+
+M V 0V ⊤ 
+
+> 0
+
+= M . Thus 
+
+J (U0, V 0) = E∥PU0 M P V0 ∥2 
+
+> F
+
+= E∥M ∥2 
+
+> F
+
+= E∥U0S0V ⊤ 
+
+> 0
+
+∥2 
+
+> F
+
+= E∥S0∥2 
+
+> F
+
+.
+
+If a pair (U, V ) is a global optimizer, it must achieve the maximal upper bound. Consequently, the inequalities in (7) and (8) must hold as equalities, meaning: 
+
+tr(( IR − Q)Σ R) = 0 and tr(( IR − P )E[S0QS ⊤ 
+
+> 0
+
+]) = 0 .
+
+Since ΣR ≻ 0 and IR − Q ⪰ 0, the trace of their product is zero if and only if IR − Q = 0 , implying 
+
+Q = IR. Consequently, E[S0QS ⊤ 
+
+> 0
+
+] = E[S0S⊤ 
+
+> 0
+
+] = Σ L ≻ 0. By the same logic, IR − P ⪰ 0 combined with ΣL ≻ 0 implies P = IR.The conditions P = IR and Q = IR explicitly translate to 
+
+U ⊤ 
+
+> 0
+
+PU U0 = IR and V ⊤ 
+
+> 0
+
+PV V0 = IR.
+
+Focusing on U , we can rewrite U ⊤ 
+
+> 0
+
+PU U0 = IR as U ⊤ 
+
+> 0
+
+(Im1 − PU )U0 = 0 . Since Im1 − PU is a positive semi-definite projection matrix, this requires (Im1 − PU )U0 = 0 , or equivalently, PU U0 = U0. This means U (U ⊤U0) = U0, which strictly implies that span (U0) ⊆ span (U ). Since both U and U0
+
+have exactly rank R, their column spaces must be identical: span (U0) = span (U ). By symmetric reasoning, span (V0) = span (V ). Thus, the global optimizers are equivalent to the true subspaces up to orthogonal rotations. 
+
+Proof of Proposition 4.3. Under the exact low-rank setting ( τ = 0 ) of Assumption 4.1, we have 
+
+M M ⊤ = U0S0V ⊤ 
+
+> 0
+
+V0S⊤ 
+
+> 0
+
+U ⊤ 
+
+> 0
+
+= U0(S0S⊤ 
+
+> 0
+
+)U ⊤ 
+
+> 0
+
+.
+
+Taking the expectation gives the population left second moment 
+
+CL = E[M M ⊤] = U0E[S0S⊤ 
+
+> 0
+
+]U ⊤ 
+
+> 0
+
+= U0ΣLU ⊤ 
+
+> 0
+
+.
+
+Since ΣL ≻ 0, CL is positive semi-definite with exactly rank R. Furthermore, ΣL and CL share the same non-zero eigenvalues. For any eigen-pair (μ, q ) of ΣL such that ΣLq = μq , we can define 
+
+u = U0q. It follows that 
+
+CLu = U0ΣLU ⊤ 
+
+> 0
+
+(U0q) = U0ΣLq = U0(μq ) = μ(U0q) = μu. 
+
+Therefore, the R-th largest eigenvalue of CL perfectly matches that of ΣL
+
+λR(CL) = λR(Σ L). (9) Let ∆L := bCL − CL denote the empirical estimation error. By the Courant–Fischer min-max principle [20], we know 
+
+λk( bCL) = max  
+
+> dim( S)= k
+
+min 
+
+> x∈S ∥x∥2=1
+
+x⊤ bCLx = max  
+
+> dim( S)= k
+
+min 
+
+> x∈S ∥x∥2=1
+
+x⊤(CL + ∆ L)x. 
+
+16 Since x⊤∆Lx ≥ λmin (∆ L) for all unit vectors x, we have 
+
+λk( bCL) ≥ max  
+
+> dim( S)= k
+
+min 
+
+> x∈S ∥x∥2=1
+
+ x⊤CLx + λmin (∆ L) = λk(CL) + λmin (∆ L). (10) Similarly, bounding from above using x⊤∆Lx ≤ λmax (∆ L) yields 
+
+λk( bCL) ≤ λk(CL) + λmax (∆ L).
+
+Since both CL and bCL are symmetric, the perturbation ∆L is symmetric, which directly implies 
+
+∥∆L∥2 =
+
+q
+
+λmax (∆ ⊤ 
+
+> L
+
+∆L) = qmax  
+
+> i
+
+λ2 
+
+> i
+
+(∆ L) ≥ − λmin (∆ L). (11) By combining (9) , (10) , and (11) , we establish a lower bound on the R-th eigenvalue of the empirical matrix 
+
+λR( bCL) ≥ λR(CL) − ∥ ∆L∥2 = λR(Σ L) − ∥ ∆L∥2. (12) Recall that U (0) is the matrix of the top-R eigenvectors of bCL and Λ(0) ∈ RR×R is their corresponding diagonal eigenvalue matrix satisfying: 
+
+bCLU (0) = U (0) Λ(0) , U (0) ⊤U (0) = IR.
+
+Let U0,⊥ ∈ Rm1×(m1−R) denote an orthonormal complement of U0. Left-multiplying the eigen-equation by U ⊤ 
+
+> 0,⊥
+
+gives 
+
+U ⊤ 
+
+> 0,⊥
+
+bCLU (0) = U ⊤
+
+> 0,⊥
+
+U (0) Λ(0) . (13) Alternatively, expanding bCL = CL + ∆ L and noting that U ⊤
+
+> 0,⊥
+
+CL = 0 (since CL = U0ΣLU ⊤ 
+
+> 0
+
+), we obtain 
+
+U ⊤ 
+
+> 0,⊥
+
+bCLU (0) = U ⊤
+
+> 0,⊥
+
+(CL + ∆ L)U (0) = U ⊤
+
+> 0,⊥
+
+CLU (0) + U ⊤
+
+> 0,⊥
+
+∆LU (0) = U ⊤
+
+> 0,⊥
+
+∆LU (0) . (14) Equating (13) and (14) yields 
+
+U ⊤
+
+> 0,⊥
+
+∆LU (0) = U ⊤
+
+> 0,⊥
+
+U (0) Λ(0) .
+
+Since ∥ bCL − CL∥2 < λ R(Σ L), equation (12) ensures that λR( bCL) > 0. Therefore, Λ(0) is invertible, and we have 
+
+U ⊤
+
+> 0,⊥
+
+U (0) = U ⊤
+
+> 0,⊥
+
+∆LU (0)  Λ(0) −1.
+
+This together with the facts that ∥U ⊤
+
+> 0,⊥
+
+∥2 = 1 and ∥U (0) ∥2 = 1 implies that 
+
+∥U ⊤
+
+> 0,⊥
+
+U (0) ∥2 ≤ ∥ ∆L∥2 · ∥ (Λ (0) )−1∥2 = ∥∆L∥2
+
+λR( bCL) ≤ ∥∆L∥2
+
+λR(Σ L) − ∥ ∆L∥2
+
+,
+
+where the last inequality is from the lower bound (12) . Finally, by the definition of principal angles, we have ∥U ⊤
+
+> 0,⊥
+
+U (0) ∥2 = ∥(I − U0U ⊤ 
+
+> 0
+
+)U (0) ∥2 = sin Θ( U (0) , U 0), which concludes the proof. 
+
+Proof of Proposition 4.6. By the conditional-to-marginal equivalence of flow matching [ 25 , Theo-rem 2], the population minimizer of Algorithm 1’s CFM loss for the linear interpolant xt = (1 −t)s+tz ,
+
+s ∼ p∗ 
+
+> s
+
+, z ∼ q, is the marginal velocity v(x, t ) = E[z − s | xt = x]. This velocity induces the den-sity path ρt that satisfies the continuity equation and transports ρ0 = p∗ 
+
+> s
+
+to ρ1 = q. Therefore, Assumption 4.5(i) is a population approximation condition for ˆv relative to this marginal velocity v.17 Define the time-dependent divergences 
+
+G(t) := χ2(ρt∥q) = ρt
+
+q − 1
+
+> 2
+> L2(q)
+
+, ˆG(t) := χ2(ˆ ρt∥q) = ˆρt
+
+q − 1
+
+> 2
+> L2(q)
+
+.
+
+Since the target vector field v is valid, we have ρ1 = q, which implies G(1) = 0 . By the reverse triangle inequality in the normed space L2(q),
+
+q
+
+ˆG(1) − pG(1) ≤
+
+ ˆρ1
+
+q − 1
+
+
+
+−
+
+ ρ1
+
+q − 1
+
+
+
+> L2(q)
+
+= ˆρ1 − ρ1
+
+q L2(q)
+
+.
+
+Expanding the squared norm yields 
+
+ˆρ1 − ρ1
+
+q
+
+> 2
+> L2(q)
+
+=
+
+Z
+
+> Rd
+
+ ˆρ1 − ρ1
+
+q
+
+2
+
+q dx =
+
+Z
+
+> Rd
+
+(ˆ ρ1 − ρ1)2
+
+q dx =
+
+Z
+
+> Rd
+
+(ˆ ρ1 − ρ1)2
+
+ˆρ1
+
+· ˆρ1
+
+q dx. 
+
+By Assumption 4.5 (iii), both density paths satisfy the upper bound ˆρt(x) ≤ C1e−∥ x∥2/2. Conse-quently, the density ratio is bounded by 
+
+ˆρt(x)
+
+q(x) ≤ C1e−∥ x∥2/2
+
+cd e−∥ x∥2/2 = C1
+
+cd
+
+, ∀ t ∈ [0 , 1] , x ∈ Rd.
+
+Next, we define the auxiliary function 
+
+F (t) := 
+
+Z
+
+> Rd
+
+(ˆ ρt − ρt)2
+
+ˆρt
+
+dx =
+
+Z
+
+> Rd
+
+ ρt
+
+ˆρt
+
+− 1
+
+2
+
+ˆρt dx ≥ 0.
+
+Combining these observations, we obtain 
+
+q
+
+ˆG(1) ≤
+
+Z
+
+> Rd
+
+(ˆ ρ1 − ρ1)2
+
+ˆρ1
+
+· ˆρ1
+
+q dx 
+
+!1/2
+
+≤
+
+ C1
+
+cd
+
+1/2 pF (1) . (15) Since ρ0 = ˆρ0 = p, we initially have F (0) = 0 . Recall that the Neural ODE induces continuity equations governing both density paths 
+
+∂tρt + ∇· (ρt v) = 0 , ∂t ˆρt + ∇· (ˆ ρt ˆv) = 0 . (16) Differentiating F (t) with respect to time yields 
+
+ddt F (t) = 
+
+Z
+
+> Rd
+
+ ρt
+
+ˆρt
+
+− 1
+
+2
+
+∂t ˆρt + 2 
+
+ ρt
+
+ˆρt
+
+− 1
+
+  
+
+∂tρt − ρt
+
+ˆρt
+
+∂t ˆρt
+
+
+
+dx 
+
+=
+
+Z
+
+> Rd
+
+2 ∂tρt
+
+ ρt
+
+ˆρt
+
+− 1
+
+
+
+− ∂t ˆρt
+
+ ρt
+
+ˆρt
+
+2
+
+− 1
+
+!
+
+dx 
+
+=
+
+Z
+
+> Rd
+
+−2 ∇· (ρt v)
+
+ ρt
+
+ˆρt
+
+− 1
+
+
+
++ ∇· (ˆ ρt ˆv)
+
+ ρt
+
+ˆρt
+
+2
+
+− 1
+
+!
+
+dx 
+
+=
+
+Z
+
+> Rd
+
+2( ρt v) · ∇ 
+
+ ρt
+
+ˆρt
+
+
+
+− (ˆ ρt ˆv) · 2ρt
+
+ˆρt
+
+∇
+
+ ρt
+
+ˆρt
+
+
+
+dx 
+
+= 2 
+
+Z
+
+> Rd
+
+ρt(v − ˆv) · ∇ 
+
+ ρt
+
+ˆρt
+
+
+
+dx 
+
+= 2 
+
+Z
+
+> Rd
+
+(v − ˆv) · ρ2
+
+> t
+
+ˆρt
+
+(∇ log ρt − ∇ log ˆ ρt)dx, 
+
+(17) 18 where the third equality substitutes the continuity equations (16) , and the fourth equality follows from integration by parts. Note that the boundary terms strictly vanish due to the Gaussian tail decay specified in Assumption 4.5(iii). Integrating (17) over t ∈ [0 , 1] and applying F (0) = 0 gives 
+
+F (1) = 2 
+
+Z 10
+
+Z
+
+> Rd
+
+ v − ˆv · ρ2
+
+> t
+
+ˆρt
+
+ ∇ log ρt − ∇ log ˆ ρt
+
+dxdt. (18) By factoring the integrand as (∥v − ˆv∥√ρt) · (∥∇ log ρt − ∇ log ˆ ρt∥ρ3/2 
+
+> t
+
+/ˆρt) and applying the Cauchy– Schwarz inequality in L2(dxdt ), we can bound (18) as follows 
+
+12 F (1) ≤
+
+Z 10
+
+Z
+
+> Rd
+
+∥v − ˆv∥2 ρtdxdt 
+
+1/2
+
+·
+
+Z 10
+
+Z
+
+> Rd
+
+∥∇ log ρt − ∇ log ˆ ρt∥2 ρ3
+
+> t
+
+ˆρ2
+
+> t
+
+dxdt 
+
+1/2
+
+.
+
+For the first factor, Assumption 4.5 (i) directly implies that the square root is bounded by ε. For the second factor, the score-difference bound in Assumption 4.5 (iv) provides 
+
+∥∇ log ρt − ∇ log ˆ ρt∥ ≤ ∥∇ log ρt∥ + ∥∇ log ˆ ρt∥ ≤ 2L(1 + ∥x∥).
+
+Consequently, for any t ∈ [0 , 1] , we have 
+
+Z
+
+> Rd
+
+∥∇ log ρt − ∇ log ˆ ρt∥2 ρ3
+
+> t
+
+ˆρ2
+
+> t
+
+dx ≤ (2 L)2
+
+Z
+
+> Rd
+
+(1 + ∥x∥)2 ρ3
+
+> t
+
+ˆρ2
+
+> t
+
+dx ≤ (2 L)2C2,
+
+where the final inequality leverages the moment bound from Assumption 4.5 (v). Combining both factors, we conclude 
+
+F (1) ≤ 4LpC2ε =: C3ε. (19) Plugging (19) into (15) and recalling G(1) = 0 , we obtain the forward divergence bound 
+
+χ2(ˆ ρ1∥q) = ˆG(1) ≤ C1
+
+cd
+
+· C3 ε = CF ε, 
+
+where CF := ( C1/c d) C3 = 4 L√C2 · C1/c d.By definition, ˆps = ˆT −1# q, which yields ˆT# ˆps = q. Furthermore, ˆρ1 = ˆT#p. We now prove the pushforward identity χ2(p∗ 
+
+> s
+
+∥ˆps) = χ2( ˆρ1∥q). Since the estimated vector field ˆv is Lv-Lipschitz (Assumption 4.5 (ii)), the resulting flow map ˆT : Rd → Rd is a valid C1-diffeomorphism with a strictly positive Jacobian J(x) := | det ∇ ˆT (x)| > 0 everywhere. For y = ˆT (x), the pushforward densities satisfy 
+
+( ˆT#p∗ 
+
+> s
+
+)( y) = p∗ 
+
+> s
+
+(x)
+
+J(x) , ( ˆT# ˆps)( y) = ˆps(x)
+
+J(x) ,
+
+ensuring that the density ratio is preserved: ( ˆT#p∗ 
+
+> s
+
+)( y)/( ˆT# ˆps)( y) = p∗ 
+
+> s
+
+(x)/ˆps(x). Applying the change of variables y = ˆT (x) (where dy = J(x) dx ), we evaluate 
+
+χ2( ˆT#p∗ 
+
+> s
+
+∥ ˆT# ˆps) = 
+
+Z
+
+> Rd
+
+( ˆT#p∗ 
+
+> s
+
+)( y)( ˆT# ˆps)( y) − 1
+
+!2
+
+( ˆT# ˆps)( y)dy 
+
+=
+
+Z
+
+> Rd
+
+ p∗ 
+
+> s
+
+(x)ˆps(x) − 1
+
+2 ˆps(x)
+
+J(x) J(x)dx = χ2(p∗ 
+
+> s
+
+∥ˆps).
+
+Therefore, we conclude the proof with 
+
+χ2(p∗ 
+
+> s
+
+∥ˆps) = χ2( ˆT#p∗ 
+
+> s
+
+∥ ˆT# ˆps) = χ2(ˆ ρ1∥q) ≤ CF ε. 
+
+19 Proof of Theorem 4.7. Condition on the fixed Stage-I output (U ∗, V ∗), and define 
+
+PU := U ∗U ∗⊤ , PV := V ∗V ∗⊤ .
+
+For M ∼ pM , let 
+
+S := U ∗⊤ M V ∗, s := vec( S),
+
+so that s ∼ p∗ 
+
+> s
+
+. Let ˆS := mat(ˆ s), where ˆs ∼ ˆps, and define 
+
+ˆM := U ∗ ˆSV ∗⊤ .
+
+We couple (s, ˆs) via the optimal W2-coupling between p∗ 
+
+> s
+
+and ˆps, so that 
+
+E∥S − ˆS∥2 
+
+> F
+
+= E∥s − ˆs∥22 = W 22 (p∗ 
+
+> s
+
+, ˆps).
+
+Given S, draw M from its true conditional distribution under the constraint S = U ∗⊤ M V ∗. This gives a valid joint distribution over (M, ˆM ) with marginals pM and ˆpM . Therefore, 
+
+W 22 (ˆ pM , p M ) ≤ E∥M − ˆM ∥2 
+
+> F
+
+.
+
+Using S = U ∗⊤ M V ∗, we have 
+
+U ∗SV ∗⊤ = U ∗U ∗⊤ M V ∗V ∗⊤ = PU M P V .
+
+To avoid overloading notation, write the oracle low-rank representation in Assumption 4.1 as 
+
+M = U0S0V ⊤ 
+
+> 0
+
++ E, 
+
+where S0 is the oracle core and ∥S0∥2 ≤ CS . Adding and subtracting the intermediate term 
+
+U ∗SV ∗⊤ = PU M P V gives 
+
+M − ˆM =  M − U ∗SV ∗⊤  +  U ∗SV ∗⊤ − ˆM 
+
+= U0S0V ⊤ 
+
+> 0
+
++ E − PU (U0S0V ⊤ 
+
+> 0
+
++ E)PV + U ∗SV ∗⊤ − U ∗ ˆSV ∗
+
+=  U0S0V ⊤ 
+
+> 0
+
+− PU U0S0V ⊤ 
+
+> 0
+
+PV
+
+| {z }
+
+=: ∆ sub 
+
++ U ∗(S − ˆS)V ∗⊤ 
+
+| {z }
+
+=: ∆ core 
+
++  E − PU EP V
+
+| {z }
+
+=: ∆ noise 
+
+.
+
+Applying Minkowski’s inequality in L2 over the joint distribution of (M, S, ˆS),
+
+ E∥M − ˆM ∥2
+
+> F
+
+1/2 ≤  E∥∆sub ∥2
+
+> F
+
+1/2 +  E∥∆core ∥2
+
+> F
+
+1/2 +  E∥∆noise ∥2
+
+> F
+
+1/2. (20) We first bound the subspace mismatch term. Since 
+
+∆sub = U0S0V ⊤ 
+
+> 0
+
+− PU U0S0V ⊤ 
+
+> 0
+
+PV ,
+
+we decompose 
+
+∆sub = ( I − PU )U0S0V ⊤ 
+
+> 0
+
++ PU U0S0V ⊤ 
+
+> 0
+
+(I − PV ).
+
+By the triangle inequality and mixed-norm submultiplicativity, and the fact that ∥V0∥2 = 1 and 
+
+∥PU U0∥2 ≤ 1,
+
+∥∆sub ∥F ≤ ∥ (I − PU )U0S0V ⊤ 
+
+> 0
+
+∥F + ∥PU U0S0V ⊤ 
+
+> 0
+
+(I − PV )∥F
+
+≤ ∥ (I − PU )U0∥2∥S0∥F ∥V0∥2 + ∥PU U0∥2∥S0∥F ∥V ⊤ 
+
+> 0
+
+(I − PV )∥2
+
+≤  sin Θ( U ∗, U 0) + sin Θ( V ∗, V 0)∥S0∥F .
+
+20 Taking the L2-norm gives 
+
+ E∥∆sub ∥2
+
+> F
+
+1/2 ≤  E∥S0∥2
+
+> F
+
+1/2 sin Θ( U ∗, U 0) + sin Θ( V ∗, V 0)
+
+≤ √R C S
+
+ sin Θ( U ∗, U 0) + sin Θ( V ∗, V 0), (21) where we used Assumption 4.1(ii): E∥S0∥2 
+
+> F
+
+≤ RC 2 
+
+> S
+
+.
+
+Next, since U ∗ and V ∗ have orthonormal columns, 
+
+E∥∆core ∥2 
+
+> F
+
+= E∥U ∗(S − ˆS)V ∗⊤ ∥2 
+
+> F
+
+= E∥S − ˆS∥2 
+
+> F
+
+= W 22 (p∗ 
+
+> s
+
+, ˆps).
+
+By Proposition 4.6 and KL ≤ χ2, we have 
+
+KL( p∗ 
+
+> s
+
+∥ˆps) ≤ CF ε. 
+
+Since ˆps = ˆT −1# N (0 , I ) and ˆT −1 is eLv -Lipschitz by Grönwall and Assumption 4.5(ii), ˆps satisfies Talagrand’s T2(e2Lv ) inequality [28, 39]. Therefore, 
+
+W2(p∗ 
+
+> s
+
+, ˆps) ≤ eLv
+
+p2 KL( p∗ 
+
+> s
+
+∥ˆps) ≤ eLv
+
+p2CF ε. (22) Finally, the noise term is bounded directly by Assumption 4.1. Since E 7 → PU EP V is an orthogonal projection in Frobenius norm, 
+
+∥E − PU EP V ∥F ≤ ∥ E∥F .
+
+Hence  E∥∆noise ∥2
+
+> F
+
+1/2 =  E∥E − PU EP V ∥2
+
+> F
+
+1/2
+
+≤  E∥E∥2
+
+> F
+
+1/2
+
+≤ pmin( m1, m 2) ·  E∥E∥22
+
+1/2 ≤ pmin( m1, m 2) τ. 
+
+(23) Substituting (21), (22), and (23) into (20) gives 
+
+W2(ˆ pM , p M ) ≤ √RC S
+
+ sin Θ( U ∗, U 0) + sin Θ( V ∗, V 0) + eLv
+
+p2CF ε + pmin( m1, m 2) τ. 
+
+This proves the theorem. 
+
+Remark A.1 (Error metric alignment) . Theorem 4.7 unifies errors across disparate spaces: am-bient Frobenius norm (subspace mismatch and data noise) and density-space χ2-divergence (core generation). We bridge these via standard optimal transport inequalities, bounding the W2 cost through KL ≤ χ2 and Talagrand’s T2 inequality. Because the inverse flow ˆT −1 is eLv -Lipschitz (by the Grönwall inequality), the classical Gaussian T2(1) property [ 28 ] transfers to the generated measure ˆps with constant e2Lv [39 ]. Finally, the orthonormality of (U ∗, V ∗) allows this core-space 
+
+W2 coupling to lift isometrically to the ambient Frobenius distance, thus unifying all terms. 
+
+## B Stage I: Learn (U, V ) from Incomplete Matrices 
+
+The Stage I training procedure for incomplete matrices is provided in Algorithm 3. 21 Algorithm 3: Stage I for CoreFlow : Learn (U, V ) from Incomplete Matrices 
+
+Require: Observations {(M obs  
+
+> i
+
+, Ωi)}Ni=1 ; rank R; outer iterative steps E; inner iterative steps Tsub ;learning rates ηU , η V . 
+
+> 1:
+
+Initialize U ∈ St( m1, R ), V ∈ St( m2, R ) via spectral initialization.  
+
+> 2:
+
+Initialize filled-in states fMi ← P Ωi (M obs  
+
+> i
+
+) for all i. 
+
+> 3:
+
+for e = 1 to E do  
+
+> 4:
+
+(a) Subspace update with masked loss  
+
+> 5:
+
+for t = 1 to Tsub do  
+
+> 6:
+
+Sample mini-batch B ⊂ { 1, . . . , N }. 
+
+> 7:
+
+Lmiss ← 1
+
+> |B|
+
+P 
+
+> i∈B
+
+PΩi
+
+
+
+M obs  
+
+> i
+
+− U U ⊤ fMiV V ⊤
+
+ 2 
+
+> F
+
+. 
+
+> 8:
+
+Compute GU ← ∇ U Lmiss , GV ← ∇ V Lmiss . 
+
+> 9:
+
+U ← StiefelStep (U, G U , η U ); V ← StiefelStep (V, G V , η V ). 
+
+> 10:
+
+end for  
+
+> 11:
+
+(b) Completion update: keep observed entries, impute missing ones  
+
+> 12:
+
+for i = 1 to N do  
+
+> 13:
+
+cMi ← U U ⊤ fMiV V ⊤. 
+
+> 14:
+
+fMi ← P Ωi (M obs  
+
+> i
+
+) + PΩci ( cMi). 
+
+> 15:
+
+end for  
+
+> 16:
+
+end for  
+
+> 17:
+
+return U ∗ ← U, V ∗ ← V, { fMi}Ni=1 .
+
+## C Experimental Details 
+
+C.1 Metrics 
+
+Let {M true  
+
+> b
+
+}Btrue  
+
+> b=1
+
+denote the set of ground-truth matrices and {M gen  
+
+> b
+
+}Bgen  
+
+> b=1
+
+denote the set of generated matrices, where each M ∈ Rm1×m2 . We calculate the metrics below that compare the empirical distributions induced by these two sets. 
+
+Entrywise moment discrepancy (mean). For each entry j ∈ { 1, . . . , m 1m2} (after flattening the matrix), we define the per-entry empirical means as: 
+
+μtrue  
+
+> j
+
+= 1
+
+Btrue 
+
+> Btrue
+
+X
+
+> b=1
+
+M true  
+
+> b,j
+
+, μgen  
+
+> j
+
+= 1
+
+Bgen 
+
+> Bgen
+
+X
+
+> b=1
+
+M gen  
+
+> b,j
+
+,
+
+and the absolute per-entry mean difference is ∆μj = |μgen  
+
+> j
+
+−μtrue  
+
+> j
+
+|. We report the average of {∆μj }m1m2
+
+> j=1
+
+across all entries: 
+
+AbsEntryMeanDiff = 1
+
+m1m2
+
+> m1m2
+
+X
+
+> j=1
+
+∆μj .
+
+Entrywise moment discrepancy (standard deviation). Analogously, we define the per-entry empirical standard deviations as: 
+
+σtrue  
+
+> j
+
+= Std 
+
+
+
+{M true  
+
+> b,j
+
+}Btrue 
+
+> b=1
+
+
+
+, σgen  
+
+> j
+
+= Std 
+
+
+
+{M gen  
+
+> b,j
+
+}Bgen 
+
+> b=1
+
+
+
+,
+
+22 and the absolute per-entry standard-deviation difference ∆σj = |σgen  
+
+> j
+
+− σtrue  
+
+> j
+
+|. We report the average of it across all entries: 
+
+AbsEntryStdDiff = 1
+
+m1m2
+
+> m1m2
+
+X
+
+> j=1
+
+∆σj .
+
+These entrywise metrics quantify how well the generator matches the first two moments at each spatial location .
+
+Frobenius-norm distribution shift. For each matrix, we compute its Frobenius norm: 
+
+rtrue  
+
+> b
+
+= ∥M true  
+
+> b
+
+∥F , rgen  
+
+> b
+
+= ∥M gen  
+
+> b
+
+∥F .
+
+Let ¯rtrue and ¯rgen denote the empirical means of {rtrue  
+
+> b
+
+}Btrue  
+
+> b=1
+
+and {rgen  
+
+> b
+
+}Bgen  
+
+> b=1
+
+, and we let strue and 
+
+sgen denote the empirical standard deviations. We report absolute differences 
+
+FrobMeanDiff = |¯rgen − ¯rtrue |, FrobStdDiff = |sgen − strue |.
+
+These statistics summarize distributional shifts in overall matrix energy and its variability. 
+
+Average singular-value spectrum distance. Let σi(M ) denote the i-th singular value of M ,for i = 1 , . . . , k with k = min( m1, m 2). We define the average singular-value spectra as: 
+
+¯σtrue = 1
+
+Btrue 
+
+> Btrue
+
+X
+
+> b=1
+
+ σ1(M true  
+
+> b
+
+), . . . , σ k(M true  
+
+> b
+
+), ¯σgen = 1
+
+Bgen 
+
+> Bgen
+
+X
+
+> b=1
+
+ σ1(M gen  
+
+> b
+
+), . . . , σ k(M gen  
+
+> b
+
+).
+
+We then compute the relative ℓ2 discrepancy as: 
+
+SVRelL2 = ¯σtrue − ¯σgen 
+
+> 2
+
+∥ ¯σtrue ∥2 + ε , ε = 10 −8.
+
+This metric compares the global spectral structure of the two sets of matrices. We also evaluate how good the estimates are about U , V , as well as generated low-rank matrix 
+
+M .
+
+Principal Angles. For simulation cases where Utrue and Vtrue are available, we also measure subspace recovery for both U and V . Given the ground-truth and estimated factors Utrue , U ∗ ∈ Rm×R
+
+(analogously Vtrue , V ∗), we first orthonormalize the columns via reduced QR: 
+
+Qtrue = qr( Utrue ), Q∗ = qr( U ∗),
+
+and form the overlap matrix M = Q⊤
+
+> true
+
+Q∗ ∈ RR×R. As in our implementation, we compute singular values {σr}Rr=1 = svdvals( M ), clamp them to [−1, 1] , and define principal angles by 
+
+θr = arccos( σr) ∈
+
+h
+
+0, π
+
+> 2
+
+i
+
+(equivalently θr ∈ [0 , 90 ◦]) .
+
+We report the mean principal angle (in degrees) for U and V separately: 
+
+θU = 1
+
+R
+
+> R
+
+X
+
+> r=1
+
+θ(U ) 
+
+> r
+
+, θV = 1
+
+R
+
+> R
+
+X
+
+> r=1
+
+θ(V ) 
+
+> r
+
+.
+
+23 Maximum Mean Discrepancy (MMD). To compare the generated and true matrix distributions directly in ambient matrix space, we also report the maximum mean discrepancy (MMD) with an RBF kernel on Frobenius distance. Given true and generated samples {M true  
+
+> i
+
+}ni=1 and { cMj }mj=1 , we define 
+
+k(M, fM ) = exp − ∥M − fM ∥2
+
+> F
+
+2σ2
+
+!
+
+,
+
+where the bandwidth is chosen by the pooled-sample median, 
+
+σ2 = median 
+
+n
+
+∥Za − Zb∥2 
+
+> F
+
+: a < b, Z ∈ { M true  
+
+> i
+
+}ni=1 ∪ { cMj }mj=1 
+
+o
+
+.
+
+As in our implementation, we use the unbiased U-statistic estimator 
+
+\MMD 2 
+
+> u
+
+= 1
+
+n(n − 1) 
+
+X
+
+> i̸=i′
+
+k(M true  
+
+> i
+
+, M true  
+
+> i′
+
+) + 1
+
+m(m − 1) 
+
+X 
+
+> j̸=j′
+
+k( cMj , cMj′ ) − 2
+
+nm 
+
+> n
+
+X
+
+> i=1
+> m
+
+X
+
+> j=1
+
+k(M true  
+
+> i
+
+, cMj ),
+
+and report MMD =
+
+q
+
+max( \MMD 2
+
+> u
+
+, 0) , where smaller values indicate better distributional alignment. 
+
+C.2 Patchification details and illustrations 
+
+Many real-world matrices are not globally low-rank, yet they often exhibit strong local redundancy. Motivated by patch-based computer vision methods that exploit self-similarity through patch extraction and grouping (e.g., [ 3, 10 , 12 ]), we can apply a simple patchification operator before learning shared subspaces, which yields an effectively lower-rank representation even when the original matrix is not inherently low-rank. Specifically, given a matrix M ∈ Rm1×m2 , we choose a patch size p1 × p2 and extract np local submatrices (patches), denoted by {Pk(M ) ∈ Rp1×p2 }np
+
+> k=1
+
+. We then form the patch matrix by vectorizing each patch and stacking the resulting row vectors: 
+
+Mpatch ≜
+
+
+
+vec( P1(M )) ⊤
+
+...
+
+vec( Pnp (M )) ⊤
+
+ ∈ Rnp×(p1p2). (24) Because repeated local patterns induce highly correlated rows or columns in Mpatch , it typically has a much faster singular-value decay (i.e., a lower effective rank) than M . See Figures 4 and 5 for an illustrative spectrum comparison demonstrating the rank reduction by patchification. By reorganizing local patches into a patch-matrix via Eq. (24) , patchification can convert matrices that are not globally low-rank into an effectively lower-rank representation by leveraging local redundancy. As shown in Fig. 4, stacking vectorized patches makes recurring local structures (e.g., horizontal bands) appear as near-repeated rows/columns, which increases correlation and reduces the effective rank. Figure 5 reports the normalized spectrum λi/λ 1 for i = 1 , . . . , 10 . Across both Solar and Solar 2, the patchified curve is consistently below the original, indicating faster spectral decay and a lower effective rank. 
+
+Patchification for Solar datasets. For Solar Flare experiments, we apply deterministic non-overlapping patchification before Stage I. Given Xi ∈ RH×W , we set 
+
+p = round  (HW )1/4, Hc = ⌊H/p ⌋p, Wc = ⌊W/p ⌋p. 
+
+24 Patchified Original Patchified Original Figure 4: Patchified vs. original matrices (Solar). Patchification (Eq. (24) ) reshapes local patches into rows of a patch-matrix. In the patchified view (left), many rows/columns become visually near-repetitions due to recurring local textures, while the original matrices (right) remain globally diverse. 1 2 3 4 5 6 7 8 9 10     
+
+> Rank index i
+> 10 3
+> 10 2
+> 10 1
+> 10 0
+> Normalized eigenvalue  i/ 1
+> Solar: Normalized eigenvalue spectrum
+> Original
+> Patchified
+
+(a) Solar. 1 2 3 4 5 6 7 8 9 10       
+
+> Rank index i
+> 10 4
+> 10 3
+> 10 2
+> 10 1
+> 10 0
+> Normalized eigenvalue  i/ 1
+> Solar 2: Normalized eigenvalue spectrum
+> Original
+> Patchified
+
+(b) Solar 2. 
+
+Figure 5: Consistent rank reduction via patchification. Normalized spectra ( λi/λ 1) show that the patchified representation decays faster: for i ≥ 2, the patchified curve lies consistently below the original, indicating that more energy concentrates in the leading components and the representation has a lower effective rank. Each matrix is cropped to Hc × Wc, divided into non-overlapping p × p patches, and rearranged into a matrix of size 
+
+m1 = HcWc
+
+p2 , m2 = p2.
+
+For the 200 × 200 Solar/Solar 2 data, this gives p = 14 , Hc = Wc = 196 , and patched matrices of size 196 × 196 . Generated samples are mapped back to the cropped image domain by the inverse patch operation before visualization and metric computation. Patchification is not used for LSPF or synthetic datasets. In all reported comparisons where patchification is used, CoreFlow and all baselines use the same patch size, cropping rule, inverse mapping, and evaluation domain. 
+
+C.3 Synthetic data generation 
+
+In all simulated data synthesis, we set m1 = m2 = 200 and rank R = 24 . We generate all synthetic benchmarks from a common form 
+
+M = U SV ⊤, U, V ∈ R200 ×24 , S ∈ R24 ×24 
+
+where U and V are fixed within each case and the core S is sampled independently per matrix. We generate N = 1000 matrices per case and save (U, V ) as ground truth for subspace recovery 25 evaluation. 
+
+Discrete Cosine Transform (DCT) basis. When a case uses a DCT basis, we build an 
+
+orthonormal discrete cosine transform matrix B ∈ Rm1×m2 and take its first R columns. Concretely, for indices i ∈ { 0, . . . , m 1−1} and k ∈ { 0, . . . , m 2−1},
+
+Bk,i = αk cos 
+
+ πn (i + 12 )k
+
+
+
+, α0 =
+
+q 1 
+
+> n
+
+, αk =
+
+q 2 
+
+> n
+
+(k ≥ 1) ,
+
+using the corresponding n = m1 or n = m2. And we set: 
+
+U = B[: , 0: R], V = B[: , 0: R].
+
+The DCT-II columns correspond to cosine modes with increasing spatial frequency. Also, restricting to the first R modes biases M toward smooth and low-frequency structure. 
+
+Figure 6: Case Blobs Figure 7: Case Bands 
+
+Case Blobs. We use DCT bases for U, V and sample an i.i.d. Gaussian core 
+
+S = 1 .5 Z, Z i.i.d. 
+
+∼ N (0 , I ).
+
+Because energy is expressed in low-frequency DCT modes, the resulting matrices appear as smooth blob-like fields. See Figure 6. 
+
+Case Bands. We use DCT bases for U, V and sample a diagonal core with random mode activation, resulting in structured band patterns and varying effective rank. For each sample, we draw strengths 
+
+sr ∼ 1.5 N (0 , 1) + 3 .0, r = 1 , . . . , R, 
+
+and independent activations ar ∼ Bern (pr) with pr increasing linearly from 0.2 to 0.9 across modes. We then set 
+
+S = diag( s1a1, . . . , s RaR).
+
+This yields coherent banded and diagonal structure. Also, the number of active modes (i.e., effective rank) varies across samples. See Figure 7. 
+
+Case Waves. We use DCT bases for U, V but sample a structured core that concentrates energy on a few low-frequency interactions and adds a mild “band blur” in core space. Specifically, let 
+
+kmax = max (4 , ⌊R/ 3⌋) and ncomp = 4 . For each sample we initialize S = 0 , then: (i) draw (kj , ℓ j )
+
+uniformly from {0, . . . , k max −1}2 for j = 1 , . . . , n comp and add amplitudes Aj ∼ N (0 , 1.22) via 
+
+Skj ℓj += Aj ; (ii) for band width b = 2 , add Gaussian noise to the first two super- and sub-diagonals: 
+
+Sp,p +d += 0 .15 ξp,d , Sp+d,p += 0 .15 ˜ξp,d , d = 1 , 2,
+
+where ξp,d , ˜ξp,d i.i.d. 
+
+∼ N (0 , 1) . This produces smooth wave-like patterns in the generated matrices. See Figure 8. 26 Figure 8: Case Waves Figure 9: Case crosshatch 
+
+Case Crosshatch. We use DCT bases for U, V and sample diagonal cores with stochastic activation (similar to Case Bands, but with different parameters), yielding strong crosshatched textures and varying effective rank. Specifically, we draw 
+
+sr ∼ N (2 .5, 1.12), ar ∼ Bern( pr), pr increases linearly from 0.15 to 0.85 ,
+
+and set S = diag( s1a1, . . . , s RaR). See Figure 9. 
+
+C.4 Neural Network Architecture and Computing Resources 
+
+Table 4: Neural Networks parameter counts across different datasets and rank settings. Notably, all models compared share the exact same network structure. 
+
+Setting Rank Parameters 
+
+Case A (Blobs) 24 195,169 Case B (Bands) 24 195,169 Case C (Waves) 24 195,169 Case E (Crosshatch) 24 195,169 LSPF 56 564,481 LSPF 80 614,657 Solar / Solar 2 60 564,481 Solar / Solar 2 120 564,481 Solar / Solar 2 200 614,657 Our generative model in Stage II parameterizes the continuous-time velocity field vθ(x, t ) on the low-dimensional core space using a lightweight time-conditioned U-Net. Stage I does not use a neural network: the shared row and column subspaces U ∈ St (m1, R ) and V ∈ St (m2, R ) are optimized directly on the Stiefel manifold, and each matrix is represented in the core space by 
+
+s = vec (U ⊤M V ) ∈ RR2
+
+. Therefore, only Stage II velocity field is implemented using a Neural Network. 
+
+Velocity network. Given a core vector x ∈ Rd with d = R2 and time t ∈ [0 , 1] , we reshape x
+
+into a single-channel square feature map and predict the velocity field vθ(x, t ) ∈ Rd using a compact U-Net. Time is encoded by a two-layer MLP and injected into every residual block through an additive bias. Each residual block uses GroupNorm, SiLU activations, two 3 × 3 convolutions, and a residual skip connection. When the input and output channel dimensions differ, the skip path uses a 
+
+1 × 1 convolution. Downsampling is implemented by average pooling followed by a 3 × 3 convolution, and upsampling uses nearest-neighbor interpolation followed by a 3 × 3 convolution. The network 27 includes encoder skip connections, two bottleneck residual blocks, and a final GroupNorm–SiLU– 3 × 3
+
+output layer. If the reshaped core image size is not divisible by the downsampling factor, we pad symmetrically before the U-Net and crop back to the original size at the output. 
+
+Architecture hyperparameters. The architecture is determined by the following quantities: 
+
+• Core rank R, which sets the core dimension d = R2.
+
+• U-Net base width : base_channels = 32 .
+
+• Channel multipliers : either [1,1] for smaller core grids or [1,1,2] for larger ones. 
+
+• Residual blocks per resolution : num_res_blocks = 1 .
+
+• Time embedding width : time_emb_dim = 128 .
+
+Sampling. To generate samples, we solve the learned ODE ˙x(t) = vθ(x, t ) from a Gaussian initial state in the core space using an RK4 solver with 101 time steps, and then map the generated core back to the matrix space through the learned subspaces. 
+
+Baseline architectures. To ensure a fully comparable evaluation, all baselines except SMG-Core use exactly the same neural network architecture and shared hyperparameters in each experiment. The corresponding parameter counts are reported in Table 4. 
+
+Compute. All experiments were conducted on a single NVIDIA V100 GPU. Because the velocity network is shared across methods, Figure 3 in the main text uses the learned-dimension ratio only as a proxy for Stage II CNF training cost . However, CoreFlow is a two-stage method, so its full training cost also includes Stage I subspace learning. Table 5 reports end-to-end training times. Table 5: Measured total training time on a single NVIDIA V100 GPU. For CoreFlow, the total includes both Stage I subspace training and Stage II core-space CNF training. For MissDiff, MissFlow, and CSDM, we report the actual generative model’s training time until validation-loss convergence.                                                                        
+
+> Dataset Method ρpmiss Stage I (min) Stage II to convergence (min) Total (min) Solar / Solar 2 CoreFlow 9% 0% 4.42 4.05 8.47 CoreFlow 9% 20% 8.85 4.05 12.90
+> CoreFlow 9% 40% 8.85 4.05 12.90
+> CoreFlow 36% 0% 3.17 13.23 16.40
+> CoreFlow 36% 20% 4.76 13.23 17.99
+> CoreFlow 36% 40% 6.35 13.23 19.58
+> MissDiff / MissFlow 100% all –37.70 37.70 CSDM 9% all –8.29 8.29
+> CSDM 36% all –23.81 23.81 LSPF CoreFlow 49% 0% 11.36 30.20 41.56
+> CoreFlow 49% 20% 22.73 30.20 52.93
+> CoreFlow 49% 40% 22.73 30.20 52.93
+> MissDiff / MissFlow 100% all –83.20 83.20
+
+On Solar and Solar 2, the measured Stage-I training speed is 10.5 epochs/s for R = 120 (ρ = 36% )and 11.3 epochs/s for R = 60 (ρ = 9% ). Based on the actual number of Stage-I epochs required under each compression and missingness setting, this corresponds to Stage-I costs of 3.17/4.76/6.35 minutes at pmiss = 0 /20 /40% for ρ = 36% , and 4.42/8.85/8.85 minutes for ρ = 9% . Adding the corresponding measured Stage-II times then gives the total CoreFlow training time. On LSPF, Stage I runs at 2.5 epochs/s on average. Based on the actual number of Stage-I epochs required under each missingness setting, this corresponds to 10.0/20.0/20.0 minutes for 28 pmiss = 0 /20 /40% , respectively. Adding the corresponding measured Stage-II time then gives the total CoreFlow training time. For the other baselines, Table 5 reports their actual Stage-II wall-clock time to convergence directly. For the simulations, Stage I is negligible at pmiss = 0% because Tucker spectral initialization is used directly, and costs about 8.62 minutes under missingness (1500 epochs at 2.9 epochs/s). 
+
+C.5 SMG-Core implementation details 
+
+Why an adaptation is needed. The original BayeSMG framework is designed for matrix completion : it performs conditional inference for a partially observed matrix under an SMG prior, using the observed entries to infer posterior uncertainty about the unobserved ones. Our task here is different: we study unconditional generation of new matrices from a training distribution. Therefore, the original BayeSMG procedure is not directly applicable as a generative baseline, since at generation time there is no partially observed test matrix to condition on. To obtain a controlled low-dimensional baseline for our setting, we fix the shared subspaces learned in Stage I and use the BayeSMG Gaussian variance-prior structure only to model the core distribution. This yields SMG-Core, which isolates the effect of replacing CoreFlow’s nonlinear core generator by a Gaussian core model under the same shared geometry. 
+
+Normal–Inverse–Wishart prior. We place a conjugate Normal–Inverse–Wishart (NIW) prior on the unknown mean μ ∈ Rd and covariance Σ ∈ Rd×d:
+
+Σ ∼ InvWishart( ν0, Ψ0), μ | Σ ∼ N 
+
+
+
+μ0, 1
+
+κ0
+
+Σ
+
+
+
+,
+
+where κ0 > 0, ν0 > d − 1, and Ψ0 ≻ 0.
+
+Posterior. Given data {xi}Ni=1 , define the empirical mean ¯x = 1
+
+> N
+
+P 
+
+> i
+
+xi and scatter matrix 
+
+S =
+
+> N
+
+X
+
+> i=1
+
+(xi − ¯x)( xi − ¯x)⊤.
+
+The NIW posterior is again NIW with parameters 
+
+κN = κ0 + N, μN = κ0μ0 + N ¯xκN
+
+,νN = ν0 + N, ΨN = Ψ 0 + S + κ0NκN
+
+(¯ x − μ0)(¯ x − μ0)⊤.
+
+Posterior predictive sampling. A Bayesian posterior predictive sample can be drawn in either of the following equivalent ways: (i) Two-stage sampling: 
+
+Σ ∼ InvWishart( νN , ΨN ), μ ∼ N 
+
+
+
+μN , 1
+
+κN
+
+Σ
+
+
+
+, xnew ∼ N (μ, Σ) .
+
+(ii) Collapsed predictive distribution: Integrating out (μ, Σ) yields a multivariate Student-t
+
+distribution: 
+
+xnew ∼ tνN −d+1 
+
+
+
+μN , κN + 1 
+
+κN (νN − d + 1) ΨN
+
+
+
+.
+
+We then reshape xnew into a core matrix and decode: 
+
+Tnew = unvec( xnew ), Mnew = U T new V ⊤.
+
+29 D Additional Results 
+
+This appendix provides additional qualitative and quantitative results that complement the main paper. 
+
+D.1 Qualitative cross-method sample comparisons True CoreFlow (9%)  
+
+> CSDM (9%) CSDM (36%)
+
+Figure 10: Comparisons of generated samples on Solar Flare with pmiss = 0% (training on complete matrices). CoreFlow is trained at ρ = 9% of the original dimension, and is compared against CSDM trained at ρ ∈ { 9% , 36% }.True CoreFlow (9%)    
+
+> MissDiff (100%) MissFlow (100%) True CoreFlow (1.44%)
+> CSDM (1.44%) CSDM (64%)
+
+Figure 11: Comparison of generated samples across methods. Left: Solar Flare with pmiss = 40% .CoreFlow is trained at ρ = 9% of the original dimension, and is compared against MissDiff and MissFlow trained at ρ = 100% . Right: Case Waves with pmiss = 0% (complete training matrices). CoreFlow is trained at ρ = 1 .44% of the original dimension, and is compared against CSDM trained at ρ ∈ { 1.44% , 64% }.Figures 10 and 11 visualize representative generated matrices under both complete training (pmiss = 0% ) and missing-entry training. On Solar Flare with complete training (Figure 10), CoreFlow at ρ = 9% reproduces the salient flare morphology, matching the visual statistics of real samples. In contrast, CSDM at the same compression ( ρ = 9% ) loses the global structure. This gap is primarily due to information loss induced by CSDM’s compression operator: its compressed measurements may not preserve spatial locality and can discard geometry information at aggressive ρ.Under missing entries (Figure 11 Left ), CoreFlow maintains coherent spatial patterns and realistic intensity variation despite operating in a reduced core space, while full-space baselines (MissDiff and MissFlow) fail to learn the matrix distribution in the 200 × 200 ambient dimension with limited samples. Finally, in the Waves simulation (Figure 11, right ), CoreFlow preserves the characteristic smooth oscillatory textures even at extreme compression ( ρ = 1 .44% ). 30 D.2 Real data: robustness to missing entries 
+
+Table 6: Comparisons to baselines with missingness handling on real data (Frobenius-norm distribu-tion shift: FrobMeanDiff and FrobStdDiff; lower is better). Column headers denote missing-entry rate. Parentheses report each method’s learned-dimension ratio (CoreFlow: ρ=36% for Solar and 
+
+ρ=49% for LSPF; all ambient-space baselines use ρ=100% ). Solar is a few-sample regime (300 samples) and LSPF a standard regime (8760 samples). 
+
+Solar LSPF 
+
+pmiss 0% 20% 40% 0% 20% 40% MissDiff ( ρ = 100% ) (0 .85 ±.13 , 0.62 ±.11 ) (37 .4±.19 , 0.72 ±.24 ) (71 .2±.30 , 0.91 ±.26 ) (0.21 ±.11 , 0.18 ±.08 ) (13 .5±.17 , 0.61 ±.16 ) (16 .7±.21 , 0.82 ±.19 )
+
+MissFlow ( ρ = 100% ) (0.13 ±.10 , 0.53 ±.10 ) (21 .2±.13 , 0.32 ±.11 ) (54 .3±.14 , 0.41 ±.13 ) (0.20 ±.12 , 0.19 ±.09 ) (11 .9±.15 , 0.44 ±.16 ) (15 .9±.11 , 0.72 ±.12 )
+
+CoreFlow (ρ = 36% /49% ) (0 .56 ±.28 , 0.39 ±.21 ) (0.30 ±.14 , 0.45 ±.09 ) (0.84 ±.15 , 0.40 ±.08 ) (0 .24 ±.09 , 0.12 ±.06 ) (0.67 ±.09 , 0.20 ±.06 ) (0.98 ±.08 , 0.44 ±.05 )
+
+Table 7: Comparisons to baselines with missingness handling on real data (entry-wise moment discrepancies: AbsEntryMeanDiff and AbsEntryStdDiff; lower is better). Column headers denote missing-entry rate. Parentheses report each method’s learned-dimension ratio (CoreFlow: ρ=36% 
+
+for Solar and ρ=49% for LSPF; all ambient-space baselines use ρ=100% ). Solar is a few-sample regime (300 samples) and LSPF a standard regime (8760 samples). All values are in ×10 −2.
+
+Solar LSPF 
+
+pmiss 0% 20% 40% 0% 20% 40% MissDiff ( ρ = 100% ) (12 .3±.28 , 5.91 ±.29 ) (29 .3±.20 , 6.00 ±.24 ) (39 .1±.25 , 6.96 ±.28 ) (1.69 ±.22 , 1.74 ±.20 ) (15 .6±.18 , 2.53 ±.20 ) (21 .7±.14 , 3.07 ±.19 )
+
+MissFlow ( ρ = 100% ) (7 .16 ±.39 , 5.41 ±.38 ) (16 .4±.18 , 5.69 ±.25 ) (33 .4±.19 , 6.68 ±.27 ) (1 .71 ±.35 , 1.70 ±.23 ) (14 .8±.17 , 2.65 ±.28 ) (20 .4±.12 , 3.23 ±.21 )
+
+CoreFlow (ρ = 36% /49% ) (1.02 ±.17 , 0.92 ±.33 ) (0.87 ±.08 , 1.19 ±.13 ) (0.97 ±.03 , 1.32 ±.04 ) (1 .87 ±.11 , 1.89 ±.12 ) (1.69 ±.10 , 1.96 ±.09 ) (1.62 ±.07 , 2.38 ±.05 )
+
+Tables 6 and 7 report distribution-shift metrics on three real datasets (Solar, Solar 2, and LSPF) under pmiss ∈ { 0, 20 , 40 }%. On Solar and Solar 2 (few-data regime), full-space baselines can be competitive at pmiss = 0% but degrade sharply as missingness increases, with FrobMeanDiff growing by orders of magnitude at 20% . On LSPF (standard regime), all methods are closer at pmiss = 0% ,but CoreFlow achieves clearly smaller shifts once missingness is introduced ( 20% /40% ). 
+
+D.3 Simulations: distribution matching under controlled structure 
+
+Table 8: Comparisons to low-dimensional generative baselines on Blobs and Bands simulations (Frobenius-norm distribution shift: FrobMeanDiff and FrobStdDiff; lower is better). Column headers denote missing-entry rate. Parentheses report each method’s learned-dimension ratio. 
+
+Blobs Bands 
+
+pmiss 0% 20% 40% 0% 20% 40% CSDM ( ρ = 1 .44% ) (130 ±6.9, 0.70 ±.38 ) (155 ±5.1, 0.76 ±.36 ) (178 ±4.1, 0.84 ±.31 ) (40 .5±1.3, 1.61 ±.18 ) (48 .7±2.3, 1.61 ±.13 ) (55 .9±1.8, 1.62 ±.18 )
+
+CSDM ( ρ = 36% ) (76 .1±5.5, 0.69 ±.44 ) (93 .4±4.3, 0.72 ±.34 ) (108 ±3.9, 0.76 ±.34 ) (23 .4±1.5, 1.57 ±.33 ) (28 .9±1.8, 1.56 ±.22 ) (33 .7±2.4, 1.56 ±.29 )
+
+CSDM ( ρ = 64% ) (50 .6±5.1, 0.71 ±.51 ) (64 .1±4.4, 0.74 ±.25 ) (75 .8±5.3, 0.77 ±.24 ) (15 .6±1.1, 1.56 ±.29 ) (19 .9±1.3, 1.55 ±.37 ) (23 .6±1.4, 1.53 ±.34 )
+
+SMG-Core ( ρ = 1 .44% ) (70 .2±6.0, 2.30 ±.94 ) (79 .7±6.3, 2.15 ±.90 ) (80 .2±6.2, 2.03 ±.88 ) (14 .2±.80 , 2.28 ±.34 ) (16 .3±0.8, 2.14 ±.37 ) (19 .9±1.0, 2.37 ±.36 )
+
+CoreFlow (ρ = 1 .44% ) (0.09 ±.06 , 0.20 ±.05 ) (0.19 ±.06 , 0.12 ±.06 ) (0.44 ±.07 , 0.15 ±.05 ) (0.08 ±.06 , 0.12 ±.06 ) (0.85 ±.08 , 0.23 ±.06 ) (0.98 ±.07 , 0.47 ±.04 )
+
+Tables 8 and 9 report Frobenius-norm distribution shift on synthetic families; Tables 10 and 11 report entry-wise moment discrepancies. Across Blobs/Bands/Waves/Crosshatch, CoreFlow at 
+
+ρ = 1 .44% achieves near-zero discrepancies and remains small as pmiss increases. In contrast, low-dimensional generative baselines exhibit substantially larger shifts. 31 Table 9: Comparisons to low-dimensional generative baselines on Waves and Crosshatch simulations (Frobenius-norm distribution shift: FrobMeanDiff and FrobStdDiff; lower is better). Column headers denote missing-entry rate. Parentheses report learned-dimension ratio. 
+
+Waves Crosshatch 
+
+pmiss 0% 20% 40% 0% 20% 40% CSDM ( ρ = 1 .44% ) (83 .5±5.6, 9.84 ±1.3) (85 .4±5.0, 10 .1±1.3) (87 .4±4.3, 10 .3±1.2) (62 .4±3.4, 7.67 ±1.2) (63 .8±3.0, 7.82 ±1.1) (65 .31 ±2.5, 8.00 ±1.2)
+
+CSDM ( ρ = 36% ) (34 .8±2.2, 4.23 ±.96 ) (41 .8±2.9, 5.03 ±.85 ) (49 .6±2.7, 5.94 ±.72 ) (25 .6±1.3, 3.32 ±.64 ) (30 .9±1.2, 3.94 ±.66 ) (36 .8±1.2, 4.63 ±.56 )
+
+CSDM ( ρ = 64% ) (17 .8±2.7, 2.22 ±.32 ) (26 .5±3.4, 3.23 ±.51 ) (36 .4±2.1, 4.38 ±.72 ) (12 .88 ±1.6, 1.79 ±.45 ) (19 .46 ±1.5, 2.56 ±.43 ) (26 .9±1.6, 3.45 ±.51 )
+
+SMG-Core ( ρ = 1 .44% ) (11 .6±1.3, 4.10 ±.47 ) (14 .8±1.9, 3.79 ±.29 ) (15 .7±2.0, 4.97 ±.87 ) (5 .94 ±.90 , 2.14 ±.40 ) (7 .28 ±1.1, 2.31 ±.44 ) (9 .75 ±1.0, 2.76 ±.48 )
+
+CoreFlow (ρ = 1 .44% ) (0.55 ±.38 , 0.53 ±.32 ) (0.47 ±.38 , 2.87 ±.37 ) (3.53 ±.63 , 0.87 ±.39 ) (0.96 ±.31 , 0.75 ±.30 ) (1.07 ±.39 , 0.95 ±.38 ) (1.60 ±.48 , 0.96 ±.36 )
+
+Table 10: Comparisons to low-dimensional generative baselines on Blobs and Bands simulations (entry-wise moment discrepancies: AbsEntryMeanDiff and AbsEntryStdDiff; lower is better). Column headers denote missing-entry rate. Parentheses report each method’s learned-dimension ratio. All values are in ×10 −2.
+
+Blobs Bands 
+
+pmiss 0% 20% 40% 0% 20% 40% CSDM ( ρ = 1 .44% ) (63 .6±2.0, 34 .1±1.8) (84 .8±2.4, 24 .3±1.3) (106 ±2.2, 15 .5±1.2) (20 .5±1.2, 12 .2±.14 ) (27 .2±1.1, 9.10 ±.09 ) (34 .0±1.2, 3.67 ±.12 )
+
+CSDM ( ρ = 36% ) (37 .5±1.9, 17 .2±1.1) (50 .0±1.7, 12 .3±1.3) (62 .6±1.5, 6.25 ±1.6) (12 .3±1.2, 6.37 ±.18 ) (16 .2±1.1, 4.70 ±.19 ) (20 .2±1.2, 1.53 ±.20 )
+
+CSDM ( ρ = 64% ) (26 .9±.75 , 11 .0±1.4) (35 .8±.81 , 7.87 ±1.3) (106 ±1.2, 15 .5±.20 ) (8 .98 ±.91 , 4.21 ±.08 ) (11 .7±.04 , 3.12 ±.13 ) (14 .5±1.3, 0.87 ±.05 )
+
+SMG-Core ( ρ = 1 .44% ) (34 .9±1.2, 3.92 ±.82 ) (36 .5±1.2, 3.84 ±.86 ) (41 .3±1.6, 4.02 ±1.0) (8 .26 ±.57 , 1.02 ±.07 ) (10 .3±.63 , 1.74 ±.11 ) (12 .9±.89 , 1.55 ±.12 )
+
+CoreFlow (ρ = 1 .44% ) (0.98 ±.04 , 0.74 ±.02 ) (0.99 ±.03 , 0.72 ±.01 ) (1.01 ±.04 , 0.72 ±.02 ) (0.29 ±.03 , 0.19 ±.01 ) (0.45 ±.03 , 0.67 ±.03 ) (0.52 ±.02 , 0.86 ±.02 )
+
+Table 11: Comparisons to low-dimensional generative baselines on Waves and Crosshatch simulations (entry-wise moment discrepancies: AbsEntryMeanDiff and AbsEntryStdDiff; lower is better). Column headers denote missing-entry rate. Parentheses report each method’s learned-dimension ratio. All values are in ×10 −2.
+
+Waves Crosshatch 
+
+pmiss 0% 20% 40% 0% 20% 40% CSDM ( ρ = 1 .44% ) (44 .1±1.8, 8.22 ±.75 ) (45 .2±1.4, 7.14 ±.54 ) (46 .2±1.0, 6.91 ±.45 ) (31 .9±1.1, 7.97 ±.17 ) (32 .7±1.0, 7.21 ±.15 ) (33 .5±1.5, 7.00 ±.16 )
+
+CSDM ( ρ = 36% ) (26 .0±.86 , 3.78 ±.68 ) (29 .2±1.1, 6.40 ±.75 ) (33 .7±.99 , 7.96 ±.81 ) (18 .7±1.1, 10 .9±.36 ) (20 .9±1.2, 4.72 ±.11 ) (24 .2±1.2, 5.67 ±.15 )
+
+CSDM ( ρ = 64% ) (18 .5±.79 , 2.36 ±.53 ) (21 .9±1.1, 8.06 ±.92 ) (27 .8±1.1, 10 .6±.95 ) (13 .2±1.4, 2.23 ±.08 ) (15 .7±1.4, 5.27 ±.13 ) (20 .0±1.4, 6.84 ±.15 )
+
+SMG-Core ( ρ = 1 .44% ) (13 .1±.40 , 1.70 ±.21 ) (17 .6±.47 , 1.99 ±.28 ) (20 .6±.57 , 2.04 ±.39 ) (12 .7±.85 , 1.53 ±.05 ) (14 .3±.94 , 1.87 ±.11 ) (17 .3±1.2, 1.84 ±.19 )
+
+CoreFlow (ρ = 1 .44% ) (0.97 ±.09 , 1.11 ±.13 ) (0.82 ±.09 , 2.65 ±.13 ) (1.59 ±.28 , 1.37 ±.14 ) (0.93 ±.22 , 0.74 ±.07 ) (0.85 ±.23 , 0.96 ±.09 ) (0.89 ±.14 , 0.97 ±.07 )
+
+D.4 Compression-matched comparison on Solar Flare 
+
+Table 12: Comparisons to low-dimensional baselines on Solar (Frobenius-norm distribution shift: FrobMeanDiff and FrobStdDiff; lower is better). Column headers denote missing-entry rate. Paren-theses report each method’s learned-dimension ratio. 
+
+Solar Solar 2 
+
+pmiss 0% 20% 40% 0% 20% 40% CSDM ( ρ = 9% ) (52 .9±1.8, 0.98 ±.30 ) (56 .4±1.6, 1.03 ±.40 ) (60 .3±1.5, 1.08 ±.62 ) (65 .9±3.8, 1.81 ±1.0) (70 .2±3.3, 1.92 ±1.1) (75 .1±3.1, 2.04 ±1.1)
+
+CSDM ( ρ = 36% ) (26 .6±3.5, 0.52 ±.24 ) (32 .8±3.3, 0.62 ±.25 ) (39 .9±3.0, 0.72 ±.29 ) (33 .7±6.6, 1.06 ±.48 ) (41 .4±6.1, 1.25 ±.47 ) (50 .2±5.5, 1.43 ±.58 )
+
+SMG-Core ( ρ = 9% ) (2 .15 ±.87 , 0.20 ±.06 ) (3 .02 ±.90 , 0.28 ±.08 ) (3 .79 ±1.0, 0.36 ±.18 ) (1 .03 ±.31 , 1.09 ±.32 ) (1 .92 ±.34 , 1.30 ±.37 ) (2 .03 ±45 , 1.54 ±.58 )
+
+CoreFlow (ρ = 9% ) (0.33 ±.19 , 0.14 ±.11 ) (0.53 ±.08 , 0.05 ±.04 ) (0.65 ±.10 , 0.11 ±.06 ) (0.44 ±.29 , 0.93 ±.22 ) (0.61 ±13 , 0.40 ±.11 ) (0.70 ±.13 , 0.74 ±.12 )
+
+Tables 12 and 13 directly compare CoreFlow and low-dimensional baselines at the same compres-sion ratio ρ = 9% on Solar and Solar 2, isolating the contribution of the modeling pipeline beyond dimensionality reduction. At matched ρ, CoreFlow dramatically reduces both Frobenius-norm distribution shift (Table 12) and entry-wise moment discrepancies (Table 13) across all missing rates. 32 Table 13: Comparisons to low-dimensional baselines on Solar (entry-wise moment discrepancies: AbsEntryMeanDiff and AbsEntryStdDiff; lower is better). Column headers denote missing-entry rate. Parentheses report each method’s learned-dimension ratio. All values are in ×10 −2.                                                            
+
+> Solar Solar 2
+> pmiss 0% 20% 40% 0% 20% 40% CSDM ( ρ= 9% )(26 .8±1.3,2.91 ±.40 )(28 .1±1.4,4.18 ±.22 )(29 .6±1.4,4.82 ±.29 )(34 .9±1.7,2.21 ±.38 )(36 .6±1.9,4.64 ±.45 )(38 .6±1.6,5.74 ±.57 )
+> CSDM ( ρ= 36% )(19 .6±1.4,2.30 ±.31 )(21 .4±1.5,6.53 ±.35 )(23 .9±1.6,8.41 ±.47 )(25 .3±1.6,1.76 ±.50 )(27 .9±1.1,8.55 ±.71 )(31 .4±1.1,11 .4±.92 )
+> SMG-Core ( ρ= 9% )(1 .54 ±.49 ,1.44 ±.26 )(1 .76 ±.46 ,1.47 ±.21 )(1 .81 ±.51 ,1.36 ±.34 )(1 .30 ±.15 ,1.27 ±.19 )(1 .34 ±16 ,1.32 ±.19 )(1 .48 ±.19 ,1.38 ±.20 )
+> CoreFlow (ρ= 9% )(0.77 ±.21 ,0.83 ±.10 )(0.80 ±.08 ,0.86 ±.03 )(0.91 ±.10 ,0.93 ±.15 )(0.86 ±.05 ,0.71 ±.06 )(0.98 ±.07 ,0.69 ±.04 )(1.05 ±.09 ,0.78 ±.04 )
+
+D.5 Stage-I subspace recovery diagnostic via principal angles 
+
+Finally, Table 14 shows that CoreFlow recovers the ground-truth row/column subspaces accurately, with small mean and maximum principal angles even at pmiss = 40% .Table 14: Simulation: CoreFlow principal-angle discrepancy in degrees. Each entry reports 
+
+(θU /θ U, max , θ V /θ V, max ). All values lie in [0 , 90] ; lower is better. Columns denote the missing-entry rate pmiss .
+
+pmiss 
+
+Case 0% 20% 40% 
+
+Blobs (ρ = 1 .44%) (0 .00 /0.00 , 0.00 /0.00) (0 .01 /0.07 , 0.04 /0.13) (0 .04 /0.14 , 0.03 /0.15) 
+
+Bands (ρ = 1 .44%) (0 .00 /0.00 , 0.00 /0.00) (0 .28 /0.74 , 0.27 /0.74) (0 .58 /1.98 , 0.58 /1.97) 
+
+Waves (ρ = 1 .44%) (0 .00 /0.00 , 0.00 /0.00) (0 .04 /0.33 , 0.05 /0.89) (0 .05 /0.40 , 0.08 /0.89) 
+
+Crosshatch (ρ = 1 .44%) (0 .00 /0.00 , 0.00 /0.00) (0 .20 /4.63 , 0.21 /4.62) (0 .24 /4.63 , 0.22 /4.63) 
+
+D.6 Maximum Mean Discrepancy (MMD) metrics 
+
+Table 15: Comparison with baselines that explicitly handle missing data on real datasets, measured by MMD (lower is better). Columns report the missing-entry rate pmiss . Entries report MMD values. CoreFlow uses a learned-dimension ratio of ρ = 36% for Solar and Solar 2 and ρ = 49% for LSPF, while all ambient-space baselines use ρ = 100% . Solar and Solar 2 correspond to few-sample settings ( n = 300 ), whereas LSPF is a standard-sample setting ( n = 8760 ). Empty entries indicate results not yet collected. 
+
+Solar Solar 2 LSPF 
+
+pmiss 0% 20% 40% 0% 20% 40% 0% 20% 40% 
+
+MissDiff ( ρ = 100% ) 0.893 0.917 1.044 0.593 0.915 0.976 0.116 0.685 0.811 
+
+MissFlow ( ρ = 100% ) 0.882 0.786 0.866 0.517 0.932 0.923 0.118 0.661 0.814 
+
+CoreFlow (ρ = 36% /49% ) 0.177 0.193 0.249 0.187 0.267 0.360 0.122 0.115 0.120 
+
+Table 16: Comparison with low-dimensional baselines on the Solar datasets, measured by MMD (lower is better). Columns report the missing-entry rate pmiss . Entries report MMD values. Parentheses indicate the learned-dimension ratio ρ. Empty entries indicate results not yet collected. 
+
+Solar Solar 2 
+
+pmiss 0% 20% 40% 0% 20% 40% 
+
+CSDM ( ρ = 9% ) 1.197 1.314 1.367 1.206 1.351 1.373 
+
+CSDM ( ρ = 36% ) 0.842 0.873 0.905 0.857 0.913 0.970 
+
+SMG-Core ( ρ = 36% ) 0.224 0.265 0.293 0.219 0.285 0.426 
+
+CoreFlow (ρ = 36% ) 0.177 0.193 0.249 0.187 0.267 0.360 
+
+33 Table 17: Comparison with low-dimensional generative baselines on simulation datasets, measured by MMD (lower is better). Columns report the missing-entry rate pmiss . Entries report MMD values. Parentheses indicate the learned-dimension ratio ρ. Empty entries indicate results not yet collected.                                                                       
+
+> Blobs Bands Waves Crosshatch
+> pmiss 0% 20% 40% 0% 20% 40% 0% 20% 40% 0% 20% 40%
+> CSDM ( ρ= 1 .44% )1.206 1.389 1.402 1.071 1.293 1.335 0.913 1.136 1.252 0.988 0.993 1.102
+> CSDM ( ρ= 64% )0.836 0.897 0.943 0.851 0.906 0.988 0.495 0.561 0.607 0.503 0.599 0.684
+> SMG-Core ( ρ= 1 .44% )0.814 0.970 0.995 0.702 0.747 0.804 0.276 0.314 0.380 0.220 0.289 0.319
+> SMG-Core ( ρ= 64% )0.312 0.364 0.411 0.323 0.324 0.365 0.127 0.249 0.299 0.100 0.192 0.237
+> CoreFlow (ρ= 1 .44% )0.004 0 .010 0 .017 0 .006 0 .117 0 .212 0 .084 0 .158 0 .101 0 .073 0 .082 0 .095
+
+D.7 Ablation Studies: Stage-I Representation with PCA-Flow 
+
+To isolate the effect of our matrix-structured Stage-I representation, we further consider a PCA-Flow ablation that follows the same two-stage low-dimensional flow idea as CoreFlow, but replaces the learned row/column subspaces with a standard PCA subspace on flattened matrices. Given complete training matrices Mi ∈ Rm1×m2 , let xi = vec (Mi) ∈ RD, where D = m1m2, and define 
+
+μ = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+xi, Xc =
+
+
+
+(x1 − μ)⊤
+
+· · · 
+
+(xN − μ)⊤
+
+ .
+
+We compute the economy SVD Xc = AΣV ⊤ and retain the leading dPCA right singular vectors 
+
+WPCA = [ v1, . . . , v dPCA ] ∈ RD×dPCA , dPCA ≤ min {R2, N − 1},
+
+with an additional rounding to the nearest perfect square when using the U-Net velocity field. Each matrix is then encoded as a PCA score 
+
+zi = W ⊤
+
+> PCA
+
+(xi − μ) ∈ RdPCA ,
+
+normalized as ˜zi = ( zi − ¯z)/σ z , and the same CNF architecture is trained in this PCA-score space by flow matching: 
+
+ϵ ∼ N (0 , I ), t ∼ Unif(0 , 1) , xt = (1 − t)ϵ + t˜zi,
+
+LPCA -Flow (θ) = Ei,t,ϵ 
+
+h
+
+∥vθ(xt, t ) − (˜ zi − ϵ)∥22
+
+i
+
+.
+
+At generation time, we sample ϵ ∼ N (0 , I ), solve the learned ODE from t = 0 to t = 1 to obtain a generated normalized PCA score ˆ˜z, de-normalize it by ˆz = σz ˆ˜z + ¯ z, and reconstruct the matrix by 
+
+ˆM = mat ( μ + WPCA ˆz) .
+
+Key findings. PCA-Flow is a useful ablation because it follows the same high-level principle as CoreFlow. In complete-data settings, PCA-Flow can obtain similar, though slightly weaker generation quality, suggesting that low-dimensional flow modeling itself is important. However, PCA-Flow is a flattened and geometry-agnostic representation: it treats each matrix as a vector and reconstructs only through a global linear PCA subspace. Consequently, it does not preserve the row/column factorization structure U SV ⊤ and does not explicitly separate shared row and column subspaces from sample-specific core variation. Besides, it cannot naturally handle incomplete training matrices because PCA requires complete vectors before the projection W ⊤
+
+> PCA
+
+(x − μ) is well-defined. By contrast, CoreFlow learns a matrix-structure-aware representation M ≈ U SV ⊤,34 Table 18: Ablation comparison on LSPF between CoreFlow and PCA-Flow using three metrics: SVRelL2 (×10 −2), FrobMeanDiff, and AbsEntryMeanDiff ( ×10 −2). This table is for the complete-data case ( pmiss = 0 ). CoreFlow uses the matrix-structured representation M ≈ U SV ⊤ with ρ = 49% , while PCA-Flow replaces Stage I with flattened PCA and trains the same CNF on PCA scores. 
+
+LSPF Method SVRelL2 FrobMeanDiff AbsEntryMeanDiff 
+
+PCA-Flow ( ρ = 49% ) 2.54 ±0.23 0.34 ±0.15 2.14 ±.08 
+
+CoreFlow (ρ = 49% ) 2.88 ±0.19 0.24 ±.09 1.87 ±.11 
+
+Table 19: Ablation comparison on simulation datasets between CoreFlow and PCA-Flow using three metrics: SVRelL2 ( ×10 −2), FrobMeanDiff, and AbsEntryMeanDiff ( ×10 −2). This table is for the complete-data case ( pmiss = 0 ). CoreFlow uses the matrix-structured representation M ≈ U SV ⊤ with ρ = 1 .44% , while PCA-Flow replaces Stage I with flattened PCA and trains the same CNF on PCA scores.                                           
+
+> Blobs Bands Waves Crosshatch Method SVRelL2 FrobMeanDiff AbsEntryMeanDiff SVRelL2 FrobMeanDiff AbsEntryMeanDiff SVRelL2 FrobMeanDiff AbsEntryMeanDiff SVRelL2 FrobMeanDiff AbsEntryMeanDiff
+> PCA-Flow ( ρ= 1 .44% )1.77 ±0.60 0.55 ±0.25 2.94 ±0.08 24 .45 ±1.26 0.33 ±0.21 0.71 ±0.12 7.74 ±0.98 2.39 ±2.16 1.76 ±0.76 8.07 ±0.92 1.71 ±1.29 1.56 ±0.37
+> CoreFlow (ρ= 1 .44% )0.43 ±0.12 0.09 ±.06 0.98 ±.04 4.45 ±0.74 0.08 ±.06 0.29 ±.03 3.47 ±0.17 0.55 ±.38 0.97 ±.09 3.23 ±0.50 0.96 ±.31 0.93 ±.22
+
+trains the CNF on the induced core S = U ⊤M V , and naturally supports missing entries through the masked Stage-I objective and alternating completion. Overall, the ablation study PCA-Flow confirms the value of low-dimensional flow modeling, while the stronger CoreFlow architecture is essential for geometry-preserving generation and robustness under missingness. 35
