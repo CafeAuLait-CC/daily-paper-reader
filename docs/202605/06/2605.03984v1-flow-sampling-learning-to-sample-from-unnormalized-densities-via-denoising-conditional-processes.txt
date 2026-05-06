@@ -1,0 +1,2041 @@
+Title: Flow Sampling: Learning to Sample from Unnormalized Densities via Denoising Conditional Processes
+
+URL Source: https://arxiv.org/pdf/2605.03984v1
+
+Published Time: Wed, 06 May 2026 01:26:49 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# Flow Sampling: Learning to Sample from Unnormalized Densities via Denoising Conditional Processes 
+
+Aaron Havens 1 Brian Karrer 1 Neta Shaul 2
+
+## Abstract 
+
+Sampling from unnormalized densities is anal-ogous to the generative modeling problem, but the target distribution is defined by a known en-ergy function instead of data samples. Because evaluating the energy function is often costly, a primary challenge is to learn an efficient sampler. We introduce Flow Sampling , a framework built on diffusion models and flow matching for the data-free setting. Our training objective is con-ditioned on a noise sample and regresses onto a denoising diffusion drift constructed from the energy function. In contrast, diffusion models’ objective is conditioned on a data sample and re-gresses onto a noising diffusion drift. We utilize the interpolant process to minimize the number of energy function evaluations during training, resulting in an efficient and scalable method for sampling unnormalized densities. Furthermore, our formulation naturally extends to Riemannian manifolds, enabling diffusion-based sampling in geometries beyond Euclidean space. We derive a closed-form formula for the conditional drift on constant curvature manifolds, including hy-perspheres and hyperbolic spaces. We evaluate Flow Sampling on synthetic energy benchmarks, small peptides, large-scale amortized molecular conformer generation, and distributions supported on the sphere, demonstrating strong empirical per-formance. 
+
+## 1. Introduction 
+
+Many problems in the computational sciences require sam-pling from high-dimensional probability distributions that are specified only up to a normalization constant (Frenkel & Smit, 2002; No´ e et al., 2019; Barroso-Luque et al., 2024), 
+
+q(x) = exp( r(x)) 
+
+Z , Z =
+
+Z
+
+> Rd
+
+exp( r(x)) d x < ∞. (1) 
+
+> 1
+
+FAIR at Meta 2Weizmann Institute of Science. Correspon-dence to: Aaron Havens <havensaaronj@gmail.com >, Neta Shaul 
+
+<shaulneta@gmail.com >.
+
+Preprint. May 6, 2026. 
+
+The target distribution is q, and it is defined by the unnor-malized log density r(x), which is referred to as the reward function in reinforcement learning, or the negative energy in physical the sciences, computational chemistry and biology. One can typically evaluate r(x) and its gradient ∇r(x), of-ten at high computational cost, but does not have access to samples from q.Markov chain Monte Carlo (MCMC) methods (Hastings, 1970; Neal, 2001), including Langevin dynamics (Roberts & Tweedie, 1996; Roberts & Rosenthal, 1998), converge asymptotically to the target distribution but often mix slowly and generate samples sequentially. This limits their applica-bility in settings such as materials design (Barroso-Luque et al., 2024) that require fast, reusable samplers across many target instances. This motivates the development of amor-tized sampling methods that replace long sequential simula-tions with learned sampling dynamics. In this work, we introduce Flow Sampling , a diffusion-based framework for learning amortized samplers directly from unnormalized density functions. Flow Sampling learns to sample the target distribution using a conditional denois-ing process constructed from the energy function, such that its marginal distribution matches the target by design. It utilizes the known interpolant process and a detached state of the model to obtain reusable gradients of the negative energy which reduces considerably the required number of energy function evaluation. In contrast, existing diffusion-based methods (Phillips et al., 2024; De Bortoli et al., 2024; Akhound-Sadegh et al., 2024b) learn to sample the target distribution through Monte Carlo corrections, such as im-portance weighting, resampling, or auxiliary MCMC. While principled, these approaches rely on stochastic estimation and repeated energy function evaluations, which can signifi-cantly increase computational cost. More recently, diffusion samplers based on stochastic opti-mal control or Schr ¨odinger bridge problems haved emerged. They learn the diffusion dynamics by optimizing diver-gences over diffusion path measures (Zhang & Chen, 2022b; Havens et al., 2025; Liu et al., 2025a). Although theoreti-cally well grounded, this perspective requires characterizing optimal controls or bridges, leading to complex training schemes and auxiliary networks. By building on the diffu-1 
+
+> arXiv:2605.03984v1 [cs.LG] 5 May 2026 Flow Sampling
+> Figure 1. Flow Sampling is the first diffusion sampler able to perform sampling from an unnormalized density on Riemannian manifolds. The figure depicts a learned diffusion process using iterative Flow Sampling from a mixture of spherical von Mises–Fisher distributions.
+
+sion models (Ho et al., 2020; Song et al., 2021) and flow matching (Lipman et al., 2023; Liu et al., 2023; Albergo et al., 2023) formulation, we alleviate these restrictions, re-sulting in a flexible design space and an easy to implement method. Despite the non-optimal control or coupling, in practice Flow Sampling cuts training cost by at least half on the large-scale amortized molecular conformer generation benchmarks (Havens et al., 2025). Moreover, the Flow Sam-pling naturally extends to Riemannian manifolds. Similar to Riemannian flow matching (Chen & Lipman, 2023), we replace the affine interpolant with a geodesic interpolant, and furthermore we derive a closed-form formula for the conditional drift on constant curvature manifolds, which includes the hypersphere and hyperbolic spaces. 
+
+Our main contributions: 
+
+1. We introduce Flow Sampling, a principled framework for learning diffusion samplers from unnormalized densities by matching conditional denoising diffusion drifts. 2. We derive a simple closed-form regression target that reuses endpoint energy gradients along the interpolant process, leading to an efficient replay-buffer training algorithm summarized in Algorithm 1. 3. We extend diffusion-based samplers to geometries be-yond Euclidean spaces. In particular, we derive a closed-form formula for the conditional denoising dif-fusion drift on constant curvature Riemannian mani-folds, including the hypersphere and the hyperbolic spaces. 4. We demonstrate state-of-the-art performance on syn-thetic energy benchmarks and amortized molecular conformer generation, while reducing simulation train-ing cost by 4–8 times. 
+
+## 2. Preliminaries: Flow Matching 
+
+A flow process (Xt)0≤t≤1 is defined by a velocity field 
+
+v : Rd × [0 , 1] → Rd and a boundary condition, 
+
+dXt = vt (Xt) d t, X0 ∼ p0, (2) where the source distribution p0 is the marginal of the pro-cess at time t = 0 . The probability path pt is the marginal of the process at time 0 ≤ t ≤ 1, and it is given by the 
+
+continuity equation ,
+
+∂∂t pt(x) + ∇ [pt(x)vt(x)] = 0 . (3) Given a dataset of i.i.d. samples from a target distribution q
+
+on Rd, and an easy to sample source distribution p0, the goal of flow matching (FM) (Lipman et al., 2023; Liu et al., 2023; Albergo & Vanden-Eijnden, 2023) is to learn a velocity field 
+
+vθt such that the marginal of Xt interpolate between the source and the target, i.e., 
+
+X0 ∼ p0, X1 ∼ p1 ≡ q. (4) To learn vθt , FM uses a supervising flow process conditioned at time t = 1 . Given X1 = x1, the conditional velocity is, 
+
+vt|1(x|x1) = ˙σt
+
+σt
+
+(x − αtx1) + ˙ αtx1. (5) The ODE (2) for the conditional flow (5) is solved by, 
+
+Xt = σtX0 + αtx1, X0 ∼ p0. (6) The marginal of the interpolant (6) Xt is the conditional probability path that is given by the push forward formula 
+
+pt|1(x|x1) = 1
+
+σdt
+
+p0
+
+ x − αtx1
+
+σt
+
+
+
+. (7) Finally, the training objective for the velocity is the FM loss 
+
+LFM (θ) = E
+
+h
+
+vθt (Xt) − vt|1 (Xt|X1) 2i
+
+, (8) where X1 ∼ q sample is obtained from the dataset, and 
+
+Xt ∼ pt|1 is sampled using the interpolant (6). Indeed, the generated probability path by the optimal vθt is 
+
+pt(x) = E pt|1(x|X1) , (9) that equals the source, p0 and target q at t = 0 and t = 1 .2Flow Sampling 
+
+Flow Matching conditional Flow Sampling conditional (ours) Marginal    
+
+> Figure 2. (left) Flow matching conditional probability path is marginal of a noising process conditioned on a data point x1. (middle) Flow sampling conditional probability path is a marginal of a denoising process conditioned on a noise point x0. (right) The probability of the marginal process is the same in both cases.
+
+## 3. Flow Sampling 
+
+In contrast to flow matching, we are interested in the data free settings, but our goal is similar. Given a score function of the target ∇ log q(x1) = ∇r(x1), and an easy to sample source distribution p0, our goal is to learn a diffusion pro-cess (Xt)0≤t≤1 such that its probability path interpolates between source p0 and target p1 ≡ q.
+
+Diffusion process A diffusion process is defined by a drift 
+
+u : Rd × [0 , 1] → Rd, a diffusion coefficient gt : [0 , 1] →
+
+R≥0, and a boundary condition, 
+
+dXt = ut (Xt) d t + gt dBt, X0 ∼ p0. (10) where Bt is the Brownian motion. The probability path pt of a diffusion process is given by the Fokker–Planck equation, 
+
+∂∂t pt(x) + ∇ [pt(x)ut(x)] = g2
+
+> t
+
+2 ∇2pt(x). (11) We recall the standard correspondence between determinis-tic transport and a diffusion with the same probability path. 
+
+Proposition 3.1. Let vt be a velocity that defines the flow process (2) with a marginal pt. Then the drift 
+
+ut(x) = vt(x) + g2
+
+> t
+
+2 ∇ log pt(x), (12) 
+
+defines a diffusion process (10) with the same marginal pt.
+
+Proposition 3.1 is a known result (Anderson, 1982); we defer the proof to the appendix. This observation makes explicit how score information enters the drift, which is exactly the mechanism we will exploit to inject target information. 
+
+Key Idea Given a data sample X1 ∼ q, the conditional flow (5) which is the supervision for the FM loss (8), is independent of the target distribution q. Thus, all learning signals for the target q come through marginalization. In data-free settings, we don’t have access to data samples 
+
+X1 ∼ q, hence we cannot marginalize over the target q. Our key observation is that we can condition on samples from the source X0 ∼ p0, move all the signal about the target q
+
+to a supervising denoising diffusion process conditioned at time t = 0 by X0, and marginalize over the source p0.We use a conditional probability path defined as a push forward of the target distribution 
+
+pt|0 (x|x0) = 1
+
+αdt
+
+q
+
+ x − σtx0
+
+αt
+
+
+
+. (13) This is in contrast to flow matching and diffusion mod-els (Ho et al., 2020) that pushes the source distribution (7). Still, in both cases the marginal probability path is the same, 
+
+E pt|0 (x|X0) = pt(x) = E pt|1 (x|X1) . (14) The difference between pushing forward the source p0 or the target q is illustrated in Figure 2. Notably, the former is independent of the target, and the latter is a scale and shift of the target. 
+
+Supervising drift Importantly, we identify two processes that generate the conditional path in (13) . The first, is de-fined by a conditional velocity similar to FM (5) but condi-tioned on time t = 0 . That is, 
+
+vt|0(x|x0) = ˙αt
+
+αt
+
+(x − σtx0) + ˙ σtx0, (15) which generates the probability path pt|0 (13) since they satisfy the continuity equation (3). The second, is defined by the conditional drift 
+
+ut|0(x|x0) := vt|0(x|x0) + g2
+
+> t
+
+2 ∇ log pt|0 (x|x0) , (16) which by Proposition (3.1), generates the same conditional probability path pt|0 (13). The two processes are important. The second process, i.e., the drift (16) allows to sample X1 ∼ q given X0 = x0 using simulation, and regressing onto the drift ut|0 suffices to learn a sampler of q. The first process, i.e.. the velocity (15) is solved in closed form by the interpolant (6) and allows efficient reuse of existing samples X1 ∼ q with simulation free sampling of pt|0, significantly reducing training cost. 3Flow Sampling 
+
+Training objective Similar to FM, we use the marginal-ization trick (Lipman et al., 2024) and train our drift uθ by regressing onto the conditional drift ut|0 (16). This yields a 
+
+diffusion matching (DM) objective 
+
+LDM (θ) = E
+
+h
+
+uθ (Xt) − ut|0 (Xt|X0) 2i
+
+, (17) where X0 ∼ p0 and Xt ∼ pt|0. The conditional pt|0 is sam-pled using the flow process (2) defined by vt|0 (15) which can be done efficiently since it is solved by the interpolant, 
+
+Xt = σtX0 + αtX1, X0 ∼ p0, X 1 ∼ q. (18) 
+
+Proposition 3.2. Let X0 = x0, and vt|0 the conditional velocity (15) that generates pt|0 the conditional probabil-ity path (13). Then, for every gt ≥ 0 and X1 ∼ q,
+
+ut|0 (Xt|x0) = ˙ αtX1 + ˙ σtx0 + g2
+
+> t
+
+2αt
+
+∇r (X1) . (19) 
+
+where Xt is the interpolant (18) defined by vt|0.
+
+Proof of Proposition 3.2 is in Appendix E. This proposition is extremely useful, since it implies that for every sample from the target X1 ∼ q, the score ∇ log q(X1) = ∇ r(X1)
+
+needs to be evaluated only once, to evaluate ut|0, the con-ditional drift (19), along Xt the interpolant (18) for all 
+
+t ∈ [0 , 1] and X0 ∼ p0. Hence, we can use a replay buffer 
+
+B to store the pairs X1, ∇ r (X1) and reuse them during training. This improves training efficiency significantly in cases where the reward is costly to compute. 
+
+Linear process We train our model using the known linear scheduler (Lipman et al., 2023; Liu, 2022), 
+
+αt = t, σt = 1 − t, g2 
+
+> t
+
+= 2 γt, γ > 0. (20) The squared diffusion coefficient is chosen g2 
+
+> t
+
+∝ αt to account for the possible singularity at time t = 0 as implied by Proposition (3.2). This yields a stable target for the regression, and γ is a hyper-parameter that is used to further regularize the target during training. 
+
+3.1. Diffusion matching with the Flow Sampling loss 
+
+Sampling the target X1 ∼ q using simulation with the conditional drift (16) requires repeated evaluations of the energy gradient ∇r(x), which we want to avoid. 
+
+Fixed point iteration To overcome this, we propose a fixed point iteration training algorithm. We defined X ¯θ 
+
+> 1
+
+to be samples from the detached current state of the model, i.e., 
+
+¯θ = stopgrad (θ), using the Euler–Maruyama algorithm, 
+
+X ¯θt+h = X ¯θt + hu ¯θt
+
+
+
+X ¯θt
+
+
+
++ p2γthZ t, (21) where Zt ∼ N (0 , I ). Then, by minimizing the DM loss (17) , but sampling X ¯θ 
+
+> 1
+
+∼ p¯θ 
+
+> 1
+
+instead of X1 ∼ q during training we obtain our flow sampling objective. 
+
+Algorithm 1 Flow sampling training                                                                              
+
+> #model_fn -trainable drift model #solver_fn -Euler--Maruyama solver #score_fn -gradient of the reward #buffer -replay buffer #gam -diffusion coefficient #bz, shape -batch size and data shape
+> for _in range(outer_loops): #exploration phase x_0 =randn(bz, *shape)
+> with no_grad (): x_1 =solver_fn (model_fn ,gam, x_0) score_1 =score_fn (x_1) buffer.push(x_1, score_1) #optimization phase
+> for _in range(inner_loops): x_1, score_1 =buffer.sample(bz) x_0 =randn(bz, *shape) t=rand(bz, *[1]*len(shape)) x_t =(1-t)*x_0 +t*x_1 u_t =x_1 -x_0 +gam*score_1 pred =model_fn (x_t, t) loss =mse_loss(pred, u_t) loss.backward() optimizer.step() optimizer.zero_grad()
+
+Flow Sampling Objective We train uθt by regressing onto a closed-form target (19), and linear process (20). The target distribution is approximated with samples of the current detached state of the model X ¯θ 
+
+> 1
+
+∼ p¯θ
+
+> 1
+
+.
+
+LFS (θ) = E
+
+
+
+uθt (Xt) −
+
+
+
+X ¯θ 
+
+> 1
+
+− X0 + γ∇r(X ¯θ 
+
+> 1
+
+)
+
+ 2
+
+,
+
+(22) where Xt is the linear interpolant process 
+
+Xt = (1 − t)X0 + tX ¯θ 
+
+> 1
+
+, X 0 ∼ p0, X ¯θ 
+
+> 1
+
+∼ p¯θ
+
+> 1
+
+. (23) 
+
+We use the same alternating scheme as Adjoint Sam-pling (Havens et al., 2025), which consists of two phases: 1. Exploration phase: Using the current detached model 
+
+u¯θ , we draw a batch of samples X ¯θ 
+
+> 1
+
+∼ p¯θ 
+
+> 1
+
+with the Euler–Maruyama solver, evaluate the score ∇r
+
+
+
+X ¯θ
+
+> 1
+
+
+
+,and store the pairs in the replay buffer B ← B ∪ n
+
+X ¯θ 
+
+> 1
+
+, ∇r
+
+
+
+X ¯θ
+
+> 1
+
+o 
+
+.2. Optimization phase: Fixing the state of the replay buffer 
+
+B, we iterate over it 
+
+n
+
+X ¯θ 
+
+> 1
+
+, ∇r
+
+
+
+X ¯θ
+
+> 1
+
+o 
+
+∼ B , and per-form multiple gradient steps on LFS (θ) (22). 4Flow Sampling 
+
+The two phases are repeated until convergence. The pseudo code for our training method is given in Algorithm 1, where a Gaussian source p0 = N (0 , I ) is assumed. The number of energy gradient ∇r(x) evaluations equals the number of 
+
+X ¯θ 
+
+> 1
+
+∼ p¯θ 
+
+> 1
+
+acquired during training (Havens et al., 2025). 
+
+## 4. Extension to Riemannian Manifolds 
+
+A strong advantage of our flow sampling formulation for training diffusion samplers (Akhound-Sadegh et al., 2024a; Vargas et al., 2023a; Havens et al., 2025) is that it naturally extends diffusion samplers to non-Euclidean geometries. This section describes how to adapt flow sampling to Rie-mannian Manifolds. Observing our FS loss (22) we identify three key requirements: (i) simulation of diffusion process on manifolds (Huang et al., 2022) for sampling, (ii) an inter-polant process (18) on manifolds (Chen & Lipman, 2023), and (iii) a conditional drift (19) on manifolds that generate the same marginal as the interpolant. 
+
+Setup Let an ambient space A = Rd+1 equipped with a metric ⟨· , ·⟩ Σ given by Σ ∈ R(d+1) ×(d+1) an invertible sym-metric matrix. We assume a complete, connected, smooth Riemannian manifold with a constant curvature κ given by 
+
+M =
+
+
+
+x ∈ A | ⟨ x, x ⟩Σ = 1
+
+κ
+
+
+
+(24) Note, in case M has more than one connected component, we treat each one separately. The tangent space TxM at a point x ∈ M is defined as 
+
+TxM = {w ∈ A | ⟨ w, x ⟩Σ = 0 } . (25) 
+
+Diffusion on manifolds As in the Euclidean case, a dif-fusion process is defined by a drift ut(x) ∈ TxM, and a boundary condition, 
+
+dXt = ut(Xt) d t + p2γtP ⊥ 
+
+> Xt
+
+◦ dBt, X0 ∼ p0. (26) where, Bt is the standard Brownian motion in the ambient space A, the diffusion coefficient is gt := √2γt , and P ⊥ 
+
+> x
+
+is an orthogonal projection defined for any x, w ∈ A as 
+
+Pxw = ⟨x, w ⟩Σ
+
+⟨x, x ⟩Σ
+
+x, P ⊥ 
+
+> x
+
+w = w − Pxw. (27) Thus, P ⊥ 
+
+> Xt
+
+◦ dBt ∈ TXt M. The marginal of the process pt
+
+is defined by the Riemannian Fokker-Planck equation 
+
+∂tpt = −div M(ptut) + γt ∆Mpt, (28) where div M and ∆M are the divergence and Laplacian operators (resp.) generalized to manifolds. Lastly, the Euler–Maruyama solver on the manifold is 
+
+Xt+h = exp Xt
+
+
+
+hu t(Xt) + p2γthP ⊥ 
+
+> Xt
+
+Zt
+
+
+
+, (29) where Zt ∼ N (0 , I ), and exp x : TxM → M is the ex-ponential map of M. For our set of constant curvature manifolds (24), the exponential map can be solved in closed form (Chen & Lipman, 2023) that is dependent on Σ and κ.
+
+Geodesic Interpolant Given X0 = x0 ∈ M and X1 ∼
+
+q, similar to Riemannian flow matching (RFM) (Chen & Lipman, 2023), instead of an interpolant (18) between X0
+
+and X1, we use the geodesic, 
+
+Xt = ϕt (X1|x0) = exp X1
+
+(1 − t) log X1 (x0) , (30) where log x : M → TxM is the logarithmic map which can be solved in closed form for the set of manifolds we assumed. The marginal of the geodesic interpolant is the conditional probability path, 
+
+pt|0(x|x0) = q(ϕ−1 
+
+> t|0
+
+(x|x0)) det M Dϕ −1 
+
+> t|0
+
+(x|x0) . (31) 
+
+Conditional drift Similar to the Euclidean case, we find a conditional drift ut|0 that generate the conditional path (31) 
+
+pt|0. Evaluated at the geodesic interpolant (30), the drift is 
+
+ut|0(Xt|x0) = ˙Xt + γt ∇M log pt(Xt|x0), (32) where ˙Xt = ddt ϕt (X1|x0) is the derivative w.r.t. time of the geodesic, and the conditional score decomposes to 
+
+∇M log pt|0(Xt|x0) =( J−1 
+
+> t
+
+)∗ ∇Mr(X1) (33) 
+
+− ∇ M log | det M (Jt) |, (34) where Jt = Dϕ t(X1|x0) is the Jacobian of the geodesic, and (J−1 
+
+> t
+
+)∗ is its inverse adjoint. 
+
+Proposition 4.1. For Riemannian manifold M defined in (24) with a metric Σ and constant curvature κ, the Jacobian of the geodesic w.r.t. X1 is 
+
+Jt = tT X1→Xt P ˙X1 + ct (X1, x 0) TX1→Xt P ⊥ 
+
+> ˙X1
+
+,
+
+where TX1→Xt : TX1 M → TXt M is the parallel trans-port, ct (X1, x 0) is a time dependent scaling, 
+
+ct(X1, x 0) = 
+
+
+
+sin( tω 1
+
+√κ)sin( ω1
+
+√κ) if κ > 0sinh( tω 1
+
+p|κ|)sinh( ω1
+
+p|κ|) if κ < 0
+
+, (35) 
+
+and ω1 = ˙X1 Σ
+
+the geodesic distance of X1 and x0.
+
+Proposition (4.1) allows us to compute the conditional drift (32) in closed form. As it is composed of rank-1 matri-ces, it is efficient to evaluate. Its proof is based on results in Jacobi fields (Lee, 2018), and given in Appendix E. 5Flow Sampling 
+
+Riemannian Flow Sampling objective The model uθt
+
+is trained by regressing onto ut|0 the conditional drift (32) that is given in closed form in Proposition 4.1. 
+
+LRFS (θ) = E
+
+h
+
+P ⊥ 
+
+> Xt
+
+uθt (Xt) − ut|0 (Xt|X0) 2Σ
+
+i
+
+(36) where Xt is the geodesic interpolant (30), and the target distribution is approximated with X ¯θ 
+
+> 1
+
+∼ p¯θ 
+
+> 1
+
+samples of the current detached state of the model using the Riemannian Euler-Maruyama solver (29). Optimization is done using the adjusted to manifold version of Algorithm 1. 
+
+4.1. Flow sampling on a hyper-sphere 
+
+As an example, we consider the case of a hyper-sphere 
+
+M = Sd given by setting the metric and the curvature to 
+
+Σ = I, κ = 1 . (37) Given X0 = x0 ∈ Sd, and X1 ∼ q, the geodesic distance is 
+
+ω1 = log X1 (x0) = arccos  X⊤ 
+
+> 1
+
+x0
+
+ . (38) The derivative w.r.t. time of the geodesic interpolant (30) at time t = 1 is 
+
+˙X1 = − log x1 (x0) = ω1
+
+cos ω1X1 − x0
+
+sin ω1
+
+, (39) and, the geodesic interpolant (30) is the SLERP function, 
+
+Xt = cos ((1 − t)ω1) X1 − sin ((1 − t)ω1) ˙X1
+
+ω1
+
+, (40) and its derivative w.r.t. to time t is 
+
+˙Xt = ω1 sin ((1 − t)ω1) X1 + cos ((1 − t)ω1) ˙X1. (41) The parallel transport from X1 to Xt on the hyper-sphere is the Householder reflection about the midpoint X1 + Xt,
+
+TX1→Xt = I − 2PX1+Xt . (42) Since the parallel transport TX1→Xt is an orthogonal op-erator, using Proposition 4.1 the inverse Jacobian adjoint is 
+
+ J−1
+
+> t
+
+∗ = 1
+
+t TX1→Xt P ˙x1 + sin ( ω1)sin ( tω 1) TX1→Xt P ⊥ 
+
+> ˙X1
+
+. (43) This implies the correction to the conditional score is 
+
+∇M log det ( Jt) = ( d−1) ( t cot tω 1 − cot ω1) ˙X1
+
+ω1
+
+. (44) Hence we have all terms in the conditional drift (32) in closed form. Importantly, both the projection operator (27) and the parallel transport operator (42) include only rank 1 operators, thus are computationally efficient. 
+
+## 5. Related Works 
+
+Learning-Augmented Classical Samplers MCMC and SMC methods provide asymptotically exact samples from unnormalized distributions, but can mix slowly or re-quire many target evaluations in high-dimensional, multi-modal settings. Learning-augmented variants replace hand-designed proposals with normalizing flows or learnable stochastic dynamics (Albergo et al., 2019; Arbel et al., 2021; Gabri ´e et al., 2022; Matthews et al., 2022; Albergo & Vanden-Eijnden, 2025; Holderrieth et al., 2025), typically requiring importance weighting or accept–reject corrections that drive up energy-evaluation cost. 
+
+Diffusion Samplers Diffusion samplers adapt score matching to unnormalized targets via auxiliary corrections (MCMC, importance weighting, or resampling), each inflat-ing energy-evaluation cost (Phillips et al., 2024; De Bor-toli et al., 2024; Chen et al., 2024). PITA (Akhound-Sadegh et al.) trains a temperature-annealed ladder of diffusion samplers, but requires high-temperature MCMC data to bootstrap. Off-policy variants (Malkin et al., 2023; Richter & Berner, 2024) use trajectory-level objectives over a replay buffer but typically require parameterizing the model in terms of the energy gradient (He et al., 2025). iDEM (Akhound-Sadegh et al., 2024b) instead estimates the target score by Monte Carlo along the noising path, incur-ring many energy evaluations per step to control variance. 
+
+Stochastic Optimal Control and Adjoint Sampling Aclosely related line of work formulates sampling from unnor-malized distributions as a stochastic optimal control prob-lem, closely connected to Schr ¨odinger bridges (Zhang & Chen, 2022a; Vargas et al., 2023b), leading to bridge-based diffusion samplers and transport objectives (Berner et al., 2024; Richter & Berner, 2024; Vargas et al., 2024; Chen et al., 2024; Havens et al., 2025; Liu et al., 2025a). (Nam et al., 2025) further incorporates molecular inductive bias through well-tempered collective-variable biasing. Flow Sampling is inspired by this line of work but departs from SOC formulations by avoiding optimal couplings, yielding a simpler training objective that supports non-memoryless noise schedules and arbitrary source distributions without requiring an additional corrector network. In Appendix D we show that with a Brownian-bridge supervising path and matching Gaussian source, the Flow Sampling and Adjoint Sampling regression targets agree in conditional expecta-tion. 
+
+Reward-tilting and Fine-Tuning RL-style fine-tuning methods such as GRPO (Shao et al., 2024) and Flow-GRPO (Liu et al., 2025b) optimize a pretrained genera-tive model toward high-reward samples via policy gradi-ents, without explicitly targeting a particular distribution. A complementary line instead targets the reward-tilted dis-tribution—the base reweighted by an exponential reward. 6Flow Sampling 
+
+Table 1. Results for the synthetic energy function experiments. We report a geometric W2 metric Klein et al. (2024) and 1D energy histogram E(·) W2 metric with respect to ground truth samples. See Section A.4 for more details. We use light and dark shading to denote best and 2nd best result respectively. † We include baseline measurements over random subsets of the ground truth samples. This can be considered the “optimal” value for that metric, which was not clear in previous instantiations of this benchmark. Flow Sampling XL results are omitted for DW4 due to minimal improvement. Mean and standard error are reported across 5 training runs. 
+
+DW-4 (N = 4 , d = 2) LJ-13 (N = 13 , d = 3) LJ-55 (N = 55 , d = 3) 
+
+Method W2 ↓ E(·) W2 ↓ W2 ↓ E(·) W2 ↓ W2 ↓ E(·) W2 ↓
+
+PIS (Zhang & Chen, 2022a) 0.68 ±0.23 0.65 ±0.25 1.93 ±0.07 18.02 ±1.12 4.79 ±0.45 228.70 ±131.27 
+
+DDS (Vargas et al., 2023b) 0.92 ±0.11 0.90 ±0.37 1.99 ±0.13 24.61 ±8.99 4.60 ±0.09 173.09 ±18.01 
+
+iDEM (Akhound-Sadegh et al., 2024b) 0.70 ±0.06 0.55 ±0.14 1.61 ±0.01 30.78 ±24.46 4.69 ±1.52 93.53 ±16.31 
+
+AS (Havens et al., 2025) 0.62 ±0.06 0.55 ±0.12 1.67 ±0.01 2.40 ±1.25 4.04 ±0.05 30.83 ±8.19 
+
+ASBS (Liu et al., 2025a) 0.43 ±0.05 0.20 ±0.11 1.59 ±0.03 1.99 ±1.01 4.00 ±0.03 28.10 ±8.15 
+
+Flow Sampling 0.36 ±0.03 0.11 ±0.04 1.58 ±0.01 0.97 ±0.53 3.98 ±0.01 21.32 ±0.63 
+
+Flow Sampling XL – – 1.57 ±0.01 0.81 ±0.26 3.96 ±0.01 16.29 ±0.93 
+
+Subsets of MCMC (ground truth) † 0.31 ±0.01 0.10 ±0.03 1.57 ±0.01 0.35 ±0.03 3.85 ±0.05 0.57 ±0.05 
+
+Concurrent to our work, Tilt Matching (Potaptchik et al., 2025) regresses a velocity field that anneals from a base toward the tilted target using only reward evaluations, while Meta Flow Maps (Potaptchik et al., 2026) amortize one-step posterior sampling across intermediate noise levels to enable steering and off-policy fine-tuning. 
+
+## 6. Experiments 
+
+6.1. Synthetic Energy Functions 
+
+We evaluate Flow Sampling on standard synthetic n-particle energy benchmarks (K ¨ohler et al., 2020; Midgley et al., 2023; Klein et al., 2024; Akhound-Sadegh et al., 2024b): a 2D 4-particle Double-Well potential (DW-4), a 3D 13-particle Lennard–Jones system (LJ-13), and a 55-particle Lennard–Jones system (LJ-55). The states are particle po-sitions x ∈ Rn×d, corresponding to shape = ( N, d ) in Algorithm 1 and reward r(x) = −E(x), where E is the energy defined by the potentials LJ or DW. Details in Ap-pendix A. We report geometric and energy W2 distances against long-run MCMC reference samples (Klein et al., 2024). 
+
+Baselines We compare against iDEM (Akhound-Sadegh et al., 2024b), PIS (Zhang & Chen, 2022a), DDS (Vargas et al., 2023b), and the adjoint-based solvers AS (Havens et al., 2025) and ASBS (Liu et al., 2025a). All methods use a 5-layer EGNN (Satorras et al., 2021), with a 10-layer variant (Flow Sampling XL) evaluated for our method. We use the harmonic prior as in ASBS (Jing et al., 2023). Additionally, we make use of the zero-center-mass projected diffusion to handle translation invariance similarly to (Havens et al., 2025; Liu et al., 2025a). Flow Sampling outperforms prior methods across all sys-tems (Table 1), achieving the lowest E(·)W2 and improved concentration in low-energy regions compared to the state-of-the-art ASBS (Liu et al., 2025a). 
+
+6.2. Sampling Conformers of Peptides 
+
+We evaluate Flow Sampling on two widely-studied peptide systems: 22 -atom alanine dipeptide (Ala2) and 42 -atom ala-nine tetrapeptide (Ala4), which are modeled with a classical force-field and implicit water solvation using the OpenMM library (Eastman et al., 2017). Notably, we sample Ala2 and Ala4 conformations in full-atom Cartesian coordinates, unlike prior sampling frameworks (Liu et al., 2025a; Zhang & Chen, 2022a) which relied on internal torsional coordi-nate representations and (Nam et al., 2026), which makes use of bespoke collective variables biases and pretraining data. As baseline, we take the ASBS configuration from (Nam et al., 2026), but skip their MD pretraining step. Both Flow Sampling and ASBS utilize the same E(3) -equivariant PaiNN architecture (Sch¨ utt et al., 2021). 
+
+Results For Ala2, we follow prior works (Zhang & Chen, 2022a; Liu et al., 2025a) and report both the 1D KL di-vergence of each torsional dihedral angles (ϕ, ψ ) and the Jensen-Shannon divergence (JSD) of the 2D joint against ground truth samples generated via long molecular dynam-ics (MD) simulation. We also report the energy W2 to measure concentration of samples about low energy. Flow sampling performs favorably compared to ASBS on all met-rics shown in Table 2 and accurately recovers the ground truth density of the backbone dihedral angles shown by Ra-machandran plots in Figure 4. Additionally, Table 2 shows that Flow Sampling appears to degrade in performance more gracefully than ASBS as the training NFE decreases, where ASBS fails at NFE 128 and 64, as indicated by the large energy-W2 metric. Lower model NFE can accelerate train-ing and inference, which we discuss in greater detail later in Section 6.5. Additional experiment details energy his-togram plots can be found in Section B. For Ala4, we report a qualitative study of mode coverage and sample concentration via a 3D scatter plot over torsion 7Flow Sampling 
+
+ASBS Flow Sampling MD 
+
+Figure 3. Ala4 molecular structures represented by torsion coordinates (ϕ1, ϕ 2, ϕ 3) with 23 distinct modes. 
+
+Table 2. Results for ALA2. We report DKL on 1-D marginals for ϕ
+
+and ψ, Jensen–Shannon divergence (JSD) on the joint distribution of torsion angles (ϕ, ψ ), and an energy-histogram W2 metric with respect to ground-truth samples. Light and dark shading denote the best and second-best method respectively.                                             
+
+> Method NFE (Train)
+> DKL 1-D (↓)(ϕ, ψ )joint Energy
+> ϕψJSD (↓)W2(↓)
+> ASBS 1024 0.504 ±0.006 0.726 ±0.300 0.242 ±0.042 8.650 ±0.371
+> 256 0.412 ±0.038 0.631 ±0.419 0.233 ±0.090 7.290 ±2.625
+> 128 0.663 ±0.460 0.550 ±0.267 0.285 ±0.158 1.0e7 ±1.0e7
+> 64 1.127 ±0.002 0.821 ±0.006 0.441 ±0.002 6.0e7 ±8.8e5
+> Flow Sampling
+> 1024 0.031 ±0.004 0.008 ±0.002 0.018 ±0.001 0.637 ±0.267
+> 256 0.235 ±0.067 0.211 ±0.035 0.118 ±0.023 3.266 ±0.254
+> 128 0.267 ±0.023 0.344 ±0.057 0.152 ±0.021 3.579 ±0.311
+> 64 0.316 ±0.058 0.523 ±0.006 0.190 ±0.005 4.113 ±0.023
+
+ASBS Flow Sampling MD 
+
+Figure 4. Ala2 Ramachandran plots over 10 6 samples. 
+
+angles (ϕ1, ϕ 2, ϕ 3), which gives rise to 23 = 8 metastable modes corresponding to the possible combinations of the three backbone torsional states. As depicted in Figure 3, Flow Sampling covers all 8 modes observed in the MD reference samples. The samples are also more tightly con-centrated around the MD-supported torsional regions than those generated by ASBS, suggesting improved alignment with the relevant conformational landscape. This indicates that Flow Sampling can capture the multimodal structure of Ala4 while maintaining better sample concentration in physically plausible regions. 
+
+6.3. Amortized Conformer Generation 
+
+We evaluate Flow Sampling on the large-scale amortized molecular conformer generation benchmark of Havens et al. (2025), where the target is a conditional Boltzmann distribu-tion r(x|g) = − 1 
+
+> τ
+
+E(x|g), with energy given by the learned eSEN force field (Fu et al., 2025) and conditioning g that provides the molecule topology (atom types and bonds). For a molecule with N atoms, a conformer is represented as atomic coordinates x ∈ RN ×3, corresponding to shape =(N, 3) in Algorithm 1. Generation is conditioned on a fixed molecular graph g, as input to the drift network and energy. The model therefore defines a conditional diffusion process over atomic positions. We train on 24,775 molecular topologies from SPICE (East-man et al., 2023) and evaluate on 80 held-out SPICE molecules and a generalization dataset of 80 GEOM-DRUGS molecules (Axelrod & Gomez-Bombarelli, 2022), following the protocol of Havens et al. (2025). RDKit (Lan-drum, 2006) is a widely used fast conformer generation tool that provides a strong baseline. For more details see (Havens et al., 2025). 
+
+6.4. Von Mises-Fisher Mixtures on S2
+
+Directional and rotational data arise in applications such as robotics and graphics, and are naturally represented on spherical domains (Bullo & Lewis, 2005; Bronstein et al., 2021). To validate the Riemannian Flow Sampling frame-work developed in Section 4.1, we consider sampling on the two-dimensional unit sphere 
+
+S2 = {x ∈ R3 : ∥x∥2 = 1 }.
+
+We construct a multimodal target distribution given by a mixture of von Mises–Fisher (vMF) (Banerjee et al., 2005) components, the spherical analogue of Gaussians, with den-sity 
+
+fvMF (x) ∝ exp( κ μ ⊤x)
+
+parameterized by mean directions μ ∈ S2 and concentration 
+
+κ ≥ 0. We then construct a mixture distribution 
+
+q(x) ∝
+
+> K
+
+X
+
+> k=1
+
+wk fvMF (x; μk, κ k), (45) where the mixture components are evenly weighted ( wk =1/K ) and the mean directions {μk}Kk=1 are chosen to lie along the coordinate axes and diagonal directions of R3.8Flow Sampling 
+
+Table 3. Results on large-scale amortized conformer generation, evaluated on two test sets, SPICE and GEOM-DRUGS using the same 12-layer EGNN architecture across all methods. We report the coverage recall and precision (%) and Absolute Mean RMSD (AMR) for the threshold 1.25 ˚A and standard deviation across test molecules. See Section 6.3 and Appendix C for details. Precision coverage was not reported in ASBS (Liu et al., 2025a). † Re-implementation with logit normal time weighting. ∗ Auxiliary network roughly doubles the number of network evaluation during optimization. 
+
+SPICE GEOM-DRUGS Method Recall Precision Recall Precision NFE (Train) Cov. ↑ AMR ↓ Cov. ↑ AMR ↓ Cov. ↑ AMR ↓ Cov. ↑ AMR ↓
+
+RDKit ETKDG – 72.74 ±33.18 1.04 ±0.52 69.68 ±37.11 1.14 ±0.64 63.51 ±34.74 1.15 ±0.61 69.77 ±38.23 1.09 ±0.66 
+
+ASBS ∗ (Liu et al., 2025a) 512 89.66 ±19.42 0.86 ±0.24 – – 74.50 ±32.32 1.05 ±0.41 – –AS † (Havens et al., 2025) 256 88.60 ±20.83 0.87 ±0.25 59.82 ±30.90 1.19 ±0.37 69.37 ±34.44 1.10 ±0.44 40.15 ±29.80 1.59 ±0.54 
+
+128 77.97 ±29.9 0.98 ±0.30 55.30 ±32.88 1.24 ±0.40 57.42 ±35.33 1.24 ±0.46 33.14 ±30.71 1.75 ±0.67 
+
+64 29.13 ±– 1.43 ±– 20.37 ±– 1.46 ±– 5.50 ±– 1.89 ±– 4.15 ±– 1.89 ±–
+
+Flow Sampling 256 91.89 ± 7.51 0.86 ±0.23 62.35 ±25.76 1.15 ±0.35 72.61 ±44.81 1.55 ±0.34 44.81 ±31.55 1.55 ±0.46 
+
+128 91.39 ±16.63 0.87 ±0.22 61.27 ±30.55 1.18 ±0.33 71.20 ±34.21 1.08 ±0.44 41.63 ±31.80 1.61 ±0.62 
+
+64 90.13 ± 17.85 0.87 ±0.23 60.75 ±31.02 1.18 ±0.33 71.14 ±34.40 1.09 ±0.43 40.82 ±31.67 1.61 ±0.61 
+
+Using the closed-form conditional drift derived in Sec-tion 4.1, we apply iterative Flow Sampling directly on the manifold in ambient space without reparameterizations. As shown in Figure 1, the learned diffusion accurately recov-ers the multimodal target density, demonstrating that Flow Sampling extends naturally beyond Euclidean spaces and can operate directly on curved geometries. 
+
+6.5. Discussion on model efficiency 
+
+Training computational cost per a single exploration, fol-lowed by a training phase Algorithm 1 is composed of three primary components: i) Number of energy gradient eval-uations ii) Number of function evaluations (NFE (Train)) to sample X ¯θ 
+
+> 1
+
+∼ p¯θ
+
+> 1
+
+, and iii) number of optimization steps. Regarding i) i.e. number of energy gradient evaluations, AS (Havens et al., 2025), ASBS (Liu et al., 2025a) and Flow Sampling are equally efficient. Regarding iii), AS and Flow Sampling are performing 100 gradient updates per optimization stage. However, since ASBS requires fitting an auxiliary corrector network which doubles the cost of optimization and results in about ×2 gradient updates per optimization stage. Most importantly, ii) the NFE to acquire a sample from the model using the Euler-Maruyama solver. Tables 2 and 3 show that Flow Sampling maintains con-sistent performance across metrics even when substantially reducing NFE (Train). In particular, reducing NFE from 512 to 64 on conformer generation in Table 3 potentially cuts the exploration-phase cost by ×8 relative to the 512-NFE base-line, which dominates the training cost. Furthermore, we observe strong degradation in the low-NFE regime for the baselines: ASBS on Ala2 in Table 2 and AS on conformer generation in Table 3. In contrast, Flow Sampling remains robust in both settings, indicating that the efficiency of the exploration phase significantly improves the scalability of the method for larger models or datasets. 
+
+## 7. Conclusion 
+
+We introduce Flow Sampling, a principled method for learn-ing to sample from unnormalized densities by matching conditional denoising diffusion drifts (19). We present a simplified formulation for training diffusion-based samplers, and provide a pytorch pseudo-code in Algorithm 1. We ex-tend diffusion samplers to non-Euclidean geometries, where we provide closed-form formulas for the conditional drift on constant curvature Riemannian manifolds. We validate our Flow Sampling method empirically, observing strong re-sults in the synthetic-energy dataset as shown in Table 1 and on small peptides in Table 2. On the amortized conformer generation benchmark reported in Table 3, our Flow Sam-pling demonstrates a 4×–8× speedup in simulation train-ing, potentially enabling a considerable increase in scale of diffusion-based samplers. 
+
+Limitations Flow Sampling is trained as a fixed-point pro-cedure: since target samples are unavailable, the ideal con-ditional diffusion-matching objective is approximated using samples from the detached current sampler. This is effective empirically, but we do not yet provide global convergence guarantees for the resulting replay-buffer dynamics. Finally, our Riemannian extension relies on closed-form conditional drifts for constant-curvature manifolds; extending the same efficiency to more general manifolds and constrained spaces remains an important direction. 9Flow Sampling 
+
+Impact Statement 
+
+This work is primarily intended for scientific and indus-trial research applications and does not introduce immediate risks of misuse. Nevertheless, as with advances in genera-tive modeling more broadly, care should be taken to ensure responsible deployment, especially in application domains such as drug discovery and materials science, where mod-eling biases or inaccuracies could influence downstream decisions. Flow Sampling has direct relevance to computational chem-istry, including molecular modeling and conformer gener-ation, and may contribute to accelerating research in drug development, materials engineering, and biophysical model-ing. 
+
+## References 
+
+Akhound-Sadegh, T., Lee, J., Bose, J., De Bortoli, V., Doucet, A., Bronstein, M. M., Beaini, D., Ravanbakhsh, S., Neklyudov, K., and Tong, A. Progressive inference-time annealing of diffusion models for sampling from boltzmann densities. In The Thirty-ninth Annual Confer-ence on Neural Information Processing Systems .Akhound-Sadegh, T., Rector-Brooks, J., Bose, A. J., Mittal, S., Lemos, P., Liu, C.-H., Sendera, M., Ravanbakhsh, S., Gidel, G., Bengio, Y., Malkin, N., and Tong, A. Iterated denoising energy matching for sampling from boltzmann densities, 2024a. URL https://arxiv.org/abs/ 2402.06121 .Akhound-Sadegh, T., Rector-Brooks, J., Joey Bose, A., Mit-tal, S., Lemos, P., Liu, C.-H., Sendera, M., Ravanbakhsh, S., Gidel, G., Bengio, Y., Malkin, N., and Tong, A. Iter-ated denoising energy matching for sampling from Boltz-mann densities. In International Conference on Machine Learning (ICML) , 2024b. Albergo, M. S. and Vanden-Eijnden, E. Building normal-izing flows with stochastic interpolants, 2023. URL 
+
+https://arxiv.org/abs/2209.15571 .Albergo, M. S. and Vanden-Eijnden, E. NETS: A non-equilibrium transport sampler. In International Confer-ence on Machine Learning (ICML) , 2025. Albergo, M. S., Kanwar, G., and Shanahan, P. E. Flow-based generative models for markov chain monte carlo in lattice field theory. Physical Review D , 100(3):034515, 2019. Albergo, M. S., Boffi, N. M., and Vanden-Eijnden, E. Stochastic interpolants: A unifying framework for flows and diffusions. arXiv preprint arXiv:2303.08797 , 2023. Anderson, B. D. Reverse-time diffusion equation models. Stochastic Processes and their Applica-tions , 12(3):313–326, 1982. ISSN 0304-4149. doi: https://doi.org/10.1016/0304-4149(82)90051-5. URL https://www.sciencedirect.com/ science/article/pii/0304414982900515 .Arbel, M., Matthews, A., and Doucet, A. Annealed flow transport monte carlo. In International Conference on Machine Learning (ICML) , 2021. Axelrod, S. and Gomez-Bombarelli, R. GEOM: energy-annotated molecular conformations for property predic-tion and molecular generation. Scientific Data , 9(1):185, 2022. Banerjee, A., Dhillon, I. S., Ghosh, J., Sra, S., and Ridge-way, G. Clustering on the unit hypersphere using von mises-fisher distributions. Journal of Machine Learning Research , 6(9), 2005. Barroso-Luque, L., Muhammed, S., Fu, X., Wood, B., Dzamba, M., Gao, M., Rizvi, A., Zitnick, C. L., and Ulissi, Z. W. Open materials 2024 (omat24) inor-ganic materials dataset and models. arXiv preprint arXiv:2410.12771 , 2024. Berner, J., Richter, L., and Ullrich, K. An optimal con-trol perspective on diffusion-based generative modeling. 
+
+Transactions on Machine Learning Research (TMLR) ,2024. Bronstein, M. M., Bruna, J., Cohen, T., and Veli ˇckovi ´c, P. Geometric deep learning: Grids, groups, graphs, geodesics, and gauges. arXiv preprint arXiv:2104.13478 ,2021. Bullo, F. and Lewis, A. D. Geometric Control of Mechanical Systems . Springer, 2005. Chen, J., Richter, L., Berner, J., Blessing, D., Neumann, G., and Anandkumar, A. Sequential controlled langevin diffusions. arXiv preprint arXiv:2412.07081 , 2024. Chen, R. T. Q. and Lipman, Y. Riemannian flow matching on general geometries. arXiv preprint arXiv:2302.03660 ,2023. De Bortoli, V., Hutchinson, M., Wirnsberger, P., and Doucet, A. Target score matching. arXiv preprint arXiv:2402.08667 , 2024. Eastman, P., Swails, J., Chodera, J. D., McGibbon, R. T., Zhao, Y., Beauchamp, K. A., Wang, L.-P., Simmonett, A. C., Harrigan, M. P., Stern, C. D., Wiewiora, R. P., Brooks, B. R., and Pande, V. S. OpenMM 7: Rapid de-velopment of high performance algorithms for molecular dynamics. PLoS computational biology , 13(7):e1005659, 2017. 10 Flow Sampling 
+
+Eastman, P., Behara, P. K., Dotson, D. L., Galvelis, R., Herr, J. E., Horton, J. T., Mao, Y., Chodera, J. D., Pritchard, B. P., Wang, Y., Fabritiis, G. D., and Markland, T. E. SPICE, a dataset of drug-like molecules and peptides for training machine learning potentials. Scientific Data , 10 (1):11, 2023. Frenkel, D. and Smit, B. Understanding Molecular Sim-ulation: From Algorithms to Applications , volume 1 of 
+
+Computational Science Series . Academic Press, San Diego, second edition, 2002. Fu, X., Wood, B. M., Barroso-Luque, L., Levine, D. S., Gao, M., Dzamba, M., and Zitnick, C. L. Learning smooth and expressive interatomic potentials for physical prop-erty prediction. In International Conference on Machine Learning (ICML) , 2025. Gabri ´e, M., Rotskoff, G. M., and Vanden-Eijnden, E. Adap-tive monte carlo augmented with normalizing flows. Pro-ceedings of the National Academy of Sciences , 119(10): e2109420119, 2022. Ganea, O., Pattanaik, L., Coley, C., Barzilay, R., Jensen, K., Green, W., and Jaakkola, T. Geomol: Torsional geo-metric generation of molecular 3d conformer ensembles. 
+
+Advances in Neural Information Processing Systems , 34: 13757–13769, 2021. Hastings, W. Monte carlo sampling methods using markov chains and their applications. Biometrika , 57(1):97–109, 1970. Havens, A., Miller, B. K., Yan, B., Domingo-Enrich, C., Sriram, A., Wood, B., Levine, D., Hu, B., Amos, B., Kar-rer, B., Fu, X., Liu, G.-H., and Chen, R. T. Q. Adjoint Sampling: Highly scalable diffusion samplers via Ad-joint Matching. In International Conference on Machine Learning (ICML) , 2025. He, J., Du, Y., Vargas, F., Zhang, D., Padhy, S., OuYang, R., Gomes, C., and Hern ´andez-Lobato, J. M. No trick, no treat: Pursuits and challenges towards simulation-free training of neural samplers. arXiv preprint arXiv:2502.06685 , 2025. Ho, J., Jain, A., and Abbeel, P. Denoising diffusion prob-abilistic models. In Advances in Neural Information Processing Systems (NeurIPS) , 2020. Holderrieth, P., Albergo, M. S., and Jaakkola, T. LEAPS: A discrete neural sampler via locally equivariant networks. 
+
+arXiv preprint arXiv:2502.10843 , 2025. Huang, C.-W., Aghajohari, M., Bose, J., Panangaden, P., and Courville, A. C. Riemannian diffusion models. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. Hyv ¨arinen, A. and Dayan, P. Estimation of non-normalized statistical models by score matching. Journal of Machine Learning Research , 6(4), 2005. Jing, B., Corso, G., Chang, J., Barzilay, R., and Jaakkola, T. Torsional diffusion for molecular conformer generation. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. Jing, B., Erives, E., Pao-Huang, P., Corso, G., Berger, B., and Jaakkola, T. S. EigenFold: Generative protein struc-ture prediction with diffusion models. In International Conference on Learning Representations (ICLR), Work-shop Track , 2023. Klein, L., Kr¨ amer, A., and No´ e, F. Equivariant flow match-ing. Advances in Neural Information Processing Systems ,36, 2024. K ¨ohler, J., Klein, L., and No ´e, F. Equivariant Flows: Exact likelihood generative learning for symmetric densities. In 
+
+International Conference on Machine Learning (ICML) ,2020. Landrum, G. Rdkit: Open-source cheminformatics. 
+
+https://www.rdkit.org , 2006. Lee, J. M. Introduction to Riemannian manifolds , volume 2. Springer, 2018. Lipman, Y., Chen, R. T. Q., Ben-Hamu, H., Nickel, M., and Le, M. Flow matching for generative modeling. In 
+
+International Conference on Learning Representations (ICLR) , 2023. Lipman, Y., Havasi, M., Holderrieth, P., Shaul, N., Le, M., Karrer, B., Chen, R. T. Q., Lopez-Paz, D., Ben-Hamu, H., and Gat, I. Flow matching guide and code, 2024. URL 
+
+https://arxiv.org/abs/2412.06264 .Liu, G.-H., Choi, J., Chen, Y., Miller, B. K., and Chen, R. T. Q. Adjoint Schr ¨odinger bridge sampler. In Advances in Neural Information Processing Systems (NeurIPS) ,2025a. Liu, J., Liu, G., Liang, J., Li, Y., Liu, J., Wang, X., Wan, P., Zhang, D., and Ouyang, W. Flow-grpo: Training flow matching models via online rl. arXiv preprint arXiv:2505.05470 , 2025b. Liu, Q. Rectified flow: A marginal preserving approach to optimal transport. arXiv preprint arXiv:2209.14577 ,2022. Liu, X., Gong, C., and Liu, Q. Flow straight and fast: Learning to generate and transfer data with rectified flow. In International Conference on Learning Representations (ICLR) , 2023. 11 Flow Sampling 
+
+Malkin, N., Jain, M., Bengio, E., Sun, C., and Bengio, Y. Trajectory balance: Improved credit assignment in gflownets. arXiv preprint arXiv:2201.13259 , 2023. Matthews, A., Arbel, M., Rezende, D. J., and Doucet, A. Continual repeated annealed flow transport monte carlo. In International Conference on Machine Learning (ICML) , 2022. Midgley, L. I., Stimper, V., Simm, G. N., Sch ¨olkopf, B., and Hern ´andez-Lobato, J. M. Flow annealed importance sam-pling bootstrap. In International Conference on Learning Representations (ICLR) , 2023. Nam, J., M ´at ´e, B., Toshev, A. P., Kaniselvan, M., G ´omez-Bombarelli, R., Chen, R. T., Wood, B., Liu, G.-H., and Miller, B. K. Enhancing diffusion-based sampling with molecular collective variables. arXiv preprint arXiv:2510.11923 , 2025. Nam, J., M ´at ´e, B., Toshev, A. P., Kaniselvan, M., Gomez-Bombarelli, R., Chen, R. T. Q., Wood, B. M., Liu, G.-H., and Miller, B. K. Enhancing diffusion-based sampling with molecular collective variables. In The Fourteenth International Conference on Learning Representations ,2026. URL https://openreview.net/forum? id=1bJN1EQByS .Neal, R. M. Annealed importance sampling. Statistics and computing , 11:125–139, 2001. No ´e, F., Olsson, S., K ¨ohler, J., and Wu, H. Boltzmann gener-ators: Sampling equilibrium states of many-body systems with deep learning. Science , 365(6457):eaaw1147, 2019. Phillips, A., Dau, H.-D., Hutchinson, M. J., De Bortoli, V., Deligiannidis, G., and Doucet, A. Particle denoising dif-fusion sampler. In International Conference on Machine Learning (ICML) , 2024. Potaptchik, P., Lee, C.-K., and Albergo, M. S. Tilt matching for scalable sampling and fine-tuning. arXiv preprint arXiv:2512.21829 , 2025. Potaptchik, P., Saravanan, A., Mammadov, A., Prat, A., Al-bergo, M. S., and Teh, Y. W. Meta flow maps enable scal-able reward alignment. arXiv preprint arXiv:2601.14430 ,2026. Richter, L. and Berner, J. Improved sampling via learned diffusions. In International Conference on Learning Rep-resentations (ICLR) , 2024. Roberts, G. O. and Rosenthal, J. S. Optimal scaling of dis-crete approximations to langevin diffusions. Journal of the Royal Statistical Society: Series B (Statistical Method-ology) , 60(1):255–268, 1998. Roberts, G. O. and Tweedie, R. L. Exponential convergence of langevin distributions and their discrete approxima-tions. 1996. Satorras, V. G., Hoogeboom, E., and Welling, M. E(n)
+
+equivariant graph neural networks. In International Con-ference on Machine Learning (ICML) , 2021. Sch ¨utt, K., Unke, O., and Gastegger, M. Equivariant mes-sage passing for the prediction of tensorial properties and molecular spectra. In International conference on machine learning , pp. 9377–9388. PMLR, 2021. Shao, Z., Wang, P., Zhu, Q., Xu, R., Song, J., Bi, X., Zhang, H., Zhang, M., Li, Y., Wu, Y., et al. Deepseekmath: Push-ing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Song, Y., Sohl-Dickstein, J., Kingma, D. P., Kumar, A., Er-mon, S., and Poole, B. Score-based generative modeling through stochastic differential equations. In International Conference on Learning Representations (ICLR) , 2021. Vargas, F., Grathwohl, W., and Doucet, A. Denoising dif-fusion samplers, 2023a. URL https://arxiv.org/ abs/2302.13834 .Vargas, F., Grathwohl, W., and Doucet, A. Denoising diffu-sion samplers. In International Conference on Learning Representations (ICLR) , 2023b. Vargas, F., Padhy, S., Blessing, D., and N ¨usken, N. Trans-port meets variational inference: Controlled monte carlo diffusions. In International Conference on Learning Rep-resentations (ICLR) , 2024. Zhang, Q. and Chen, Y. Path integral sampler: A stochastic control approach for sampling. In International Confer-ence on Learning Representations (ICLR) , 2022a. Zhang, Q. and Chen, Y. Path integral sampler: a stochastic control approach for sampling, 2022b. URL https: //arxiv.org/abs/2111.15141 .12 Flow Sampling 
+
+## A. Synthetic Energy Experiment Details 
+
+A.1. Double Well Potential (DW-4) 
+
+We use the same double-well potential as in iDEM (Akhound-Sadegh et al., 2024b), which was originally proposed in K ¨ohler et al. (2020). DW-4 describes a pair-wise distance potential energy for a system of 4 particles {x1, x 2, x 3, x 4}, where each particle has 2 spatial dimensions xi ∈ R2 (d = 8) . The potentials analytical form is given by: 
+
+E(x) = 1
+
+τ
+
+X
+
+> ij
+
+a(dij − d0) + b(dij − d0)2 + c(dij − d0)4, dij = ∥xi − xj ∥2 (46) where we set a = 0 , b = −4, c = 0 .9 and temperature τ = 1 .
+
+A.2. Lennard-Jones Potential (LJ-13, LJ-55) 
+
+Similarly to DW-4, the Lennard-Jones potential is also based pair-wise distances of a system with n particles, but each each particle has 3 spatial dimensions. Its analytical form is given by 
+
+ELJ (x) = ϵτ
+
+X
+
+> ij
+
+ rm
+
+dij 
+
+6
+
+−
+
+ rm
+
+dij 
+
+12 !
+
+, dij = ∥xi − xj ∥2 (47) where rm, τ, ϵ and c are physical constants. As in K ¨ohler et al. (2020) and Akhound-Sadegh et al. (2024b), we add the additional a harmonic potential: 
+
+Eosc (x) = 12
+
+X
+
+> i
+
+∥xi − xCOM ∥2 (48) where xCOM refers to the center of mass of the system. Therefore, the final energy is then ETot = ELJ (x) + cE osc (x), for c
+
+the oscillator scale. As in previous work, we use rm = 1 , τ = 1 , ϵ = 1 and c = 1 .0.
+
+A.3. Architectures and Hyperparameters 
+
+We provide the main model and training hyperparameters used for the synthetic energy experiments in Table 4. For all three systems, we use an EGNN architecture following the setup of Akhound-Sadegh et al. (2024b). Results for iDEM are taken from the AS evaluation in (Havens et al., 2025). Each outer iteration consists of an exploration phase, where new samples are generated and their energy gradients are evaluated, followed by an optimization phase over the replay buffer. 
+
+Adaptive noise scaling. Since the magnitude of the reward-gradient signal can vary substantially across systems and during training, we adapt the diffusion coefficient γ using the current replay buffer. Let B denote the replay-buffer distribution over stored samples x1 and their reward gradients. We set 
+
+γ = c
+
+r
+
+Ex1∼B 
+
+h
+
+∥∇ r(x1)∥2i
+
++ ε, (49) where c controls the scale of the reward-gradient contribution and ε > 0 is a small constant for numerical stability. In practice, the expectation is estimated from the stored gradients in the replay buffer. This makes γ inversely proportional to the empirical RMS reward-gradient norm, reducing sensitivity to the absolute gradient scale and to the manual clipping threshold. 
+
+A.4. Reported Metrics Geometric W2 Because our energy and diffusion process is invariant to rotational and permutations symmetries, we also take these symmetries into account when measuring distance between generated and ground truth point clouds (e.g., from long run MCMC). Note this W2 metric is different from what is reported in Akhound-Sadegh et al. (2024b), which uses the euclidean metric. 13 Flow Sampling                                                 
+
+> Table 4. Hyperparameters for the synthetic energy experiments. We report the architecture, replay-buffer configuration, and optimization settings used for DW-4, LJ-13, and LJ-55.
+> Hyperparameter DW-4 LJ-13 LJ-55
+> Model
+> Hidden features 128 128 128 EGNN layers 355
+> Base SDE
+> Harmonic source σ111
+> Noise scaling γAdaptive, Eq. (49) ( c= 1 )Adaptive, Eq. (49) ( c= 1 )Adaptive, Eq. (49) ( c= 1 )
+> Replay buffer
+> Buffer size 10,000 10,000 10,000 New samples per outer iteration 1,024 1,024 128 Batch size 512 512 128
+> Training
+> Epochs 5,000 5,000 5,000 Iterations per Epoch 200 300 300 Learning rate 3×10 −43×10 −43×10 −4
+> Reward clipping value 100.0 100.0 100.0
+
+W2(μ, ν ) = 
+
+
+
+inf 
+
+> π
+
+Z
+
+π(x, y )d(x, y )2 dx dy
+
+ 12
+
+(50) where π is the transport plan with marginals constrained to μ and ν respectively. Here the distance metric d takes into account all point-cloud symmetries, and is obtained by minimizing the squared Euclidean distance over all possible combinations of rotations, reflections ( O(d)), and permutations ( S(k)) for k particles of spatial dimension d.
+
+d(x0, x 1) = min   
+
+> R∈O(d),P ∈S(k)
+
+∥x0 − (R ⊗ P )x1∥22. (51) However, computing the exact minimal squared distance is computationally infeasible in practice. Therefore, we adopt the approach of K¨ ohler et al. (2020) and approximate the minimizer by performing a sequential search 
+
+d(x0, x 1) ≈ min  
+
+> R∈SO (d)
+
+∥x0 − (R ⊗ ˜P )x1∥22, ˜P = arg min   
+
+> P∈S(k)
+
+∥x0 − P x 1∥22. (52) 
+
+Energy W2 (E(·) W2) An informative way to assess the quality of the generated samples is to look at their energy distribution with respect to the ground truth distribution obtained from energies of long-run MCMC simulations. This shows how well the generated samples are avoiding high-energy regions. Specifically, we use the Wasserstein-2 ( W2) distance on the 1-dimensional energy distribution on R. This results in the standard euclidean W2 metric 
+
+W2(Eμ, E ν ) = 
+
+
+
+inf 
+
+> π
+
+Z
+
+π(x, y )|x − y|2 dx dy
+
+ 12
+
+, (53) 
+
+## B. Alanine Dipeptide and Tetrapeptide Experiment Details 
+
+Energy Function For both Ala2 and Ala4, we utilize a classical force-field and implicit water solvation using the OpenMM library (Eastman et al., 2017), with settings identical to (Nam et al., 2026). 
+
+Model Architecture Following the setup from (Nam et al., 2026), we employ the PaiNN architecture (Sch ¨utt et al., 2021) which is an E(3) –equivariant graph neural network specifically suited for molecular energy and force-field prediction. (Nam et al., 2026) modifies the architecture to include time-conditioning, breaking parity symmetries, which restricts the symmetry to spatial SE (3) -equivariance. We use the same hyper-parameters which are restated below in Table 5. 14 Flow Sampling    
+
+> Figure 5. Ala2 interatomic distance and energy histogram over 10 4samples evaluated against the MD data as reference.
+
+Reference Data For Ala2, we use the same 10 7 test samples from (Midgley et al., 2023), also used by (Nam et al., 2026). These samples are generated via replica exchange MD across 21 replicas of various temperatures spanning 300 K to 1300 Kand require 2.3 × 10 10 energy evaluations to generate. For Ala4, we directly use the test set of 5 × 10 7 samples generated by (Nam et al., 2026), but only subsampling 50 ,000 for the generated 3D scatter plot Figure 3. These samples required approximately 10 11 energy evaluations to generate. 
+
+Ramachandran Jensen–Shannon Divergence (JSD). We evaluate the quality of generated ala2 conformations via the Jensen–Shannon divergence (JSD) of the joint backbone dihedral (ϕ, ψ ) distribution. For both the generated and reference sample sets, we compute the Ramachandran angles ϕ and ψ using mdtraj and bin them into a 200 × 200 2D histogram over [−π, π ] × [−π, π ]. Each histogram is normalized to form a discrete probability distribution: 
+
+ˆpij = hij 
+
+P 
+
+> i,j
+
+hij 
+
+, (54) where hij denotes the count in bin (i, j ). The JSD between the generated distribution ˆp and the reference distribution ˆq is then 
+
+JSD(ˆ p ∥ ˆq) = 12 DKL (ˆ p ∥ m) + 12 DKL (ˆ q ∥ m), m = 12 (ˆ p + ˆ q), (55) where DKL (p ∥ q) = P 
+
+> i,j
+
+pij log pij  
+
+> qij
+
+is the Kullback–Leibler divergence. 
+
+B.1. Interatomic Distance and Energy Histograms 
+
+In Figure 5, we provide additional qualitative comparisons on Ala2 by comparing the energy and interatomic distance distributions of generated samples against MD reference data. 
+
+## C. Conformer Generation Experiment Details 
+
+C.1. Coverage Recall and Precision Metrics Root Mean Square Deviation (RMSD) Similarly to Ganea et al. (2021) and Jing et al. (2022), we measure the so-called Average Minimum RMSD (AMR) and Coverage (COV) for Precision (P) and Recall (R). When measuring these metrics, we generate twice as many conformers as provided by CREST reference conformers. For K = 2 L let {C∗ 
+
+> l
+
+}l∈[1 ,L ] and 
+
+{Ck}k∈[1 ,K ] be the sets of ground truth and generated conformers respectively. In our evaluations, we use L = max (L′, 128) ,where L′ is the number of reference conformers given by CREST, taking the lowest energy conformers as a subset. The RMSD metric finds the best average distance between atoms of molecule with respect to the reference molecule, taking into account all possible symmetries. 15 Flow Sampling 
+
+Table 5. Hyperparameters for the alanine peptide experiments. Model and training hyperparameters used for alanine dipeptide (Ala2) and alanine tetrapeptide (Ala4). 
+
+Hyperparameter Ala2 Ala4 
+
+Model 
+
+Hidden dimension 128 128 Radial basis 64 64 Control layers 4 4Corrector layers 3 3Radial cutoff [ ˚ A] 8.0 8.0 
+
+Base SDE 
+
+Harmonic Source σ 2 ˚A 2 ˚ANoise scaling γ Adaptive, Eq. (49) ( c = 1 ) Adaptive, Eq. (49) ( c = 1 )
+
+Replay buffer 
+
+Buffer size 16,384 16,384 Buffer samples per epoch 2,048 2,048 Batch size 2,048 2,048 
+
+Training 
+
+Epochs 10,000 10,000 Iterations per Epoch 100 100 Initial learning rate 1 × 10 −4 1 × 10 −4
+
+Final learning rate 3 × 10 −5 5 × 10 −5
+
+Reward clipping value 1000.0 100.0 
+
+Coverage Recall 
+
+COV-R (δ) := 1
+
+L |{ l ∈ { 1, . . . , L } : ∃k ∈ { 1, . . . , K }, RMSD (Ck, C ∗ 
+
+> l
+
+) < δ }| (56) AMR-R := 1
+
+L
+
+X
+
+> l∈{ 1,...,L }
+
+min  
+
+> k∈{ 1,...,K }
+
+RMSD (Ck, C ∗ 
+
+> l
+
+) (57) 
+
+Coverage Precision 
+
+COV-P (δ) := 1
+
+K |{ k ∈ { 1, . . . , K } : ∃l ∈ { 1, . . . , L }, RMSD (Ck, C ∗ 
+
+> l
+
+) < δ }| (58) AMR-P := 1
+
+K
+
+X
+
+> k∈{ 1,...,K }
+
+min  
+
+> l∈{ 1,...,L }
+
+RMSD (Ck, C ∗ 
+
+> l
+
+) (59) where δ > 0 is the coverage threshold. 
+
+C.2. Hyperparameters and Architecture Details for SPICE and GEOM-DRUGS 
+
+We use the existing hyperparameter settings for AS and ASBS. Below we specify the hyperparameters specific to Flow Sampling, noting that all EGNN architectures are kept the same for all methods. 
+
+Flow Sampling: We use an Equivariant Graph Neural Network (EGNN, Satorras et al. 2021) with 12 layers and a hidden feature dimension of 128. The model is trained for 5000 outer-loop iterations, sampling 100 batches each iteration from the replay buffer. Each GPU maintains its own buffer with max size of 64000 samples and at each iteration we generate 
+
+128 × 8 new molecules and energy evaluations for the buffer across 8 GPUs. The model is trained with a batch size of 64 per GPU and uses a constant gamma schedule γt ≡ 0.1. Weight gradient clipping of 10 20 is applied. Additionally we use the temperature τ = 5 × 10 −3 and a regularization constant α = 100 .0 for the regularized energy function. The regression target, the temperature-scaled gradient of the energy function is clipped at ℓ2 norm 150. 
+
+## D. Connection to Adjoint Sampling via Control Variates 
+
+In this section we relate the Adjoint Sampling (Havens et al., 2025) target to the target obtained from Flow Sampling when the supervising path is defined using the same Brownian bridge pair law. The comparison is made at the target endpoint 16 Flow Sampling 
+
+law. In particular, we take X1 ∼ q, construct the Brownian bridge interpolant used by Adjoint Sampling, and apply Flow Sampling to the conditional path induced by this interpolant. The resulting Flow Sampling target differs from the Adjoint Sampling target by a samplewise control variate whose conditional expectation given Xt is zero. Adjoint Sampling considers the controlled SDE 
+
+dXt = σ(t)u(Xt, t ) d t + σ(t) d Bt, X0 = 0 . (60) The base process is obtained by setting u ≡ 0, with marginals 
+
+pbase  
+
+> t
+
+= N (0 , ν tI), νt := 
+
+Z t
+
+> 0
+
+σ(s)2 ds. (61) For a target q(x) ∝ er(x), the terminal cost used by Adjoint Sampling, corresponding the optimal control formulation, is 
+
+g(x) = log pbase 1 (x) − r(x). (62) In this zero-base-drift sampling setting, the Adjoint Sampling regression target for the control is 
+
+−σ(t)∇g(X1). (63) 
+
+Supervising Process We now define the Flow Sampling supervising path using the same Brownian bridge pair law. Given 
+
+X1 ∼ q, let 
+
+Xt = λtX1 + stε, λt := νt
+
+ν1
+
+, s2 
+
+> t
+
+:= νt(ν1 − νt)
+
+ν1
+
+, ε ∼ N (0 , I ). (64) Conditioned on ε, the map X1 7 → Xt is deterministic and invertible for t ∈ (0 , 1) , and therefore pushes q forward to the conditional path 
+
+pt|ε(x|ε) = 1
+
+λdt
+
+q
+
+ x − stελt
+
+
+
+. (65) Applying Flow Sampling to this conditional path gives a control target uFS  
+
+> t|ε
+
+. The result below shows that this target has the same conditional regression signal as the Adjoint Sampling target in (63). 
+
+Theorem D.1 (Flow Sampling recovers the Adjoint Sampling target) . Let Xt = λtX1 + stε be the Brownian bridge interpolant in (64) , with X1 ∼ q, and let uFS  
+
+> t|ε
+
+(Xt|ε) be the Flow Sampling control target associated with the conditional path (65) . Then, for every t ∈ (0 , 1) ,
+
+E
+
+h
+
+uFS  
+
+> t|ε
+
+(Xt|ε) Xt = x
+
+i
+
+= E [−σ(t)∇g(X1) | Xt = x] . (66) 
+
+Consequently, the two samplewise targets define the same least-squares regression target as functions of Xt.Proof. We first compute the Flow Sampling target for the conditional path (65). Along the interpolant, 
+
+vt|ε(Xt|ε) = ˙λtX1 + ˙ stε, ∇ log pt|ε(Xt|ε) = 1
+
+λt
+
+∇r(X1). (67) Using 
+
+˙λt = σ(t)2
+
+ν1
+
+, ˙st = σ(t)2(1 − 2λt)2st
+
+, (68) the Flow Sampling physical drift target is 
+
+bFS  
+
+> t|ε
+
+(Xt|ε) = vt|ε(Xt|ε) + σ(t)2
+
+2 ∇ log pt|ε(Xt|ε) (69) 
+
+= σ(t)2
+
+ X1
+
+ν1
+
++ 1 − 2λt
+
+2st
+
+ε + 12λt
+
+∇r(X1)
+
+
+
+. (70) 17 Flow Sampling 
+
+Since the controlled SDE (60) is parameterized by the physical drift σ(t)u(Xt, t ), we compare targets at the level of the control: 
+
+uFS  
+
+> t|ε
+
+(Xt|ε) := 1
+
+σ(t) bFS  
+
+> t|ε
+
+(Xt|ε) (71) 
+
+= σ(t)
+
+ X1
+
+ν1
+
++ 1 − 2λt
+
+2st
+
+ε + 12λt
+
+∇r(X1)
+
+
+
+. (72) We now compare this with the Adjoint Sampling target. Since pbase 1 = N (0 , ν 1I), the terminal cost (62) satisfies 
+
+−σ(t)∇g(X1) = −σ(t)∇  log pbase 1 (X1) − r(X1) (73) 
+
+= σ(t)
+
+ X1
+
+ν1
+
++ ∇r(X1)
+
+
+
+. (74) Subtracting (74) from (72) gives 
+
+uFS  
+
+> t|ε
+
+(Xt|ε) −  −σ(t)∇g(X1) = σ(t)(1 − 2λt)2
+
+ εst
+
++ 1
+
+λt
+
+∇r(X1)
+
+
+
+. (75) Thus the two targets differ pointwise by the term on the right-hand side. We now show that this term vanishes after conditioning on Xt.Fix Xt = x. The conditional density of X1 ∼ q given Xt = x under the Brownian bridge law is given by, 
+
+p(X1 = x1 | Xt = x) ∝ q(x1) exp − ∥x − λtx1∥2
+
+2s2
+
+> t
+
+!
+
+. (76) Moreover, under this conditional law, 
+
+ε = x − λtX1
+
+st
+
+. (77) Applying Stein’s identity (Hyv¨ arinen & Dayan, 2005) to (76) gives 
+
+0 = E [∇X1 log p(X1 | Xt = x) | Xt = x] (78) 
+
+= E
+
+
+
+∇r(X1) + λt
+
+s2
+
+> t
+
+(x − λtX1) Xt = x
+
+
+
+(79) 
+
+= E
+
+
+
+∇r(X1) + λt
+
+st
+
+ε Xt = x
+
+
+
+. (80) Dividing by λt, we obtain 
+
+E
+
+ εst
+
++ 1
+
+λt
+
+∇r(X1) Xt = x
+
+
+
+= 0 . (81) Combining (75) with (81) proves (66). Finally, least-squares regression onto functions of Xt depends only on the conditional expectation of the samplewise target. Therefore (66) implies that the Flow Sampling target and the Adjoint Sampling target define the same regression target as functions of Xt.This result is a target-law comparison. In the practical fixed-point training procedures used by both methods, the endpoint samples are obtained from the current detached sampler and are reused through a replay buffer. The calculation above explains why, when the endpoint law has reached the target distribution, the Brownian bridge Flow Sampling target reduces to the same conditional regression signal as Adjoint Sampling, with the remaining sample-wise difference acting as a zero-mean control variate. 18 Flow Sampling 
+
+## E. Proofs 
+
+Proposition 3.1. Let vt be a velocity that defines the flow process (2) with a marginal pt. Then the drift 
+
+ut(x) = vt(x) + g2
+
+> t
+
+2 ∇ log pt(x), (12) 
+
+defines a diffusion process (10) with the same marginal pt.Proof. ut (12) generate a diffusion process with marginal pt, if they satisfy the Fokker–Planck equation (11). Indeed, 
+
+∂∂t pt(x) + ∇ [pt(x)ut(x)] = ∂∂t pt(x) + ∇ [pt(x)vt(x)] 
+
+| {z }
+
+> =0 , by continuity equation.
+
++ g2
+
+> t
+
+2 ∇ [pt(x)∇ log pt(x)] = g2
+
+> t
+
+2 ∇2pt(x),
+
+where in the first equality we substitute ut , and in the second equality we used the assumption that vt generate pt, i.e., they satisfy the continuity equation (3). 
+
+Proposition 3.2. Let X0 = x0, and vt|0 the conditional velocity (15) that generates pt|0 the conditional probability path (13). Then, for every gt ≥ 0 and X1 ∼ q,
+
+ut|0 (Xt|x0) = ˙ αtX1 + ˙ σtx0 + g2
+
+> t
+
+2αt
+
+∇r (X1) . (19) 
+
+where Xt is the interpolant (18) defined by vt|0.Proof of Proposition 3.2. By definition, the drift (16) ut|0 at Xt the interpolant (18) is 
+
+ut|0 (Xt|x0) = vt|0 (Xt|x0) + g2
+
+> t
+
+2 ∇ log pt|0 (Xt) . (82) We treat each term separately. The first term was also shown by Lipman et al. (2023), since the Xt the interpolant (18) is the solution to the flow defined by vt|0 the conditional velocity (15), we have 
+
+vt|0 (Xt|x0) = ddt Xt (83) 
+
+= ddt (αtX1 + σtx0) (84) 
+
+= ˙ αtX1 + ˙ σtx0, (85) where the first equality is by definition (2), and the second equality we substitute Xt as in equation (18). Second, using the definition of the conditional probability path (13) pt|0, we have 
+
+∇ log pt|0 (Xt|x0) = ∇
+
+
+
+log q
+
+ x − σtx0
+
+αt
+
+
+
+− d log ( αt)
+
+
+
+> x=Xt
+
+(86) 
+
+= ∇
+
+
+
+r
+
+ x − σtx0
+
+αt
+
+
+
+− log ( Z) − d log ( αt)
+
+
+
+> x=Xt
+
+(87) 
+
+= 1
+
+αt
+
+∇r
+
+ Xt − σtx0
+
+αt
+
+
+
+(88) 
+
+= 1
+
+αt
+
+∇r (X1) , (89) where in the second equality we substitute the definition for q(x) = er(x) 
+
+> Z
+
+, and in the last equality we substitute Xt as in equation (18). 19 Flow Sampling 
+
+Proposition 4.1. For Riemannian manifold M defined in (24) with a metric Σ and constant curvature κ, the Jacobian of the geodesic w.r.t. X1 is 
+
+Jt = tT X1→Xt P ˙X1 + ct (X1, x 0) TX1→Xt P ⊥ 
+
+> ˙X1
+
+,
+
+where TX1→Xt : TX1 M → TXt M is the parallel transport, ct (X1, x 0) is a time dependent scaling, 
+
+ct(X1, x 0) = 
+
+
+
+sin( tω 1
+
+√κ)sin( ω1
+
+√κ) if κ > 0sinh( tω 1
+
+p|κ|)sinh( ω1
+
+p|κ|) if κ < 0
+
+, (35) 
+
+and ω1 = ˙X1 Σ
+
+the geodesic distance of X1 and x0.Proof of Proposition 4.1. Our proof closely follows results about Jacobi fields from the book Introduction to Riemannian Manifolds (Lee, 2018). Denote the geodesic starting at X1 and ending at x0 by 
+
+γ(s) ∈ M , ∀s ∈ [0 , 1] γ(0) = X1, γ(1) = x0. (90) The velocity of the geodesic is defined as γ′(s) = dds γ(s), and for every s ∈ [0 , 1] , γ′(s) ∈ Tγ(s)M. Indeed 
+
+⟨γ′(s), γ (s)⟩Σ =
+
+ dds γ(s), γ (s)
+
+
+
+> Σ
+
+(91) 
+
+= 12
+
+ dds γ(s), γ (s)
+
+
+
+> Σ
+
++
+
+
+
+γ(s), dds γ(s)
+
+
+
+> Σ
+
+
+
+(92) 
+
+= 12
+
+dds ⟨γ(s), γ (s)⟩Σ = 0 . (93) The covariant derivative Ds on our embedded manifold can be understood as Dsv = P ⊥ 
+
+> γ(s)
+> dds
+
+v(s) for any field v(s) ∈
+
+Tγ(s)M along the geodesic γ. A field v(s) ∈ Tγ(s)M is said to be parallel along γ(s) if Dsv ≡ 0. By definition of the geodesic, the velocity γ′(s) is parallel along γ(s), i.e., 
+
+Dsγ′ ≡ 0 (94) Every parallel field v(s) along γ(s) given by an isometric linear map Tγ(0) →γ(s) : Tγ(0) M → Tγ(s)M called the parallel transport along γ and an initial condition, 
+
+v(s) = Tγ(0) →γ(s)v(0) . (95) For our set of manifolds (24), for any X1 ∈ M and x0 ∈ M with a unique minimizing geodesic, 
+
+γ(s) = exp X1 (sV 1) , V1 = log X1 (x0) , (96) where exp X1 : TX1 → M and log X1 : M → TX1 are the exponential and logarithmic map of the manifold. By definition of the exponential map 
+
+γ′(0) = V1 (97) Note, both the basis of exp X1 and log X1 depends on X1, hence the Jacobian of geodesic requires the total variation w.r.t. 
+
+X1.
+
+DX1 γ(s) = ( dx exp X1 )sV 1
+
+| {z }
+
+> Base-point variation
+
++ ( dv exp X1 )sV 1
+
+| {z }
+
+> Argument variation
+
+◦  sD X1 log X1 (x0) (98) To compute the variations of the exponent map, we use tools of Jacobi fields. A field j(s) along γ(s) is said to be a Jacobi field if it satisfies the Jacobi equation. In constant curvature manifolds, the Jacobi equation takes the simple form 
+
+D2 
+
+> s
+
+j(s) + κ [⟨γ′(s), γ ′(s)⟩Σ j(s) − ⟨ γ′(s), j (s)⟩Σ γ′(s)] = 0 , (99) 20 Flow Sampling 
+
+Proposition 10.1 (Lee, 2018) states that every variation through the geodesic is a Jacobi field. That is, for every vector 
+
+v1 ∈ TX1 M, both 
+
+jx(s) = ( dx exp X1 )sV 1 · v1, and jv (s) = ( dv exp X1 )sV 1 · v1 (100) are Jacobi fields, where ” ·” denotes the action of the variation on v1.Additionally, Proposition 10.2 (Lee, 2018) states that for every s0 ∈ [0 , 1] and pair of vectors v, w ∈ Tγ(s0)M there exists a unique Jacobi field j(s) along gamma such that 
+
+j(s0) = v Dsj(s0) = w. (101) We use the uniqueness to compute the variations (dx exp X1 )sV 1 and (dv exp X1 )sV 1 . That is, we have that at s = 0 , for every v1 ∈ TX1 M,
+
+(dx exp X1 )0 · v1 = v1, Ds(dx exp X1 )0 · v1 = 0 , and (dv exp X1 )0 · v1 = 0 , Ds(dv exp X1 )0 · v1 = v1. (102) Hence by uniqueness it is suffice to find two Jacobi fields jx(s) and jv (s) along γ(s) that satisfy these boundary conditions. A field v∥(s) ∈ Tγ(s)M is called tangential field if v∥(s) ∈ span {γ′(s)} for every s ∈ [0 , 1] , and a field v⊥(s) ∈ Tγ(s)M
+
+is called normal field if ⟨v(s), γ ′(s)⟩Σ = 0 for every s ∈ [0 , 1] . We show that the Jacobian can be decomposed to a tangential field and a normal field. Importantly, the Jacobi equation (99) takes a simpler form in case j∥(s) is a tangential field or j⊥ is a normal field. Indeed 
+
+D2 
+
+> s
+
+j∥(s) = 0 , and D2 
+
+> s
+
+j⊥(s) + κ ⟨γ′(s), γ ′(s)⟩Σ j⊥(s) = 0 . (103) Additionally, since γ′(s) is parallel along γ,
+
+⟨γ′(s), γ ′(s)⟩Σ = Tγ(0) →γ(s)γ′(0) , T γ(0) →γ(s)γ′(0) Σ (104) 
+
+= ⟨γ′(0) , γ ′(0) ⟩Σ (105) 
+
+= ⟨V1, V 1⟩Σ (106) 
+
+= ω21 , (107) where in the second equality used that the parallel transport Tγ(0) →γ(s) is an isometry. Thus the Jacobi equation (99) further simplify to 
+
+D2 
+
+> s
+
+j∥(s) = 0 , and D2 
+
+> s
+
+j⊥(s) + κw 21 j⊥(s) = 0 . (108) The simplest way to generate fields that conserve orientation along γ(s), i.e., tangential or normal are using the parallel transport. Since TX1→γ(s) is an isometry if v∥ 
+
+> 1
+
+, v ⊥ 
+
+> 1
+
+∈ TX1 M are tangential and normal vectors (reps.), i.e., v∥ 
+
+> 1
+
+∈ span {V1}
+
+and v⊥ 
+
+> 1
+
+, V 1 Σ = 0 , then v∥ 
+
+> 1
+
+and v⊥ 
+
+> 1
+
+give rise to a tangential and normal (resp.) parallel field along γ(s) defined as 
+
+v∥(s) = TX1→γ(s)v∥ 
+
+> 1
+
+, and v⊥(s) = TX1→γ(s)v⊥ 
+
+> 1
+
+. (109) Indeed, 
+
+v∥(s) = TX1→γ(s)v∥ 
+
+> 1
+
+∈ span TX1→γ(s)V1 = span {γ′(s)} , (110) and 
+
+v⊥(s), γ ′(s) Σ = TX1→γ(s)v⊥ 
+
+> 1
+
+, T X1→γ(s)V1 Σ = v⊥ 
+
+> 1
+
+, V 1 Σ = 0 . (111) First we consider the tangential direction. Let v∥ 
+
+> 1
+
+∈ span {V1}, and consider j∥
+
+> x
+
+(s) = v∥(s) and j∥ 
+
+> v
+
+(s) = sv ∥(s), both tangential fields and since v∥(s) is parallel Dsv∥ ≡ 0. Thus both j∥
+
+> x
+
+(s) and j∥ 
+
+> v
+
+(s) satisfy the Jacobi equation for the tangential case 108, and the initial conditions at s = 0 by construction are 
+
+j∥
+
+> x
+
+(0) = v∥ 
+
+> 1
+
+, Dsj∥
+
+> x
+
+(0) = 0 , and j∥ 
+
+> v
+
+(0) = 0 , Dsj∥ 
+
+> v
+
+(0) = v∥ 
+
+> 1
+
+. (112) Hence uniqueness implies, 
+
+j∥
+
+> x
+
+(s) = ( dx exp X1 )sV 1 · v∥ 
+
+> 1
+
+, and j∥ 
+
+> v
+
+(s) = ( dv exp X1 )sV 1 · v∥ 
+
+> 1
+
+. (113) 21 Flow Sampling 
+
+Second we consider the normal directions. Let v⊥ 
+
+> 1
+
+∈ TX1 M be such that v⊥ 
+
+> 1
+
+, V 1 Σ = 0 . and consider j⊥(s) = 
+
+cs(X1, x 0)v⊥(s), where c(X1, x 0) : [0 , 1] → R is some smooth scaling function. Then since v⊥(s) is parallel field along 
+
+γ(s), i.e., Dsv⊥ ≡ 0, the normal case of the Jacobi equation (108) reduce to 
+
+c′′  
+
+> s
+
+(X1, x 0)v⊥(s) + κw 21 cs(X1, x 0)v⊥(s) = 0 , (114) which is true if and only if cs (X1, x 0) satisfies the ODE, 
+
+c′′  
+
+> s
+
+(X1, x 0) + κw 21 cs(X1, x 0) = 0 . (115) The solutions to the ODE in equation (115) are 
+
+cs(X1, x 0) = 
+
+
+
+c0(X1, x 0) cos ( √κω 1s) + c′ 
+
+> 0(X1,x 0)
+> √κω 1
+
+sin ( √κω 1s) if κ > 0
+
+c0(X1, x 0) cosh 
+
+p|κ|ω1s
+
+
+
++ c′ 
+
+> 0(X1,x 0)
+> √κω 1
+
+sinh 
+
+p|κ|ω1s
+
+
+
+if κ < 0 , (116) where c0(X1, x 0) and c′
+
+> 0
+
+(X1, x 0) are determined by the boundary conditions at s = 0 . Thus we define, 
+
+j⊥ 
+
+> x
+
+(s) = cxs (X1, x 0)v⊥(s), and j⊥ 
+
+> v
+
+(s) = cvs (X1, x 0)v⊥, (117) where 
+
+cxs (X1, x 0) = 
+
+(cos ( √κω 1s) if κ > 0cosh 
+
+p|κ|ω1s
+
+
+
+if κ < 0 , (118) and 
+
+cvs (X1, x 0) = 
+
+ 
+
+> 1√κω 1
+
+sin ( √κω 1s) if κ > 0 
+
+> 1√κω 1
+
+sinh 
+
+p|κ|ω1s
+
+
+
+if κ < 0. (119) Then they satisfy the initial conditions 
+
+j⊥ 
+
+> x
+
+(0) = v⊥ 
+
+> 1
+
+, Dsj⊥ 
+
+> x
+
+(0) = 0 , and j⊥ 
+
+> v
+
+(0) = 0 , Dsj⊥ 
+
+> v
+
+(0) = v⊥ 
+
+> 1
+
+. (120) Hence uniqueness implies, 
+
+j⊥ 
+
+> x
+
+(s) = ( dx exp X1 )sV 1 · v⊥ 
+
+> 1
+
+, and j⊥ 
+
+> v
+
+(s) = ( dv exp X1 )sV 1 · v⊥ 
+
+> 1
+
+. (121) Let v1 ∈ TX1 M, finally we can write the full Jacobi fields for the variations of the exponent, i.e., 
+
+jx(s) = ( dx exp X1 )sV 1 · v1, and jv (s) = ( dv exp X1 )sV 1 · v1. (122) Define v∥ 
+
+> 1
+
+= PV1 v1 and v⊥ 
+
+> 1
+
+= P ⊥ 
+
+> V1
+
+v1, where PV1 is the orthogonal projection (27) and P ⊥ 
+
+> V1
+
+its orthogonal compliment. Then v∥ 
+
+> 1
+
+is tangential vector and v⊥ 
+
+> 1
+
+is normal vector, thus they give rise to Jacobi fields j∥
+
+> x
+
+, j∥ 
+
+> v
+
+which satisfy the tangential Jacobi equation (108), and j⊥ 
+
+> x
+
+, j⊥ 
+
+> v
+
+which satisfy the normal Jacobi equation (108). Lastly, since the Jacobi equation (99) decomposes to two independent linear differential equations (i.e., one tangential and one normal) as in equation (108), the fields 
+
+jx(s) = j∥
+
+> x
+
+(s) + j⊥ 
+
+> x
+
+(123) 
+
+= TX1→γ(s)PV1 v1 + cxs (X1, x 0) TX1→γ(s)P ⊥ 
+
+> V1
+
+v1 (124) 
+
+= TX1→γ(s)PV1 + cxs (X1, x 0) TX1→γ(s)P ⊥
+
+> V1
+
+ v1 (125) and 
+
+jv (s) = j∥ 
+
+> v
+
+(s) + j⊥ 
+
+> v
+
+(126) 
+
+= sT X1→γ(s)PV1 v1 + cvs (X1, x 0) TX1→γ(s)P ⊥ 
+
+> V1
+
+v1 (127) 
+
+= sT X1→γ(s)PV1 + cvs (X1, x 0) TX1→γ(s)P ⊥
+
+> V1
+
+ v1, (128) 22 Flow Sampling 
+
+are Jacobi fields and they satisfy boundary condition (102). As last step, we compute the variation of the logarithmic DX1 log X1 (x0). By definition 
+
+x0 = γ(1) = exp X1
+
+ log X1 (x0) . (129) Since x0 is fixed, 
+
+0 = DX1 γ(1) = ( dx exp X1 )V1 + ( dv exp X1 )V1 ◦ DX1 log X1 (x0) (130) 
+
+= TX1→x0 PV1 + cx 
+
+> 1
+
+(X1, x 0) TX1→x0 P ⊥
+
+> V1
+
+ + TX1→x0 PV1 + cv 
+
+> 1
+
+(X1, x 0) TX1→x0 P ⊥
+
+> V1
+
+ ◦ DX1 log X1 (x0) (131) 
+
+= TX1→x0 ◦   PV1 + cx 
+
+> 1
+
+(X1, x 0) P ⊥
+
+> V1
+
+ +  PV1 + cv 
+
+> 1
+
+(X1, x 0) P ⊥
+
+> V1
+
+ ◦ DX1 log X1 (x0) (132) 
+
+= TX1→x0 ◦   PV1 + PV1 ◦ DX1 log X1 (x0) +  cv 
+
+> 1
+
+(X1, x 0) P ⊥ 
+
+> V1
+
++ cv 
+
+> 1
+
+(X1, x 0) P ⊥ 
+
+> V1
+
+◦ DX1 log X1 (x0) . (133) Since the parallel transport is invertible, this implies 
+
+PV1 ◦ DX1 log X1 (x0) = −PV1 , and P ⊥ 
+
+> V1
+
+◦ DX1 log X1 (x0) = − cx 
+
+> 1
+
+(X1, x 0)
+
+cv 
+
+> 1
+
+(X1, x 0) P ⊥ 
+
+> V1
+
+(134) We conclude that the Jacobian DX1 γ(s) is 
+
+DX1 γ(s) = ( dx exp X1 )sV 1 + ( dv exp X1 )sV 1 ◦ DX1 log X1 (x0) (135) 
+
+= TX1→x0 PV1 + cxs (X1, x 0) TX1→γ(s)P ⊥
+
+> V1
+
+ + sT X1→γ(s)PV1 + cvs (X1, x 0) TX1→γ(s)P ⊥
+
+> V1
+
+ ◦ DX1 log X1 (x0)
+
+(136) 
+
+= TX1→γ(s)
+
+PV1 + sP V1 ◦ DX1 log X1 (x0) + TX1→γ(s)
+
+cxs (X1, x 0) P ⊥ 
+
+> V1
+
++ cvs (X1, x 0) P ⊥ 
+
+> V1
+
+◦ DX1 log X1 (x0)
+
+(137) 
+
+= (1 − s) TX1→γ(s)PV1 + cv 
+
+> 1
+
+(X1, x 0) cxs (X1, x 0) − cx 
+
+> 1
+
+(X1, x 0) cvs (X1, x 0)
+
+cv 
+
+> 1
+
+(X1, x 0) TX1→γ(s)P ⊥ 
+
+> V1
+
+(138) 
+
+= (1 − s) TX1→γ(s)PV1 + c1−s (X1, x 0) TX1→γ(s)P ⊥ 
+
+> V1
+
+, (139) where 
+
+c1−s(X1, x 0) = 
+
+
+
+sin((1 − s)ω1
+
+√κ)sin( ω1
+
+√κ) if κ > 0sinh((1 − s)ω1
+
+p|κ|)sinh( ω1
+
+p|κ|) if κ < 0
+
+, (140) Finally, noting that the geodesic interpolant (30) is Xt = γ(1 − t), which implies V1 = − ˙X1, and therefore span {V1} =
+
+span 
+
+n ˙X1
+
+o
+
+, completes the proof. 23
