@@ -6,73 +6,76 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-07
-- 运行时间：2026-05-07 20:25:52 UTC
+- 最新运行日期：2026-05-08
+- 运行时间：2026-05-08 20:16:48 UTC
 - 运行状态：成功
-- 本次总论文数：17
-- 精读区：6
+- 本次总论文数：18
+- 精读区：7
 - 速读区：11
 
 ### 今日简报（AI）
-今日精选17篇前沿论文，重点攻克了舞蹈动作合成与人体交互中的物理精确性难题。
-推荐关注通过“接触矩阵”提升舞蹈合成精度，以及利用物理约束解决人体交互碰撞问题的突破性方案。
-建议对4D网格动画或具身智能控制感兴趣的读者，深入研读 AnimateAnyMesh++ 与 Hydra-DP3 的最新进展。
-- 详情：[/202605/07/README](/202605/07/README)
+今日聚焦 18 篇前沿成果，重点攻克了高保真人体交互生成与第一视角动作恢复的两大难题。
+满分论文 PhysiGen 引入物理约束解决交互碰撞，MotionGRPO 则通过优化算法显著提升了动作恢复的多样性。
+建议深入了解物理仿真与生成式模型结合的趋势，把握人体动态建模的最新技术风向。
+- 详情：[/202605/08/README](/202605/08/README)
 
 ### 精读区论文标签
-1. [Contact Matrix: Enhancing Dance Motion Synthesis with Precise Interaction Modeling](/202605/07/2605.04662v1-contact-matrix-enhancing-dance-motion-synthesis-with-precise-interaction-modeling)  
-   标签：评分：9.5/10、query:3d-motion-generation
-   evidence：舞蹈动作合成与人体交互建模
-2. [PhysiGen: Integrating Collision-Aware Physical Constraints for High-Fidelity Human-Human Interaction Generation](/202605/07/2605.00517v1-physigen-integrating-collision-aware-physical-constraints-for-high-fidelity-human-human-interaction-generation)  
+1. [PhysiGen: Integrating Collision-Aware Physical Constraints for High-Fidelity Human-Human Interaction Generation](/202605/08/2605.00517v1-physigen-integrating-collision-aware-physical-constraints-for-high-fidelity-human-human-interaction-generation)  
+   标签：评分：10.0/10、query:3d-motion-generation
+   evidence：带物理约束的文本驱动 3D 人体动作合成
+2. [MotionGRPO: Overcoming Low Intra-Group Diversity in GRPO-Based Egocentric Motion Recovery](/202605/08/2605.05680v1-motiongrpo-overcoming-low-intra-group-diversity-in-grpo-based-egocentric-motion-recovery)  
+   标签：评分：10.0/10、query:3d-motion-generation
+   evidence：使用基于扩散的方法进行全身 3D 人体运动恢复
+3. [MaMi-HOI: Harmonizing Global Kinematics and Local Geometry for Human-Object Interaction Generation](/202605/08/2605.05756v1-mami-hoi-harmonizing-global-kinematics-and-local-geometry-for-human-object-interaction-generation)  
+   标签：评分：10.0/10、query:3d-motion-generation
+   evidence：使用扩散模型生成3D人机交互
+4. [Uni-HOI:A Unified framework for Learning the Joint distribution of Text and Human-Object Interaction](/202605/08/2604.27491v1-uni-hoia-unified-framework-for-learning-the-joint-distribution-of-text-and-human-object-interaction)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：文本驱动的 3D 人体动作合成与交互生成
-3. [InterPhys: Physics-aware Human Motion Synthesis in a Dynamic Scene](/202605/07/2605.01036v1-interphys-physics-aware-human-motion-synthesis-in-a-dynamic-scene)  
+   evidence：人体动作生成和文本条件 HOI 的统一框架
+5. [InterPhys: Physics-aware Human Motion Synthesis in a Dynamic Scene](/202605/08/2605.01036v1-interphys-physics-aware-human-motion-synthesis-in-a-dynamic-scene)  
    标签：评分：9.0/10、query:3d-motion-generation
    evidence：动态场景中感知物理的人体动作合成
-4. [MG-Former: A Transformer-Based Framework for Music-Driven 3D Conducting Gesture Generation](/202605/07/2605.01197v1-mg-former-a-transformer-based-framework-for-music-driven-3d-conducting-gesture-generation)  
+6. [Contact Matrix: Enhancing Dance Motion Synthesis with Precise Interaction Modeling](/202605/08/2605.04662v1-contact-matrix-enhancing-dance-motion-synthesis-with-precise-interaction-modeling)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：音乐驱动的3D指挥手势生成和SMPL参数人体动作
-5. [Cardiac Mesh Flow: One-Step Generation of 3D+t Cardiac Four-Chamber Meshes via Flow Matching](/202605/07/2605.01884v1-cardiac-mesh-flow-one-step-generation-of-3dt-cardiac-four-chamber-meshes-via-flow-matching)  
+   evidence：生成逼真的反应性动作和双人舞动作合成
+7. [PersonaGesture: Single-Reference Co-Speech Gesture Personalization for Unseen Speakers](/202605/08/2605.06064v1-personagesture-single-reference-co-speech-gesture-personalization-for-unseen-speakers)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：通过流匹配进行三维+时间心脏网格生成
-6. [SnapPose3D: Diffusion-Based Single-Frame 2D-to-3D Lifting of Human Poses](/202605/07/2604.26620v1-snappose3d-diffusion-based-single-frame-2d-to-3d-lifting-of-human-poses)  
-   标签：评分：8.5/10、query:3d-motion-generation
-   evidence：基于扩散模型的2D到3D人体姿态生成
+   evidence：基于扩散模型的协同语音手势个性化流水线
 
 ### 速读区论文标签
-1. [AnimateAnyMesh++: A Flexible 4D Foundation Model for High-Fidelity Text-Driven Mesh Animation](/202605/07/2604.26917v1-animateanymesh-a-flexible-4d-foundation-model-for-high-fidelity-text-driven-mesh-animation)  
+1. [Action Motifs: Self-Supervised Hierarchical Representation of Human Body Movements](/202605/08/2604.28173v1-action-motifs-self-supervised-hierarchical-representation-of-human-body-movements)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：文本驱动的任意3D网格动画和动作多样性
-2. [Binomial flows: Denoising and flow matching for discrete ordinal data](/202605/07/2605.00360v1-binomial-flows-denoising-and-flow-matching-for-discrete-ordinal-data)  
+   evidence：基于 3D 姿态数据的动作层次化表示
+2. [A unified perspective on fine-tuning and sampling with diffusion and flow models](/202605/08/2605.00229v1-a-unified-perspective-on-fine-tuning-and-sampling-with-diffusion-and-flow-models)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：离散序数数据的流匹配与扩散模型
-3. [Hydra-DP3: Frequency-Aware Right-Sizing of 3D Diffusion Policies for Visuomotor Control](/202605/07/2605.01581v1-hydra-dp3-frequency-aware-right-sizing-of-3d-diffusion-policies-for-visuomotor-control)  
+   evidence：扩散和流模型的微调与采样的统一视角
+3. [Posterior Augmented Flow Matching](/202605/08/2605.00825v1-posterior-augmented-flow-matching)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：用于机器人动作轨迹的基于扩散的视觉运动策略
-4. [Adaptive Interpolation-Synthesis for Motion In-Betweening on Keyframe-Based Animation](/202605/07/2605.02742v1-adaptive-interpolation-synthesis-for-motion-in-betweening-on-keyframe-based-animation)  
+   evidence：用于生成建模的后验增强流匹配
+4. [Divergence is Uncertainty: A Closed-Form Posterior Covariance for Flow Matching](/202605/08/2605.00941v1-divergence-is-uncertainty-a-closed-form-posterior-covariance-for-flow-matching)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：3D 动画和动作合成中的动作补全
-5. [PhyCo: Learning Controllable Physical Priors for Generative Motion](/202605/07/2604.28169v1-phyco-learning-controllable-physical-priors-for-generative-motion)  
-   标签：评分：7.5/10、query:3d-motion-generation
-   evidence：使用带有物理先验的扩散模型进行生成式动作建模
-6. [InpaintSLat: Inpainting Structured 3D Latents via Initial Noise Optimization](/202605/07/2605.00664v1-inpaintslat-inpainting-structured-3d-latents-via-initial-noise-optimization)  
-   标签：评分：7.5/10、query:3d-motion-generation
-   evidence：用于修复的结构化3D潜扩散框架
-7. [3D Generation for Embodied AI and Robotic Simulation: A Survey](/202605/07/2604.26509v2-3d-generation-for-embodied-ai-and-robotic-simulation-a-survey)  
+   evidence：流匹配的闭式后验协方差
+5. [SQuadGen: Generating Simple Quad Layouts via Chart Distance Fields](/202605/08/2604.27329v1-squadgen-generating-simple-quad-layouts-via-chart-distance-fields)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：具身智能和机器人模拟的三维生成综述
-8. [STARRY: Spatial-Temporal Action-Centric World Modeling for Robotic Manipulation](/202605/07/2604.26848v2-starry-spatial-temporal-action-centric-world-modeling-for-robotic-manipulation)  
+   evidence：基于扩散的3D形状四边形布局生成框架
+6. [CasLayout: Cascaded 3D Layout Diffusion for Indoor Scene Synthesis with Implicit Relation Modeling](/202605/08/2604.27361v1-caslayout-cascaded-3d-layout-diffusion-for-indoor-scene-synthesis-with-implicit-relation-modeling)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：用于动作生成和时空预测的统一扩散过程
-9. [Unified 4D World Action Modeling from Video Priors with Asynchronous Denoising](/202605/07/2604.26694v1-unified-4d-world-action-modeling-from-video-priors-with-asynchronous-denoising)  
-   标签：评分：6.5/10、query:3d-motion-generation
-   evidence：使用扩散模型进行4D世界合成和机器人动作建模
-10. [A Few-Step Generative Model on Cumulative Flow Maps](/202605/07/2605.03623v1-a-few-step-generative-model-on-cumulative-flow-maps)  
-   标签：评分：6.5/10、query:3d-motion-generation
-   evidence：基于流映射的少步生成模型框架
-11. [3D Generation for Embodied AI and Robotic Simulation: A Survey](/202605/07/2604.26509v1-3d-generation-for-embodied-ai-and-robotic-simulation-a-survey)  
+   evidence：用于场景合成的级联 3D 布局扩散
+7. [PhyCo: Learning Controllable Physical Priors for Generative Motion](/202605/08/2604.28169v1-phyco-learning-controllable-physical-priors-for-generative-motion)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：使用带有物理先验的视频扩散模型进行生成式动作建模
+8. [Pose-Aware Diffusion for 3D Generation](/202605/08/2605.00345v1-pose-aware-diffusion-for-3d-generation)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：直接合成 3D 几何的扩散框架
+9. [Consistent Diffusion Language Models](/202605/08/2605.00161v1-consistent-diffusion-language-models)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：具身智能 3D 生成综述，包含关节物体生成
+   evidence：扩散语言模型的一致性训练
+10. [Trees to Flows and Back: Unifying Decision Trees and Diffusion Models](/202605/08/2605.00414v1-trees-to-flows-and-back-unifying-decision-trees-and-diffusion-models)  
+   标签：评分：6.0/10、query:3d-motion-generation
+   evidence：通过流匹配原理统一决策树与扩散模型
+11. [UniVidX: A Unified Multimodal Framework for Versatile Video Generation via Diffusion Priors](/202605/08/2605.00658v1-unividx-a-unified-multimodal-framework-for-versatile-video-generation-via-diffusion-priors)  
+   标签：评分：6.0/10、query:3d-motion-generation
+   evidence：用于多种多模态图形任务的视频扩散模型
 
 
 <div class="dpr-home-promo-card">
