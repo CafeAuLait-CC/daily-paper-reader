@@ -1,0 +1,1445 @@
+Title: Tempered Guided Diffusion
+
+URL Source: https://arxiv.org/pdf/2605.03712v1
+
+Published Time: Wed, 06 May 2026 01:13:51 GMT
+
+Number of Pages: 32
+
+Markdown Content:
+# Tempered Guided Diffusion 
+
+Andreas Makris 
+
+Department of Mathematics and Statistics Lancaster University, UK 
+
+a.makris@lancaster.ac.uk 
+
+Paul Fearnhead 
+
+Department of Mathematics and Statistics Lancaster University, UK 
+
+p.fearnhead@lancaster.ac.uk 
+
+Christopher Nemeth 
+
+Department of Mathematics and Statistics Lancaster University, UK 
+
+c.nemeth@lancaster.ac.uk 
+
+## Abstract 
+
+Training-free conditional diffusion provides a flexible alternative to task-specific conditional model training, but existing samplers often allocate computation ineffi-ciently: independent guided trajectories can vary widely in quality, and additional function evaluations along a single trajectory may not recover from poor early decisions. We propose Tempered Guided Diffusion (TGD) , an annealed sequen-tial Monte Carlo framework for training-free conditional sampling with diffusion priors. TGD targets tempered posterior distributions over the clean signal, using noisy diffusion states only as auxiliary variables for proposing reconstructions and propagating particles. Particles are reweighted by incremental likelihood ra-tios, resampled, and propagated across noise levels, concentrating computation on trajectories plausible under both the prior and observation. Under idealized exact-reconstruction assumptions, full TGD yields a consistent particle approximation to the posterior as the number of particles grows. For expensive reconstruction tasks, Accelerated TGD (A-TGD) retains early particle exploration but prunes to a single high-likelihood trajectory partway through sampling. Experiments on a controlled two-dimensional inverse problem and image inverse problems show improved posterior approximation and favorable wall-clock speed-quality tradeoffs over independent multi-trajectory baselines. 
+
+## 1 Introduction 
+
+Diffusion models [ 22 , 24 , 37 , 42 , 43 , 45 – 47 ] have emerged as powerful generative priors for con-ditional generation [ 3, 12 , 18 , 21 , 25 , 38 ] and inverse problems [ 1, 7, 8 , 13 , 26 , 27 , 30 , 31 , 44 , 48 ,51 , 55 , 57 ]. In many applications, however, the conditioning mechanism changes from task to task, while paired training data for each new setting may be unavailable or costly to obtain. This makes training-free conditional diffusion [ 3, 20 , 39 , 49 , 52 , 53 ] especially attractive: rather than training a separate conditional model for every inverse problem, one reuses a pretrained unconditional diffusion prior and incorporates the observation only at sampling time. This flexibility is useful both when the goal is posterior sampling or to obtain a single high-quality reconstruction. Despite this appeal, existing training-free conditional diffusion methods can be unreliable on chal-lenging inverse problems. For a fixed observation, different random initializations may produce markedly different reconstructions, some of which remain inconsistent with the observation or have poor perceptual quality [ 55 ]. A common response is to run the sampler multiple times and retain the best output according to a data-consistency score [ 8, 55 ]. Such best-of-N heuristics can improve robustness, but they treat trajectories independently and spend computation uniformly across candi-
+
+> Preprint.
+> arXiv:2605.03712v1 [stat.ML] 5 May 2026
+
+Figure 1: Motivation for A-TGD. Independent trajectories select only after completion; A-TGD explores early, prunes by likelihood, and completes one trajectory. dates, even after some have become unlikely to satisfy the observation. This suggests that the main difficulty is not only the amount of computation, but how it is allocated across candidate trajectories. This perspective is consistent with a broader theme in scalable Monte Carlo methodology [ 15 ]: when a single large computation is inefficient, one can often gain robustness by splitting computation across multiple partial simulations and then using weighting, selection, transformation, or recombination to concentrate effort on the statistically relevant components [ 40 , 50 ]. In TGD, this principle is instantiated through interacting particles rather than through independent best-of-N trajectories. Motivated by this perspective, we introduce Tempered Guided Diffusion (TGD), a sequential Monte Carlo (SMC) approach that maintains a population of candidate reconstructions and uses resampling to focus subsequent computation on the most promising candidates. Existing diffusion-SMC methods have applied particle-based ideas to conditional sampling and inverse problems [ 13 , 49 , 52 ]. TGD differs in where the annealed targets are defined: rather than treating noisy diffusion states as the main objects of inference, TGD defines a sequence of tempered posterior targets [ 10 , 33 – 35 ] over the clean signal. For an inverse problem with clean signal x0 ∈ Rdx , observation y ∈ Rdy , and likelihood p(y | x0), these targets are 
+
+πr (x0) ∝ p(x0) p(y | x0)λr , 0 ≤ λR ≤ λR−1 ≤ · · · ≤ λ0 = 1 , (1) where R is the number of restarts, λr ∈ [0 , 1] controls the strength of the observation, the index r
+
+decreases as conditioning increases, and π0 = p(x0 | y) is the full posterior. Noisy diffusion states are used only as auxiliary variables for reconstruction and propagation. At each stage, a training-free diffusion solver, such as an MPGD- or DAPS-style reconstruction module [ 20 , 55 ], maps each noisy auxiliary particle to a candidate clean reconstruction. The candidates are then reweighted by the incremental likelihood ratio needed to move from πr to πr−1; resampling discards low-likelihood candidates and duplicates promising ones before the retained particles are re-noised for the next stage. Thus, unlike independent best-of-N sampling, TGD uses multiple reconstructions as an interacting population, concentrating later computation on candidates that remain plausible under both the prior and the observation. For expensive image inverse problems, we use Accelerated TGD (A-TGD), which prunes the particle population once at an intermediate stage (see Figure 1) and completes the same schedule with a single high-likelihood trajectory. 
+
+Our contributions: (i) We introduce TGD, an annealed SMC framework for training-free con-ditional sampling over clean signals, and show that several existing training-free samplers can be viewed as different stagewise reconstruction modules within the same outer particle scheme. (ii) Under exact stagewise reconstruction and standard SMC assumptions, we show that idealized TGD is asymptotically consistent for the posterior as the number of particles grows. (iii) We develop Accelerated TGD (A-TGD), a pruning-based variant that preserves early particle exploration while 2reducing the cost of reconstruction. (iv) We evaluate TGD on a controlled two-dimensional inverse problem with known posterior and on image inverse problems including inpainting and phase retrieval, showing that particle resampling improves posterior approximation in the controlled setting and that A-TGD improves wall-clock speed-quality tradeoffs for image reconstruction. 
+
+## 2 Preliminaries 
+
+Inverse problems. We consider inverse problems in which an unknown clean signal x0 ∈ Rdx
+
+is observed indirectly through a measurement y ∈ Rdy . The likelihood p(y | x0) encodes the probabilistic relationship between the clean signal and the observation, including the measurement process, or forward operator, and observation noise. Given a prior p(x0) over clean signals, the posterior [15, 19, 32] is 
+
+p(x0 | y) ∝ p(x0) p(y | x0). (2) We represent the prior p(x0) using a pretrained diffusion model. We adopt a standard continuous-time formulation based on a forward noising process and its corresponding reverse dynamics. 
+
+Unconditional diffusion. Let (xs)s∈[0 ,S ] denote a forward diffusion process defined by 
+
+dxs = g(s) d ws, x0 ∼ p(x0),
+
+where ws is standard Brownian motion and g(s) is a scalar noise schedule. This defines a family of marginal densities ps(xs), where ps is the distribution obtained by sampling x0 ∼ p(x0) and evolving the forward process to time s. For sufficiently large S, pS is well-approximated by a simple Gaussian distribution [24, 47]. Under standard regularity conditions [ 2, 47 ], the reverse-time dynamics that transform xS ∼ pS back to x0 ∼ p(x0) are given by the reverse SDE 
+
+dxs = −g(s)2∇xs log ps(xs) ds + g(s)d ¯ ws, (3) where ¯ws denotes reverse-time Brownian motion. One can also use the corresponding probability-flow ODE [47], 
+
+dxs = − 12 g(s)2∇xs log ps(xs) d s, (4) which has the same time-marginal distributions as the reverse SDE when integrated from S to 0. In practice, the score function ∇xs log ps(xs) is approximated by a neural network trained on noisy samples [ 24 , 47 ]. In the Elucidated Diffusion Model (EDM) parameterization [ 24 ], this corresponds to predicting a denoised estimate ˆx0(xs, s ), yielding 
+
+∇xs log ps(xs) = ˆx0(xs, s ) − xs
+
+σ2
+
+> s
+
+,
+
+where σ2 
+
+> s
+
+= R s 
+
+> 0
+
+g(t)2 dt is the accumulated noise variance of the forward process. 
+
+Training-free conditional sampling. Given an observation y, we wish to sample from the posterior (2) without retraining the diffusion model. Training-free conditional diffusion uses the property that, if we adapt the reverse dynamics by replacing the unconditional score in either the reverse SDE (3) or the probability-flow ODE (4) with the conditional score, then simulating the resulting conditional dynamics to time 0 would yield samples from the posterior (2) . The conditional score is defined using the conditional-score decomposition 
+
+∇xs log ps(xs | y) = ∇xs log ps(xs) + ∇xs log ps(y | xs), (5) where 
+
+ps(y | xs) = 
+
+Z
+
+p(y | x0) p(x0 | xs) d x0
+
+is the observation likelihood marginalized through the diffusion conditional p(x0 | xs).Incorporating (5) into the reverse SDE yields condition-aware dynamics that map a noisy state xs
+
+toward samples consistent with y. In practice, however, the term ∇xs log ps(y | xs) is intractable and must be approximated. Existing methods differ in this approximation: manifold-preserving guided 3diffusion (MPGD) [ 20 ] and related approaches [ 8, 39 , 55 ] construct approximate gradients in data or measurement space, while others rely on plug-in likelihood approximations or score corrections. Another common strategy is to introduce restarts , repeatedly reinitializing the diffusion process at intermediate noise levels and reapplying conditional updates [ 1, 3, 29 , 53 –55 ]. DAPS, for example, alternates noising and denoising steps and can use a coarse ODE discretization to obtain efficient reconstructions between restart levels [ 55 ]. Restarts can improve robustness, but they are typically used as an ad hoc sampling heuristic. In TGD, these short conditional reconstruction procedures are used as modules that map noisy auxiliary states to candidate clean signals; the outer procedure is instead formulated separately as SMC over an annealed sequence of clean-space posteriors. 
+
+## 3 Tempered Guided Diffusion 
+
+3.1 Annealed posterior paths over clean signals 
+
+Our goal is to sample from the posterior p(x0 | y). Rather than imposing the full observation likelihood at once, TGD introduces an annealed sequence [ 5 , 10 , 33 ] of tempered targets [ 34 , 36 ]over the clean signal x0,
+
+πr (x0) ∝ p(x0) p(y | x0)λr , 0 ≤ λR ≤ λR−1 ≤ · · · ≤ λ0 = 1 , (6) where R is the number of restarts, λr ∈ [0 , 1] is the tempering parameter at stage r. The index r
+
+decreases as conditioning increases: π0 = p(x0 | y) is the full posterior, while earlier stages impose the observation more weakly. When λR = 0 , the initial target is the prior. Practical choices of the tempering schedule are described in Appendix F.7. The key modeling choice in TGD is that the annealed path (6) is defined over clean signals rather than noisy diffusion states. We refer to each πr as a clean-space target because it is a distribution over the unknown clean signal x0. An outer stage pairs a tempering level λr with a diffusion noise level 
+
+sr . At stage r, the particle system is represented by noisy auxiliary states {z(i) 
+
+> r
+
+}Ni=1 at noise level sr .These states are not themselves the inferential targets; they are diffusion-compatible variables used to propose and propagate clean candidates. Given a noisy auxiliary state z(i) 
+
+> r
+
+, a reconstruction step produces a candidate clean signal x(i)0 . These clean candidates are reweighted by the incremental likelihood ratio needed to move from πr to 
+
+πr−1 and may then be resampled. The retained clean particles are subsequently re-noised to form auxiliary states at the next noise level. Thus, the sequence {πr }Rr=0 defines the clean-space inference path, while diffusion supplies the reconstruction and re-noising operations used to move the particle population along that path. We write ps(z | x0) for the forward noising kernel and ps(x0 | z) ∝ p(x0)ps(z | x0) for the corresponding conditional density. 
+
+3.2 Stagewise construction of TGD 
+
+We approximate the targets {πr }Rr=0 with a weighted particle system evolved by SMC [ 6 , 9, 14 , 33 ]. At outer stage r, particles are represented by auxiliary states {(z(i) 
+
+> r
+
+, w (i) 
+
+> r
+
+)}Ni=1 at noise level sr , where 
+
+S = sR ≥ sR−1 ≥ · · · ≥ s0 > 0.
+
+We initialize from the noisy prior, 
+
+z(i) 
+
+> R
+
+∼ psR (zR), w(i) 
+
+> R
+
+= 1
+
+N , i = 1 , . . . , N. 
+
+When λR = 0 , this is exactly the noisy marginal corresponding to the initial clean-space target. More generally, it should be viewed as a prior initialization before the first tempered reconstruction step. For r = R, . . . , 1, one TGD update from stage r to stage r − 1 consists of: (i) reconstruction, (ii) weighting/resampling, and (iii) propagation. 4Algorithm 1 Tempered Guided Diffusion (TGD) 
+
+Require: observation y, number of particles N , tempering schedule {λr }Rr=0 , noise schedule 
+
+{sr }Rr=0 , conditional reconstruction law pλr ,s r (x0 | zr , y) 
+
+> 1:
+
+Sample z(i) 
+
+> R
+
+∼ psR (zR) and set w(i) 
+
+> R
+
+← 1/N , for i = 1 , . . . , N  
+
+> 2:
+
+for r = R, R − 1, . . . , 1 do  
+
+> 3:
+
+for i = 1 , . . . , N do  
+
+> 4:
+
+Sample x(i)0 ∼ pλr ,s r (x0 | z(i) 
+
+> r
+
+, y) 
+
+> 5:
+
+˜w(i) 
+
+> r−1
+
+← w(i) 
+
+> r
+
+p(y | x(i)0 )λr−1−λr 
+
+> 6:
+
+end for  
+
+> 7:
+
+w(i) 
+
+> r−1
+
+← ˜w(i)
+
+> r−1
+
+ P Nj=1 ˜w(j)
+
+> r−1
+
+, for i = 1 , . . . , N  
+
+> 8:
+
+Optionally resample according to {w(i)
+
+> r−1
+
+}Ni=1 and reset weights to 1/N  
+
+> 9:
+
+for i = 1 , . . . , N do  
+
+> 10:
+
+Sample z(i) 
+
+> r−1
+
+∼ psr−1 (zr−1 | x(i)0 ) 
+
+> 11:
+
+end for  
+
+> 12:
+
+end for  
+
+> 13:
+
+for i = 1 , . . . , N do  
+
+> 14:
+
+Sample x(i)0 ∼ pλ0,s 0 (x0 | z(i)0 , y) 
+
+> 15:
+
+end for  
+
+> 16:
+
+return {(x(i)0 , w (i)0 )}Ni=1 
+
+Reconstruction. Given z(i) 
+
+> r
+
+, we sample a clean candidate from the stagewise reconstruction law 
+
+x(i)0 ∼ pλr ,s r (x0 | z(i) 
+
+> r
+
+, y),
+
+where 
+
+pλr ,s r (x0 | zr , y) ∝ psr (x0 | zr ) p(y | x0)λr ∝ p(x0) psr (zr | x0) p(y | x0)λr . (7) This maps each noisy auxiliary particle to a clean reconstruction under the current tempering level. 
+
+Weighting and resampling. To move from πr to πr−1, we update weights using the incremental likelihood ratio 
+
+˜w(i) 
+
+> r−1
+
+= w(i) 
+
+> r
+
+p(y | x(i)0 )λr−1−λr .
+
+After normalization, particles whose clean reconstructions better satisfy the observation receive larger weight as conditioning is strengthened. This likelihood-ratio form follows from the lifted construction underlying TGD (see Appendix A). To control weight degeneracy, one may resample particles using a standard low-variance scheme. In our experiments, when resampling is enabled, we use systematic resampling [33] and reset all weights to 1/N .
+
+Propagation. Each retained clean particle is propagated to the next outer stage by re-noising, 
+
+z(i) 
+
+> r−1
+
+∼ psr−1 (zr−1 | x(i)0 ),
+
+yielding a new population of noisy auxiliary states at level sr−1.After the outer loop, a final reconstruction at r = 0 produces clean samples 
+
+x(i)0 ∼ pλ0,s 0 (x0 | z(i)0 , y),
+
+and TGD returns the weighted particle set {(x(i)0 , w (i)0 )}Ni=1 .
+
+3.3 Practical reconstruction modules 
+
+The ideal reconstruction law (7) is generally unavailable, so practical TGD replaces this draw with an approximate training-free conditional diffusion solver. The outer update is unchanged: reconstructed particles are likelihood-reweighted, optionally resampled, and re-noised. We instantiate this interface with MPGD-style and DAPS-style modules. MPGD/DPS-style methods approximate the conditional score term in (5) , while DAPS-style methods combine unconditional 5diffusion reconstruction with clean-space observation correction. In all image experiments, each reconstruction module uses a coarse four-step ODE discretization between restart levels, so cost scales with the number of particles, outer stages, and reconstruction steps per stage. This modular view treats existing training-free solvers as approximations to the same stagewise reconstruction law; detailed reductions are deferred to Appendices C and D. 
+
+3.4 Idealized consistency of TGD 
+
+We analyze an ideal reference version of TGD to isolate the particle approximation from reconstruc-tion error. In this version, each reconstruction step samples exactly from 
+
+pλr ,s r (x0 | zr , y) ∝ psr (x0 | zr ) p(y | x0)λr ,
+
+and the full particle population is propagated without pruning. Exact reconstuction maps the noisy auxiliary marginal associated with πr back to the clean target πr ; likelihood tempering then reweights particles from πr to πr−1, and re-noising produces the next auxiliary marginal. Thus ideal TGD is a lifted SMC sampler [10] over the clean-space targets. 
+
+Theorem 3.1 (Consistency of ideal TGD) . Assume λR = 0 , so that initialization from the noisy prior matches the initial clean-space target. Suppose further that the stagewise reconstruction kernel is exact at each outer stage, the incremental potentials 
+
+Gr (x0) = p(y | x0)λr−1−λr
+
+are bounded, the initial particles are sampled i.i.d. from the noisy prior, and resampling, when used, is performed with a standard SMC scheme [ 6, 33 ]. Then, for every bounded measurable test function 
+
+h, NX
+
+> i=1
+
+w(i)0 h(x(i)0 ) P
+
+−→ Ep(x0|y)[h(x0)] .
+
+Equivalently, ˆπN 
+
+> 0
+
+converges weakly in probability to the posterior p(x0 | y).
+
+The formal assumptions and proof are given in Appendix B. This result applies only to the ideal full-particle procedure; practical reconstruction modules and the pruning step in A-TGD introduce additional approximation. 
+
+3.5 Accelerated TGD 
+
+TGD is designed to approximate the posterior by propagating a particle population through all outer stages. For image inverse problems, where the goal is often a single reconstruction under a fixed compute budget, we use Accelerated TGD (A-TGD): a pruning-based variant that runs the full particle procedure only during the early stages. A-TGD starts with N particles and follows TGD until a pruning fraction ρ ∈ [0 , 1] of the outer stages has been completed. At this point, it reconstructs clean candidates {x(i)0 }Ni=1 using the current reconstruction module and retains the particle with largest likelihood, 
+
+i⋆ = arg max   
+
+> i∈{ 1,...,N }
+
+p(y | x(i)0 ).
+
+All other particles are discarded, and the auxiliary state corresponding to the selected particle is continued through the remaining stages with a single trajectory. Thus A-TGD keeps the exploratory benefit of multiple early particles while avoiding the cost of propagating the full population to r = 0 .The pruning fraction ρ controls the trade-off between exploration and computation: smaller values prune earlier and are cheaper, while larger values more closely track full TGD. Because pruning collapses the particle population, A-TGD is a reconstruction-oriented acceleration and is not covered by the posterior-consistency result of Section 3.4. 
+
+## 4 Related Work 
+
+Training-free diffusion inverse solvers use a pretrained unconditional diffusion model and incorporate the observation only at sampling time. DPS [ 8], MPGD [ 20 ], DAPS [ 55 ], and related approaches 6[ 1, 39 ] differ in how they impose data consistency, for example through approximate conditional guidance, manifold constraints, decoupled posterior updates, or repeated corrections at intermediate noise levels. RePaint [ 29 ] and FreeDoM [ 54 ] further show that revisiting intermediate noise levels can improve robustness. TGD is complementary to these approaches: it treats conditional diffusion solvers as stagewise reconstruction modules inside an outer annealed particle procedure, rather than prescribing a single guidance approximation. The additional particle layer lets intermediate reconstructions interact through likelihood weighting and resampling, reallocating later computation toward candidates that better satisfy the observation. We make these links explicit in Appendix D, where several training-free samplers are recovered as special cases of the reconstruction interface. TGD is also related to particle-based approaches for diffusion models and inverse problems, including SMCDiff [ 49 ], TDS [ 52 ], and FPS-SMC [ 13 ]. These methods demonstrate the usefulness of SMC ideas for diffusion-based sampling. More broadly, particle systems have also been used outside diffusion models for latent-variable inference and learning, including marginal maximum-likelihood training methods in which particles approximate intractable posterior or marginal quantities [ 28 , 41 ]. TGD differs in where the annealed targets and particle weights are defined. Its SMC targets are clean-space distributions over x0, so each reconstructed candidate is weighted using the observation likelihood p(y | x0) evaluated on a clean signal. Noisy diffusion states are instead auxiliary variables: after resampling, retained clean particles are re-noised to produce the next auxiliary states and then reconstructed again. Thus, diffusion supplies proposal and refresh moves, while likelihood weighting and resampling act directly on clean reconstructions. This also distinguishes TGD from independent best-of-N sampling [ 55 ], where trajectories are run separately and selected only at the end; A-TGD uses this interaction early, then prunes for efficient reconstruction. 
+
+## 5 Experiments 
+
+Setup. We evaluate TGD in a controlled two-dimensional inverse problem with a known posterior, and A-TGD on image inverse problems. The two-dimensional experiment uses a noisy elementwise absolute-value observation model and measures posterior approximation using sliced Wasserstein distance (SWD) [ 4, 16 , 17 ] to reference posterior samples. For images, we consider inpainting and phase retrieval on FFHQ [ 23 ] and ImageNet [ 11 ], reporting LPIPS [ 56 ], PSNR, and SSIM averaged over 100 validation images. In all image-result tables, entries are reported as mean ± standard deviation over the 100 validation images. We compare against DPS, DAPS with one trajectory, and DAPS with four independent trajectories, denoted DAPS (N = 4) , where the final reconstruction is selected by lowest measurement error. A-TGD also starts with N = 4 particles but prunes to a single trajectory partway through sampling. Image methods are compared at matched wall-clock runtime within each task and dataset. All image experiments use four Euler ODE steps per reconstruction module (except DPS, see Appendix F) and a single NVIDIA H200 GPU with 141GB memory. 
+
+5.1 Controlled posterior approximation in 2D 
+
+We first evaluate whether the outer particle procedure improves posterior approximation in a controlled setting where the posterior is known. We consider a two-dimensional inverse problem with a Gaussian-mixture prior and noisy elementwise absolute-value observations, 
+
+y = |x0| + ϵ, ϵ ∼ N (0 , τ 2I).
+
+To isolate the particle inference mechanism from score-model error, we use the ground-truth uncondi-tional score and compare final particles to reference posterior samples using SWD. Figure 2 compares TGD to baselines and ablations as the number of particles increases. To make the comparison focus on the outer inference procedure, all methods use the DPS reconstruction proposal. TGD combines likelihood tempering with resampling, while the DPS-DAPS ablation removes these outer particle updates. TGD is the only method whose SWD consistently decreases toward zero as the number of particles grows, empirically matching the behavior predicted by the idealized particle construction. 
+
+5.2 Image inverse problems at matched runtime 
+
+Table 1 reports reconstruction quality at matched wall-clock runtime. Across both inpainting datasets, A-TGD achieves the best LPIPS and SSIM, while remaining competitive in PSNR. On FFHQ phase 7(a) Prior context and posterior zoom. 1 2 4 8 16 32 64 128   
+
+> Number of particles, N
+> 10 −2
+> 10 −1
+> SWD ↓
+> DPS-DAPS
+> DPS
+> TGD
+> 50× lower than DPS
+> shaded: ±1 standard error
+
+(b) Posterior approximation vs. particle count. 
+
+Figure 2: Controlled 2D inverse problem. Left: prior context and posterior zoom for a representative test condition. Orange crosses denote the final TGD particles with N = 64 ; black markers denote the ground-truth clean sample and the sign-ambiguous candidates induced by the absolute-value observation. Right: SWD as a function of particle count. Bands denote ±1 standard error over 10 test conditions. TGD improves rapidly with particle count, while DPS and DPS-DAPS do not benefit from additional independent particles in this setting. Lower is better. Table 1: Image inverse-problem results at matched wall-clock runtime. DAPS ( N = 4 ) runs four independent trajectories and selects by measurement error; A-TGD starts with four particles and prunes to one trajectory. 
+
+Task Dataset Algorithm PSNR ↑ SSIM ↑ LPIPS ↓
+
+Inpainting FFHQ A-TGD (ours) 25 .14 ±2.54 0.853 ±0.025 0.122 ±0.028 
+
+DAPS ( N = 1 ) 24 .93 ±2.57 0.801 ±0.028 0.153 ±0.033 
+
+DAPS ( N = 4 ) 24 .52 ±2.25 0.790 ±0.030 0.157 ±0.034 
+
+DPS 22 .12 ±2.51 0.806 ±0.030 0.167 ±0.033 
+
+ImageNet A-TGD (ours) 20 .89 ±3.67 0.781 ±0.037 0.204 ±0.036 
+
+DAPS ( N = 1 ) 20 .87 ±3.65 0.753 ±0.035 0.218 ±0.044 
+
+DAPS ( N = 4 ) 20 .70 ±3.42 0.740 ±0.033 0.227 ±0.044 
+
+DPS 18 .39 ±2.57 0.710 ±0.069 0.281 ±0.069 
+
+Phase Retrieval FFHQ A-TGD (ours) 29 .43 ±4.07 0.811 ±0.104 0.172 ±0.106 
+
+DAPS ( N = 1 ) 26 .98 ±8.35 0.767 ±0.193 0.225 ±0.185 
+
+DAPS ( N = 4 ) 27 .81 ±5.12 0.765 ±0.128 0.207 ±0.111 
+
+DPS 12 .65 ±2.42 0.331 ±0.095 0.564 ±0.063 
+
+ImageNet A-TGD (ours) 22 .18 ±8.75 0.617 ±0.276 0.326 ±0.218 
+
+DAPS ( N = 1 ) 19 .42 ±9.31 0.499 ±0.298 0.413 ±0.222 
+
+DAPS ( N = 4 ) 22 .41 ±9.26 0.593 ±0.291 0.325 ±0.221 
+
+DPS 12 .58 ±2.48 0.232 ±0.140 0.601 ±0.064 
+
+retrieval, where independent guided trajectories vary substantially in quality, A-TGD improves over DAPS (N = 4) across all metrics. On ImageNet phase retrieval, the gains are more mixed: A-TGD matches DAPS (N = 4) in PSNR, improves SSIM slightly, but does not improve LPIPS at the matched budget. Overall, these results suggest that A-TGD can use a fixed wall-clock budget more effectively than independent best-of-N sampling, especially when early multi-trajectory exploration identifies a high-likelihood trajectory that can be continued alone. Additional ablations on the number of particles, pruning fraction, annealing and resampling, and choice of reconstruction module are provided in Appendix G. 
+
+5.3 Speed-quality tradeoffs 
+
+The matched-runtime results in Table 1 compare methods at a fixed budget. We further evaluate how reconstruction quality changes with wall-clock time on FFHQ phase retrieval, where independent trajectories exhibit high variability and best-of-N selection is a strong baseline. Figure 3 plots LPIPS as a function of seconds per image for DPS, DAPS (N = 1) , DAPS (N = 4) , and A-TGD. DPS 8(a) LPIPS vs. wall-clock time 0.45 0.40 0.35 0.30 0.25 0.20   
+
+> LPIPS threshold ↓
+> 1.00
+> 1.25
+> 1.50
+> 1.75
+> Speedup over DAPS ( N = 4) (×)
+> equal runtime
+> 1.5×
+> 1.7×
+> 1.6× 1.6×
+> 1.5×
+> 1.4×
+
+(b) Speedup to LPIPS threshold 
+
+Figure 3: Speed-quality tradeoff on FFHQ phase retrieval. (a) LPIPS as a function of wall-clock time per image for DPS, DAPS (N = 1) , DAPS (N = 4) , and A-TGD. (b) Speedup of A-TGD over DAPS (N = 4) to reach fixed LPIPS thresholds. 
+
+Figure 4: Qualitative reconstructions on FFHQ. We show one inpainting example and one phase retrieval example. A-TGD starts with four particles and prunes to one trajectory, while DAPS (N = 4) 
+
+runs four independent trajectories and selects the final reconstruction with lowest measurement error. remains poor even as the number of function evaluations increases, while DAPS generally improves with runtime, especially for the best-of-four setting, but it must pay the cost of all independent trajectories throughout sampling. A-TGD achieves a better speed-quality curve by using multiple trajectories early and then pruning to a single high-likelihood trajectory for the remaining stages. Figure 3(b) summarizes this tradeoff by reporting the speedup of A-TGD over DAPS (N = 4) at fixed LPIPS thresholds. A-TGD reaches the same perceptual-quality thresholds faster across the evaluated range, suggesting that pruning retains much of the benefit of early multi-trajectory exploration while avoiding the cost of propagating all trajectories to completion. Figure 4 shows representative FFHQ reconstructions for inpainting and phase retrieval. The examples are consistent with Table 1: A-TGD preserves perceptual quality while improving observation consistency relative to independent trajectory baselines. In phase retrieval, DPS often fails to recover a plausible image, while DAPS improves substantially and A-TGD further benefits from early multi-trajectory exploration followed by pruning. 96 Discussion and Limitations 
+
+TGD separates clean-space particle inference from the conditional reconstruction module, yielding an idealized SMC construction while allowing practical implementations to reuse existing training-free diffusion solvers. The theoretical guarantee assumes exact stagewise reconstruction and an unpruned particle procedure; image experiments instead use approximate reconstruction modules, learned unconditional scores, and A-TGD pruning to obtain a single reconstruction under a fixed compute budget. The usefulness of particle-based exploration depends on the inverse problem: it is most effective when early trajectories reach different plausible reconstruction basins and the likelihood reliably selects among them. When the image prior and observation effectively determine a single solution, aggressive early resampling or pruning can discard a good trajectory and increase variance, especially in challenging phase retrieval settings. 
+
+## References 
+
+[1] Bilal Ahmed and Joseph G. Makin. Solving diffusion inverse problems with restart posterior sampling, 2025. URL https://arxiv.org/abs/2511.20705 .[2] Brian D.O. Anderson. Reverse-time diffusion equation models. Stochastic Processes and their Applications , 12(3):313–326, 1982. ISSN 0304-4149. doi: https://doi.org/10.1016/ 0304-4149(82)90051-5. URL https://www.sciencedirect.com/science/article/ pii/0304414982900515 .[3] Arpit Bansal, Hong-Min Chu, Avi Schwarzschild, Roni Sengupta, Micah Goldblum, Jonas Geiping, and Tom Goldstein. Universal guidance for diffusion models. In The Twelfth Inter-national Conference on Learning Representations , 2024. URL https://openreview.net/ forum?id=pzpWBbnwiJ .[4] Nicolas Bonneel, Julien Rabin, Gabriel Peyré, and Hanspeter Pfister. Sliced and radon wasserstein barycenters of measures. Journal of Mathematical Imaging and Vision , 51: 22–45, 2015. doi: 10.1007/s10851-014-0506-3. URL https://doi.org/10.1007/ s10851-014-0506-3 .[5] Alberto Cabezas, Louis Sharrock, and Christopher Nemeth. Markovian flow matching: Acceler-ating mcmc with continuous normalizing flows. Advances in Neural Information Processing Systems , 37:104383–104411, 2024. [6] Nicolas Chopin. An introduction to sequential monte carlo. Technical report, University of Bristol, 2004. Technical report. [7] Hyungjin Chung, Byeongsu Sim, Dohoon Ryu, and Jong Chul Ye. Improving diffusion models for inverse problems using manifold constraints. In Alice H. Oh, Alekh Agarwal, Danielle Belgrave, and Kyunghyun Cho, editors, Advances in Neural Information Processing Systems ,2022. URL https://openreview.net/forum?id=nJJjv0JDJju .[8] Hyungjin Chung, Jeongsol Kim, Michael T. Mccann, Marc L. Klasky, and Jong Chul Ye. Diffusion posterior sampling for general noisy inverse problems, 2024. URL https://arxiv. org/abs/2209.14687 .[9] Pierre Del Moral. Feynman-Kac Formulae , pages 47–93. Springer New York, New York, NY, 2004. ISBN 978-1-4684-9393-1. doi: 10.1007/978-1-4684-9393-1_2. URL https: //doi.org/10.1007/978-1-4684-9393-1_2 .[10] Pierre Del Moral, Arnaud Doucet, and Ajay Jasra. Sequential monte carlo samplers. Journal of the Royal Statistical Society: Series B (Statistical Methodology) , 68(3):411–436, 2006. [11] Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. Imagenet: A large-scale hierarchical image database. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , pages 248–255, 2009. [12] Prafulla Dhariwal and Alex Nichol. Diffusion models beat gans on image synthesis, 2021. URL 
+
+https://arxiv.org/abs/2105.05233 .10 [13] Zehao Dou and Yang Song. Diffusion posterior sampling for linear inverse problem solving: A filtering perspective. In The Twelfth International Conference on Learning Representations ,2024. URL https://openreview.net/forum?id=tplXNcHZs1 .[14] Arnaud Doucet, Nando de Freitas, and Neil Gordon. Sequential Monte Carlo Methods in Practice . Statistics for Engineering and Information Science. Springer, New York, 2001. [15] Paul Fearnhead, Christopher Nemeth, Chris J. Oates, and Chris Sherlock. Scalable Monte Carlo for Bayesian Learning . Institute of Mathematical Statistics Monographs. Cambridge University Press, 2025. [16] Rémi Flamary, Nicolas Courty, Alexandre Gramfort, Mokhtar Z. Alaya, Aurélie Boisbunon, Stanislas Chambon, Laetitia Chapel, Adrien Corenflos, Kilian Fatras, Nemo Fournier, Léo Gautheron, Nathalie T.H. Gayraud, Hicham Janati, Alain Rakotomamonjy, Ievgen Redko, Antoine Rolet, Antony Schutz, Vivien Seguy, Danica J. Sutherland, Romain Tavenard, Alexander Tong, and Titouan Vayer. Pot: Python optimal transport. Journal of Machine Learning Research ,22(78):1–8, 2021. URL http://jmlr.org/papers/v22/20-451.html .[17] Rémi Flamary, Cédric Vincent-Cuaz, Nicolas Courty, Alexandre Gramfort, Oleksii Kachaiev, Huy Quang Tran, Laurène David, Clément Bonet, Nathan Cassereau, Théo Gnassounou, Eloi Tanguy, Julie Delon, Antoine Collas, Sonia Mazelet, Laetitia Chapel, Tanguy Kerdoncuff, Xizheng Yu, Matthew Feickert, Paul Krzakala, Tianlin Liu, and Eduardo Fernandes Montesuma. Pot python optimal transport (version 0.9.5), 2024. URL https://github.com/PythonOT/ POT .[18] Zhengqi Gao, Kaiwen Zha, Tianyuan Zhang, Zihui Xue, and Duane S Boning. REG: Rectified gradient guidance for conditional diffusion models. In Forty-second International Conference on Machine Learning , 2025. URL https://openreview.net/forum?id=uNK4ftGdnq .[19] Andrew Gelman, John B Carlin, Hal S Stern, and Donald B Rubin. Bayesian data analysis .Chapman and Hall/CRC, 1995. [20] Yutong He, Naoki Murata, Chieh-Hsin Lai, Yuhta Takida, Toshimitsu Uesaka, Dongjun Kim, Wei-Hsiang Liao, Yuki Mitsufuji, J. Zico Kolter, Ruslan Salakhutdinov, and Stefano Ermon. Manifold preserving guided diffusion, 2023. URL https://arxiv.org/abs/2311.16424 .[21] Jonathan Ho and Tim Salimans. Classifier-free diffusion guidance, 2022. URL https:// arxiv.org/abs/2207.12598 .[22] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models, 2020. URL https://arxiv.org/abs/2006.11239 .[23] Tero Karras, Samuli Laine, and Timo Aila. A style-based generator architecture for generative adversarial networks. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 4401–4410, 2019. [24] Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine. Elucidating the design space of diffusion-based generative models, 2022. URL https://arxiv.org/abs/2206.00364 .[25] Tero Karras, Miika Aittala, Tuomas Kynkäänniemi, Jaakko Lehtinen, Timo Aila, and Samuli Laine. Guiding a diffusion model with a bad version of itself. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. URL https://openreview. net/forum?id=bg6fVPVs3s .[26] Bahjat Kawar, Gregory Vaksman, and Michael Elad. SNIPS: Solving noisy inverse problems stochastically. Advances in Neural Information Processing Systems , 34:21757–21769, 2021. [27] Bahjat Kawar, Michael Elad, Stefano Ermon, and Jiaming Song. Denoising diffusion restoration models. In S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh, editors, 
+
+Advances in Neural Information Processing Systems , volume 35, pages 23593–23606. Curran Associates, Inc., 2022. URL https://proceedings.neurips.cc/paper_files/paper/ 2022/file/95504595b6169131b6ed6cd72eb05616-Paper-Conference.pdf .11 [28] Juan Kuntz, Jen Ning Lim, and Adam M Johansen. Particle algorithms for maximum likelihood training of latent variable models. In International Conference on Artificial Intelligence and Statistics , pages 5134–5180. PMLR, 2023. [29] Andreas Lugmayr, Martin Danelljan, Andres Romero, Fisher Yu, Radu Timofte, and Luc Van Gool. Repaint: Inpainting using denoising diffusion probabilistic models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2022. [30] Morteza Mardani, Jiaming Song, Jan Kautz, and Arash Vahdat. A variational perspective on solving inverse problems with diffusion models. arXiv preprint arXiv:2305.04391 , 2023. [31] Naoki Murata, Koichi Saito, Chieh-Hsin Lai, Yuhta Takida, Toshimitsu Uesaka, Yuki Mitsufuji, and Stefano Ermon. GibbsDDRM: A partially collapsed gibbs sampler for solving blind inverse problems with denoising diffusion restoration. In International Conference on Machine Learning , 2023. [32] Kevin P Murphy. Probabilistic machine learning: an introduction . MIT press, 2022. [33] Christian A. Naesseth, Fredrik Lindsten, and Thomas B. Schön. Elements of sequential monte carlo. Found. Trends Mach. Learn. , 12(3):307–392, November 2019. ISSN 1935-8237. doi: 10.1561/2200000074. URL https://doi.org/10.1561/2200000074 .[34] Radford M Neal. Sampling from multimodal distributions using tempered transitions. Statistics and computing , 6(4):353–366, 1996. [35] Radford M. Neal. Annealed importance sampling, 1998. URL https://arxiv.org/abs/ physics/9803008 .[36] Christopher Nemeth, Fredrik Lindsten, Maurizio Filippone, and James Hensman. Pseudo-extended markov chain monte carlo. Advances in Neural Information Processing Systems , 32, 2019. [37] Alex Nichol and Prafulla Dhariwal. Improved denoising diffusion probabilistic models. In Proceedings of the 38th International Conference on Machine Learning , volume 139 of Proceedings of Machine Learning Research , pages 8162–8171. PMLR, 2021. URL 
+
+https://proceedings.mlr.press/v139/nichol21a.html .[38] Kushagra Pandey, Farrin Marouf Sofian, Felix Draxler, Theofanis Karaletsos, and Stephan Mandt. Variational control for guidance in diffusion models. In Forty-second Interna-tional Conference on Machine Learning , 2025. URL https://openreview.net/forum? id=Z0ffRRtOim .[39] Severi Rissanen, Markus Heinonen, and Arno Solin. Free hunch: Denoiser covariance estimation for diffusion models without extra costs. In The Thirteenth International Conference on Learning Representations , 2025. URL https://openreview.net/forum?id=4JK2XMGUc8 .[40] Steven L Scott, Alexander W Blocker, Fernando V Bonassi, Hugh A Chipman, Edward I George, and Robert E McCulloch. Bayes and big data: The consensus monte carlo algorithm. In Big Data and Information Theory , pages 8–18. Routledge, 2022. [41] Louis Sharrock, Daniel Dodd, and Christopher Nemeth. Tuning-free maximum likelihood training of latent variable models via coin betting. In International Conference on Artificial Intelligence and Statistics , pages 1810–1818. PMLR, 2024. [42] Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli. Deep unsu-pervised learning using nonequilibrium thermodynamics. In Francis Bach and David Blei, editors, Proceedings of the 32nd International Conference on Machine Learning , volume 37 of 
+
+Proceedings of Machine Learning Research , pages 2256–2265, Lille, France, 07–09 Jul 2015. PMLR. URL https://proceedings.mlr.press/v37/sohl-dickstein15.html .[43] Jiaming Song, Chenlin Meng, and Stefano Ermon. Denoising diffusion implicit models. In 
+
+International Conference on Learning Representations , 2021. URL https://openreview. net/forum?id=St1giarCHLP .12 [44] Jiaming Song, Arash Vahdat, Morteza Mardani, and Jan Kautz. Pseudoinverse-guided diffusion models for inverse problems. In International Conference on Learning Representations , 2023. URL https://openreview.net/forum?id=9_gsMA8MRKQ .[45] Yang Song and Stefano Ermon. Generative modeling by estimating gradients of the data distribution. In H. Wallach, H. Larochelle, A. Beygelzimer, F. d'Alché-Buc, E. Fox, and R. Garnett, editors, Advances in Neural Information Processing Systems , volume 32. Curran Associates, Inc., 2019. URL https://proceedings.neurips.cc/paper_files/paper/ 2019/file/3001ef257407d5a371a96dcd947c7d93-Paper.pdf .[46] Yang Song and Stefano Ermon. Improved techniques for training score-based generative models. In H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin, editors, Advances in Neural Information Processing Systems , volume 33, pages 12438–12448. Curran Associates, Inc., 2020. URL https://proceedings.neurips.cc/paper_files/paper/2020/file/ 92c3b916311a5517d9290576e3ea37ad-Paper.pdf .[47] Yang Song, Jascha Sohl-Dickstein, Diederik P. Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole. Score-based generative modeling through stochastic differential equations, 2021. URL https://arxiv.org/abs/2011.13456 .[48] Yang Song, Liyue Shen, Lei Xing, and Stefano Ermon. Solving inverse problems in medi-cal imaging with score-based generative models. In International Conference on Learning Representations , 2022. URL https://openreview.net/forum?id=vaRCHVj0uGI .[49] Brian L. Trippe, Jason Yim, Doug Tischer, David Baker, Tamara Broderick, Regina Barzilay, and Tommi S. Jaakkola. Diffusion probabilistic modeling of protein backbones in 3d for the motif-scaffolding problem. In The Eleventh International Conference on Learning Representations ,2023. URL https://openreview.net/forum?id=6TxBxqNME1Y .[50] Callum Vyner, Christopher Nemeth, and Chris Sherlock. Swiss: A scalable markov chain monte carlo divide-and-conquer strategy. Stat , 12(1):e523, 2023. [51] Yinhuai Wang, Jiwen Yu, and Jian Zhang. Zero-shot image restoration using denoising diffusion null-space model. In The Eleventh International Conference on Learning Representations , 2023. URL https://openreview.net/forum?id=mRieQgMtNTQ .[52] Luhuan Wu, Brian L. Trippe, Christian A. Naesseth, David M. Blei, and John P. Cunningham. Practical and asymptotically exact conditional sampling in diffusion models, 2024. URL 
+
+https://arxiv.org/abs/2306.17775 .[53] Haotian Ye, Haowei Lin, Jiaqi Han, Minkai Xu, Sheng Liu, Yitao Liang, Jianzhu Ma, James Zou, and Stefano Ermon. Tfg: Unified training-free guidance for dif-fusion models. In A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang, editors, Advances in Neural Information Processing Sys-tems , volume 37, pages 22370–22417. Curran Associates, Inc., 2024. doi: 10.52202/ 079017-0704. URL https://proceedings.neurips.cc/paper_files/paper/2024/ file/2818054fc6de6dacdda0f142a3475933-Paper-Conference.pdf .[54] Jiwen Yu, Yinhuai Wang, Chen Zhao, Bernard Ghanem, and Jian Zhang. Freedom: Training-free energy-guided conditional diffusion model. Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , 2023. [55] Bingliang Zhang, Wenda Chu, Julius Berner, Chenlin Meng, Anima Anandkumar, and Yang Song. Improving diffusion inverse problem solving with decoupled noise anneal-ing. In 2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,page 20895–20905. IEEE, June 2025. doi: 10.1109/cvpr52734.2025.01946. URL http: //dx.doi.org/10.1109/CVPR52734.2025.01946 .[56] Richard Zhang, Phillip Isola, Alexei A. Efros, Eli Shechtman, and Oliver Wang. The unrea-sonable effectiveness of deep features as a perceptual metric. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , pages 586–595, 2018. [57] Yuanzhi Zhu, Kai Zhang, Jingyun Liang, Jiezhang Cao, Bihan Wen, Radu Timofte, and Luc Van Gool. Denoising diffusion models for plug-and-play image restoration. In IEEE Conference on Computer Vision and Pattern Recognition Workshops (NTIRE) , 2023. 13 A Lifted SMC Construction and Incremental Weights 
+
+We derive the incremental weight update used in the stagewise TGD construction. Throughout this appendix, densities are understood up to normalizing constants that do not depend on the particle index, since SMC weights are normalized after each outer stage. For compactness, write 
+
+ℓ(x0) := p(y | x0).
+
+Recall that the clean-space annealed target at outer stage r is 
+
+πr (x0) ∝ p(x0)ℓ(x0)λr , 0 ≤ λR ≤ · · · ≤ λ0 = 1 . (8) To connect this target to the diffusion prior, TGD introduces an auxiliary noisy state zr at noise level 
+
+sr . Define the unnormalized lifted density 
+
+γr (x0, zr ) := p(x0)ℓ(x0)λr psr (zr | x0). (9) Its clean marginal is proportional to πr , since R psr (zr | x0) dzr = 1 . Its noisy marginal is 
+
+ηr (zr ) := 
+
+Z
+
+γr (x0, zr ) dx0. (10) The ideal TGD reconstruction kernel at stage r is the conditional distribution induced by γr :
+
+Kr (dx0 | zr ) := pλr ,s r (x0 | zr , y) dx0 = γr (x0, zr )
+
+ηr (zr ) dx0. (11) Equivalently, 
+
+pλr ,s r (x0 | zr , y) ∝ psr (x0 | zr )ℓ(x0)λr ∝ p(x0)psr (zr | x0)ℓ(x0)λr . (12) Suppose a particle zr targets the noisy marginal ηr . One ideal TGD transition first samples 
+
+x0 ∼ Kr (· | zr ),
+
+and then re-noises the retained clean sample to the next noise level: 
+
+zr−1 ∼ psr−1 (· | x0).
+
+Thus the proposal kernel from zr to (x0, zr−1) is 
+
+Qr (dx0, d zr−1 | zr ) = Kr (dx0 | zr ) psr−1 (dzr−1 | x0). (13) To derive the incremental weight, define the following unnormalized extended target: 
+
+Γr−1(zr , x0, zr−1) := p(x0)ℓ(x0)λr−1 psr (zr | x0)psr−1 (zr−1 | x0). (14) This is a valid extension of the next-stage lifted target because marginalizing out zr gives 
+
+Z
+
+Γr−1(zr , x0, zr−1) dzr = p(x0)ℓ(x0)λr−1 psr−1 (zr−1 | x0)
+
+Z
+
+psr (zr | x0) dzr
+
+= p(x0)ℓ(x0)λr−1 psr−1 (zr−1 | x0) = γr−1(x0, zr−1). (15) The standard SMC incremental weight associated with the proposal ηr (zr )Qr (dx0, d zr−1 | zr ) and the extended target Γr−1 is 
+
+Gr (zr , x0, zr−1) = Γr−1(zr , x0, zr−1)
+
+ηr (zr )Qr (x0, zr−1 | zr ) , (16) up to a stage-dependent normalizing constant. Using (11) and (13), the denominator becomes 
+
+ηr (zr )Qr (x0, zr−1 | zr ) = ηr (zr ) γr (x0, zr )
+
+ηr (zr ) psr−1 (zr−1 | x0)= γr (x0, zr )psr−1 (zr−1 | x0)= p(x0)ℓ(x0)λr psr (zr | x0)psr−1 (zr−1 | x0). (17) 14 Comparing (17) with the extended target (14) , all terms cancel except the change in likelihood tempering: 
+
+Gr (zr , x0, zr−1) ∝ ℓ(x0)λr−1−λr = p(y | x0)λr−1−λr . (18) Therefore, for particle i,
+
+ew(i) 
+
+> r−1
+
+= w(i) 
+
+> r
+
+p(y | x(i)0 )λr−1−λr . (19) The incremental weight does not depend on the proposed auxiliary state zr−1. Consequently, the weighting and resampling step can be performed immediately after reconstruction, before re-noising to the next level. This gives exactly the stagewise update used by TGD in Section 3.2. 
+
+## B Consistency of Ideal TGD 
+
+We state and prove the asymptotic consistency result for ideal TGD: the version of TGD in which each stagewise reconstruction step samples exactly from the tempered conditional law introduced in Section 3.2. This result applies to the full particle procedure with exact reconstruction kernels. It does not apply to approximate reconstruction modules or to the pruning step used by A-TGD. Throughout this appendix, all densities are taken with respect to fixed dominating measures, and we use the same notation for a density and its associated measure when the meaning is clear. For compactness, write 
+
+ℓ(x0) := p(y | x0).
+
+For r = 0 , . . . , R , define the unnormalized clean-space density 
+
+γr (x0) := p(x0)ℓ(x0)λr , Zr := 
+
+Z
+
+γr (u) du. (20) The corresponding normalized clean-space target is 
+
+πr (dx0) := γr (x0)
+
+Zr
+
+dx0. (21) Since λ0 = 1 , π0 is the posterior p(x0 | y).At outer stage r, TGD uses an auxiliary noisy state zr at noise level sr . The corresponding noisy auxiliary marginal is 
+
+ηr (zr ) := 
+
+Z γr (x0)
+
+Zr
+
+psr (zr | x0) dx0, ηr (dzr ) := ηr (zr ) dzr . (22) 
+
+Theorem B.1 (Consistency of ideal TGD) . Assume the following conditions. 1. Well-defined targets. For every r = 0 , . . . , R , 0 < Z r < ∞, and the tempering schedule satisfies 
+
+0 ≤ λR ≤ λR−1 ≤ · · · ≤ λ0 = 1 .
+
+2. Initialization. λR = 0 , and the initial particles are sampled i.i.d. from the noisy prior: 
+
+z(i) 
+
+> R
+
+∼ psR (zR), w(i) 
+
+> R
+
+= 1 /N. 
+
+Equivalently, the initial weighted empirical measure is consistent for ηR.3. Exact reconstruction. For each r = 0 , . . . , R , the stagewise reconstruction kernel used by ideal TGD is the exact conditional law 
+
+Kr (dx0 | zr ) := pλr ,s r (x0 | zr , y) dx0 = πr (x0)psr (zr | x0)
+
+ηr (zr ) dx0. (23) 
+
+Equivalently, 
+
+pλr ,s r (x0 | zr , y) ∝ psr (x0 | zr )ℓ(x0)λr . (24) 
+
+4. Bounded incremental potentials. For each r = R, . . . , 1, the incremental potential 
+
+Gr (x0) := ℓ(x0)λr−1−λr = p(y | x0)λr−1−λr (25) 
+
+is measurable and bounded, with πr (Gr ) > 0.
+
+15 5. Consistent resampling. At each outer stage, either resampling is omitted or the resampling scheme preserves consistency of weighted empirical measures: whenever the weighted particle system is consistent for a target distribution, the equally weighted resampled particles are also consistent for the same target. Standard SMC schemes [ 6, 33 ] such as multinomial, stratified, residual, and systematic resampling satisfy this condition. Then, for every bounded measurable test function h, the final weighted empirical measure produced by ideal TGD satisfies 
+
+> N
+
+X
+
+> i=1
+
+w(i)0 h(x(i)0 ) P
+
+−→
+
+Z
+
+h(x0) π0(dx0) = Ep(x0|y)[h(x0)] . (26) 
+
+In particular, the final weighted empirical measure produced by ideal TGD converges weakly in probability to the posterior p(x0 | y) as N → ∞ .Proof. We prove the result by identifying ideal TGD as a standard SMC approximation of an exact sequence of measure transformations. 
+
+Step 1: One ideal TGD stage has the correct population flow. Fix r ∈ { R, . . . , 1}. By the definition of the exact reconstruction kernel, 
+
+Kr (dx0 | zr ) = πr (x0)psr (zr | x0)
+
+ηr (zr ) dx0. (27) Integrating this kernel against ηr gives 
+
+ηr Kr (dx0) := 
+
+Z
+
+ηr (dzr )Kr (dx0 | zr )=
+
+Z
+
+ηr (zr ) dzr
+
+πr (x0)psr (zr | x0)
+
+ηr (zr ) dx0
+
+= πr (x0)
+
+Z 
+
+psr (zr | x0) dzr
+
+
+
+dx0 = πr (dx0). (28) Thus exact reconstruction maps the noisy marginal ηr to the clean target πr .Next define the Boltzmann–Gibbs reweighting operator 
+
+ΨGr (μ)( dx0) := Gr (x0)μ(dx0)
+
+μ(Gr ) . (29) Applying this operator to πr gives 
+
+ΨGr (πr )( dx0) ∝ p(y | x0)λr−1−λr p(x0)p(y | x0)λr dx0
+
+= p(x0)p(y | x0)λr−1 dx0 ∝ πr−1(dx0). (30) Therefore, 
+
+ΨGr (πr ) = πr−1. (31) Finally, let 
+
+Pr−1(dzr−1 | x0) := psr−1 (dzr−1 | x0) (32) be the forward noising kernel to the next auxiliary noise level. By the definition of ηr−1,
+
+πr−1Pr−1 = ηr−1. (33) Combining (28), (31), and (33), one ideal TGD stage implements the exact population flow 
+
+ηrKr
+
+−−→ πr
+
+> ΨGr
+
+−−−→ πr−1
+
+> Pr−1
+
+−−−→ ηr−1. (34) At the terminal stage, there is no additional reweighting or propagation; exact reconstruction gives 
+
+η0
+
+> K0
+
+−−→ π0. (35) 16 Step 2: The particle update consistently approximates this flow. Assume that the weighted empirical measure 
+
+bηNr := 
+
+> N
+
+X
+
+> i=1
+
+w(i) 
+
+> r
+
+δz(i)
+
+> r
+
+(36) is consistent for ηr , meaning that for every bounded measurable φ,
+
+bηNr (φ) P
+
+−→ ηr (φ).
+
+The ideal TGD update first samples 
+
+x(i)0 ∼ Kr (· | z(i) 
+
+> r
+
+).
+
+By standard consistency results for sequential Monte Carlo samplers [ 9 , 14 , 33 ], mutation by a Markov kernel preserves consistency. Hence the resulting weighted empirical measure over clean particles is consistent for 
+
+ηr Kr = πr .
+
+TGD then applies the incremental potential 
+
+Gr (x0) = p(y | x0)λr−1−λr ,
+
+using the weight update 
+
+ew(i) 
+
+> r−1
+
+∝ w(i) 
+
+> r
+
+Gr (x(i)0 ) = w(i) 
+
+> r
+
+p(y | x(i)0 )λr−1−λr . (37) This is the same incremental weight derived in Appendix A. Since Gr is bounded and πr (Gr ) > 0,standard SMC consistency results imply that weighting preserves consistency, and the weighted clean empirical measure is consistent for 
+
+ΨGr (πr ) = πr−1.
+
+If resampling is performed, the assumed consistency of the resampling scheme preserves this limit. If resampling is omitted, the weighted particle system is left unchanged and consistency is immediate. Finally, TGD samples 
+
+z(i) 
+
+> r−1
+
+∼ Pr−1(· | x(i)0 ).
+
+A second application of mutation consistency gives a weighted empirical measure over noisy auxiliary particles that is consistent for 
+
+πr−1Pr−1 = ηr−1.
+
+Thus, consistency for ηr implies consistency for ηr−1.At the terminal stage r = 0 , if 
+
+bηN 
+
+> 0
+
+=
+
+> N
+
+X
+
+> i=1
+
+w(i)0 δz(i)0
+
+is consistent for η0, then sampling 
+
+x(i)0 ∼ K0(· | z(i)0 )
+
+produces a weighted clean empirical measure consistent for 
+
+η0K0 = π0.
+
+Step 3: Induction over outer stages. Because λR = 0 , the initial clean target is the prior: 
+
+πR(dx0) = p(x0)dx0.
+
+Therefore the corresponding noisy marginal is 
+
+ηR(dzR) = 
+
+Z
+
+p(x0)psR (dzR | x0) dx0 = psR (dzR),
+
+which is exactly the noisy prior used to initialize TGD. Hence the initial empirical measure is consistent for ηR.17 Applying Step 2 for 
+
+r = R, R − 1, . . . , 1
+
+shows by induction that the particle system is consistent for η0. Applying the terminal reconstruction kernel K0 then yields a weighted empirical measure over clean particles that is consistent for 
+
+π0(dx0) = p(x0 | y)dx0.
+
+Consequently, for every bounded measurable h,
+
+> N
+
+X
+
+> i=1
+
+w(i)0 h(x(i)0 ) P
+
+−→ π0(h) = Ep(x0|y)[h(x0)] .
+
+This proves the claim. 
+
+## C Hybrid Conditional Reconstruction and Clean-Space Correction 
+
+Section 3.3 described two practical families of reconstruction modules for approximating the ideal stagewise law 
+
+pλr ,s r (x0 | zr , y) ∝ psr (x0 | zr ) p(y | x0)λr , (38) where zr is the auxiliary state at noise level sr . Conditional reverse-dynamics modules, such as DPS or MPGD solvers, attempt to impose the observation during the reconstruction dynamics. Clean-space correction modules, such as DAPS solvers, first reconstruct using the unconditional diffusion prior and then correct the clean sample using the observation. We show that these two strategies can be viewed as endpoints of a common hybrid construction. For compactness, write 
+
+ℓ(x0) := p(y | x0).
+
+For any intermediate conditioning level ν ∈ [0 , λ r ], define the weaker stagewise conditional law 
+
+pν,s r (x0 | zr , y) ∝ psr (x0 | zr ) ℓ(x0)ν . (39) Then the full stagewise law admits the factorization 
+
+pλr ,s r (x0 | zr , y) ∝ psr (x0 | zr ) ℓ(x0)λr
+
+= psr (x0 | zr ) ℓ(x0)ν ℓ(x0)λr −ν
+
+∝ pν,s r (x0 | zr , y) ℓ(x0)λr −ν . (40) Thus, one may first approximately sample from a weaker conditional law and then apply a clean-space correction that accounts for the remaining likelihood exponent. This suggests the following hybrid reconstruction module at outer stage r.
+
+Conditional reverse-dynamics warm start. Choose an intermediate conditioning level ν ∈ [0 , λ r ].Starting from the auxiliary noisy state zr , run a conditional reverse-dynamics reconstruction module whose target is the weaker law 
+
+pν,s r (x0 | zr , y) ∝ psr (x0 | zr ) ℓ(x0)ν .
+
+Let the resulting clean candidate be denoted by ex0. In practice, this step is approximate, because conditional reverse dynamics use tractable approximations to the intractable conditional score. 
+
+Clean-space correction. Starting from ex0, apply a clean-space Markov kernel Mr,ν whose invariant distribution is the full stagewise law 
+
+pλr ,s r (x0 | zr , y).
+
+Examples include Metropolis–Hastings, Langevin, proximal, or other observation-correction kernels, depending on the likelihood model. By the factorization in (40) , this correction can be interpreted as accounting for the residual likelihood factor 
+
+ℓ(x0)λr −ν .
+
+18 Figure 5: Settings under which existing training-free conditional samplers are recovered as special cases of TGD. Single-stage TGD recovers the chosen conditional reconstruction module, while fully conditioned multi-stage TGD with constant tempering recovers DAPS-style repeated reconstruction and correction. More precisely, the full target is still pλr ,s r (x0 | zr , y); the residual factor describes how this target differs from the weaker law pν,s r (x0 | zr , y). In the special case where exact samples from pν,s r
+
+are used as an independence proposal, the Metropolis–Hastings acceptance ratio depends only on the residual likelihood factor. For generic local correction kernels, the transition must target the full stagewise density. The endpoints of this construction recover the two reconstruction families used in the main text. If 
+
+ν = 0 , then 
+
+p0,s r (x0 | zr , y) = psr (x0 | zr ),
+
+so the first step is unconditional reconstruction followed by clean-space observation correction, corresponding to a DAPS-style module. If ν = λr , the residual factor is constant, and the clean-space correction step is unnecessary when the conditional reverse-dynamics reconstruction is exact. This recovers a fully conditional reverse-dynamics module. Intermediate values 0 < ν < λ r yield hybrid modules in which conditional reverse dynamics absorb part of the observation likelihood and the clean-space correction accounts for the remaining conditioning. This hybrid construction is useful conceptually because it shows that conditional reverse dynamics and clean-space correction are compatible within the same TGD reconstruction interface. It also separates two sources of approximation: the accuracy of the weak conditional reconstruction and the mixing or accuracy of the clean-space correction kernel. In our preliminary experiments, however, hybrid choices with 0 < ν < λ r did not yield consistent improvements over the simpler endpoint modules used in the main experiments. We therefore report the endpoint variants in the main paper and include the hybrid construction here for completeness. 
+
+## D Recovering Existing Training-Free Conditional Samplers 
+
+We describe how several existing training-free conditional diffusion samplers are recovered as special cases of TGD. In the notation of Sections 3.1–3.3, TGD is specified by an outer noise schedule {sr }Rr=0 , a tempering schedule {λr }Rr=0 , a number of outer particles N , and a stagewise reconstruction module approximating 
+
+pλr ,s r (x0 | zr , y) ∝ psr (x0 | zr ) p(y | x0)λr . (41) The corresponding clean-space annealed targets are 
+
+πr (x0) ∝ p(x0) p(y | x0)λr , 0 ≤ λR ≤ · · · ≤ λ0 = 1 , (42) 19 and the outer incremental weight update is 
+
+ew(i) 
+
+> r−1
+
+= w(i) 
+
+> r
+
+p(y | x(i)0 )λr−1−λr , r = R, . . . , 1. (43) Here R denotes the number of outer transitions, while r = 0 denotes the terminal fully conditioned reconstruction stage. 
+
+Single-stage conditional samplers. When R = 0 , TGD has no outer reweighting, resampling, or propagation stages. The tempering schedule consists only of the terminal level λ0 = 1 , and the algorithm initializes 
+
+z0 ∼ ps0 .
+
+With the standard choice s0 = S, this gives a single fully conditioned reconstruction from the highest-noise prior state: 
+
+x0 ∼ pλ0,s 0 (x0 | z0, y) = p1,S (x0 | z0, y). (44) Therefore, TGD with R = 0 exactly recovers any chosen single-call training-free conditional sampler when that sampler is used as the reconstruction module. Choosing a DPS-style reconstruction module recovers DPS; choosing an MPGD-style reconstruction module recovers MPGD; choosing a TDS reconstruction module recovers TDS. In the TDS case, the particles and weights internal to TDS are part of the reconstruction module itself and are distinct from the outer TGD particle system. 
+
+DAPS-style multi-stage reconstruction. DAPS-style methods use repeated reconstruction and observation correction across a decreasing sequence of noise levels. This behavior is recovered by choosing a multi-stage noise schedule 
+
+S = sR ≥ sR−1 ≥ · · · ≥ s0 > 0, R ≥ 1, (45) and setting the tempering schedule to be fully conditioned at every stage: 
+
+λr ≡ 1, r = 0 , . . . , R. (46) Then, for every nonterminal stage r = R, . . . , 1,
+
+λr−1 − λr = 0 ,
+
+so the incremental potential in (43) is constant. Consequently, the outer weighting step is vacuous. If resampling is omitted, and the reconstruction module at each stage is chosen to be the DAPS-style module consisting of unconditional reconstruction followed by clean-space observation correction, then TGD exactly recovers DAPS along the same noise schedule {sr }Rr=0 .For N = 1 , this gives a single DAPS trajectory. For N > 1, omitting resampling gives independent multi-trajectory DAPS sampling. This corresponds to best-of-N baselines, which run several indepen-dent trajectories and select the final reconstruction using a data-consistency score. In contrast, TGD with a nonconstant tempering schedule introduces nontrivial likelihood-ratio weights and optional resampling, allowing outer particles to interact before the terminal reconstruction. These reductions clarify the role of TGD. When the outer structure collapses to a single stage, TGD reduces to the chosen conditional reconstruction solver. When the tempering schedule is constant and fully conditioned, the likelihood-ratio weights are constant and the method reduces to repeated reconstruction and correction without outer particle interaction. The distinctive TGD regime is the annealed multi-stage setting: outer particles are reconstructed under progressively stronger conditioning, reweighted by likelihood-ratio increments, optionally resampled, and propagated across noise levels. This is the regime that allows computation to concentrate on trajectories that remain plausible under both the diffusion prior and the observation. 
+
+## E Accelerated TGD pseudocode 
+
+For completeness, Algorithm 2 gives the A-TGD procedure used in our experiments. 
+
+## F Experimental and Implementation Details 
+
+F.1 Controlled two-dimensional experiment 
+
+We use a controlled two-dimensional inverse problem in which the prior, score, likelihood, and posterior reference sampler are all available analytically. This lets us evaluate the outer particle procedure without learned-score error. 20 Algorithm 2 Accelerated Tempered Guided Diffusion (A-TGD) 
+
+Require: observation y, number of particles N , tempering schedule {λr }Rr=0 , noise schedule 
+
+{sr }Rr=0 , conditional reconstruction law pλr ,s r (x0 | zr , y), pruning factor ρ ∈ [0 , 1]  
+
+> 1:
+
+Kρ ← min {R, max {1, ⌈ρR ⌉}}  
+
+> 2:
+
+Sample z(i) 
+
+> R
+
+∼ psR (zR) and set w(i) 
+
+> R
+
+← 1/N , for i = 1 , . . . , N  
+
+> 3:
+
+for r = R, R − 1, . . . , R − Kρ + 1 do  
+
+> 4:
+
+for i = 1 , . . . , N do  
+
+> 5:
+
+Sample x(i)0 ∼ pλr ,s r (x0 | z(i) 
+
+> r
+
+, y) 
+
+> 6:
+
+˜w(i) 
+
+> r−1
+
+← w(i) 
+
+> r
+
+p(y | x(i)0 )λr−1−λr 
+
+> 7:
+
+end for  
+
+> 8:
+
+Normalize { ˜w(i)
+
+> r−1
+
+}Ni=1 to obtain {w(i)
+
+> r−1
+
+}Ni=1  
+
+> 9:
+
+Optionally resample according to {w(i)
+
+> r−1
+
+}Ni=1 and reset weights to 1/N  
+
+> 10:
+
+for i = 1 , . . . , N do  
+
+> 11:
+
+Sample z(i) 
+
+> r−1
+
+∼ psr−1 (zr−1 | x(i)0 ) 
+
+> 12:
+
+end for  
+
+> 13:
+
+end for 
+
+// Prune current particle population  
+
+> 14:
+
+for i = 1 , . . . , N do  
+
+> 15:
+
+Sample ¯x(i)0 ∼ pλR−Kρ ,s R−Kρ (x0 | z(i) 
+
+> R−Kρ
+
+, y) 
+
+> 16:
+
+end for  
+
+> 17:
+
+i⋆ ← arg max i p(y | ¯x(i)0 ) 
+
+> 18:
+
+Set zR−Kρ ← z(i⋆) 
+
+> R−Kρ
+> 19:
+
+for r = R − Kρ, R − Kρ − 1, . . . , 1 do  
+
+> 20:
+
+Sample x0 ∼ pλr ,s r (x0 | zr , y) 
+
+> 21:
+
+Sample zr−1 ∼ psr−1 (zr−1 | x0) 
+
+> 22:
+
+end for  
+
+> 23:
+
+Sample x0 ∼ pλ0,s 0 (x0 | z0, y) 
+
+> 24:
+
+return x0
+
+Prior and analytic score. The clean prior is an equally weighted mixture of 5 Gaussians in R2. The component means are sampled uniformly from [−0.9, 0.9] 2, corresponding to a margin parameter 
+
+0.10 , and each component has covariance τ 2I with τ = 0 .005 . We use an analytic diffusion model: under additive Gaussian noising at noise level s, the noised marginal remains a Gaussian mixture with component covariances τ 2I + s2I, and the score is computed exactly from this noised mixture distribution. 
+
+Observation model and posterior reference samples. For each of 10 test conditions, we sample a clean point x0 from the mixture prior and generate an elementwise absolute-value observation 
+
+y = |x0| + ϵ, ϵ ∼ N (0 , 0.01 2I).
+
+The same observations are used for all methods. For each observation, we generate 10 ,000 reference posterior samples from the exact conditional distribution p(x0 | y). This sampler exploits the diagonal Gaussian-mixture prior and the separable absolute-value likelihood: it first samples the mixture component conditional on y, then samples each coordinate from the corresponding one-dimensional conditional distribution, which is a mixture over the two possible signs. 
+
+Samplers. All methods use the same analytic prior score and the same DPS-style conditional drift inside their reconstruction solver. The proposal likelihood used for DPS-style guidance has standard deviation 
+
+σprop (s) = 0 .8s + 0 .01 ,
+
+while TGD particle weights use the true measurement likelihood with noise standard deviation 0.01 .TGD uses a 20 -point EDM outer noise grid with highest noise sR = 80 , lowest positive noise 
+
+s0 = 0 .002 , and EDM curvature parameter 7. Its likelihood tempering schedule is uniform from 
+
+λR = 0 to λ0 = 1 . Each outer stage uses a one-step Euler-discretized DPS-style ODE reconstruction 21 proposal, followed by likelihood weighting, systematic resampling after nontrivial weighting steps, and EDM re-noising. We compare against two baselines implemented in the same sampler framework. DPS uses a single outer stage and a 20 -step Euler ODE DPS-style reconstruction trajectory, with no outer particle interaction. DPS-DAPS uses the same 20 -point outer EDM noise grid as TGD but sets λr = 1 
+
+at every stage. Since the tempering exponent is constant, the incremental likelihood weights are constant, so no resampling is triggered. This baseline corresponds to repeated DPS/DAPS-style reconstruction without annealed SMC weighting or particle interaction. 
+
+Particle sweep and metrics. We sweep the logical particle count 
+
+N ∈ { 1, 2, 4, 8, 16 , 32 , 64 , 128 }.
+
+For each method and particle count, we run the corresponding N -particle sampler repeatedly and pool 
+
+10 ,000 generated samples per observation before computing distributional metrics. For computational efficiency, the N = 1 pooled-sample setting is generated in larger independent batches, but it is evaluated as the logical single-particle setting. We report the max-sliced Wasserstein distance, labeled as SWD in Figure 2, between generated samples and exact posterior reference samples. The metric is computed with the POT implementa-tion [ 16 , 17 ] per observation using 100 random projections, and then summarized over the 10 test conditions. Figure 2 reports means over the 10 test conditions, with bands corresponding to one standard error. 
+
+Visualization. For Figure 2(a), we visualize one representative test condition. Prior contours are estimated from 20 ,000 prior samples, and posterior contours are estimated from exact posterior reference samples for the same observation. We overlay the final N = 64 TGD particles, the ground-truth clean point, and the sign-ambiguous candidate locations induced by the absolute-value observation. 
+
+Compute. The controlled two-dimensional experiments were run on CPU and completed in a few minutes. 
+
+F.2 Noise and ODE discretization 
+
+We use the EDM noise discretization [ 24 ], following DAPS [ 55 ]. Our implementation uses two discretizations. The first is the outer TGD discretization, which defines the noise levels sR, . . . , s 0 at which particles are reconstructed, likelihood-reweighted, optionally resampled, and re-noised. For all image experiments, we use the same outer EDM discretization as DAPS, with maximum noise 
+
+sR = 100 , minimum positive noise s0 = 0 .1, and curvature parameter 7.The second is the inner ODE discretization used inside each reconstruction module. We denote the inner ODE variable by τ to distinguish it from the outer TGD levels sr . All image experiments use four Euler ODE steps per reconstruction module, with minimum positive inner noise τmin = 0 .01 
+
+and curvature parameter 7.
+
+F.3 Inverse problem setup 
+
+We use the same inverse-problem definitions and preprocessing as DAPS [ 55 ], which follows the DPS benchmark setup [ 8]. In all image experiments, the observation noise standard deviation is σ = 0 .05 .For inpainting, the forward operator A applies the prescribed pixel mask to the clean image, and the observation is generated as 
+
+y = A(x0) + ϵ, ϵ ∼ N (0, σ 2I).
+
+We use the same mask-generation protocol as DAPS and fix the mask realization across methods for fair comparison. For phase retrieval, we use the normalized observation model from DAPS: 
+
+y ∼ N  |F P (0 .5x0 + 0 .5) | , σ 2I ,
+
+22 where F is the discrete Fourier transform and P is the oversampling operator. Following DAPS, we use oversampling factor k = 2 and n = 8 . The affine transformation 0.5x0 + 0 .5 maps images from 
+
+[−1, 1] to [0 , 1] before applying the phase-retrieval operator. 
+
+F.4 Pretrained diffusion models 
+
+We use the same pretrained diffusion models as DAPS [ 55 ]. For FFHQ, we use the 256 × 256 model used in DPS [ 8 ]. For ImageNet, we use the 256 × 256 model from [ 12 ]. All image inverse-problem generation and evaluation protocols follow DAPS [ 55 ], except that DAPS reports oracle best-of-N
+
+scores using the trajectory with the best LPIPS, PSNR, or SSIM against the ground truth, whereas we select the trajectory with the lowest measurement error. Since the ground-truth image is unavailable in practical inverse problems, oracle LPIPS/PSNR/SSIM selection is not possible at test time, while measurement-error selection depends only on the observation. 
+
+F.5 Existing assets and licenses 
+
+We use existing datasets, pretrained models, baseline implementations, and evaluation libraries only for research evaluation. FFHQ [ 23 ] is used under the Creative Commons BY-NC-SA 4.0 license. ImageNet [ 11 ] is used under the ImageNet terms of access for non-commercial research and educational use. We do not redistribute FFHQ, ImageNet, or pretrained diffusion checkpoints in the supplemental material; the reproduction instructions direct users to obtain these assets from their original sources and follow the corresponding terms of use. Our implementation also depends on standard open-source scientific-computing and evaluation packages, including PyTorch, LPIPS [ 56 ], and POT [ 16 , 17 ]. The supplemental code includes only materials that we are permitted to redistribute, and all third-party assets are credited through the corresponding citations and original access instructions. 
+
+F.6 Reconstruction modules 
+
+We instantiate TGD with DPS-, MPGD-, and DAPS-style reconstruction modules. Each module maps a noisy auxiliary state xs at noise level s to an approximate clean reconstruction, which is then passed to the outer TGD likelihood-weighting, resampling, pruning, and re-noising steps. For the DPS- and MPGD-style modules, we use the conditional-score decomposition in (5) and approximate the intractable conditional term using the denoised estimate ˆx0(xs, s ).For DPS, we use the standard plug-in approximation 
+
+∇xs log ps(y | xs) ≈ ∇ xs log ˆ ps(y | ˆx0(xs, s )) .
+
+For MPGD, we instead use a clean-space guidance term 
+
+∇xs log ps(y | xs) ≈ ∇ x0 log ˆ ps(y | ˆx0(xs, s )) ,
+
+which is inserted into the MPGD reconstruction update. In both cases, the approximate proposal likelihood used inside the reconstruction module is 
+
+ˆps(y | x) = N  y; A(x), (γs + σ)2I ,
+
+where A is the task forward operator, σ is the observation noise, and γ is a proposal-smoothing parameter that inflates the likelihood variance at high diffusion noise levels. This smoothed likelihood is used inside the reconstruction proposal. The outer TGD particle weights use the true measurement likelihood p(y | x0). For pruning, we select the particle with smallest measurement-space error, 
+
+i⋆ = arg min  
+
+> i
+
+∥A ( ˆ x(i)0 ) − y∥22,
+
+which is equivalent to maximum likelihood selection under a Gaussian observation model with fixed variance. We use σ = 0 .05 in all image experiments, with γ = 0 .7 for inpainting and γ = 0 .4 for phase retrieval. For DAPS-style reconstruction, we follow the DAPS implementation [ 55 ]. In particular, DAPS uses 100 Langevin correction steps with a linearly decayed step size and the correction-noise setting reported in that work. This DAPS-style module is used for the phase retrieval A-TGD experiments and for the DAPS baselines. 23 0 50 100 150 200 250 
+
+Outer stage j = R − r (early to late)         
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Likelihood exponent  λr
+> sr = 100
+> Uniform
+> Noise-dependent, α= 0.5
+> Noise-dependent, α= 1.0
+> Noise-dependent, α= 2.0
+> Noise-dependent, α= 4.0
+
+Figure 6: Likelihood-tempering schedules for the EDM discretization with 256 steps. The uniform schedule increases the exponent linearly across outer stages, while the noise-dependent schedules tie the exponent to the EDM noise level sr .
+
+F.7 Annealing schedules 
+
+TGD uses a sequence of likelihood-tempering exponents 
+
+λR, λ R−1, . . . , λ 0
+
+to move from weakly conditioned targets to the final posterior. Stage r = R is the earliest, highest-noise stage, while stage r = 0 is the final, lowest-noise stage. We require 
+
+0 ≤ λR ≤ λR−1 ≤ · · · ≤ λ0 = 1 ,
+
+so the final target corresponds to the full posterior. 
+
+Uniform schedule. The uniform schedule increases the likelihood exponent linearly across outer stages: 
+
+λr = λR + R − rR (1 − λR) , r = 0 , . . . , R. 
+
+Thus the initial stage uses exponent λR, while the final stage uses λ0 = 1 . Setting λR = 1 gives the no-annealing variant, in which the full likelihood is applied at every stage. 
+
+Noise-dependent schedule. We also consider a schedule that ties the likelihood exponent directly to the diffusion noise level. Let sr denote the noise level at stage r, ordered as 
+
+sR ≥ sR−1 ≥ · · · ≥ s0.
+
+For a curvature parameter α > 0, we define the normalized noise progress 
+
+ur =
+
+ sR − sr
+
+sR − 0
+
+α
+
+,
+
+and set the likelihood exponent to 
+
+λr = λR + (1 − λR)
+
+ sR − sr
+
+sR − 0
+
+α
+
+.
+
+This gives uR = 0 and u0 = 1 , so the schedule starts from the initial likelihood exponent λR at the highest noise level and reaches the full likelihood exponent 1 at the lowest noise level. The parameter α controls the curvature of the transition: α = 1 gives a linear transition in the noise level, while larger values keep λr closer to λR until lower noise levels. In our experiments, we use 
+
+sR = 100 . Figure 6 visualizes the uniform schedule and several noise-dependent schedules for the EDM discretization with 256 steps. 24 Table 2: Main A-TGD configurations for image inverse problems. All settings use N = 4 particles. When resampling is enabled, we use systematic resampling.                              
+
+> Task Dataset Module ρAnnealing Resampling Inpainting FFHQ MPGD 0.5 Uniform Always Inpainting ImageNet MPGD 0.5 Uniform Always Phase retrieval FFHQ DAPS 0.5 None, λr= 1 Never Phase retrieval ImageNet DAPS 0.8 None, λr= 1 Never
+
+F.8 Hyperparameter selection 
+
+All image-experiment hyperparameters were selected using a small tuning set of five images that was disjoint from both the diffusion-model training data and the 100-image validation set used for reporting results. After selecting the hyperparameters on this tuning set, we fixed them for all reported evaluations. The reported PSNR, SSIM, LPIPS, and runtime values were computed only on the held-out validation images and were not used for hyperparameter selection. 
+
+F.9 Image experiment configurations 
+
+Table 2 summarizes the A-TGD configurations used in the main image experiments. All main image experiments use N = 4 initial particles. For inpainting, we use an MPGD-style reconstruction module, uniform likelihood tempering, and systematic resampling after every likelihood-weighting step. For phase retrieval, we use a DAPS-style reconstruction module and no likelihood tempering, i.e. 
+
+λr = 1 for all stages; therefore the incremental weights are constant and no resampling is performed. The pruning factor is ρ = 0 .5 for all image experiments except ImageNet phase retrieval, where we use ρ = 0 .8.When resampling is enabled, we use systematic resampling and reset the particle weights to 1/N .Our implementation also supports effective-sample-size- (ESS) threshold resampling, but we do not use it in the main experiments. In preliminary experiments, ESS-threshold resampling produced similar behavior to the simpler always-resample or never-resample policies, while introducing an additional task-dependent hyperparameter. We therefore use the simpler policies in Table 2 to keep the matched-runtime comparison transparent. 
+
+F.10 Matched-runtime image configurations 
+
+Table 3 reports the sampling configurations used for the matched-runtime image experiments. For ODE-based methods, the NFE scheme is written as the number of reconstruction calls times the four ODE steps used per reconstruction. For DPS, which does not use the restart-based reconstruction interface, we write 0 × K, where K is the total number of function evaluations. For DAPS (N = 4) ,the NFE scheme is reported per trajectory; the reported wall-clock time includes all four trajectories. Wall-clock time per image is measured by dividing the total sampling time for the 100-image evaluation set by 100. 
+
+F.11 Speed-quality tradeoff configuration 
+
+Figure 3 evaluates the speed-quality tradeoff on FFHQ phase retrieval. For each method, we sweep the sampling budget and record reconstruction quality on 100 validation images. Wall-clock time per image is measured by dividing the total sampling time for the 100-image evaluation set by 100, including all independent trajectories or particle computations. Table 4 reports the configurations used to generate the curves. For ODE-based methods, the NFE scheme is reported as the number of reconstruction calls times the four ODE steps used per recon-struction. For DPS, which does not use the restart-based reconstruction interface, we write 0 × K to indicate no reconstruction restarts and K total function evaluations. For Figure 3b, we compare A-TGD and DAPS (N = 4) at fixed LPIPS thresholds 
+
+ℓ ∈ { 0.45 , 0.40 , 0.35 , 0.30 , 0.25 , 0.20 }.
+
+25 Table 3: Matched-runtime image sampling configurations.                                                                                     
+
+> Task Dataset Method NFE scheme Time/img (s) Inpainting FFHQ DPS 0×596 6.34 DAPS (N= 1) 299 ×46.44 DAPS (N= 4) 77 ×46.50 A-TGD 128 ×46.47 ImageNet DPS 0×596 23.63 DAPS (N= 1) 320 ×423.52 DAPS (N= 4) 80 ×423.84 A-TGD 128 ×423.64 Phase retrieval FFHQ DPS 0×404 4.34 DAPS (N= 1) 159 ×44.30 DAPS (N= 4) 41 ×44.35 A-TGD 64 ×44.35 ImageNet DPS 0×7860 346 DAPS (N= 1) 3855 ×4357 DAPS (N= 4) 1070 ×4352 A-TGD 1250 ×4345
+
+For each threshold, we estimate the wall-clock time required by each method to reach that LPIPS value by linearly interpolating its LPIPS–runtime curve from Table 4. The speedup is 
+
+speedup( ℓ) = TDAPS( N =4) (ℓ)
+
+TA-TGD (ℓ) ,
+
+where Tm(ℓ) is the interpolated time per image required by method m to reach LPIPS threshold 
+
+ℓ. Values greater than one indicate that A-TGD reaches the same LPIPS threshold faster than independent best-of-four DAPS sampling. 
+
+## G Ablations 
+
+Unless otherwise stated, all ablations are run on FFHQ using 100 validation images and report mean 
+
+± standard deviation for PSNR, SSIM, LPIPS, and wall-clock time per image in seconds. We use 
+
+N = 4 , ρ = 0 .5, 64 restarts and 4 ODE sampling steps with the MPGD as the default reconstruction module. For inpainting, the default SMC configuration uses the uniform annealing with resampling; for phase retrieval, it uses no annealing. These defaults are used only for the ablations in this section; the main experiments use the task-specific configurations described in Appendix F. 
+
+Number of particles. Table 5 varies the number of initial A-TGD particles N . For FFHQ inpainting, increasing N has only a small effect on reconstruction quality: performance saturates around N = 4 ,and larger particle counts mainly increase wall-clock time. For FFHQ phase retrieval, the effect of N
+
+is much stronger. Increasing N from 1 to 4 substantially improves PSNR, SSIM, and LPIPS, and larger values continue to improve quality, although with diminishing returns and increased runtime. These results indicate that the value of particle exploration depends on the ambiguity of the inverse problem. Inpainting is comparatively stable, so a small particle population is sufficient. Phase retrieval exhibits higher trajectory variability, and therefore benefits more from maintaining multiple early particles before pruning. 
+
+Pruning fraction. Table 6 varies the pruning factor ρ, which controls how long A-TGD maintains multiple particles before pruning to a single trajectory. For inpainting, quality is relatively insensitive to ρ, and aggressive early pruning already gives strong performance. For phase retrieval, the pruning factor has a much larger effect: later pruning substantially improves PSNR, SSIM, and LPIPS, at the cost of increased runtime. 
+
+Annealing and resampling. Table 7 studies the effect of annealing and resampling. For this ablation, we set ρ = 1 .0 to isolate the effect of annealing and resampling at matched compute across 26 Table 4: FFHQ phase retrieval speed-quality sweep. Method NFE scheme Time/img (s) ↓ LPIPS ↓ PSNR ↑
+
+DPS 
+
+0 × 68 0.73 0.561 ±0.063 12 .67 ±2.42 
+
+0 × 104 1.12 0.562 ±0.063 12 .67 ±2.42 
+
+0 × 204 2.18 0.563 ±0.063 12 .66 ±2.42 
+
+0 × 404 4.31 0.564 ±0.063 12 .65 ±2.42 
+
+0 × 800 8.53 0.564 ±0.063 12 .65 ±2.42 
+
+0 × 1592 16.97 0.564 ±0.063 12 .65 ±2.42 
+
+DAPS (N = 1) 26 × 4 0.70 0.427 ±0.191 19 .18 ±7.40 
+
+42 × 4 1.13 0.354 ±0.223 21 .95 ±8.54 
+
+81 × 4 2.18 0.245 ±0.173 25 .67 ±8.19 
+
+159 × 4 4.29 0.225 ±0.185 26 .98 ±8.35 
+
+315 × 4 8.51 0.208 ±0.175 28 .10 ±8.08 
+
+628 × 4 16.94 0.225 ±0.191 27 .52 ±8.68 
+
+DAPS (N = 4) 7 × 4 0.74 0.561 ±0.099 16 .83 ±4.08 
+
+11 × 4 1.16 0.478 ±0.128 18 .89 ±4.73 
+
+21 × 4 2.21 0.359 ±0.160 22 .42 ±6.10 
+
+41 × 4 4.31 0.207 ±0.111 27 .81 ±5.12 
+
+81 × 4 8.51 0.169 ±0.116 29 .56 ±5.31 
+
+162 × 4 17.03 0.135 ±0.033 31 .40 ±2.38 
+
+A-TGD 
+
+9 × 4 0.71 0.508 ±0.114 18 .13 ±4.53 
+
+16 × 4 1.14 0.388 ±0.143 21 .59 ±5.38 
+
+32 × 4 2.19 0.259 ±0.148 25 .62 ±6.11 
+
+64 × 4 4.30 0.172 ±0.106 29 .43 ±4.07 
+
+128 × 4 8.53 0.153 ±0.089 30 .24 ±4.49 
+
+256 × 4 16.97 0.152 ±0.091 30 .63 ±4.60 
+
+Table 5: Particle-count ablation for A-TGD on FFHQ. 
+
+Task Particles Time/img (s) ↓ PSNR ↑ SSIM ↑ LPIPS ↓
+
+Inpainting 
+
+N = 1 1.29 24 .61 ±2.70 0.846 ±0.026 0.126 ±0.028 
+
+N = 2 1.92 24 .73 ±2.34 0.848 ±0.024 0.125 ±0.028 
+
+N = 4 3.26 25 .01 ±2.34 0.849 ±0.025 0.124 ±0.028 
+
+N = 8 5.85 24 .88 ±2.28 0.848 ±0.025 0.124 ±0.028 
+
+N = 16 11.14 24 .92 ±2.45 0.849 ±0.025 0.124 ±0.028 
+
+Phase Retrieval 
+
+N = 1 1.30 22 .26 ±7.61 0.678 ±0.213 0.303 ±0.194 
+
+N = 2 1.94 24 .76 ±7.02 0.734 ±0.192 0.248 ±0.169 
+
+N = 4 3.27 26 .38 ±5.63 0.778 ±0.145 0.206 ±0.129 
+
+N = 8 5.91 27 .00 ±5.52 0.793 ±0.151 0.193 ±0.125 
+
+N = 16 11.27 27 .24 ±4.85 0.798 ±0.131 0.189 ±0.110 
+
+variants. “No annealing” sets λr = 1 for all stages, applying the full likelihood at every stage, while “no resampling” uses the annealed schedule but disables resampling. The results show that the preferred SMC configuration differs across tasks. For inpainting, annealing with resampling gives the best reconstruction quality across PSNR, SSIM, and LPIPS, although the margin over the ablated variants is modest. For phase retrieval, however, the no-annealing variant performs best across all metrics. We therefore use annealing with resampling as the default for FFHQ inpainting and no annealing as the default for FFHQ phase retrieval. 
+
+Reconstruction module. Table 8 compares different reconstruction modules inside the same A-TGD outer procedure. We use no annealing in this ablation. We use MPGD as the default reconstruction module because it provides the best wall-clock efficiency while remaining competitive in reconstruction quality. The best-quality module, however, depends on the task. For inpainting, DPS gives the strongest PSNR, SSIM, and LPIPS, but is substantially slower. For phase retrieval, DAPS gives the best reconstruction quality, while MPGD is faster and remains competitive. 27 Table 6: Pruning-fraction ablation for A-TGD on FFHQ. 
+
+Task Pruning factor ρ Time/img (s) ↓ PSNR ↑ SSIM ↑ LPIPS ↓
+
+Inpainting 
+
+0.10 1.76 24 .88 ±2.32 0.848 ±0.025 0.123 ±0.028 
+
+0.25 2.30 24 .65 ±2.57 0.847 ±0.025 0.125 ±0.028 
+
+0.50 3.26 25 .01 ±2.34 0.849 ±0.025 0.124 ±0.028 
+
+0.75 4.22 24 .64 ±2.44 0.845 ±0.025 0.126 ±0.027 
+
+1.00 5.12 24 .93 ±2.41 0.849 ±0.024 0.124 ±0.029 
+
+Phase Retrieval 
+
+0.10 1.80 23 .25 ±7.88 0.688 ±0.225 0.292 ±0.203 
+
+0.25 2.33 23 .47 ±7.82 0.697 ±0.219 0.282 ±0.194 
+
+0.50 3.28 26 .38 ±5.63 0.778 ±0.145 0.206 ±0.129 
+
+0.75 4.23 27 .01 ±5.13 0.795 ±0.145 0.193 ±0.124 
+
+1.00 5.13 27 .19 ±5.13 0.802 ±0.131 0.188 ±0.111 
+
+Table 7: Ablation of annealing and resampling. 
+
+Task Variant Time/img (s) ↓ PSNR ↑ SSIM ↑ LPIPS ↓
+
+Inpainting No annealing 5.05 24 .36 ±2.64 0.843 ±0.027 0.130 ±0.031 
+
+No resampling 5.06 24 .42 ±2.59 0.845 ±0.027 0.127 ±0.031 
+
+Annealing + resampling 5.05 24 .93 ±2.41 0.849 ±0.024 0.124 ±0.029 
+
+Phase Retrieval No annealing 5.05 27 .19 ±5.13 0.802 ±0.131 0.188 ±0.111 
+
+No resampling 5.06 26 .98 ±5.23 0.796 ±0.135 0.191 ±0.113 
+
+Annealing + resampling 5.07 24 .80 ±7.79 0.727 ±0.217 0.254 ±0.190 
+
+The ablations show that A-TGD is most useful when early trajectories differ substantially in quality. Inpainting is relatively stable and benefits little from larger particle populations or later pruning, whereas phase retrieval benefits strongly from both. The reconstruction-module ablation confirms that the outer A-TGD procedure is modular: MPGD provides the fastest default, while DPS or DAPS can improve quality for specific tasks at higher cost. The annealing ablation shows that tempering is not uniformly beneficial: it helps modestly for inpainting but hurts phase retrieval in this setting. 
+
+Annealing schedule without resampling. Table 9 compares different annealing schedules for A-TGD without resampling. For inpainting, the choice of annealing schedule has only a small effect on reconstruction quality: uniform annealing gives the best SSIM and LPIPS, while the noise-dependent schedule with α = 0 .5 gives the best PSNR. In contrast, for phase retrieval, annealing does not improve performance. The no-annealing variant achieves the best PSNR, SSIM, and LPIPS, while stronger noise-dependent annealing progressively degrades reconstruction quality. 
+
+Annealing schedule with always resampling. Table 10 reports the same annealing-schedule ablation when resampling is performed at every annealing step. Compared to the no-resampling setting in Table 9, always resampling gives small improvements for inpainting. For phase retrieval, always resampling substantially degrades reconstruction quality across all annealing schedules: even the best resampling variant remains worse than the corresponding no-resampling result, and uniform annealing is particularly unstable. These results suggest that frequent resampling can remove useful particle diversity in harder inverse problems. 28 Table 8: Reconstruction-module ablation inside the A-TGD outer loop. 
+
+Task Reconstruction module Time/img (s) ↓ PSNR ↑ SSIM ↑ LPIPS ↓
+
+Inpainting DPS 6.75 25 .66 ±2.42 0.873 ±0.023 0.112 ±0.024 
+
+MPGD 3.23 24 .86 ±2.35 0.847 ±0.025 0.126 ±0.028 
+
+DAPS 3.41 24 .60 ±2.00 0.791 ±0.027 0.156 ±0.034 
+
+Phase Retrieval DPS 6.77 26 .38 ±5.87 0.782 ±0.151 0.217 ±0.129 
+
+MPGD 3.27 26 .38 ±5.63 0.778 ±0.145 0.206 ±0.129 
+
+DAPS 4.27 29 .43 ±4.07 0.811 ±0.104 0.172 ±0.106 
+
+Table 9: Annealing-schedule ablation for A-TGD on FFHQ without resampling. 
+
+Task Annealing schedule Time/img (s) ↓ PSNR ↑ SSIM ↑ LPIPS ↓
+
+Inpainting No annealing 3.29 24 .86 ±2.35 0.847 ±0.025 0.126 ±0.028 
+
+Uniform annealing 3.27 24 .85 ±2.34 0.848 ±0.025 0.124 ±0.028 
+
+Noise-dependent, α = 0 .5 3.27 24 .87 ±2.27 0.847 ±0.024 0.126 ±0.028 
+
+Noise-dependent, α = 1 3.27 24 .85 ±2.31 0.847 ±0.024 0.126 ±0.028 
+
+Noise-dependent, α = 2 3.27 24 .86 ±2.25 0.847 ±0.023 0.126 ±0.027 
+
+Noise-dependent, α = 4 3.27 24 .82 ±2.51 0.847 ±0.025 0.126 ±0.029 
+
+Phase Retrieval No annealing 3.25 26 .38 ±5.63 0.778 ±0.145 0.206 ±0.129 
+
+Uniform annealing 3.24 22 .92 ±6.45 0.689 ±0.189 0.284 ±0.163 
+
+Noise-dependent, α = 0 .5 3.24 26 .12 ±5.80 0.770 ±0.153 0.212 ±0.133 
+
+Noise-dependent, α = 1 3.23 26 .01 ±5.77 0.770 ±0.150 0.211 ±0.132 
+
+Noise-dependent, α = 2 3.24 25 .33 ±6.47 0.750 ±0.173 0.230 ±0.155 
+
+Noise-dependent, α = 4 3.23 25 .03 ±6.57 0.747 ±0.179 0.236 ±0.161 
+
+Table 10: Annealing-schedule ablation for A-TGD on FFHQ with always resampling. 
+
+Task Annealing schedule Time/img (s) ↓ PSNR ↑ SSIM ↑ LPIPS ↓
+
+Inpainting Uniform annealing 3.19 25 .01 ±2.34 0.849 ±0.025 0.124 ±0.028 
+
+Noise-dependent, α = 0 .5 3.19 24 .94 ±2.21 0.847 ±0.024 0.126 ±0.028 
+
+Noise-dependent, α = 1 3.19 24 .90 ±2.37 0.848 ±0.024 0.125 ±0.028 
+
+Noise-dependent, α = 2 3.19 24 .89 ±2.38 0.847 ±0.024 0.126 ±0.029 
+
+Noise-dependent, α = 4 3.18 25 .05 ±2.26 0.848 ±0.024 0.125 ±0.028 
+
+Phase Retrieval Uniform annealing 3.25 21 .66 ±7.27 0.654 ±0.210 0.318 ±0.193 
+
+Noise-dependent, α = 0 .5 3.25 24 .77 ±7.40 0.735 ±0.198 0.248 ±0.175 
+
+Noise-dependent, α = 1 3.24 23 .92 ±7.79 0.712 ±0.208 0.269 ±0.186 
+
+Noise-dependent, α = 2 3.24 24 .18 ±7.52 0.719 ±0.204 0.267 ±0.187 
+
+Noise-dependent, α = 4 3.24 22 .25 ±7.86 0.668 ±0.220 0.309 ±0.206 
+
+29 H Broader Impacts 
+
+TGD and A-TGD are intended as methodological tools for training-free conditional diffusion and inverse-problem reconstruction. Potential positive impacts include more efficient use of pretrained diffusion priors for scientific imaging, restoration, and other inverse problems where paired task-specific training data are unavailable or costly. A-TGD may also reduce computational cost relative to independent multi-trajectory baselines by using multiple particles early and pruning to a single trajectory, improving speed-quality tradeoffs under fixed wall-clock budgets. The same capabilities also have potential negative impacts. Improvements in image reconstruction and inpainting could be misused for image manipulation, misleading visual content generation, or reconstruction of sensitive visual information from incomplete measurements. These risks are partially mitigated by the scope of this work: we do not release a new pretrained generative model or dataset, and our experiments are limited to standard benchmark datasets and inverse-problem settings. Nevertheless, downstream deployments should consider data provenance, consent, privacy, and misuse monitoring, especially in applications involving people or sensitive imagery. 
+
+## I Further Image Examples 
+
+We provide additional qualitative examples for each image inverse-problem setting. For each task and dataset, we visualize examples with the largest absolute LPIPS difference between A-TGD and DAPS 
+
+(N = 4) . These examples are intended to highlight cases where the methods differ most in perceptual reconstruction quality and are taken from the same evaluation runs used for the matched-runtime results in Table 1. 
+
+Figure 7: FFHQ phase retrieval examples. 30 Figure 8: FFHQ inpainting examples. 
+
+Figure 9: ImageNet phase retrieval examples. 31 Figure 10: ImageNet inpainting examples. 32
