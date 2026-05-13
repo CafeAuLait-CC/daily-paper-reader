@@ -6,76 +6,82 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-12
-- 运行时间：2026-05-12 21:25:33 UTC
+- 最新运行日期：2026-05-13
+- 运行时间：2026-05-13 21:03:56 UTC
 - 运行状态：成功
-- 本次总论文数：18
-- 精读区：7
+- 本次总论文数：20
+- 精读区：9
 - 速读区：11
 
 ### 今日简报（AI）
-今日深度解析 18 篇前沿论文，聚焦第一人称动作恢复与人机交互生成的重大技术突破。
-满分力作 MotionGRPO 攻克了强化学习中的多样性难题，而 MaMi-HOI 通过融合动力学与几何特征实现了极高精度的交互建模。
-建议优先研读动作合成与流匹配生成模型方向，掌握从舞蹈动作到复杂逆问题求解的最新范式。
-- 详情：[/202605/12/README](/202605/12/README)
+今日深挖 20 篇前沿成果，聚焦第一人称动作恢复与人机交互生成的质变突破。
+满分论文 MotionGRPO 与 MaMi-HOI 分别通过优化 GRPO 多样性与几何协调性，刷新了动作捕捉与交互生成的性能上限。
+建议重点关注强化学习与流匹配采样在提升机器人动作物理可行性上的跨界应用。
+- 详情：[/202605/13/README](/202605/13/README)
 
 ### 精读区论文标签
-1. [MotionGRPO: Overcoming Low Intra-Group Diversity in GRPO-Based Egocentric Motion Recovery](/202605/12/2605.05680v1-motiongrpo-overcoming-low-intra-group-diversity-in-grpo-based-egocentric-motion-recovery)  
+1. [MotionGRPO: Overcoming Low Intra-Group Diversity in GRPO-Based Egocentric Motion Recovery](/202605/13/2605.05680v2-motiongrpo-overcoming-low-intra-group-diversity-in-grpo-based-egocentric-motion-recovery)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：使用基于扩散的方法和强化学习后训练进行全身3D人体动作恢复
-2. [MaMi-HOI: Harmonizing Global Kinematics and Local Geometry for Human-Object Interaction Generation](/202605/12/2605.05756v1-mami-hoi-harmonizing-global-kinematics-and-local-geometry-for-human-object-interaction-generation)  
+   evidence：使用基于扩散的方法和强化学习进行全身 3D 人体运动恢复
+2. [MaMi-HOI: Harmonizing Global Kinematics and Local Geometry for Human-Object Interaction Generation](/202605/13/2605.05756v1-mami-hoi-harmonizing-global-kinematics-and-local-geometry-for-human-object-interaction-generation)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：使用扩散模型生成逼真的3D人机交互
-3. [PersonaGesture: Single-Reference Co-Speech Gesture Personalization for Unseen Speakers](/202605/12/2605.06064v1-personagesture-single-reference-co-speech-gesture-personalization-for-unseen-speakers)  
+   evidence：使用扩散模型生成3D人机交互动作
+3. [PersonaGesture: Single-Reference Co-Speech Gesture Personalization for Unseen Speakers](/202605/13/2605.06064v1-personagesture-single-reference-co-speech-gesture-personalization-for-unseen-speakers)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：基于扩散模型的姿态（人体动作）合成管线
-4. [Towards Highly-Constrained Human Motion Generation with Retrieval-Guided Diffusion Noise Optimization](/202605/12/2605.08054v1-towards-highly-constrained-human-motion-generation-with-retrieval-guided-diffusion-noise-optimization)  
+   evidence：用于合成个性化伴随演讲手势的扩散模型流水线
+4. [Towards Highly-Constrained Human Motion Generation with Retrieval-Guided Diffusion Noise Optimization](/202605/13/2605.08054v1-towards-highly-constrained-human-motion-generation-with-retrieval-guided-diffusion-noise-optimization)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：使用扩散噪声优化的3D人体动作生成
-5. [Diffusion Masked Pretraining for Dynamic Point Cloud](/202605/12/2605.03639v2-diffusion-masked-pretraining-for-dynamic-point-cloud)  
+   evidence：使用检索引导的扩散噪声优化生成人体动作
+5. [Contact Matrix: Enhancing Dance Motion Synthesis with Precise Interaction Modeling](/202605/13/2605.04662v1-contact-matrix-enhancing-dance-motion-synthesis-with-precise-interaction-modeling)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：动态点云动作学习中的扩散建模
-6. [Geometry Guided Self-Consistency for Physical AI](/202605/12/2605.08638v1-geometry-guided-self-consistency-for-physical-ai)  
+   evidence：生成逼真的反应性动作和舞蹈动作合成
+6. [MotionGRPO: Overcoming Low Intra-Group Diversity in GRPO-Based Egocentric Motion Recovery](/202605/13/2605.05680v1-motiongrpo-overcoming-low-intra-group-diversity-in-grpo-based-egocentric-motion-recovery)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：通过扩散或流匹配生成动作
-7. [Constraint-Aware Diffusion Priors for High-Fidelity and Versatile Quadruped Locomotion](/202605/12/2605.08804v1-constraint-aware-diffusion-priors-for-high-fidelity-and-versatile-quadruped-locomotion)  
+   evidence：基于扩散模型的全身3D人体动作恢复
+7. [Constraint-Aware Diffusion Priors for High-Fidelity and Versatile Quadruped Locomotion](/202605/13/2605.08804v1-constraint-aware-diffusion-priors-for-high-fidelity-and-versatile-quadruped-locomotion)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：用于四足动物运动（动作合成）的扩散先验
+   evidence：用于四足动物运动和动作合成的扩散先验
+8. [Constraint-Aware Diffusion Priors for High-Fidelity and Versatile Quadruped Locomotion](/202605/13/2605.08804v2-constraint-aware-diffusion-priors-for-high-fidelity-and-versatile-quadruped-locomotion)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：扩散引导的约束感知四足动物运动
+9. [ScaleMoGen: Autoregressive Next-Scale Prediction for Human Motion Generation](/202605/13/2605.11704v1-scalemogen-autoregressive-next-scale-prediction-for-human-motion-generation)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：用于 3D 人体动作生成的按比例自回归框架
 
 ### 速读区论文标签
-1. [Contact Matrix: Enhancing Dance Motion Synthesis with Precise Interaction Modeling](/202605/12/2605.04662v1-contact-matrix-enhancing-dance-motion-synthesis-with-precise-interaction-modeling)  
+1. [DexSynRefine: Synthesizing and Refining Human-Object Interaction Motion for Physically Feasible Dexterous Robot Actions](/202605/13/2605.05925v1-dexsynrefine-synthesizing-and-refining-human-object-interaction-motion-for-physically-feasible-dexterous-robot-actions)  
    标签：评分：8.5/10、query:3d-motion-generation
-   evidence：生成逼真的舞蹈动作合成
-2. [P-Flow: Proxy-gradient Flows for Linear Inverse Problems](/202605/12/2605.08328v1-p-flow-proxy-gradient-flows-for-linear-inverse-problems)  
+   evidence：从稀疏的人机交互演示中合成协调的手部-物体轨迹
+2. [Sharpen Your Flow: Sharpness-Aware Sampling for Flow Matching](/202605/13/2605.11547v1-sharpen-your-flow-sharpness-aware-sampling-for-flow-matching)  
    标签：评分：8.5/10、query:3d-motion-generation
-   evidence：用于生成建模和逆问题的流匹配方法
-3. [A Few-Step Generative Model on Cumulative Flow Maps](/202605/12/2605.03623v1-a-few-step-generative-model-on-cumulative-flow-maps)  
+   evidence：流匹配模型的锐度感知采样
+3. [Is Monotonic Sampling Necessary in Diffusion Models?](/202605/13/2605.11773v1-is-monotonic-sampling-necessary-in-diffusion-models)  
+   标签：评分：8.5/10、query:3d-motion-generation
+   evidence：在 Flow Matching 和扩散模型中系统测试非单调采样调度
+4. [Flow Matching on Symmetric Spaces](/202605/13/2605.03588v1-flow-matching-on-symmetric-spaces)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：基于累积流图的统一少步生成建模框架
-4. [Diffusion Masked Pretraining for Dynamic Point Cloud](/202605/12/2605.03639v1-diffusion-masked-pretraining-for-dynamic-point-cloud)  
-   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：在黎曼对称空间上训练流匹配模型的框架
+5. [On the Robustness of Distribution Support under Diffusion Guidance](/202605/13/2605.07220v1-on-the-robustness-of-distribution-support-under-diffusion-guidance)  
+   标签：评分：7.5/10、query:3d-motion-generation
+   evidence：扩散引导在高保真样本生成中的理论特性
+6. [Stochastic Transition-Map Distillation for Fast Probabilistic Inference](/202605/13/2605.07661v1-stochastic-transition-map-distillation-for-fast-probabilistic-inference)  
+   标签：评分：7.5/10、query:3d-motion-generation
+   evidence：使用条件均值流模型加速扩散模型推理
+7. [A Few-Step Generative Model on Cumulative Flow Maps](/202605/13/2605.03623v1-a-few-step-generative-model-on-cumulative-flow-maps)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：基于流图的统一少步生成建模
+8. [Diffusion Masked Pretraining for Dynamic Point Cloud](/202605/13/2605.03639v2-diffusion-masked-pretraining-for-dynamic-point-cloud)  
+   标签：评分：7.0/10、query:3d-motion-generation
    evidence：动态点云运动学习中的扩散建模
-5. [Structured 3D Latents Are Surprisingly Powerful: Unleashing Generalizable Style with 2D Diffusion](/202605/12/2605.04412v1-structured-3d-latents-are-surprisingly-powerful-unleashing-generalizable-style-with-2d-diffusion)  
-   标签：评分：7.5/10、query:3d-motion-generation
-   evidence：用于3D风格迁移和资产生成的2D扩散模型
-6. [FREPix: Frequency-Heterogeneous Flow Matching for Pixel-Space Image Generation](/202605/12/2605.06421v1-frepix-frequency-heterogeneous-flow-matching-for-pixel-space-image-generation)  
-   标签：评分：7.5/10、query:3d-motion-generation
-   evidence：用于图像生成的频率异构流匹配
-7. [Tessellations of Semi-Discrete Flow Matching](/202605/12/2605.07513v1-tessellations-of-semi-discrete-flow-matching)  
-   标签：评分：7.5/10、query:3d-motion-generation
-   evidence：生成式建模中流匹配方法的理论分析
-8. [Stochastic Transition-Map Distillation for Fast Probabilistic Inference](/202605/12/2605.07661v1-stochastic-transition-map-distillation-for-fast-probabilistic-inference)  
-   标签：评分：7.5/10、query:3d-motion-generation
-   evidence：用于扩散模型概率推理的随机转移图蒸馏
-9. [Energy Generative Modeling: A Lyapunov-based Energy Matching Perspective](/202605/12/2605.05530v1-energy-generative-modeling-a-lyapunov-based-energy-matching-perspective)  
+9. [SARA: Semantically Adaptive Relational Alignment for Video Diffusion Models](/202605/13/2605.07800v1-sara-semantically-adaptive-relational-alignment-for-video-diffusion-models)  
    标签：评分：6.5/10、query:3d-motion-generation
-   evidence：基于密度传输和能量匹配的生成建模
-10. [Understanding diffusion models requires rethinking (again) generalization](/202605/12/2605.06077v1-understanding-diffusion-models-requires-rethinking-again-generalization)  
+   evidence：用于合成具有运动线索的视觉片段的视频扩散模型
+10. [Trajectory-Consistent Flow Matching for Robust Visuomotor Policy Learning](/202605/13/2605.08511v1-trajectory-consistent-flow-matching-for-robust-visuomotor-policy-learning)  
    标签：评分：6.5/10、query:3d-motion-generation
-   evidence：扩散模型泛化能力的理论分析
-11. [EA-WM: Event-Aware Generative World Model with Structured Kinematic-to-Visual Action Fields](/202605/12/2605.06192v1-ea-wm-event-aware-generative-world-model-with-structured-kinematic-to-visual-action-fields)  
+   evidence：用于机器人操作和轨迹一致性的流匹配策略
+11. [CaloArt: Large-Patch x-Prediction Diffusion Transformers for High-Granularity Calorimeter Shower Generation](/202605/13/2605.12011v1-caloart-large-patch-x-prediction-diffusion-transformers-for-high-granularity-calorimeter-shower-generation)  
    标签：评分：6.5/10、query:3d-motion-generation
-   evidence：用于运动到视觉动作场的视频扩散模型
+   evidence：通过条件流匹配训练以生成高粒度簇射数据
 
 
 <div class="dpr-home-promo-card">
