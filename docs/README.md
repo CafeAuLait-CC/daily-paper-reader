@@ -6,80 +6,74 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-13 ~ 2026-05-22
-- 运行时间：2026-05-22 21:39:29 UTC
+- 最新运行日期：2026-05-23
+- 运行时间：2026-05-23 20:51:27 UTC
 - 运行状态：成功
-- 本次总论文数：20
-- 精读区：9
+- 本次总论文数：17
+- 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-过去一周精读9篇论文，重点关注自我中心运动重建与文本驱动动作生成两大前沿。最值得关注的是基于扩散强化的在线运动重建方法，以及通过超网络实现风格化文本生成动作的创新架构。建议持续跟踪生成式AI在三维动作合成领域的落地进展。
-- 详情：[/20260513-20260522/README](/20260513-20260522/README)
+- 今日共生成 17 篇推荐（精读 6 篇，速读 11 篇）
+- 精读：《Lagrangian Flow Matching: A Least-Action Framework for Principled Path Design》（9.0/10）, 《DrawMotion: Generating 3D Human Motions by Freehand Drawing》（9.0/10）
+- 速读：《One-Step Distillation of Discrete Diffusion Image Generators via Fixed-Point Iteration》（8.0/10）, 《Imagine2Real: Towards Zero-shot Humanoid-Object Interaction via Video Generative Priors》（8.0/10）, 《Lagrangian Flow Matching: A Least-Action Framework for Principled Path Design》（7.0/10）
+- 这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。
+- 详情：[/202605/23/README](/202605/23/README)
 
 ### 精读区论文标签
-1. [EgoForce: Robust Online Egocentric Motion Reconstruction via Diffusion Forcing](/20260513-20260522/2605.13041v1-egoforce-robust-online-egocentric-motion-reconstruction-via-diffusion-forcing)  
+1. [Lagrangian Flow Matching: A Least-Action Framework for Principled Path Design](/202605/23/2605.15419v1-lagrangian-flow-matching-a-least-action-framework-for-principled-path-design)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：基于扩散的在线第一人称全身运动重建
-2. [Stylized Text-to-Motion Generation via Hypernetwork-Driven Low-Rank Adaptation](/20260513-20260522/2605.13333v1-stylized-text-to-motion-generation-via-hypernetwork-driven-low-rank-adaptation)  
+   evidence：提出拉格朗日流匹配，一种基于物理的生成建模框架。
+2. [DrawMotion: Generating 3D Human Motions by Freehand Drawing](/202605/23/2605.20955v1-drawmotion-generating-3d-human-motions-by-freehand-drawing)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：文本驱动运动扩散模型用于人体运动生成
-3. [Path-independent Flow Matching for Multi-parameter Generative Dynamics](/20260513-20260522/2605.13487v1-path-independent-flow-matching-for-multi-parameter-generative-dynamics)  
+   evidence：基于扩散的框架，从文本和绘图生成3D人体动作
+3. [AnyMo: Geometry-Aware Setup-Agnostic Modeling of Human Motion in the Wild](/202605/23/2605.22715v1-anymo-geometry-aware-setup-agnostic-modeling-of-human-motion-in-the-wild)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：提出用于多参数生成动态的路径无关流匹配
-4. [Coordinating Multiple Conditions for Trajectory-Controlled Human Motion Generation](/20260513-20260522/2605.13729v1-coordinating-multiple-conditions-for-trajectory-controlled-human-motion-generation)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：协调文本和轨迹条件以生成人体运动
-5. [PhyMotion: Structured 3D Motion Reward for Physics-Grounded Human Video Generation](/20260513-20260522/2605.14269v1-phymotion-structured-3d-motion-reward-for-physics-grounded-human-video-generation)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：为视频中真实的3D人体运动生成提出奖励
-6. [AnchorRoute: Human Motion Synthesis with Interval-Routed Sparse Contro](/20260513-20260522/2605.14716v1-anchorroute-human-motion-synthesis-with-interval-routed-sparse-contro)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：使用扩散先验和稀疏锚点的人体运动合成
-7. [Multi-scale Coarse-to-fine Modeling for Test-time Human Motion Control](/20260513-20260522/2605.14935v1-multi-scale-coarse-to-fine-modeling-for-test-time-human-motion-control)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：人体运动合成与控制
-8. [StableHand: Quality-Aware Flow Matching for World-Space Dual-Hand Motion Estimation from Egocentric Video](/20260513-20260522/2605.18553v1-stablehand-quality-aware-flow-matching-for-world-space-dual-hand-motion-estimation-from-egocentric-video)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：质量感知Flow Matching用于第一人称视频中的双手运动估计
-9. [DrawMotion: Generating 3D Human Motions by Freehand Drawing](/20260513-20260522/2605.20955v1-drawmotion-generating-3d-human-motions-by-freehand-drawing)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：基于扩散的框架从文本和绘图生成3D人体运动
+   evidence：基于可穿戴传感器的几何感知设置无关人体运动建模
+4. [StableHand: Quality-Aware Flow Matching for World-Space Dual-Hand Motion Estimation from Egocentric Video](/202605/23/2605.18553v1-stablehand-quality-aware-flow-matching-for-world-space-dual-hand-motion-estimation-from-egocentric-video)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：质量感知流匹配用于从第一人称视频估计世界空间双手运动。
+5. [Multi-Scale Generative Modeling with Heat Dissipation Flow Matching](/202605/23/2605.19371v1-multi-scale-generative-modeling-with-heat-dissipation-flow-matching)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：热耗散流匹配将基于模糊的破坏集成到流匹配中用于生成建模。
+6. [Structural Energy Guidance for View-Consistent Text-to-3D Generation](/202605/23/2605.19876v1-structural-energy-guidance-for-view-consistent-text-to-3d-generation)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：使用扩散的结构能量引导用于视图一致的3D生成
 
 ### 速读区论文标签
-1. [Asymmetric Flow Models](/20260513-20260522/2605.12964v1-asymmetric-flow-models)  
+1. [One-Step Distillation of Discrete Diffusion Image Generators via Fixed-Point Iteration](/202605/23/2605.21484v1-one-step-distillation-of-discrete-diffusion-image-generators-via-fixed-point-iteration)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：用于高维生成的非对称流建模
-2. [R-DMesh: Video-Guided 3D Animation via Rectified Dynamic Mesh Flow](/20260513-20260522/2605.13838v1-r-dmesh-video-guided-3d-animation-via-rectified-dynamic-mesh-flow)  
+   evidence：离散扩散模型蒸馏用于高效生成
+2. [Imagine2Real: Towards Zero-shot Humanoid-Object Interaction via Video Generative Priors](/202605/23/2605.22272v1-imagine2real-towards-zero-shot-humanoid-object-interaction-via-video-generative-priors)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：视频引导的3D动画生成动态网格
-3. [Real2Sim in HOI: Toward Physically Plausible HOI Reconstruction from Monocular Videos](/20260513-20260522/2605.14462v1-real2sim-in-hoi-toward-physically-plausible-hoi-reconstruction-from-monocular-videos)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：重建4D人-物交互运动
-4. [Language Generation as Optimal Control: Closed-Loop Diffusion in Latent Control Space](/20260513-20260522/2605.14531v1-language-generation-as-optimal-control-closed-loop-diffusion-in-latent-control-space)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：使用流匹配作为语言生成的最优轨迹求解器
-5. [Ergodic Trajectory Design by Learned Pushforward Maps: Provable Coverage via Conditional Flow Matching](/20260513-20260522/2605.13063v1-ergodic-trajectory-design-by-learned-pushforward-maps-provable-coverage-via-conditional-flow-matching)  
+   evidence：通过视频生成先验实现人形物体交互用于运动
+3. [Lagrangian Flow Matching: A Least-Action Framework for Principled Path Design](/202605/23/2605.15419v2-lagrangian-flow-matching-a-least-action-framework-for-principled-path-design)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：通过学习的推前映射和流匹配进行遍历轨迹设计
-6. [Rigel3D: Rig-aware Latents for Animation-Ready 3D Asset Generation](/20260513-20260522/2605.13129v1-rigel3d-rig-aware-latents-for-animation-ready-3d-asset-generation)  
+   evidence：拉格朗日流匹配用于原则性概率路径设计
+4. [Dynamics-Level Watermarking of Flow Matching Models with Random Codes](/202605/23/2605.16239v1-dynamics-level-watermarking-of-flow-matching-models-with-random-codes)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：生成带有骨骼的动画就绪3D资产用于运动
-7. [Support-Conditioned Flow Matching Is Kernel Smoothing](/20260513-20260522/2605.13386v1-support-conditioned-flow-matching-is-kernel-smoothing)  
+   evidence：通过速度场扰动为流匹配模型添加水印
+5. [Accelerating Rectified Flow Models via Trajectory-Aware Caching](/202605/23/2605.16789v1-accelerating-rectified-flow-models-via-trajectory-aware-caching)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：支持条件流匹配是核平滑
-8. [WarmPrior: Straightening Flow-Matching Policies with Temporal Priors](/20260513-20260522/2605.13959v1-warmprior-straightening-flow-matching-policies-with-temporal-priors)  
+   evidence：通过缓存加速整流流（流匹配）模型
+6. [LongDPM: Overlap-Aware 4D Reconstruction from Long Monocular Videos](/202605/23/2605.17303v1-longdpm-overlap-aware-4d-reconstruction-from-long-monocular-videos)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：用于机器人控制的流匹配策略
-9. [Coreset-Induced Conditional Velocity Flow Matching](/20260513-20260522/2605.12951v1-coreset-induced-conditional-velocity-flow-matching)  
+   evidence：从长单目视频进行动态3D场景的4D重建
+7. [RoboFlow4D: A Lightweight Flow World Model Toward Real-Time Flow-Guided Robotic Manipulation](/202605/23/2605.17522v1-roboflow4d-a-lightweight-flow-world-model-toward-real-time-flow-guided-robotic-manipulation)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：RoboFlow4D使用流世界模型进行机器人3D运动规划和动作生成。
+8. [Spectral Progressive Diffusion for Efficient Image and Video Generation](/202605/23/2605.18736v2-spectral-progressive-diffusion-for-efficient-image-and-video-generation)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：频谱渐进扩散用于高效图像/视频生成
+9. [FLASH: Efficient Visuomotor Policy via Sparse Sampling](/202605/23/2605.15492v1-flash-efficient-visuomotor-policy-via-sparse-sampling)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：核心集诱导的条件速度流匹配
-10. [GTA: Advancing Image-to-3D World Generation via Geometry Then Appearance Video Diffusion](/20260513-20260522/2605.12957v1-gta-advancing-image-to-3d-world-generation-via-geometry-then-appearance-video-diffusion)  
+   evidence：流匹配用于视觉运动策略学习
+10. [AnyAct: Towards Human Reenactment of Character Motion From Video](/202605/23/2605.15497v2-anyact-towards-human-reenactment-of-character-motion-from-video)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：使用视频扩散进行图像到3D世界生成
-11. [R-DMesh: Video-Guided 3D Animation via Rectified Dynamic Mesh Flow](/20260513-20260522/2605.13838v2-r-dmesh-video-guided-3d-animation-via-rectified-dynamic-mesh-flow)  
+   evidence：从角色视频中重演人体运动
+11. [Unsupervised 3D Human Pose Estimation via Conditional Multi-view Ancestral Sampling](/202605/23/2605.15583v1-unsupervised-3d-human-pose-estimation-via-conditional-multi-view-ancestral-sampling)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：视频引导的3D动画生成动态网格
+   evidence：使用运动扩散模型进行3D人体姿态估计
 
 
 <div class="dpr-home-promo-card">
