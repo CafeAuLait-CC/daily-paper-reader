@@ -17,6 +17,41 @@
     return host === 'localhost' || host === '127.0.0.1' || host === '::1';
   };
 
+  const getCurrentDirectoryUrl = () => {
+    const loc = window.location || {};
+    const origin = String(loc.origin || '');
+    const pathname = String(loc.pathname || '/');
+    if (!origin) return '';
+    const dirPath = pathname.endsWith('/')
+      ? pathname
+      : pathname.includes('.')
+        ? pathname.replace(/\/[^/]*$/, '/')
+        : `${pathname}/`;
+    return `${origin}${dirPath}`;
+  };
+
+  const getStaticSecretFileUrl = () => {
+    const currentDir = getCurrentDirectoryUrl();
+    return currentDir ? new URL(SECRET_FILE_URL, currentDir).href : SECRET_FILE_URL;
+  };
+
+  async function fetchStaticSecretPayload() {
+    const url = getStaticSecretFileUrl();
+    try {
+      const resp = await fetch(url, {
+        method: 'GET',
+        cache: 'no-store',
+      });
+      if (!resp || !resp.ok) {
+        throw new Error(`HTTP ${resp ? resp.status : 0} ${url}`);
+      }
+      return await resp.json();
+    } catch (e) {
+      console.warn('[SECRET] 未能读取静态 secret.private：', e);
+    }
+    return null;
+  }
+
   const getLocalApiUrl = (path) => {
     const base = String(window.DPR_LOCAL_API_BASE || '').trim().replace(/\/$/, '');
     if (base) return `${base}${path}`;
@@ -54,21 +89,16 @@
     }
   }
 
-  async function loadLocalSecretPayloadFromDisk() {
-    if (!isLocalDebugHost()) return null;
-    const res = await fetch(getLocalApiUrl('/api/local/secret'), { cache: 'no-store' });
-    if (!res.ok) return null;
-    const data = await res.json().catch(() => null);
-    if (!data || !data.ok || !data.exists || !data.payload) return null;
-    return data.payload;
-  }
-
-  async function saveLocalSecretPayloadToDisk(payload) {
+  async function saveLocalSecretPayloadToDisk(payload, secretPlain) {
     if (!isLocalDebugHost()) return false;
+    const body = { payload };
+    if (secretPlain && typeof secretPlain === 'object') {
+      body.secret = secretPlain;
+    }
     const res = await fetch(getLocalApiUrl('/api/local/secret'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ payload }),
+      body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
@@ -78,14 +108,9 @@
     return true;
   }
 
-  async function loadLocalSecretPayloadPreferred() {
+  async function loadLocalSecretPayloadPreferred(staticPayload) {
+    if (staticPayload) return staticPayload;
     if (!isLocalDebugHost()) return null;
-    try {
-      const diskPayload = await loadLocalSecretPayloadFromDisk();
-      if (diskPayload) return diskPayload;
-    } catch (e) {
-      console.warn('[SECRET] 读取本地磁盘 secret.private 失败，回退 localStorage：', e);
-    }
     return loadLocalSecretPayload();
   }
 
@@ -115,6 +140,13 @@
 
   const openSecretOverlay = (overlayEl) => {
     if (!overlayEl) return;
+    try {
+      if (typeof window.DPRHideInitialSplash === 'function') {
+        window.DPRHideInitialSplash();
+      }
+    } catch {
+      // ignore
+    }
     if (secretOverlayHideTimer) {
       clearTimeout(secretOverlayHideTimer);
       secretOverlayHideTimer = null;
@@ -530,6 +562,18 @@
   // 可选 progress 回调用于在 UI 中展示上传进度：progress(currentIndex, total, secretName)
   async function saveSummarizeSecretsToGithub(token, options, progress) {
     try {
+      if (!window.sodium && typeof window.DPRLoadAssets === 'function') {
+        await window.DPRLoadAssets([
+          {
+            type: 'script',
+            path: 'app/vendor/libsodium/0.7.10/dist/modules/libsodium.js',
+          },
+          {
+            type: 'script',
+            path: 'app/vendor/libsodium-wrappers/0.7.9/dist/modules/libsodium-wrappers.js',
+          },
+        ]);
+      }
       // 等待 libsodium-wrappers 就绪（通过 CDN 注入全局 sodium）
       if (!window.sodium || !window.sodium.ready) {
         if (
@@ -1011,15 +1055,11 @@
         unlockBtn.disabled = true;
         guestBtn.disabled = true;
         try {
-          const localPayload = await loadLocalSecretPayloadPreferred();
-          let payload = localPayload;
-          if (!payload) {
-            const resp = await fetch(SECRET_FILE_URL, { cache: 'no-store' });
-            if (!resp.ok) {
-              throw new Error(`获取 secret.private 失败，HTTP ${resp.status}`);
-            }
-            payload = await resp.json();
+          const staticPayload = await fetchStaticSecretPayload();
+          if (!staticPayload) {
+            throw new Error('获取 secret.private 失败');
           }
+          const payload = await loadLocalSecretPayloadPreferred(staticPayload);
           const secret = await decryptSecret(pwd, payload);
           // 将解密后的配置保存在内存中，不落盘，同时记住密码以便下次自动解锁
           window.decoded_secret_private = secret;
@@ -1690,9 +1730,9 @@
           },
           rerankerLLM: providerDraft.reranker
             ? {
-                profile: providerDraft.reranker.profile || 'local-qwen3-0.6b',
-                provider: providerDraft.reranker.provider || providerDraft.reranker.type || 'local',
-                type: providerDraft.reranker.type || providerDraft.reranker.provider || 'local',
+                profile: providerDraft.reranker.profile || DEFAULT_RERANKER_PROFILE.value,
+                provider: providerDraft.reranker.provider || providerDraft.reranker.type || DEFAULT_RERANKER_PROFILE.provider,
+                type: providerDraft.reranker.type || providerDraft.reranker.provider || DEFAULT_RERANKER_PROFILE.provider,
                 apiKey: providerDraft.reranker.apiKey,
                 baseUrl: providerDraft.reranker.baseUrl,
                 model: providerDraft.reranker.model,
@@ -1751,7 +1791,7 @@
 
           if (localOnly) {
             try {
-              await saveLocalSecretPayloadToDisk(payload);
+              await saveLocalSecretPayloadToDisk(payload, plainConfig);
             } catch (e) {
               console.error(e);
               setErrorText('❌ 保存到本地 secret.private 失败，请确认本地后端已启动。', '#c00');
@@ -1912,8 +1952,11 @@
         const savedPwd = loadSavedPassword();
         openSecretOverlay(overlay);
         // 确保浮层可见
-        if (!savedPwd) {
-          // 没有保存密码：从第 1 步开始完整向导
+        if (hasSecretFile && !savedPwd) {
+          // 已有 secret.private 但浏览器没有保存密码时，必须先解锁，不能回到初始化向导。
+          renderUnlockUI();
+        } else if (!savedPwd) {
+          // 没有 secret.private 且没有保存密码：从第 1 步开始完整向导。
           renderInitStep1();
         } else {
           // 已保存密码：直接进入第 2 步配置向导
@@ -1954,28 +1997,28 @@
     }
 
     if (!overlay) return;
+    try {
+      window.DPRSecretSetup = window.DPRSecretSetup || {};
+      const earlyOpenStep2 = function () {
+        setupOverlay(true);
+        openSecretOverlay(overlay);
+        const formalOpenStep2 = window.DPRSecretSetup && window.DPRSecretSetup.openStep2;
+        if (typeof formalOpenStep2 === 'function' && formalOpenStep2 !== earlyOpenStep2) {
+          formalOpenStep2();
+        }
+      };
+      window.DPRSecretSetup.openStep2 = earlyOpenStep2;
+    } catch {
+      // 初始化早期兜底入口失败时，后续 setupOverlay 仍会尝试注册正式入口。
+    }
 
     // 检查是否已经存在 secret.private（用于区分“解锁”与“初始化”）
     (async () => {
       try {
-        const localPayload = await loadLocalSecretPayloadPreferred();
-        let resp = null;
-        let hasSecret = Boolean(localPayload);
-        if (!hasSecret) {
-          resp = await fetch(SECRET_FILE_URL, {
-            method: 'GET',
-            cache: 'no-store',
-          });
-        }
-        if (!hasSecret && resp && resp.ok) {
-          try {
-            // 不再依赖 content-type，只要能成功解析为 JSON，就认为是合法的 secret.private
-            await resp.clone().json();
-            hasSecret = true;
-          } catch {
-            hasSecret = false;
-          }
-        }
+        const staticPayload = await fetchStaticSecretPayload();
+        let hasSecret = Boolean(staticPayload);
+        const localPayload = await loadLocalSecretPayloadPreferred(staticPayload);
+        hasSecret = hasSecret || Boolean(localPayload);
 
         window.DPR_ACCESS_MODE = 'locked';
 
@@ -1985,17 +2028,10 @@
           const savedPwd = loadSavedPassword();
           if (savedPwd) {
             try {
-              const payload = localPayload || (await (async () => {
-                const resp2 = await fetch(SECRET_FILE_URL, {
-                  cache: 'no-store',
-                });
-                if (!resp2.ok) {
-                  throw new Error(
-                    `获取 secret.private 失败，HTTP ${resp2.status}`,
-                  );
-                }
-                return resp2.json();
-              })());
+              const payload = localPayload || staticPayload || await fetchStaticSecretPayload();
+              if (!payload) {
+                throw new Error('获取 secret.private 失败');
+              }
               const secret = await decryptSecret(savedPwd, payload);
               window.decoded_secret_private = secret;
               // 这里不在 setupOverlay 作用域内，直接标记全局访问模式为 full 并广播事件
