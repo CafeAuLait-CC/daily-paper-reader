@@ -6,73 +6,71 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-26
-- 运行时间：2026-05-26 21:11:40 UTC
+- 最新运行日期：2026-05-27
+- 运行时间：2026-05-27 21:44:16 UTC
 - 运行状态：成功
 - 本次总论文数：17
 - 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日聚焦3D人体动作生成与图像视频生成方向，精读两篇高分论文。  
-最值得关注的是《DrawMotion》通过手绘草图生成3D人体运动，以及《EMA》基于力学注意力的动作扩散模型，两者均获9.0分。  
-建议优先阅读精读列表中的两篇论文，深入理解手绘交互与力学引导生成的新思路。
-- 详情：[/202605/26/README](/202605/26/README)
+今日推荐17篇论文，精读聚焦手绘生成3D人体运动与解剖学注意力引导的运动扩散模型。最值得关注的是DrawMotion（9.0分）——用户通过自由手绘草图直接控制3D动作生成，以及EMA（9.0分）——引入解剖学注意力机制提升动作物理合理性。建议普通读者进一步探索这两篇论文中的交互式生成与生物力学先验，它们是当前动作合成领域的前沿突破。
+- 详情：[/202605/27/README](/202605/27/README)
 
 ### 精读区论文标签
-1. [DrawMotion: Generating 3D Human Motions by Freehand Drawing](/202605/26/2605.20955v1-drawmotion-generating-3d-human-motions-by-freehand-drawing)  
+1. [DrawMotion: Generating 3D Human Motions by Freehand Drawing](/202605/27/2605.20955v1-drawmotion-generating-3d-human-motions-by-freehand-drawing)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：基于扩散的文本与手绘条件3D人体运动生成
-2. [EMA: Effort Metric Attention for Anatomical Effort-Guided Human Motion Diffusion](/202605/26/2605.24566v1-ema-effort-metric-attention-for-anatomical-effort-guided-human-motion-diffusion)  
+   evidence：通过手绘生成3D人体动作
+2. [EMA: Effort Metric Attention for Anatomical Effort-Guided Human Motion Diffusion](/202605/27/2605.24566v1-ema-effort-metric-attention-for-anatomical-effort-guided-human-motion-diffusion)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：带努力引导的人类运动扩散
-3. [Forward-Learned Discrete Diffusion: Learning how to noise to denoise faster](/202605/26/2605.18204v1-forward-learned-discrete-diffusion-learning-how-to-noise-to-denoise-faster)  
+   evidence：带运动强度控制的人体运动扩散
+3. [Diverse Yet Consistent: Context-Guided Diffusion with Energy-Based Joint Refinement for Multi-Agent Motion Prediction](/202605/27/2605.22017v1-diverse-yet-consistent-context-guided-diffusion-with-energy-based-joint-refinement-for-multi-agent-motion-prediction)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：离散扩散模型用于生成
-4. [Latent Process Generator Matching](/202605/26/2605.20547v1-latent-process-generator-matching)  
+   evidence：基于扩散的多智能体人体运动预测框架
+4. [Precise: SDE-Consistent Stochastic Sampling for RL Post-Training of Flow-Matching Models](/202605/27/2605.23522v1-precise-sde-consistent-stochastic-sampling-for-rl-post-training-of-flow-matching-models)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：针对流匹配和扩散风格生成模型的通用框架
-5. [Diverse Yet Consistent: Context-Guided Diffusion with Energy-Based Joint Refinement for Multi-Agent Motion Prediction](/202605/26/2605.22017v1-diverse-yet-consistent-context-guided-diffusion-with-energy-based-joint-refinement-for-multi-agent-motion-prediction)  
+   evidence：面向流匹配模型的SDE一致随机采样
+5. [RoMo: A Large-Scale, Richly Organized Dataset and Semantic Taxonomy for Human Motion Generation](/202605/27/2605.26241v1-romo-a-large-scale-richly-organized-dataset-and-semantic-taxonomy-for-human-motion-generation)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：基于扩散的人体运动预测，与生成高度相关
-6. [Sparse Compositional Flow Matching by geometric assembly from motion primitives](/202605/26/2605.23341v1-sparse-compositional-flow-matching-by-geometric-assembly-from-motion-primitives)  
+   evidence：大规模三维人体运动生成数据集
+6. [Natural Human Motion Recovery by Aligning High-Order Temporal Dynamics from Monocular Videos](/202605/27/2605.26879v1-natural-human-motion-recovery-by-aligning-high-order-temporal-dynamics-from-monocular-videos)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：流匹配用于运动原语生成
+   evidence：从单目视频中利用高阶时间动态恢复人类运动
 
 ### 速读区论文标签
-1. [Spectral Progressive Diffusion for Efficient Image and Video Generation](/202605/26/2605.18736v2-spectral-progressive-diffusion-for-efficient-image-and-video-generation)  
+1. [Probability-Conserving Flow Guidance](/202605/27/2605.20079v1-probability-conserving-flow-guidance)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：用于高效图像和视频生成的扩散模型
-2. [Structural Energy Guidance for View-Consistent Text-to-3D Generation](/202605/26/2605.19876v1-structural-energy-guidance-for-view-consistent-text-to-3d-generation)  
+   evidence：面向扩散和流模型的指导方法
+2. [Latent Process Generator Matching](/202605/27/2605.20547v1-latent-process-generator-matching)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用扩散模型进行文本到3D生成，解决3D合成中的视角一致性问题
-3. [Linear-DPO: Linear Direct Preference Optimization for Diffusion and Flow-Matching Generative Models](/202605/26/2605.21123v1-linear-dpo-linear-direct-preference-optimization-for-diffusion-and-flow-matching-generative-models)  
+   evidence：流匹配与扩散生成模型的通用框架
+3. [Conflict-Aware Additive Guidance for Flow Models under Compositional Rewards](/202605/27/2605.20758v1-conflict-aware-additive-guidance-for-flow-models-under-compositional-rewards)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：将DPO推广到扩散和流匹配模型
-4. [Precise: SDE-Consistent Stochastic Sampling for RL Post-Training of Flow-Matching Models](/202605/26/2605.23522v1-precise-sde-consistent-stochastic-sampling-for-rl-post-training-of-flow-matching-models)  
+   evidence：提出流模型的引导方法以处理组合奖励
+4. [Dynamic Video Generation: Shaping Video Generation Across Time and Space](/202605/27/2605.21042v1-dynamic-video-generation-shaping-video-generation-across-time-and-space)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：提出面向流匹配模型的随机采样方法
-5. [HumanFlow -- Diffusion-Driven MAV Navigation Among Humans via Tightly-Coupled Motion Tracking, Forecasting, and Control](/202605/26/2605.25685v1-humanflow----diffusion-driven-mav-navigation-among-humans-via-tightly-coupled-motion-tracking-forecasting-and-control)  
+   evidence：使用扩散模型进行视频生成
+5. [Linear-DPO: Linear Direct Preference Optimization for Diffusion and Flow-Matching Generative Models](/202605/27/2605.21123v1-linear-dpo-linear-direct-preference-optimization-for-diffusion-and-flow-matching-generative-models)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：提出潜扩散模型用于人体运动跟踪与预测
-6. [Flowing with Confidence](/202605/26/2605.18472v1-flowing-with-confidence)  
+   evidence：用于扩散和流匹配模型的直接偏好优化
+6. [RiT: Vanilla Diffusion Transformers Suffice in Representation Space](/202605/27/2605.21981v1-rit-vanilla-diffusion-transformers-suffice-in-representation-space)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：表示空间中的流匹配
+7. [Stitched Value Model for Diffusion Alignment](/202605/27/2605.19804v1-stitched-value-model-for-diffusion-alignment)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：提出带置信度的流匹配，直接改进生成建模中的流匹配方法
-7. [StableHand: Quality-Aware Flow Matching for World-Space Dual-Hand Motion Estimation from Egocentric Video](/202605/26/2605.18553v1-stablehand-quality-aware-flow-matching-for-world-space-dual-hand-motion-estimation-from-egocentric-video)  
+   evidence：一种对齐扩散/流模型与任务奖励的方法
+8. [CoMoGen: COntrollable MOtion Dynamics and Interactions with Mask-Guided Video GENeration](/202605/27/2605.22996v1-comogen-controllable-motion-dynamics-and-interactions-with-mask-guided-video-generation)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：使用Flow Matching进行手部运动估计，与运动生成方法相关
-8. [MotionMERGE: A Multi-granular Framework for Human Motion Editing, Reasoning, Generation, and Explanation](/202605/26/2605.18956v1-motionmerge-a-multi-granular-framework-for-human-motion-editing-reasoning-generation-and-explanation)  
+   evidence：使用掩码引导的扩散变换器生成可控运动视频
+9. [Sparse Compositional Flow Matching by geometric assembly from motion primitives](/202605/27/2605.23341v1-sparse-compositional-flow-matching-by-geometric-assembly-from-motion-primitives)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：人体运动生成与编辑框架
-9. [FlowErase-RL: Rethinking Concept Erasure as Reward Optimization in Flow Matching Models](/202605/26/2605.19739v1-flowerase-rl-rethinking-concept-erasure-as-reward-optimization-in-flow-matching-models)  
+   evidence：流匹配用于从运动基元生成序列
+10. [Guided Flow Matching for Forward and Inverse PDE Problems with Sparse Observations: Algorithm and Theory](/202605/27/2605.25509v1-guided-flow-matching-for-forward-and-inverse-pde-problems-with-sparse-observations-algorithm-and-theory)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：流匹配模型用于概念擦除
-10. [Conflict-Aware Additive Guidance for Flow Models under Compositional Rewards](/202605/26/2605.20758v1-conflict-aware-additive-guidance-for-flow-models-under-compositional-rewards)  
+   evidence：使用流匹配对PDE解进行生成建模
+11. [HumanFlow -- Diffusion-Driven MAV Navigation Among Humans via Tightly-Coupled Motion Tracking, Forecasting, and Control](/202605/27/2605.25685v1-humanflow----diffusion-driven-mav-navigation-among-humans-via-tightly-coupled-motion-tracking-forecasting-and-control)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：提出流模型的引导方法以处理组合约束
-11. [FlowLong: Inference-time Long Video Generation via Manifold-constrained Tweedie Matching](/202605/26/2605.20910v1-flowlong-inference-time-long-video-generation-via-manifold-constrained-tweedie-matching)  
-   标签：评分：6.0/10、query:3d-motion-generation
-   evidence：流匹配方法用于长视频生成
+   evidence：基于扩散模型的三维场景中人体运动跟踪与预测
 
 
 <div class="dpr-home-promo-card">
