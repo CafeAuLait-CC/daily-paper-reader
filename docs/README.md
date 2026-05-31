@@ -6,75 +6,71 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-30
-- 运行时间：2026-05-30 20:31:09 UTC
+- 最新运行日期：2026-05-31
+- 运行时间：2026-05-31 20:51:20 UTC
 - 运行状态：成功
 - 本次总论文数：17
-- 精读区：7
-- 速读区：10
+- 精读区：6
+- 速读区：11
 
 ### 今日简报（AI）
-今日精读7篇、速读10篇，共17篇论文，重点覆盖3D人体运动生成与扩散模型采样优化。
-
-最值得关注的是满分精读《Self-Intersection-Aware 3D Human Motion Generation》以及9分精读《Precise: SDE-Consistent Stochastic Sampling for Flow-Matching Models》，分别处理人体自交避免和流匹配后训练采样的一致性。
-
-建议普通读者先看《Self-Intersection-Aware》了解高效人体球代理方案，再结合《Precise》理解如何用SDE一致采样提升扩散模型性能。
-- 详情：[/202605/30/README](/202605/30/README)
+今天聚焦人体运动生成与扩散模型，精读17篇论文，重点剖析了6篇高质量研究。推荐《EMA》的解剖学努力度量注意力机制与《Self-Intersection-Aware》的高效人体球代理自交避免方法。建议优先探索基于注意力的扩散运动生成，并关注模型对运动自交问题的处理。
+- 详情：[/202605/31/README](/202605/31/README)
 
 ### 精读区论文标签
-1. [Self-Intersection-Aware 3D Human Motion Generation Using an Efficient Human Sphere Proxy](/202605/30/2605.26744v1-self-intersection-aware-3d-human-motion-generation-using-an-efficient-human-sphere-proxy)  
-   标签：评分：10.0/10、query:3d-motion-generation
-   evidence：直接针对3D人体运动生成并惩罚自交
-2. [Precise: SDE-Consistent Stochastic Sampling for RL Post-Training of Flow-Matching Models](/202605/30/2605.23522v1-precise-sde-consistent-stochastic-sampling-for-rl-post-training-of-flow-matching-models)  
+1. [EMA: Effort Metric Attention for Anatomical Effort-Guided Human Motion Diffusion](/202605/31/2605.24566v1-ema-effort-metric-attention-for-anatomical-effort-guided-human-motion-diffusion)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：面向流匹配模型的RL后训练，采用SDE一致随机采样
-3. [EMA: Effort Metric Attention for Anatomical Effort-Guided Human Motion Diffusion](/202605/30/2605.24566v1-ema-effort-metric-attention-for-anatomical-effort-guided-human-motion-diffusion)  
+   evidence：人体运动扩散模型，用于运动强度控制
+2. [Self-Intersection-Aware 3D Human Motion Generation Using an Efficient Human Sphere Proxy](/202605/31/2605.26744v1-self-intersection-aware-3d-human-motion-generation-using-an-efficient-human-sphere-proxy)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：人体运动扩散模型，具备细粒度强度控制
-4. [Sketch2Motion: Text-driven 2D Sketch to 3D Animation via Diffusion-guided Skeleton Optimization](/202605/30/2605.28394v1-sketch2motion-text-driven-2d-sketch-to-3d-animation-via-diffusion-guided-skeleton-optimization)  
+   evidence：直接针对3D人体运动生成，提出自相交损失
+3. [AnyMo: Scaling Any-Modality Conditional Motion Generation with Masked Modeling](/202605/31/2605.29488v1-anymo-scaling-any-modality-conditional-motion-generation-with-masked-modeling)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：扩散引导的骨架运动合成用于三维动画
-5. [Plan, Don't Pose: Long Composite Motion Generation with Text-Aligned BFM](/202605/30/2605.29906v1-plan-dont-pose-long-composite-motion-generation-with-text-aligned-bfm)  
+   evidence：基于掩码建模的条件人体运动生成，附带大规模数据集
+4. [PhyGenHOI: Physically-Aware 4D Generation of Dynamic Human-Object Interactions](/202605/31/2605.30268v1-phygenhoi-physically-aware-4d-generation-of-dynamic-human-object-interactions)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：文本到长复合动作生成
-6. [Midpoint Generative Models](/202605/30/2605.29920v1-midpoint-generative-models)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：基于Flow Matching对称性的新型生成框架
-7. [PhyGenHOI: Physically-Aware 4D Generation of Dynamic Human-Object Interactions](/202605/30/2605.30268v1-phygenhoi-physically-aware-4d-generation-of-dynamic-human-object-interactions)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：运动扩散模型用于动态人-物交互生成
+   evidence：使用运动扩散模型（MDM）生成包含3D人体运动的4D人-物交互场景
+5. [Data-driven Head Motion Generation through Natural Gaze-Head Coordination](/202605/31/2605.25810v1-data-driven-head-motion-generation-through-natural-gaze-head-coordination)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：基于条件VAE的数据驱动头部运动生成
+6. [E$^3$C: Video Generation with 3D Environmental Memory and Ego-Exo Human Pose Control](/202605/31/2605.26316v1-e3c-video-generation-with-3d-environmental-memory-and-ego-exo-human-pose-control)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：可控视频扩散，人体姿势控制与3D记忆
 
 ### 速读区论文标签
-1. [HumanFlow -- Diffusion-Driven MAV Navigation Among Humans via Tightly-Coupled Motion Tracking, Forecasting, and Control](/202605/30/2605.25685v1-humanflow----diffusion-driven-mav-navigation-among-humans-via-tightly-coupled-motion-tracking-forecasting-and-control)  
+1. [Parameter-Efficient Generative Modeling with Controlled Vector Fields](/202605/31/2605.28267v1-parameter-efficient-generative-modeling-with-controlled-vector-fields)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：基于潜在扩散模型、以3D场景为条件的人体运动跟踪与预测
-2. [E$^3$C: Video Generation with 3D Environmental Memory and Ego-Exo Human Pose Control](/202605/30/2605.26316v1-e3c-video-generation-with-3d-environmental-memory-and-ego-exo-human-pose-control)  
+   evidence：基于受控矢量场的连续时间生成模型，与Flow Matching相关
+2. [Sketch2Motion: Text-driven 2D Sketch to 3D Animation via Diffusion-guided Skeleton Optimization](/202605/31/2605.28394v1-sketch2motion-text-driven-2d-sketch-to-3d-animation-via-diffusion-guided-skeleton-optimization)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：视频扩散模型结合人体姿态控制与3D环境记忆
-3. [Sparse Compositional Flow Matching by geometric assembly from motion primitives](/202605/30/2605.23341v1-sparse-compositional-flow-matching-by-geometric-assembly-from-motion-primitives)  
+   evidence：扩散引导的骨骼优化用于3D动画
+3. [Plan, Don't Pose: Long Composite Motion Generation with Text-Aligned BFM](/202605/31/2605.29906v1-plan-dont-pose-long-composite-motion-generation-with-text-aligned-bfm)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：文本到运动生成，使用行为基础模型
+4. [HumanEgo: Zero-Shot Robot Learning from Minutes of Human Egocentric Videos](/202605/31/2605.24934v2-humanego-zero-shot-robot-learning-from-minutes-of-human-egocentric-videos)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用流匹配进行运动原语组装
-4. [HumanEgo: Zero-Shot Robot Learning from Minutes of Human Egocentric Videos](/202605/30/2605.24934v1-humanego-zero-shot-robot-learning-from-minutes-of-human-egocentric-videos)  
+   evidence：从人体第一人称视频训练流匹配策略用于机器人学习
+5. [RoMo: A Large-Scale, Richly Organized Dataset and Semantic Taxonomy for Human Motion Generation](/202605/31/2605.26241v1-romo-a-large-scale-richly-organized-dataset-and-semantic-taxonomy-for-human-motion-generation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：流匹配策略用于人-机器人运动迁移
-5. [RoMo: A Large-Scale, Richly Organized Dataset and Semantic Taxonomy for Human Motion Generation](/202605/30/2605.26241v1-romo-a-large-scale-richly-organized-dataset-and-semantic-taxonomy-for-human-motion-generation)  
+   evidence：提供大规模人体运动生成数据集和语义分类
+6. [Semantic-Aware Motion Encoding for Topology-Agnostic Character Animation](/202605/31/2605.27055v1-semantic-aware-motion-encoding-for-topology-agnostic-character-animation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：用于人体运动生成的大规模数据集
-6. [Semantic-Aware Motion Encoding for Topology-Agnostic Character Animation](/202605/30/2605.27055v1-semantic-aware-motion-encoding-for-topology-agnostic-character-animation)  
+   evidence：语义运动编码用于角色动画
+7. [Midpoint Generative Models](/202605/31/2605.29920v1-midpoint-generative-models)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：语义感知的运动编码用于拓扑无关角色动画
-7. [Generator-Refiner-Examiner: A Tri-Module Data Augmentation Framework for 3D Human Avatar Learning from Monocular Videos](/202605/30/2605.23555v1-generator-refiner-examiner-a-tri-module-data-augmentation-framework-for-3d-human-avatar-learning-from-monocular-videos)  
+   evidence：利用流匹配对称性的一步生成模型
+8. [HumanEgo: Zero-Shot Robot Learning from Minutes of Human Egocentric Videos](/202605/31/2605.24934v1-humanego-zero-shot-robot-learning-from-minutes-of-human-egocentric-videos)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：基于扩散的3D人体头像数据增强
-8. [Multi-Objective Learning for Diffusion Models: A Statistical Theory under Semi-Supervised Learning](/202605/30/2605.25210v1-multi-objective-learning-for-diffusion-models-a-statistical-theory-under-semi-supervised-learning)  
+   evidence：利用第一人称视频的流动匹配策略进行人机迁移
+9. [Inference-Time Alignment of Diffusion Models via Trust-Region Iterative Twisted Sequential Monte Carlo](/202605/31/2605.25123v1-inference-time-alignment-of-diffusion-models-via-trust-region-iterative-twisted-sequential-monte-carlo)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：扩散模型用于生成
-9. [Geometry-Aware Image Flow Matching](/202605/30/2605.25294v1-geometry-aware-image-flow-matching)  
+   evidence：使用扭曲序贯蒙特卡洛的扩散模型推理时对齐方法
+10. [Multi-Objective Learning for Diffusion Models: A Statistical Theory under Semi-Supervised Learning](/202605/31/2605.25210v1-multi-objective-learning-for-diffusion-models-a-statistical-theory-under-semi-supervised-learning)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：图像上的几何感知流匹配
-10. [Recursive Flow Matching](/202605/30/2605.26535v1-recursive-flow-matching)  
+   evidence：扩散模型的多目标学习理论
+11. [Geometry-Aware Image Flow Matching](/202605/31/2605.25294v1-geometry-aware-image-flow-matching)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：流匹配生成建模方法
+   evidence：提出球面流匹配用于图像生成，是流匹配的变体
 
 
 <div class="dpr-home-promo-card">
