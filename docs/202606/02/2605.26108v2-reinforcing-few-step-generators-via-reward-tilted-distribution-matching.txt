@@ -1,0 +1,1782 @@
+Title: Reinforcing Few-step Generators via Reward-Tilted Distribution Matching
+
+URL Source: https://arxiv.org/pdf/2605.26108v2
+
+Published Time: Fri, 29 May 2026 01:54:08 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# Reinforcing Few-step Generators via Reward-Tilted Distribution Matching 
+
+Yushi Huang 1,2∗ Xiangxin Zhou 2∗† Ruoyu Wang 2,3∗
+
+Chi Zhang 3 Jun Zhang 1 Tianyu Pang 2‡
+
+> 1
+
+Hong Kong University of Science and Technology 
+
+> 2
+
+Tencent Hunyuan 3Westlake University 
+
+Abstract 
+
+Recent advances in few-step diffusion distillation have enabled efficient image generation, yet aligning these models with human preferences remains challenging. We propose Reward-Tilted Distribution Matching Distillation (RTDMD), a two-stage framework that unifies distribution matching distillation with reward-guided reinforcement learning for few-step flow generators. We show that minimizing the KL divergence to a reward-tilted teacher distribution naturally decomposes into a distribution matching term and a reward maximization term. In the first stage, we introduce Ambient-Consistent Distribution Matching Distillation (AC-DMD), which performs subinterval-wise distribution matching and augments the fake score objective with a consistency regularizer to help the fake score model track the shifting generator distribution under limited updates. In the second stage, we jointly optimize both terms: for the reward maximization term, we derive a hybrid policy gradient that combines a GRPO-style estimator for the stochastic intermediate transitions with direct reward backpropagation through the deterministic final step, and further introduce step-subset GRPO (SubGRPO) to reduce variance. Experiments on SD3, SD3.5, and FLUX.2 demonstrate that RTDMD establishes new state-of-the-art results across preference, aesthetic, and compositional metrics with only 4 inference steps, outperforming previous few-step text-to-image generation methods. Code and models are available at https: //github.com/Harahan/RTDMD .
+
+1 Introduction 
+
+Diffusion [25, 66] and flow-based generative models [38, 41] have achieved remarkable progress in text-to-image generation. Modern diffusion and rectified-flow systems [ 16 , 33 , 54 ] can synthesize realistic and semantically aligned images, but their iterative sampling procedures typically require tens of denoising or flow-integration steps [ 65 , 25 ]. This high sampling cost limits their deployment in latency-sensitive applications such as interactive content creation, on-device generation, and real-time visual systems. To improve efficiency, recent works distill pretrained multi-step models into few-step generators [ 58 ,43 , 60 , 59 , 46 , 6, 19 ]. Among them, Distribution Matching Distillation (DMD) [ 84 , 83 , 39 , 21 ] trains a student to match the teacher’s output distribution via a learned fake score model. Orthogonally, reinforcement learning (RL) aligns generative models with human preferences [ 3, 20 , 40 , 81 , 79 ,76 , 10 , 70 ]. Recent efforts combine distribution matching with reward optimization [ 29 , 47 , 14 , 18 ], aiming to retain the teacher’s generative prior while steering the student toward higher-reward outputs.    
+
+> *Equal Contribution (Work was done during Yushi and Ruoyu’s internships at Tencent Hunyuan).
+> †Project Lead.
+> ‡Corresponding author. Preprint.
+> arXiv:2605.26108v2 [cs.CV] 28 May 2026 Figure 1: Visual generations produced by our RTDMD method under 4 NFE on FLUX.2 4B [ 34 ] without applying classifier-free guidance (CFG) [24]. More visual results can be found in App. N.
+
+However, reward-guided few-step generation remains challenging for two reasons. First, in few-step generation, the intermediate latents at non-terminal timesteps are inherently noisy. The fake score model in DMD must therefore be trained on these noisy intermediates rather than clean samples. Moreover, the generator distribution shifts at every training iteration, requiring the fake score to continuously track a moving target under a limited compute budget, which makes the cold-start distillation signal unreliable. Second, reward optimization must respect the hybrid nature of the sampling dynamics: intermediate steps are stochastic due to injected noise, while the final step is deterministic (terminal noise level is zero). Optimizing only the stochastic steps [ 40 , 36 ] or only the deterministic final mapping [ 79 , 29 ] are both suboptimal; a tailored estimator that accounts for the full trajectory is needed. In this work, we propose Reward-Tilted Distribution Matching Distillation (RTDMD), a two-stage framework for training high-quality few-step flow generators. We show that minimizing the KL divergence to a reward-tilted teacher distribution (defined in Eq. (6)) naturally decomposes into a distribution matching term and a reward maximization term, providing a principled unification of distillation and RL. In the first stage, we introduce Ambient-Consistent DMD (AC-DMD) as a stable cold start. AC-DMD performs distribution matching on each time subinterval independently, and augments the fake score objective with a consistency regularizer [ 11 , 12 ] that couples predictions across timesteps. This helps the fake score model track the shifting generator distribution more effectively under limited updates. In the second stage, we jointly optimize both terms via a hybrid policy gradient that combines GRPO-style updates for stochastic intermediate transitions with direct reward backpropagation through the deterministic final step, and further introduce step-subset GRPO (SubGRPO) with shared noise to reduce variance. Comprehensive experiments on SD3-M [ 16 ], SD3.5-M [ 1 ], and FLUX.2 4B [ 34 ] demonstrate that RTDMD achieves state-of-the-art few-step generation quality under 4-step sampling. Notably, our distilled FLUX.2 4B surpasses the full FLUX.2 9B (50-step) across most benchmarks. 
+
+2 Preliminaries 
+
+2.1 Diffusion and Flow Models 
+
+Diffusion and flow-based generative models [ 65 , 25 ] define a continuous probability path {pt}t∈[0 ,1] 
+
+that connects the data distribution p0 to a simple prior p1 (typically a standard Gaussian). A common 2Gaussian interpolation is qt(xt | x0) = N (αtx0, σ 2 
+
+> t
+
+I), where x0 ∼ p0 and ϵ ∼ N (0, I), so that 
+
+xt = αtx0 + σtϵ and pt(xt) = R qt(xt | x0)p0(x0) dx0. Here αt and σt specify the noise schedule. Sampling is described by the probability-flow Ordinary Differential Equation (PF-ODE) [ 38 ] dxt 
+
+> dt
+
+=
+
+v(xt, t ), where v(x, t ) is the marginal velocity field transporting the density pt. Its relation [ 48 ] to the score function s(x, t ) = ∇x log pt(x) is 
+
+v(x, t ) = ˙αt
+
+αt
+
+x +
+
+ ˙αt
+
+αt
+
+σ2 
+
+> t
+
+− ˙σtσt
+
+
+
+s(x, t ). (1) Thus, the score function indicates how the density changes locally, while the marginal velocity determines how samples move along the probability path. In this work, we adopt flow matching with the rectified schedule [ 38 , 16 ], namely αt = 1 − t and 
+
+σt = t, which gives the linear path xt = (1 − t)x0 + tϵ. For a fixed pair (x0, ϵ), the conditional velocity is simply vt(xt | x0, ϵ) = ϵ − x0, and the marginal velocity satisfies 
+
+v(x, t ) = E[ϵ − x0 | xt = x] = − 11 − t x − t
+
+1 − t s(x, t ). (2) Flow matching trains a neural velocity field vθ by regressing it to the conditional target velocity [ 38 ]: 
+
+LCFM (θ) = Et, x0,ϵ
+
+w(t)∥vθ (xt, t ) − (ϵ − x0)∥22
+
+, xt = (1 − t)x0 + tϵ, (3) where w(t) is an optional weighting function. This objective is commonly referred to as the condi-tional flow matching (CFM) loss. 
+
+2.2 Distribution Matching Distillation 
+
+Sampling from a pretrained flow model typically requires many function evaluations, motivating distillation into a few-step generator. Let vψ denote the pretrained teacher velocity field, and let pψ
+
+be its induced distribution. Distribution Matching Distillation (DMD) [ 84 , 83 ] trains a few-step student generator Gθ with 
+
+x0 = Gθ (ϵ), where ϵ ∼ N (0, I), so that its induced distribution pθ matches pψ . A natural objective is the reverse Kullback–Leibler (KL) DKL (pθ ∥ pψ ). Because this divergence can be difficult to optimize directly in data space when the two distributions have limited overlap, DMD instead compares their noised marginals in an ambient space. Specifically, for t ∼ Unif[0 , 1] and an independent ϵ′ ∼ N (0, I), it defines xt = (1 − t)x0 + tϵ′, which induces marginals pθ,t and pr,t 
+
+for the student and teacher, respectively. The resulting time-averaged reverse KL yields a generator gradient proportional to the difference between the student and teacher scores at xt.Using Eq. (2) to convert between velocities and scores, DMD writes the generator update as 
+
+∇θ LDMD = Eϵ,t, ϵ′
+
+wtαt
+
+ sϕ(xt, t ) − sψ (xt, t )∇θ Gθ (ϵ), (4) where wt > 0 is a time-dependent weight and αt = 1 − t comes from ∂xt/∂ x0.Since the student score is not available in closed form, DMD introduces an auxiliary fake velocity field vϕ to track the current student distribution pθ . Via Eq. (2), vϕ defines the fake score sϕ, which serves as a surrogate for the student score in Eq. (4). The fake velocity is trained with the conditional flow-matching objective 
+
+Lf (ϕ) = Eϵ,t, ϵ′
+
+∥vϕ(xt, t ) − (ϵ′ − x0)∥2. (5) At optimum, vϕ recovers the marginal velocity field of the current student distribution, providing the score estimate required by the DMD update. DMD therefore alternates between updating the student generator Gθ and training the fake model vϕ to track it. 
+
+3 Method 
+
+We present Reward-Tilted Distribution Matching Distillation (RTDMD), a principled framework for training high-quality few-step generators (an overall algorithm can be found in App. I). Let pψ denote the distribution induced by the pretrained teacher model. While DMD [ 84 , 83 ] aims to replicate 3pψ , the teacher distribution itself is not necessarily aligned with human preferences, which means it can assign equal probability to both high-reward and low-reward samples. A natural remedy is to up-weight high-reward regions of pψ while down-weighting low-reward ones. Therefore, we define the reward-tilted teacher distribution as 
+
+˜pψ (x) = pψ (x) exp( βr (x)) 
+
+Z , (6) where r(x) is a scalar reward function, β ≥ 0 controls the reward strength, and Z is the normalizing constant. We optimize the few-step generator Gθ by minimizing DKL (pθ ∥˜pψ ). Since log ˜ pψ (x) = log pψ (x) + βr (x) − log Z, and Z is independent of θ, we have DKL (pθ ∥˜pψ ) = DKL (pθ ∥pψ ) −
+
+βEˆx0∼pθ [r( ˆ x0)] + log Z and 
+
+∇θ DKL (pθ ∥˜pψ ) = ∇θ DKL (pθ ∥pψ )
+
+| {z }
+
+> distribution matching
+
+−β ∇θ Eˆx0∼pθ [r( ˆ x0)] 
+
+| {z }
+
+> reward maximization
+
+. (7) This decomposition shows that minimizing the KL to the reward-tilted distribution naturally separates into a distribution matching term and a reward maximization term. This motivates our two-stage framework: we first perform distribution matching as a cold start via Ambient-Consistent DMD 
+
+(AC-DMD, Sec. 3.1), and then jointly optimize both terms using a hybrid policy gradient with 
+
+step-subset GRPO for the reward term (Sec. 3.2). 𝑝 "! 𝒙            
+
+> 𝑝 !𝒙
+> 𝑝 "𝒙
+> 𝑝 #𝒙 𝒩 𝟎 ,𝐈
+> Ambient score matching: Eq. (10)
+> Distribution matching: Eq. (8)
+> Stoc.
+> 𝑟 𝒙 #!
+> 𝒙 ($
+> Hybrid policy gradient: Eq. (14) +
+> Consistency loss: Eq. (11)
+> Det .
+> Stoc.
+> Stoc.
+
+Figure 2: Overview of the proposed RTDMD. “ Det. ” means the final deterministic step and “ Stoc. ” denotes the stochastic steps (see Sec. 3.2). Blue, green, and yellow trajectories represent the denoising trajectory of the pretrained-teacher, few-step generator, and fake score model, respectively. 
+
+3.1 Ambient-Consistent Distribution Matching Distillation 
+
+Existing DMD methods adopt either the deterministic Euler ODE sampler [ 19 ] or the consistency model (CM) sampler [ 84 , 83 ] for few-step generation. To unify these choices under a single frame-work and facilitate the subsequent policy-gradient derivation (Sec. 3.2), we first employ coefficient-preserving sampling (CPS) [ 71 ], which encompasses both as special cases by a predefined hyperpa-rameter η (see App. C for the full formula). Under CPS, each generation step consists of a denoising prediction followed by noise injection, and it also ensures that the noise level of the latent variable remains consistent with the predefined scheduler at every timestep. To be more specific, we use a K-step generator with K = 4 and a decreasing timestep schedule 
+
+0 = tK < · · · < t 1 < t 0 = 1 . Starting from ˆxt0 ∼ N (0, I), step k takes the current latent ˆxtk−1 and outputs an x-prediction, ˆx(k)pred = Gθ ( ˆ xtk−1 , t k−1), k = 1 , . . . , K, which is the sampler output under the x-parameterization, rather than a clean sample itself. The next latent ˆxtk is a linear combination of the x-prediction ˆx(k)pred , the current latent ˆxtk−1 , and a freshly sampled Gaussian noise ϵk. Here, 
+
+η ∈ [0 , 1] controls the sampling stochasticity: η = 0 recovers the deterministic Euler sampler, while 
+
+η > 0 injects noise at each step. 
+
+Ambient distribution matching distillation. Since CPS ( η > 0) injects noise at intermediate steps, the generator output ˆxtk at tk > 0 could no longer be a clean sample but a noisy latent at noise level tk. The standard DMD [ 84 , 83 ], which assumes clean samples and performs score matching 4over the full interval [0 , 1] , is therefore no longer directly applicable. We re-derive the distribution matching objective on the subinterval [tk, 1] conditioned on the noisy intermediate, and term this 
+
+Ambient Distribution Matching Distillation (A-DMD). Concretely, let p(k) 
+
+> θ
+
+denote the distribution of ˆxtk after k steps. To train step k, we match the teacher distribution on the subinterval [tk, 1] . Under the rectified schedule [ 38 , 16 ], we re-noise ˆxtk to any level t ∈ [tk, 1] via x(k) 
+
+> t
+
+= αk(t) ˆ xtk + σk(t)ϵ, where αk(t) = 1−t 
+
+> 1−tk
+
+, σk(t) = t−tk 
+
+> 1−tk
+
+, and 
+
+ϵ ∼ N (0, I). Let p(k) 
+
+> θ,t
+
+denote the resulting student marginal at noise level t. We minimize the reverse KL: 
+
+L(k)gen (θ) = Et∼U [tk ,1] 
+
+λk(t) KL( p(k) 
+
+> θ,t
+
+∥ pψ,t ), (8) where pψ,t is the teacher marginal and λk(t) is a timestep-dependent weight. Since the student score ∇x log p(k) 
+
+> θ,t
+
+(x) is intractable, following DMD [ 84 , 83 ], we introduce a fake score model sϕ(x, t ) to approximate it, yielding the practical generator gradient 
+
+∇θ L(k)gen ≈ − Et, ϵ, ˆxtk
+
+
+
+λk(t)αk(t)  sψ (x(k) 
+
+> t
+
+, t ) − sϕ(x(k) 
+
+> t
+
+, t )⊤ ∂ ˆxtk
+
+∂θ 
+
+
+
+. (9) This form (see App. B for the detailed derivation) makes the training signal entirely local to the subinterval [tk, 1] : the teacher score sψ (x(k) 
+
+> t
+
+, t ) provides the target direction, while the fake score 
+
+sϕ(x(k) 
+
+> t
+
+, t ) compensates for the intractable student marginal score. To train sϕ, we fit it on the same interval [tk, 1] using denoising score matching (DSM): 
+
+L(k)fake (ϕ) = Et∼U [tk ,1] , ˆxtk , ϵ
+
+
+
+ωk(t) sϕ(x(k) 
+
+> t
+
+, t ) − ∇ x log q(k) 
+
+> t
+
+(x | ˆxtk ) 22
+
+
+
+, (10) where ∇x log q(k) 
+
+> t
+
+(x | ˆxtk ) = ( αk(t) ˆ xtk − x) /σ k(t)2 is the conditional score of the Gaussian corruption kernel, and ωk(t) > 0 is a timestep-dependent weight (a design choice independent of 
+
+λk(t) in Eq. (8)). 
+
+Stabilizing fake score training via consistency regularization. However, when tk > 0, the fake score model sϕ is trained on corrupted intermediate latents ˆxtk rather than clean samples. Although the DSM objective in Eq. (10) is theoretically unbiased (its optimal solution is the true student marginal score ∇x log p(k) 
+
+> θ,t
+
+as proved in App. D), a practical challenge arises: the generator Gθ is updated concurrently, so the target distribution p(k) 
+
+> θ
+
+shifts at every training iteration. With only a limited number of fake score updates per generator step, sϕ must track this moving distribution under a tight sample and compute budget, making accurate estimation difficult. To stabilize fake score training, we introduce a consistency regularizer [ 11 , 12 ]. The key insight is that the optimal fake score model satisfies a self-consistency property (see App. E for a detailed proof): for any t′′ < t ′, its x-prediction at t′ must equal the expected x-prediction after one reverse-diffusion step to t′′ , i.e. , ˆxϕ(xt′ , t ′) = E˜xt′′ ∼pϕ(xt′′ |xt′ )[ ˆ xϕ( ˜ xt′′ , t ′′ )] , where ˆxϕ(x, t ) denotes the fake score model’s x-prediction. This couples the fake score predictions across different timesteps, reducing the effective degrees of freedom and lowering the overall estimation variance. Concretely, writing the fake score model in its x-prediction form, we penalize violations of this property: 
+
+L(k)cons (ϕ) = Et′,t ′′ , ˆxtk∼p(k)     
+
+> θ,xt′∼q(k)
+> t′(·| ˆxtk)
+
+h
+
+ˆxϕ(xt′ , t ′) − E˜xt′′ ∼pϕ(xt′′ |xt′ )
+
+ ˆxϕ( ˜ xt′′ , t ′′ ) 22
+
+i
+
+, (11) where pϕ(xt′′ | xt′ ) is the fake score model’s reverse transition kernel from t′ to t′′ . In practice, we use an approximated estimator following Daras et al. [12] (see App. F). We choose t′ and t′′ to be close so that the consistency term remains local and can be estimated efficiently with a single transition step. The final fake-score objective is 
+
+L(k)fake -total (ϕ) = L(k)fake (ϕ) + γ L(k)cons (ϕ). (12) Intuitively, Eq. (10) provides pointwise score supervision at each noise level, while the consistency term couples nearby timesteps by requiring them to predict the same underlying clean sample, thereby reducing the variance of ambient fake-score training. 5Overall, we refer to our method as Ambient-Consistent Distribution Matching Distillation (AC-DMD), reflecting that the fake score model is trained on noisy intermediate latents (the “ambient” setting) and regularized by a consistency loss to improve estimation quality. 
+
+3.2 Reinforcing the Few-step Generator 
+
+After the cold start with AC-DMD, we proceed to the second stage: jointly optimizing both terms in Eq. (7). The distribution matching term is handled by AC-DMD as before; we now focus on deriving efficient gradient estimators for the reward maximization term. 
+
+Few-step generator as a policy. The few-step generator induces a K-step policy over the latent trajectory ˆxt0 → ˆxt1 → · · · → ˆxtK . At each step, the CPS update combines the generator’s x-prediction with the current latent and injected Gaussian noise 1. As a result, for the first K − 1 steps, the transition defines a Gaussian policy 
+
+π(k) 
+
+> θ
+
+( ˆ xtk | ˆxtk−1 ) = N  ˆxtk ; μ(k) 
+
+> θ
+
+( ˆ xtk−1 ), σ 2
+
+> k
+
+I, k = 1 , . . . , K − 1, (13) where μ(k) 
+
+> θ
+
+is determined by the CPS update (App. C) and σk = tk sin( ηπ/ 2) . The final step is deterministic: since tK = 0 , the noise term vanishes and ˆx0 = Gθ ( ˆ xtK−1 , t K−1). Therefore, the few-step generative process is a hybrid policy consisting of K − 1 stochastic Gaussian steps followed by one deterministic step. 
+
+Hybrid policy gradient. As a result, the reward gradient ( i.e. , ∇θ Eˆx0∼pθ [r( ˆ x0)] in Eq. (7)) naturally decomposes into a contribution from the stochastic intermediate transitions and a contribution from the deterministic final mapping. Specifically, let τ = ( ˆ xt0 , ˆxt1 , . . . , ˆxtK−1 , ˆx0) denote a generated trajectory. Then 
+
+∇θ Eˆx0∼pθ [r( ˆ x0)] = 
+
+> K−1
+
+X
+
+> k=1
+
+Eτ ∼pθ
+
+h
+
+r( ˆ x0) ∇θ log π(k) 
+
+> θ
+
+( ˆ xtk | ˆxtk−1 )
+
+i
+
++ Eτ ∼pθ
+
+h ∇ˆx0 r( ˆ x0)⊤∂θ Gθ ( ˆ xtK−1 , t K−1)
+
+i
+
+.
+
+(14) The first term is a REINFORCE-style estimator and accounts for how the parameters affect the distribution of the stochastic intermediate states, while the second term differentiates the deterministic final denoising step (a formal derivation is provided in App. G; see Prop. G.1). Since the reward is typically differentiable, we estimate the second term by directly backpropagating through Gθ :
+
+∇θ Ldet = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+ ∇ˆx0 r( ˆ x(i)0 )⊤∂θ Gθ ( ˆ x(i) 
+
+> tK−1
+
+, t K−1). (15) For the first term, directly using the REINFORCE-style term leads to high variance. Following GRPO [ 64 ], we reduce variance of it by sampling a group of N trajectories {τi}Ni=1 per prompt and replacing the raw reward r with a group-normalized advantage Ai = ( ri − ¯r)/ std( {rj }Nj=1 , where 
+
+ri = r( ˆ x(i)0 ) is the reward of the i-th trajectory and ¯r = 1
+
+> N
+
+PNj=1 rj .
+
+Step-subset GRPO with shared noise. However, naive GRPO (see App. H for more details) uses independent noise at every step, so reward differences across trajectories conflate contributions from all steps. Inspired by MixGRPO [ 36 ], we propose step-subset GRPO with shared noise (SubGRPO) to further reduce variance by isolating the effect of selected steps. For each prompt, we uniformly sample a subset of stochastic steps S ⊂ { 1, . . . , K − 1} with |S| = M < K − 1. The full K-step trajectory is still rolled out, but only the steps in S use independent noise across trajectories; the remaining steps share noise within the group: 
+
+˜ϵ(i) 
+
+> k
+
+=
+
+(
+
+ϵ(i) 
+
+> k
+
+, k ∈ S ,
+
+ϵgrp  
+
+> k
+
+, k / ∈ S , ϵ(i) 
+
+> k
+
+, ϵgrp  
+
+> k
+
+∼ N (0, I), (16)    
+
+> 1We set η > 0throughout this work, as it naturally introduces stochasticity into the sampling trajectory, which is essential for exploration in reinforcement learning.
+
+6where {ϵ(i) 
+
+> k
+
+}Ni=1 are independent across trajectories, while ϵgrp  
+
+> k
+
+is shared by all trajectories in the same group at step k. Only the selected steps k ∈ S contribute the gradients, yielding 
+
+∇θ LSubGRPO stoc = K − 1
+
+M · 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+X
+
+> k∈S
+
+Ai ∇θ log π(k) 
+
+> θ
+
+( ˆ x(i) 
+
+> tk
+
+| ˆx(i) 
+
+> tk−1
+
+). (17) Under the same gradient sample budget, SubGRPO can be viewed as a Rao–Blackwellized variant of the corresponding independent-noise estimator under mild assumptions [ 4]. Therefore, its gradient estimator typically has a smaller variance. 
+
+Total objective. Combining Eqs. (15), (17), and (9), the generator in the second stage is updated by descending along: 
+
+∇θ Ltotal = ∇θ LAC -DMD − β ∇θ LSubGRPO stoc + ∇θ Ldet 
+
+. (18) 
+
+4 Experiments 
+
+4.1 Implementation Details Models. Our experiments are conducted on open-source state-of-the-art (SOTA) text-to-image diffu-sion models: Stable Diffusion 3-Medium ( SD3-M ) [ 16 ], Stable Diffusion 3.5-Medium ( SD3.5-M ) [ 1]and FLUX.2 4B [34]. We use 512 2 as the default resolution unless otherwise specified. 
+
+Rewards. For SD3-M , following prior work [ 29 , 46 ], we train with HPSv2 [ 76 ] and CLIPScore [ 23 ] re-wards on prompts from t2i-2M [13 ], and evaluate on prompts sampled from ShareGPT-4o-Image [ 8], reporting CLIPScore, Aesthetic Score [ 62 ], PickScore [ 32 ], and HPSv2. Besides, we further validate on the non-differentiable GenEval reward [ 22 ] for SD3.5-M . For FLUX.2 4B, we train with HPSv2, CLIPScore, PickScore, and GenEval rewards, and additionally evaluate on OCR Score, Aesthetic Score, GenEval2 [30], ImageReward [79], and HPSv3 [50] for a thorough assessment. 
+
+Training. We finetune the generator initialized from its corresponding pre-trained teacher without CFG [ 24 ] using LoRA [ 26 ] ( α = 32 , r = 64 ) and adopt CPS [ 71 ] with η = 0 .9 (see App. K for more discussion). For the cold start stage, we adopt 1.5×10 3 training iterations for the generator and 
+
+γ = 0 .01 . In the second stage, we use 1×10 3 iterations, and each consists of 48 groups with a group size of 24 for SD3-M and SD3.5-M , and 64 groups with the same group size for FLUX.2 4B. All the experiments are conducted on 8 or 16 NVIDIA H20 GPUs. More details can be found in App. J. 
+
+Baselines. We compare our method against SOTA few-step RL approaches, including GDMD [ 14 ], DMDR [ 29 ], Rdm [ 18 ], TDM-R1 [ 47 ], and Hyper-SD [ 56 ]. To cover a wider range of baselines, we further include foundational multi-step base models [ 34 , 68 , 1], RL-only approaches [ 79 ], and few-step distillation methods [ 43 , 83 , 5 , 46 ] as baselines. We reproduce the closed-source Rdm and evaluate the open-source baselines with their official checkpoints, while the remaining results are directly taken from GDMD [14] and TDM-R1 [47]. 
+
+4.2 Performance Analysis Comparison with baselines. We first evaluate our RTDMD on SD3-M with 4-step generation and report results in Tab. 1. RTDMD achieves the best performance across all five evaluation metrics, establishing a new state of the art for few-step generation. Specifically, we attain a CLIPScore [ 23 ]of 0.3161, a PickScore [ 32 ] of 22.86, and an HPSv2 [ 76 ] of 0.3211, outperforming the strongest prior methods Rdm [ 18 ] and GDMD [ 14 ] by a large margin. Notably, these gains extend beyond training-time rewards to unseen evaluation metrics: our model reaches an Aesthetic Score of 5.9642 and an ImageReward of 1.3024, surpassing the 100-NFE teacher with CFG [ 24 ] by substantial margins (+0.39 and +0.23, respectively) while using 25 × fewer NFE. We additionally validate our framework with the non-differentiable GenEval [ 22 ] reward on SD3.5-M (see Tab. 5), where our approach generalizes effectively. 
+
+Scaling to more advanced models. In Tab. 2, we further apply our RTDMD to FLUX.2 4B [ 34 ], a SOTA transformer-based flow model. Our approach sets new best results in seven out of 9 metrics with substantial absolute gains over the 50-step FLUX.2 4B baseline. Notably, our 4B model surpasses the considerably larger FLUX.2 9B (50-step) on the majority of metrics, demonstrating that RL-guided 7Table 1: Quantitative comparison with SOTA approaches on SD3-M with 1024 2 resolution. We highlight the best and second-best scores in bold and underlined formats, respectively. Visual results can be found in Fig. 9 
+
+Method NFE CLIPScore Aesthetic PickScore HPSv2 ImageReward 
+
+Score ↑ ∆(↑) Score ↑ ∆(↑) Score ↑ ∆(↑) Score ↑ ∆(↑) Score ↑ ∆(↑)
+
+SD3-M (w/o CFG) [15] 50 0.2535 −0.0401 5.2840 −0.2871 20.5660 −1.7576 0.2010 −0.0800 −0.3762 −1.4521 
+
+SD3-M (w/ CFG) [15] 100 0.2936 — 5.5711 — 22.3236 — 0.2810 — 1.0759 —
+
+Few-Step Distillation 
+
+DMD [84] 4 0.2861 −0.0075 5.5598 −0.0113 21.6216 −0.7020 0.2891 +0.0081 0.9704 −0.1055 
+
+DMD2 [83] 4 0.2914 −0.0022 5.7704 +0.1993 22.1442 −0.1794 0.2951 +0.0141 1.1689 +0.0930 
+
+Flash Diffusion [5] 4 0.2864 −0.0072 5.5236 −0.0475 22.0558 −0.2678 0.2636 −0.0174 0.8752 −0.2007 
+
+TDM [46] 4 0.2848 −0.0088 5.7070 +0.1359 22.1806 −0.1430 0.2940 +0.0130 1.0932 +0.0173 
+
+Few-Step RL 
+
+Hyper-SD (w/ CFG) [56] 8 0.2827 −0.0109 5.5715 +0.0004 21.2576 −1.0660 0.2608 −0.0202 0.6562 −0.4197 
+
+DMDR [29] 4 0.2901 −0.0035 5.5123 −0.0588 21.6528 −0.6708 0.2931 +0.0121 1.0120 −0.0639 
+
+GDMD [14] 4 0.2930 −0.0006 5.8728 +0.3017 22.4614 +0.1378 0.3076 +0 .0266 1.2702 +0.1943 
+
+Rdm [18] 4 0.2936 +0 .0000 5.8769 +0 .3058 22.5783 +0 .2547 0.2957 +0.0147 1.2897 +0 .2138 
+
+RTDMD (Ours) 4 0.3161 +0.0225 5.9642 +0.3931 22.8593 +0.5357 0.3211 +0.0401 1.3024 +0.2265 
+
+Table 2: Performance on larger-scale diffusion models. We evaluate HPSv3, OCR, and GenEval following Liu et al. [40] and Xue et al. [82] , and use the official setting for GenEval2. The remaining metrics are evaluated on DrawBench [61] following Zheng et al. [85]. 
+
+Model ImageReward CLIPScore Aesthetic PickScore HPSv2 HPSv3 GenEval GenEval2 OCR 
+
+Diffusion Models 
+
+FLUX.2 4B [34] 0.8538 0.2834 5.3333 22.3938 0.2771 11.7025 0.7631 0.2207 0.6133 FLUX.2 9B [34] 1.0021 0.2962 5.2030 22.6382 0.2800 11.6883 0.7568 0.3557 0.7432 Z-Image 6B [69] 0.7841 0.2841 5.2488 22.2118 0.2714 10.0857 0.6563 0.3012 0.7373 
+
+Few-Step Diffusion Models (4 NFE) 
+
+Z-Image-Turbo 6B [69] 0.9696 0.2764 5.2894 22.7994 0.2954 12.9136 0.7562 0.3530 0.7539 FLUX.2 4B [34] 1.0506 0.2864 5.2658 22.7370 0.2890 12.9295 0.7722 0.2403 0.6375 FLUX.2 9B [34] 1.1998 0.2919 5.3730 23.0178 0.2991 13.2955 0.7814 0.3570 0.7566 Z-Image 6B w/ TDM-R1 [47] 1.1543 0.2836 5.2450 22.8202 0.3064 13.4349 0.7737 0.4073 0.7665 
+
+FLUX.2 4B w/ RTDMD (Ours) 1.3712 0.3219 5.7746 23.9642 0.3516 15.5772 0.9046 0.2755 0.6858 
+
+distillation can effectively close the quality gap introduced by model scale reduction. While Z-Image 6B [ 69 ] with TDM-R1 [ 47 ] achieves higher absolute scores on GenEval2 [ 30 ] and OCR [ 40 ], this advantage stems primarily from the Z-Image base model itself being inherently stronger on these two benchmarks; in contrast, the relative improvement brought by our method over its own baseline is more pronounced on OCR (+0.0483 vs. +0.0126) and comparable on GenEval2. Qualitative comparisons in Fig. 3 and Fig. 10 further corroborate these findings. 
+
+4.3 Ablation Studies 
+
+In this subsection, we perform ablation using SD3.5-M [1] with CLIPScore [ 23 ], PickScore [ 32 ], and HPSv2 [ 76 ] as training rewards on DrawBench [ 61 ] following Zheng et al. [85] . Other settings are the same as Sec. 4.1. Visualization results for ablation are also presented in App. M. 
+
+Effect of AC-DMD. In A-DMD, the fake score model is trained on noisy intermediate latents rather than clean samples, making denoising score matching less accurate under limited updates. As shown in Tab. 3, the consistency loss L(k)cons improves fake score estimation by enforcing coherent predictions across neighboring timesteps. Notably, the improvement is consistent across all tested values of γ,confirming the robustness of the regularizer. The best result at γ = 0 .01 yields an additional +1.58 PickScore and +0.027 HPSv2 over A-DMD. 
+
+Effect of SubGRPO. As shown in Tab. 4 and Fig. 4, replacing naive GRPO with SubGRPO consistently improves all metrics. Naive GRPO samples independent noise at every stochastic step, so reward differences across trajectories conflate contributions from all steps, leading to a noisy gradient signal. SubGRPO instead shares the injected noise at non-selected steps ( k / ∈ S ) across the group (Eq. (16)), attributing reward variation primarily to the selected subset S. This shared-noise design 8Text prompt: “Lego Arnold Schwarzenegger.” 
+
+Text prompt: “a green backpack and a pig.” 
+
+Text prompt: “A vintage postcard with a faded, nostalgic look, featuring elegant cursive text that reads “Wish You Were Here” against a backdrop of a serene, old-world waterfront town with pastel buildings and a gentle, sunny sky.” (a) FLUX.2 4B 
+
+w/ Ours 
+
+(b) FLUX.2 9B (c) FLUX.2 4B (d) Z-Imag e 6B 
+
+w/ TDM -R1 
+
+(e) Z-Image -Turbo 
+
+6B 
+
+Figure 3: Qualitative comparison for few-step diffusion models (4 NFE). Using identical noise inputs, our method outperforms others in both quality and prompt alignment, showing strong performance. 
+
+Table 3: Ablation results for different distribution matching strategies in our two-stage training. All meth-ods adopt the CPS scheduler [ 71 ] with η = 0 .9. Blue row denotes the default setting of our RTDMD. Results of DMD2 [ 83 ] and A-DMD with various values of η
+
+are shown in App. K. 
+
+Method CLIPScore PickScore HPSv2 
+
+Score ↑ ∆(↑) Score ↑ ∆(↑) Score ↑ ∆(↑)
+
+A-DMD 0.2753 — 22.0116 — 0.3188 —
+
+AC-DMD ( γ = 0 .1) 0.2846 +0.0093 23.2105 +1 .1989 0.3362 +0 .0174 
+
+AC-DMD ( γ = 0 .01 ) 0.2843 +0 .0090 23.5690 +1.5574 0.3456 +0.0268 
+
+AC-DMD ( γ = 0 .005 ) 0.2837 +0.0084 22.8546 +0.8430 0.3324 +0.0136 
+
+AC-DMD ( γ = 0 .001 ) 0.2831 +0.0078 22.2378 +0.2262 0.3294 +0.0106 
+
+Table 4: Ablation results for strategies applied after cold start. “w/ Ldet ” means we adopt Eq. (15) to opti-mize the generator. “w/ GRPO” signifies that we use naive GRPO to optimize the first K − 1 stochastic steps. Blue row denotes the default setting of our RTDMD. 
+
+Method CLIPScore PickScore HPSv2 
+
+Score ↑ ∆(↑) Score ↑ ∆(↑) Score ↑ ∆(↑)
+
+Cold Start 0.2822 +0.0063 22.5056 −0.8008 0.2942 −0.0326 
+
+w/ GRPO 0.2759 — 23.3064 — 0.3268 —
+
+w/ SubGRPO ( M = 1 ) 0.2798 +0.0039 23.3272 +0.0208 0.3332 +0.0064 
+
+w/ Ldet 0.2802 +0.0043 23.4156 +0.1092 0.3318 +0.0050 
+
+w/ SubGRPO ( M = 2 ) 0.2839 +0 .0080 23.4520 +0 .1456 0.3459 +0.0191 
+
+w/ Ldet 0.2843 +0.0084 23.5690 +0.2626 0.3456 +0 .0188 0 200 400 600 800 1000 
+
+Training Iteration      
+
+> 22.6
+> 22.8
+> 23.0
+> 23.2
+> 23.4
+> 23.6
+> PickScore
+> 0200 400 600 800 1000
+
+Training Iteration      
+
+> 0.30
+> 0.31
+> 0.32
+> 0.33
+> 0.34
+> HPSv2
+> 0200 400 600 800 1000
+
+Training Iteration      
+
+> 0.2675
+> 0.2700
+> 0.2725
+> 0.2750
+> 0.2775
+> 0.2800
+> 0.2825
+> 0.2850
+> CLIPScore
+> 0200 400 600 800 1000
+
+Training Iteration           
+
+> 0.480
+> 0.485
+> 0.490
+> 0.495
+> 0.500
+> 0.505
+> 0.510
+> Mean
+> SubGRPO ( M= 2 )SubGRPO ( M= 1 ) + det SubGRPO ( M= 2 ) + det SubGRPO ( M= 1 )GRPO
+
+Figure 4: Evaluation curves when reinforcing the few-step generator. “Mean” denotes the average score of normalized PickScore, HPSv2, and CLIPScore. 
+
+reduces gradient variance by isolating the effect of selected steps. Increasing the subset size from 
+
+M = 1 to M = 2 brings further gains, with PickScore improving from 23.33 to 23.45 and HPSv2 from 0.3332 to 0.3459. This reflects a trade-off between per-step variance reduction (fewer selected steps yield tighter control) and optimization coverage (more selected steps provide gradient signal to a larger portion of the trajectory); in our setting, M = 2 strikes a favorable balance. 9Effect of hybrid policy gradient. Existing GRPO-based methods for diffusion models [ 40 , 82 ] only optimize the stochastic denoising steps via the GRPO-estimator, neglecting the final deterministic transition entirely. However, our hybrid policy gradient (Eq. (14)) combines SubGRPO for stochastic intermediate steps with a pathwise gradient through this deterministic final step. Tab. 4 shows that adding this term consistently improves performance: under M = 2 , PickScore increases from 23.45 to 23.57 and CLIPScore from 0.2839 to 0.2843, confirming that the deterministic final mapping carries a meaningful optimization signal that is otherwise left unexploited. 
+
+5 Conclusions and Limitations 
+
+We present RTDMD, a two-stage framework for few-step image generation that unifies distribution matching distillation with reward-guided reinforcement learning. The first stage, AC-DMD employs ambient distribution matching and augments fake score training with a consistency regularizer to stabi-lize estimation. The second stage minimizes the KL divergence to a reward-tilted teacher distribution, which naturally decomposes into a distribution matching term and a reward maximization term. For the latter, we derive a hybrid policy gradient that combines SubGRPO for stochastic intermediate steps with direct reward backpropagation through the deterministic final step. Comprehensive experiments demonstrate the SOTA performance of our method across baselines. In terms of limitations, this work focuses on text-to-image generation; extending the framework to video synthesis and image editing, where reward design and temporal consistency pose additional challenges, is left for future work. 
+
+References 
+
+[1] Stability AI. Sd3.5. https://github.com/Stability-AI/sd3.5 , 2024. 2, 7, 8, 24 [2] James Betker, Gabriel Goh, Li Jing, Tim Brooks, Jianfeng Wang, Linjie Li, Long Ouyang, Juntang Zhuang, Joyce Lee, Yufei Guo, et al. Improving image generation with better captions. 
+
+Computer Science. https://cdn. openai. com/papers/dall-e-3. pdf , 2(3):8, 2023. 25 [3] Kevin Black, Michael Janner, Yilun Du, Ilya Kostrikov, and Sergey Levine. Training diffusion models with reinforcement learning. In The Twelfth International Conference on Learning Representations , 2024. URL https://openreview.net/forum?id=YCWjhGrJFD . 1, 17 [4] George Casella and Christian P. Robert. Rao-blackwellisation of sampling schemes. Biometrika ,83(1):81–94, 1996. 7 [5] Clement Chadebec, Onur Tasar, Eyal Benaroche, and Benjamin Aubin. Flash diffusion: Accel-erating any conditional diffusion model for few steps image generation. In Proceedings of the AAAI Conference on Artificial Intelligence , pages 15686–15695, 2025. 7, 8, 17 [6] Guanjie Chen, Shirui Huang, Kai Liu, Jian-Xiang Zhu, Xiaoye Qu, Peng Chen, Yu Cheng, and Yifu Sun. Flash-dmd: Towards high-fidelity few-step image generation with efficient distillation and joint reinforcement learning. ArXiv , abs/2511.20549, 2025. 1, 17 [7] Huayu Chen, Kaiwen Zheng, Qinsheng Zhang, Ganqu Cui, Yin Cui, Haotian Ye, Tsung-Yi Lin, Ming-Yu Liu, Jun Zhu, and Haoxiang Wang. NFT: Bridging supervised learning and reinforcement learning in math reasoning. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview.net/forum?id=ujBrsQm6Zu .17 [8] Junying Chen, Zhenyang Cai, Pengcheng Chen, Shunian Chen, Ke Ji, Xidong Wang, Yunjin Yang, and Benyou Wang. Sharegpt-4o-image: Aligning multimodal models with gpt-4o-level image generation. arXiv preprint arXiv:2506.18095 , 2025. 7 [9] Xiaokang Chen, Zhiyu Wu, Xingchao Liu, Zizheng Pan, Wen Liu, Zhenda Xie, Xingkai Yu, and Chong Ruan. Janus-pro: Unified multimodal understanding and generation with data and model scaling, 2025. URL https://arxiv.org/abs/2501.17811 . 25 [10] Kevin Clark, Paul Vicol, Kevin Swersky, and David J. Fleet. Directly fine-tuning diffusion models on differentiable rewards. In The Twelfth International Conference on Learning Repre-sentations , 2024. URL https://openreview.net/forum?id=1vmSEVL19f . 1, 17 10 [11] Giannis Daras, Yuval Dagan, Alex Dimakis, and Constantinos Daskalakis. Consistent diffusion models: Mitigating sampling drift by learning to be consistent. Advances in Neural Information Processing Systems , 36:42038–42063, 2023. 2, 5 [12] Giannis Daras, Alex Dimakis, and Constantinos Costis Daskalakis. Consistent diffusion meets tweedie: Training exact ambient diffusion models with noisy data. In Forty-first Interna-tional Conference on Machine Learning , 2024. URL https://openreview.net/forum? id=PlVjIGaFdH . 2, 5, 20 [13] Hugging Face Open Data. text-to-image-2m. https://huggingface.co/datasets/ jackyhate/text-to-image-2M , 2024. 7 [14] Linwei Dong, Ruoyu Guo, Ge Bai, Zehuan Yuan, Yawei Luo, and Changqing Zou. Guiding distribution matching distillation with gradient-based reinforcement learning, 2026. URL 
+
+https://arxiv.org/abs/2604.19009 . 1, 7, 8, 17 [15] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al. Scaling rectified flow trans-formers for high-resolution image synthesis. In Forty-first international conference on machine learning , 2024. 8, 27 [16] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al. Scaling rectified flow trans-formers for high-resolution image synthesis. In Forty-first international conference on machine learning , 2024. 1, 2, 3, 5, 7, 17, 25 [17] Jiajun Fan, Shuaike Shen, Chaoran Cheng, Yuxin Chen, Chumeng Liang, and Ge Liu. Online reward-weighted fine-tuning of flow matching with wasserstein regularization. In The Thirteenth International Conference on Learning Representations , 2025. 17 [18] Linqian Fan, Peiqin Sun, Tiancheng Wen, Shun Lu, and Chengru Song. rdm : Re-conceptualizing distribution matching as a reward for diffusion distillation, 2026. URL https://arxiv.org/ abs/2603.28460 . 1, 7, 8, 17 [19] Xiangyu Fan, Zesong Qiu, Zhuguanyu Wu, Fanzhou Wang, Zhiqian Lin, Tianxiang Ren, Dahua Lin, Ruihao Gong, and Lei Yang. Phased dmd: Few-step distribution matching distillation via score matching within subintervals, 2026. URL https://arxiv.org/abs/2510.27684 . 1, 4, 17, 24 [20] Ying Fan, Olivia Watkins, Yuqing Du, Hao Liu, Moonkyung Ryu, Craig Boutilier, Pieter Abbeel, Mohammad Ghavamzadeh, Kangwook Lee, and Kimin Lee. Dpok: Reinforcement learning for fine-tuning text-to-image diffusion models. Advances in Neural Information Processing Systems , 36:79858–79885, 2023. 1, 17 [21] Xingtong Ge, Xin Zhang, Tongda Xu, Yi Zhang, Xinjie Zhang, Yan Wang, and Jun Zhang. Senseflow: Scaling distribution matching for flow-based text-to-image distillation. arXiv preprint arXiv:2506.00523 , 2025. 1 [22] Dhruba Ghosh, Hannaneh Hajishirzi, and Ludwig Schmidt. Geneval: An object-focused framework for evaluating text-to-image alignment. Advances in Neural Information Processing Systems , 36:52132–52152, 2023. 7, 24 [23] Jack Hessel, Ari Holtzman, Maxwell Forbes, Ronan Le Bras, and Yejin Choi. Clipscore: A reference-free evaluation metric for image captioning. In Proceedings of the 2021 conference on empirical methods in natural language processing , pages 7514–7528, 2021. 7, 8 [24] Jonathan Ho and Tim Salimans. Classifier-free diffusion guidance. In NeurIPS 2021 Workshop on Deep Generative Models and Downstream Applications , 2021. URL https://openreview. net/forum?id=qw8AKxfYbI . 2, 7, 17, 25, 28 [25] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Advances in neural information processing systems , 33:6840–6851, 2020. 1, 2, 17 11 [26] Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, et al. Lora: Low-rank adaptation of large language models. ICLR , 1 (2):3, 2022. 7, 23 [27] Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al. Gpt-4o system card. arXiv preprint arXiv:2410.21276 , 2024. 25 [28] Albert Q. Jiang, Alexandre Sablayrolles, Antoine Roux, Arthur Mensch, Blanche Savary, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Emma Bou Hanna, Florian Bressand, Gianna Lengyel, Guillaume Bour, Guillaume Lample, Lélio Renard Lavaud, Lucile Saulnier, Marie-Anne Lachaux, Pierre Stock, Sandeep Subramanian, Sophia Yang, Szymon Antoniak, Teven Le Scao, Théophile Gervet, Thibaut Lavril, Thomas Wang, Timothée Lacroix, and William El Sayed. Mixtral of experts, 2024. URL https://arxiv.org/abs/2401.04088 .17 [29] Dengyang Jiang, Dongyang Liu, Zanyi Wang, Qilong Wu, Liuzhuozheng Li, Hengzhuang Li, Xin Jin, David Liu, Zhen Li, Bo Zhang, et al. Distribution matching distillation meets reinforcement learning. arXiv preprint arXiv:2511.13649 , 2025. 1, 2, 7, 8, 17 [30] Amita Kamath, Kai-Wei Chang, Ranjay Krishna, Luke Zettlemoyer, Yushi Hu, and Marjan Ghazvininejad. Geneval 2: Addressing benchmark drift in text-to-image evaluation, 2025. URL 
+
+https://arxiv.org/abs/2512.16853 . 7, 8 [31] Dongjun Kim, Chieh-Hsin Lai, Wei-Hsiang Liao, Naoki Murata, Yuhta Takida, Toshimitsu Uesaka, Yutong He, Yuki Mitsufuji, and Stefano Ermon. Consistency trajectory models: Learning probability flow ODE trajectory of diffusion. In ICLR . OpenReview.net, 2024. 17 [32] Yuval Kirstain, Adam Polyak, Uriel Singer, Shahbuland Matiana, Joe Penna, and Omer Levy. Pick-a-pic: An open dataset of user preferences for text-to-image generation. Advances in neural information processing systems , 36:36652–36663, 2023. 7, 8 [33] Black Forest Labs. Flux. https://github.com/black-forest-labs/flux , 2024. 1, 25 [34] Black Forest Labs. FLUX.2: Frontier Visual Intelligence. https://bfl.ai/blog/flux-2 ,2025. 2, 7, 8, 28 [35] Kimin Lee, Hao Liu, Moonkyung Ryu, Olivia Watkins, Yuqing Du, Craig Boutilier, Pieter Abbeel, Mohammad Ghavamzadeh, and Shixiang Shane Gu. Aligning text-to-image models using human feedback. arXiv preprint arXiv:2302.12192 , 2023. 17 [36] Junzhe Li, Yutao Cui, Tao Huang, Yinping Ma, Chun Fan, Miles Yang, and Zhao Zhong. Mixgrpo: Unlocking flow-based grpo efficiency with mixed ode-sde. arXiv preprint arXiv:2507.21802 , 2025. 2, 6 [37] Shanchuan Lin, Anran Wang, and Xiao Yang. Sdxl-lightning: Progressive adversarial diffusion distillation. arXiv preprint arXiv:2402.13929 , 2024. 17 [38] Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow matching for generative modeling. In The Eleventh International Conference on Learning Representations , 2023. URL https://openreview.net/forum?id=PqvMRDCJT9t . 1, 3, 5, 17 [39] Dongyang Liu, Peng Gao, David Liu, Ruoyi Du, Zhen Li, Qilong Wu, Xin Jin, Sihan Cao, Shifeng Zhang, Steven HOI, and Hongsheng Li. Decoupled DMD: CFG augmentation as the spear, distribution matching as the shield. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview.net/forum?id=jBztvOiCKE .1, 17 [40] Jie Liu, Gongye Liu, Jiajun Liang, Yangguang Li, Jiaheng Liu, Xintao Wang, Pengfei Wan, Di ZHANG, and Wanli Ouyang. Flow-GRPO: Training flow matching models via online RL. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. URL 
+
+https://openreview.net/forum?id=oCBKGw5HNf . 1, 2, 8, 10, 17, 24, 25 12 [41] Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow straight and fast: Learning to generate and transfer data with rectified flow. In International Conference on Learning Representations ,2023. 1 [42] Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. In International Conference on Learning Representations , 2019. URL https://openreview.net/forum? id=Bkg6RiCqY7 . 23 [43] Simian Luo, Yiqin Tan, Longbo Huang, Jian Li, and Hang Zhao. Latent consistency models: Synthesizing high-resolution images with few-step inference. arXiv preprint arXiv:2310.04378 ,2023. 1, 7, 17 [44] Weijian Luo. Diff-instruct++: Training one-step text-to-image generator model to align with human preferences, 2025. URL https://arxiv.org/abs/2410.18881 . 17 [45] Weijian Luo, Tianyang Hu, Shifeng Zhang, Jiacheng Sun, Zhenguo Li, and Zhihua Zhang. Diff-instruct: A universal approach for transferring knowledge from pre-trained diffusion models. In 
+
+NeurIPS , 2023. 17 [46] Yihong Luo, Tianyang Hu, Jiacheng Sun, Yujun Cai, and Jing Tang. Learning few-step diffusion models by trajectory distribution matching. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 17719–17728, 2025. 1, 7, 8, 17, 25 [47] Yihong Luo, Tianyang Hu, Weijian Luo, and Jing Tang. Tdm-r1: Reinforcing few-step diffusion models with non-differentiable reward, 2026. URL https://arxiv.org/abs/2603.07700 .1, 7, 8, 17, 25 [48] Nanye Ma, Mark Goldstein, Michael S Albergo, Nicholas M Boffi, Eric Vanden-Eijnden, and Saining Xie. Sit: Exploring flow and diffusion-based generative models with scalable interpolant transformers. In European Conference on Computer Vision , pages 23–40. Springer, 2024. 3 [49] Yiyang Ma, Xingchao Liu, Xiaokang Chen, Wen Liu, Chengyue Wu, Zhiyu Wu, Zizheng Pan, Zhenda Xie, Haowei Zhang, Xingkai Yu, et al. Janusflow: Harmonizing autoregression and rectified flow for unified multimodal understanding and generation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 7739–7751, 2025. 25 [50] Yuhang Ma, Xiaoshi Wu, Keqiang Sun, and Hongsheng Li. Hpsv3: Towards wide-spectrum hu-man preference score. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 15086–15095, 2025. 7 [51] David McAllister, Songwei Ge, Brent Yi, Chung Min Kim, Ethan Weber, Hongsuk Choi, Haiwen Feng, and Angjoo Kanazawa. Flow matching policy gradients. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview. net/forum?id=eoEmoKoQpJ . 17 [52] Zichen Miao, Zhengyuan Yang, Kevin Lin, Ze Wang, Zicheng Liu, Lijuan Wang, and Qiang Qiu. Tuning timestep-distilled diffusion model using pairwise sample optimization. In The Thirteenth International Conference on Learning Representations , 2025. URL https://openreview. net/forum?id=fXnE4gB64o . 17 [53] OpenAI. Dalle-2, 2023. URL https://openai.com/dall-e-2 . 25 [54] Dustin Podell, Zion English, Kyle Lacey, Andreas Blattmann, Tim Dockhorn, Jonas Müller, Joe Penna, and Robin Rombach. SDXL: Improving latent diffusion models for high-resolution image synthesis. In The Twelfth International Conference on Learning Representations , 2024. URL https://openreview.net/forum?id=di52zR8xgf . 1, 25 [55] Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and Chelsea Finn. Direct preference optimization: Your language model is secretly a reward model. In Thirty-seventh Conference on Neural Information Processing Systems , 2023. URL 
+
+https://openreview.net/forum?id=HPuSIXJaa9 . 17 13 [56] Yuxi Ren, Xin Xia, Yanzuo Lu, Jiacheng Zhang, Jie Wu, Pan Xie, XING WANG, and Xuefeng Xiao. Hyper-SD: Trajectory segmented consistency model for efficient image synthesis. In 
+
+The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. URL 
+
+https://openreview.net/forum?id=O5XbOoi0x3 . 7, 8, 17 [57] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer. High-resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 10684–10695, 2022. 17, 25 [58] Tim Salimans and Jonathan Ho. Progressive distillation for fast sampling of diffusion models. In The Tenth International Conference on Learning Representations, ICLR 2022, Virtual Event, April 25-29, 2022 . OpenReview.net, 2022. URL https://openreview.net/forum?id= TIdIXIpzhoI . 1, 17 [59] Axel Sauer, Frederic Boesel, Tim Dockhorn, Andreas Blattmann, Patrick Esser, and Robin Rombach. Fast high-resolution image synthesis with latent adversarial diffusion distillation. In 
+
+SIGGRAPH Asia 2024 Conference Papers , pages 1–11, 2024. 1, 17 [60] Axel Sauer, Dominik Lorenz, Andreas Blattmann, and Robin Rombach. Adversarial diffusion distillation. In European Conference on Computer Vision , pages 87–103. Springer, 2024. 1, 17 [61] Christoph Schuhmann. Laion-aesthetics. https://laion.ai/blog/laion-aesthetics/ ,2022. 8 [62] Christoph Schuhmann, Romain Beaumont, Richard Vencu, Cade Gordon, Ross Wightman, Mehdi Cherti, Theo Coombes, Aarush Katta, Clayton Mullis, Mitchell Wortsman, et al. Laion-5b: An open large-scale dataset for training next generation image-text models. Advances in neural information processing systems , 35:25278–25294, 2022. 7 [63] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. 17 [64] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. 6, 17, 22, 26 [65] Jiaming Song, Chenlin Meng, and Stefano Ermon. Denoising diffusion implicit models. In 
+
+International Conference on Learning Representations , 2021. URL https://openreview. net/forum?id=St1giarCHLP . 1, 2 [66] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole. Score-based generative modeling through stochastic differential equations. In 
+
+International Conference on Learning Representations , 2021. URL https://openreview. net/forum?id=PxTIG12RRHS . 1 [67] Yang Song, Prafulla Dhariwal, Mark Chen, and Ilya Sutskever. Consistency models. In 
+
+International Conference on Machine Learning , pages 32211–32252. PMLR, 2023. 17, 19 [68] Image Team, Huanqia Cai, Sihan Cao, Ruoyi Du, Peng Gao, Steven Hoi, Zhaohui Hou, Shijie Huang, Dengyang Jiang, Xin Jin, Liangchen Li, Zhen Li, Zhong-Yu Li, David Liu, Dongyang Liu, Junhan Shi, Qilong Wu, Feng Yu, Chi Zhang, Shifeng Zhang, and Shilin Zhou. Z-image: An efficient image generation foundation model with single-stream diffusion transformer, 2025. URL https://arxiv.org/abs/2511.22699 . 7 [69] Z-Image Team. Z-image: An efficient image generation foundation model with single-stream diffusion transformer. arXiv preprint arXiv:2511.22699 , 2025. 8 [70] Bram Wallace, Meihua Dang, Rafael Rafailov, Linqi Zhou, Aaron Lou, Senthil Purushwalkam, Stefano Ermon, Caiming Xiong, Shafiq Joty, and Nikhil Naik. Diffusion model alignment using direct preference optimization. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 8228–8238, 2024. 1, 17 [71] Feng Wang and Zihao Yu. Coefficients-preserving sampling for reinforcement learning with flow matching. arXiv preprint arXiv:2509.05952 , 2025. 4, 7, 9, 19 14 [72] Fu-Yun Wang, Zhaoyang Huang, Alexander Bergman, Dazhong Shen, Peng Gao, Michael Lingelbach, Keqiang Sun, Weikang Bian, Guanglu Song, Yu Liu, et al. Phased consistency models. Advances in neural information processing systems , 37:83951–84009, 2024. 17 [73] Xinlong Wang, Xiaosong Zhang, Zhengxiong Luo, Quan Sun, Yufeng Cui, Jinsheng Wang, Fan Zhang, Yueze Wang, Zhen Li, Qiying Yu, Yingli Zhao, Yulong Ao, Xuebin Min, Tao Li, Boya Wu, Bo Zhao, Bowen Zhang, Liangdong Wang, Guang Liu, Zheqi He, Xi Yang, Jingjing Liu, Yonghua Lin, Tiejun Huang, and Zhongyuan Wang. Emu3: Next-token prediction is all you need, 2024. URL https://arxiv.org/abs/2409.18869 . 25 [74] Zhendong Wang, Huangjie Zheng, Pengcheng He, Weizhu Chen, and Mingyuan Zhou. Diffusion-gan: Training gans with diffusion. In The Eleventh International Conference on Learning Representations, ICLR 2023, Kigali, Rwanda, May 1-5, 2023 . OpenReview.net, 2023. URL https://openreview.net/forum?id=HZf7UbpWHuA . 17 [75] Zhengyi Wang, Cheng Lu, Yikai Wang, Fan Bao, Chongxuan Li, Hang Su, and Jun Zhu. Pro-lificdreamer: High-fidelity and diverse text-to-3d generation with variational score distillation. 
+
+Advances in Neural Information Processing Systems , 36:8406–8441, 2023. 17 [76] Xiaoshi Wu, Yiming Hao, Keqiang Sun, Yixiong Chen, Feng Zhu, Rui Zhao, and Hongsheng Li. Human preference score v2: A solid benchmark for evaluating human preferences of text-to-image synthesis. arXiv preprint arXiv:2306.09341 , 2023. 1, 7, 8, 24 [77] Enze Xie, Junsong Chen, Yuyang Zhao, Jincheng YU, Ligeng Zhu, Yujun Lin, Zhekai Zhang, Muyang Li, Junyu Chen, Han Cai, Bingchen Liu, Daquan Zhou, and Song Han. SANA 1.5: Efficient scaling of training-time and inference-time compute in linear diffusion transformer. In Forty-second International Conference on Machine Learning , 2025. URL 
+
+https://openreview.net/forum?id=27hOkXzy9e . 25 [78] Jinheng Xie, Weijia Mao, Zechen Bai, David Junhao Zhang, Weihao Wang, Kevin Qinghong Lin, Yuchao Gu, Zhijie Chen, Zhenheng Yang, and Mike Zheng Shou. Show-o: One single transformer to unify multimodal understanding and generation. In The Thirteenth International Conference on Learning Representations , 2025. URL https://openreview.net/forum? id=o6Ynz6OIQ6 . 25 [79] Jiazheng Xu, Xiao Liu, Yuchen Wu, Yuxuan Tong, Qinkai Li, Ming Ding, Jie Tang, and Yuxiao Dong. Imagereward: Learning and evaluating human preferences for text-to-image generation. 
+
+Advances in Neural Information Processing Systems , 36:15903–15935, 2023. 1, 2, 7, 17 [80] Shuchen Xue, Chongjian Ge, Shilong Zhang, Yichen Li, and Zhi-Ming Ma. Advantage weighted matching: Aligning rl with pretraining in diffusion models. arXiv preprint arXiv:2509.25050 ,2025. 17 [81] Zeyue Xue, Jie Wu, Yu Gao, Fangyuan Kong, Lingting Zhu, Mengzhao Chen, Zhiheng Liu, Wei Liu, Qiushan Guo, Weilin Huang, et al. Dancegrpo: Unleashing grpo on visual generation. 
+
+arXiv preprint arXiv:2505.07818 , 2025. 1 [82] Zeyue Xue, Jie Wu, Yu Gao, Fangyuan Kong, Lingting Zhu, Mengzhao Chen, Zhiheng Liu, Wei Liu, Qiushan Guo, Weilin Huang, et al. Dancegrpo: Unleashing grpo on visual generation. 
+
+arXiv preprint arXiv:2505.07818 , 2025. 8, 10, 17 [83] Tianwei Yin, Michaël Gharbi, Taesung Park, Richard Zhang, Eli Shechtman, Fredo Durand, and Bill Freeman. Improved distribution matching distillation for fast image synthesis. Advances in neural information processing systems , 37:47455–47487, 2024. 1, 3, 4, 5, 7, 8, 9, 17, 19, 24 [84] Tianwei Yin, Michaël Gharbi, Richard Zhang, Eli Shechtman, Fredo Durand, William T Freeman, and Taesung Park. One-step diffusion with distribution matching distillation. In 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 6613–6623, 2024. 1, 3, 4, 5, 8, 17, 19 [85] Kaiwen Zheng, Huayu Chen, Haotian Ye, Haoxiang Wang, Qinsheng Zhang, Kai Jiang, Hang Su, Stefano Ermon, Jun Zhu, and Ming-Yu Liu. DiffusionNFT: Online diffusion reinforcement with forward process. In The Fourteenth International Conference on Learning Representations ,2026. URL https://openreview.net/forum?id=VJZ477R89F . 8, 17 15 Appendix of Reinforcing Few-step Generators via Reward-Tilted Distribution Matching 
+
+A Related Work 17 B Derivation of the Step-k Training Objective 17 C Coefficient-Preserving Sampling Formula 18 D Optimality of Ambient Denoising Score Matching 19 E Self-Consistency of the Optimal Fake Score 20 F Practical Consistency Loss Estimator 20 G Hybrid Policy Gradient 21 
+
+G.1 Derivation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 G.2 Discussion . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 
+
+H Background on GRPO and Its Application to Few-step Generators 22 I Detailed Algorithm of RTDMD 23 J More Implementation Details 23 K Discussion on the Sampling Schedule and Connection to DMD2 24 L GenEval Results 24 M Qualitative comparison for Ablation 25 N More Qualitative Results 26 A Related Work 
+
+Few-step distillation. To alleviate the iterative sampling cost of diffusion and flow-based models [ 25 ,57 , 16 , 38 ], a growing line of work distills multi-step teachers into few-step students, broadly falling into trajectory-based and distribution-based approaches. The former, including progressive distillation [ 58 , 56 , 37 , 5] and consistency models (CM) [ 67 , 43 , 31 , 72 ], replicate or enforce self-consistency along the teacher’s trajectory, while the latter align output distributions via GAN-based [74, 60, 59] or score/VSD variants [75, 45]. Among these, Distribution Matching Distillation (DMD) [ 84 , 83 ] has become a foundation work for high-fidelity few-step generation, with follow-ups refining it from different angles: Flash-DMD [ 6] uses a timestep-aware pixel-GAN; TDM [ 46 ]fuses trajectory and distribution matching without GAN; Decoupled DMD [ 39 ] recasts classifier-free guidance (CFG) [ 24 ] as the generative driver and DMD as a regularizer; and PhasedDMD [ 19 ]combines phase-wise distillation with Mixture-of-Experts (MoE) [28] to ease learning. 
+
+Reinforcement learning for diffusion models. Reinforcement learning (RL) has emerged as a powerful tool for aligning diffusion and flow-based models with human preferences. One line directly backpropagates reward gradients, as in ReFL [ 79 ] on one-step predictions and DRaFT [ 10 ]on multi-step samples via truncated backpropagation. Another line formulates denoising as a multi-step decision process: DDPO [ 3 ] and DPOK [ 20 ] derive tractable Gaussian likelihoods via an Euler–Maruyama discretization, enabling PPO-style [ 63 ] optimization. Flow-GRPO [ 40 ] and DanceGRPO [ 82 ] further combine this formulation with GRPO [ 64 ], thereby simplifying PPO with a group-mean baseline. A third line optimizes the forward process: Lee et al. [35] and Fan et al. [17] use reward-weighted denoising losses, Diffusion-DPO [ 70 ] adapts DPO [ 55 ] without rollouts, and FMPG [ 51 ] and AWM [ 80 ] use the ELBO as a likelihood proxy, while DiffusionNFT [ 85 ] reinterprets GRPO as an NFT-style [7] forward-process variant. 
+
+Reinforcement learning for few-step generative models. Beyond applying RL to multi-step teachers, a growing body of work integrates RL with few-step distillation to combine efficiency with preference alignment. Early efforts treat RL as an independent post-training stage on top of distilled models: Hyper-SD [ 56 ] augments trajectory-segmented consistency distillation with human feedback learning, while PSO [ 52 ] fine-tunes timestep-distilled models with pairwise preference data to avoid costly re-distillation. Diff-Instruct++ [ 44 ] further reveals a theoretical link between CFG-based distillation and RL, formulating one-step generator alignment as KL-regularized reward maximization. More recent work [ 47 , 29 ] moves toward joint optimization: DMDR [ 29 ] unifies DMD and RL so that the two mutually regularize each other, and Rdm [ 18 ] re-conceptualizes distribution matching itself as a reward, providing a principled bridge between DMD and GRPO-style RL. Besides these two works, GDMD [14] first combines NFT-style RL [85] with DMD. 
+
+B Derivation of the Step-k Training Objective 
+
+Learning the generator after k sampling steps. Let p(k) 
+
+> θ
+
+denote the distribution of the generated state ˆxtk after the first k sampling steps. For training step k, we define the student marginal at time 
+
+t ∈ [tk, 1] by diffusing ˆxtk forward within the remaining interval. Under the rectified schedule, the diffusion path is 
+
+xt = (1 − t)x0 + tϵ, ϵ ∼ N (0, I).
+
+By the Markov property of the Gaussian path, conditioning on an intermediate state xtk yields 
+
+xt = 1 − t
+
+1 − tk
+
+xtk + t − tk
+
+1 − tk
+
+ϵ, t ∈ [tk, 1] .
+
+Therefore, for generated samples ˆxtk ∼ p(k) 
+
+> θ
+
+, we define 
+
+x(k) 
+
+> t
+
+= αk(t) ˆ xtk + σk(t)ϵ, αk(t) = 1 − t
+
+1 − tk
+
+, σk(t) = t − tk
+
+1 − tk
+
+,
+
+with conditional density 
+
+qk(xt | ˆxtk , t ) = N  xt; αk(t) ˆ xtk , σ k(t)2I .
+
+17 The induced student marginal is 
+
+p(k) 
+
+> θ,t
+
+(x) = 
+
+Z
+
+qk(x | ˆxtk , t ) p(k) 
+
+> θ
+
+( ˆ xtk ) d ˆxtk .
+
+Following the reverse-KL formulation used in distribution matching distillation, we optimize 
+
+L(k)gen (θ) = Et∼U [tk ,1] 
+
+h
+
+λk(t) KL 
+
+
+
+p(k) 
+
+> θ,t
+
+∥ pψ,t 
+
+i 
+
+.
+
+Using the pathwise derivative of the reverse KL gives 
+
+∇θ L(k)gen = Et, ϵ, ˆxtk
+
+"
+
+λk(t)
+
+
+
+∇x log p(k) 
+
+> θ,t
+
+(x(k) 
+
+> t
+
+) − sψ (x(k) 
+
+> t
+
+, t )
+
+⊤ ∂x(k)
+
+> t
+
+∂θ 
+
+#
+
+.
+
+Since 
+
+x(k) 
+
+> t
+
+= αk(t) ˆ xtk + σk(t)ϵ,
+
+we have 
+
+∂x(k)
+
+> t
+
+∂θ = αk(t) ∂ ˆxtk
+
+∂θ ,
+
+and hence 
+
+∇θ L(k)gen = Et, ϵ, ˆxtk
+
+
+
+λk(t)αk(t)
+
+
+
+∇x log p(k) 
+
+> θ,t
+
+(x(k) 
+
+> t
+
+) − sψ (x(k) 
+
+> t
+
+, t )
+
+⊤ ∂ ˆxtk
+
+∂θ 
+
+
+
+.
+
+Because the score of p(k) 
+
+> θ,t
+
+is intractable, we approximate it with a learned fake score 
+
+∇x log p(k) 
+
+> θ,t
+
+(x) ≈ sϕ(x, t ),
+
+which yields the practical score-difference gradient 
+
+∇θ L(k)gen ≈ − Et, ϵ, ˆxtk
+
+
+
+λk(t)αk(t)
+
+
+
+sψ (x(k) 
+
+> t
+
+, t ) − sϕ(x(k) 
+
+> t
+
+, t )
+
+⊤ ∂ ˆxtk
+
+∂θ 
+
+
+
+.
+
+Learning the fake score within [tk, 1] . Since clean samples x0 are unavailable when tk > 0, the fake score must be trained using the generated endpoint ˆxtk rather than a global clean target. Restating Eq. (10), the fake-score model sϕ is fit on the subinterval [tk, 1] via the DSM objective 
+
+L(k)fake (ϕ) = Et∼U [tk ,1] , ˆxtk , ϵ
+
+
+
+ωk(t) sϕ(x(k) 
+
+> t
+
+, t ) − ∇ x log q(k) 
+
+> t
+
+(x(k) 
+
+> t
+
+| ˆxtk ) 22
+
+
+
+,
+
+which is unbiased for the marginal score ∇x log p(k) 
+
+> θ,t
+
+(App. D); reusing the full-interval objective with a mismatched conditioning would in general yield a biased estimator. In practice, we parametrize sϕ via an x-prediction model fϕ that predicts ˆxtk . Under the Gaussian subinterval kernel 
+
+q(k) 
+
+> t
+
+(x | ˆxtk ) = N  x; αk(t) ˆ xtk , σ k(t)2I ,
+
+the score estimator follows from Tweedie’s formula: 
+
+sϕ(x(k) 
+
+> t
+
+, t ) = − x(k) 
+
+> t
+
+− αk(t) fϕ(x(k) 
+
+> t
+
+, t )
+
+σk(t)2 .
+
+C Coefficient-Preserving Sampling Formula 
+
+Under the rectified-flow modeling, xt = (1 − t)x0 + tϵ with ϵ ∼ N (0, I), so αt = 1 − t and 
+
+σt = t. Given the current latent ˆxtk−1 at noise level tk−1, the generator produces an x-prediction 
+
+ˆx(k)pred = Gθ ( ˆ xtk−1 , t k−1) and a corresponding noise estimate 
+
+ˆϵ(k) = ˆxtk−1 − (1 − tk−1) ˆ x(k)pred 
+
+tk−1
+
+. (19) 18 coefficient-preserving sampling (CPS) [ 71 ] constructs the next latent ˆxtk by enforcing that the signal and noise coefficients exactly match the scheduler at time tk:
+
+ˆxtk = (1 − tk) ˆ x(k)pred + tk cos 
+
+ ηπ 
+
+2
+
+
+
+ˆϵ(k) + tk sin 
+
+ ηπ 
+
+2
+
+
+
+ϵk, (20) where ϵk ∼ N (0, I) is fresh noise and η ∈ [0 , 1] controls stochasticity. Setting η = 0 recovers the deterministic Euler ODE scheduler ˆxtk = (1 − tk) ˆ x(k)pred + tk ˆϵ(k), while η = 1 fully replaces the old noise with fresh samples, recovering the consistency model (CM) scheduler [ 67 ]. CPS thus provides a unified formulation that subsumes both common DMD [ 83 , 84 ] sampling ( i.e. , Euler and CM) strategies as special cases. Substituting ˆϵ(k) from Eq. (19) into Eq. (20) and collecting terms gives 
+
+ˆxtk = (1 − tk) ˆ x(k)pred + tk
+
+tk−1
+
+cos 
+
+ ηπ 
+
+2
+
+ ˆxtk−1 − (1 − tk−1) ˆ x(k)pred 
+
+ + tk sin 
+
+ ηπ 
+
+2
+
+
+
+ϵk
+
+=
+
+h
+
+1 − tk + tk cos 
+
+ ηπ 
+
+2
+
+ 
+
+1 − 1
+
+tk−1
+
+i 
+
+ˆx(k)pred + tk
+
+tk−1
+
+cos 
+
+ ηπ 
+
+2
+
+
+
+ˆxtk−1 + tk sin 
+
+ ηπ 
+
+2
+
+
+
+ϵk. (21) The transition defines a Gaussian policy with mean μ(k) 
+
+> θ
+
+= ˆ xtk ϵk =0 and standard deviation σk =
+
+tk sin( ηπ/ 2) .
+
+D Optimality of Ambient Denoising Score Matching 
+
+We show that the denoising score matching (DSM) objective in Eq. (10) has the true student marginal score ∇x log p(k) 
+
+> θ,t
+
+(x) as its unique optimal solution. 
+
+Proposition D.1. Let p(k) 
+
+> θ,t
+
+(x) = R q(k) 
+
+> t
+
+(x | ˆxtk ) p(k) 
+
+> θ
+
+( ˆ xtk ) d ˆxtk denote the student marginal. Then, over functions s : Rd × [tk, 1] → Rd,
+
+arg min 
+
+> s
+
+Et∼U [tk ,1] Eˆxtk ∼p(k)     
+
+> θ,x∼q(k)
+> t(·| ˆxtk)
+
+
+
+ωk(t) s(x, t ) − ∇ x log q(k) 
+
+> t
+
+(x | ˆxtk ) 2
+
+is achieved at s∗(x, t ) = ∇x log p(k) 
+
+> θ,t
+
+(x) for almost every t ∈ [tk, 1] .Proof. Since s is a function of both (x, t ), the outer expectation over t decouples and the minimization can be carried out independently for each t. Indeed, the full objective can be written as 
+
+11 − tk
+
+Z 1
+
+> tk
+
+ωk(t) Jt
+
+ s(·, t ) dt, Jt(f ) := Eˆxtk , x
+
+h
+
+∥f (x) − ∇ x log q(k) 
+
+> t
+
+(x | ˆxtk )∥2i
+
+.
+
+For each fixed t ∈ [tk, 1] , ωk(t) > 0 is a strictly positive constant and does not affect the inner argmin, so it suffices to minimize Jt(f ) over f : Rd → Rd.Since the joint density of (x, ˆxtk ) is p(k) 
+
+> θ
+
+( ˆ xtk ) q(k) 
+
+> t
+
+(x | ˆxtk ), we can write 
+
+Jt(f ) = 
+
+Z
+
+p(k) 
+
+> θ,t
+
+(x) Eˆxtk ∼p( ˆ xtk |x)
+
+h
+
+∥f (x) − ∇ x log q(k) 
+
+> t
+
+(x | ˆxtk )∥2i
+
+dx,
+
+where p( ˆ xtk | x) = q(k)        
+
+> t(x|ˆxtk)p(k)
+> θ( ˆ xtk)
+> p(k)
+> θ,t (x)
+
+is the posterior. For each x, the inner expectation is minimized pointwise by choosing f (x) equal to the conditional mean: 
+
+f ∗(x) = Eˆxtk ∼p( ˆ xtk |x)
+
+h
+
+∇x log q(k) 
+
+> t
+
+(x | ˆxtk )
+
+i
+
+.
+
+19 It remains to show that this equals the marginal score. By Bayes’ rule, 
+
+∇x log p(k) 
+
+> θ,t
+
+(x) = ∇x log 
+
+Z
+
+q(k) 
+
+> t
+
+(x | ˆxtk ) p(k) 
+
+> θ
+
+( ˆ xtk ) d ˆxtk
+
+=
+
+R ∇x q(k) 
+
+> t
+
+(x | ˆxtk ) p(k) 
+
+> θ
+
+( ˆ xtk ) d ˆxtk
+
+p(k) 
+
+> θ,t
+
+(x)=
+
+Z q(k) 
+
+> t
+
+(x | ˆxtk ) p(k) 
+
+> θ
+
+( ˆ xtk )
+
+p(k) 
+
+> θ,t
+
+(x) ∇x log q(k) 
+
+> t
+
+(x | ˆxtk ) d ˆxtk
+
+= Eˆxtk ∼p( ˆ xtk |x)
+
+h
+
+∇x log q(k) 
+
+> t
+
+(x | ˆxtk )
+
+i
+
+= f ∗(x).
+
+Hence the pointwise optimum s∗(x, t ) = ∇x log p(k) 
+
+> θ,t
+
+(x) holds for almost every t ∈ [tk, 1] .
+
+E Self-Consistency of the Optimal Fake Score 
+
+We prove that the optimal fake score model satisfies the self-consistency property invoked in Sec. 3.1. 
+
+Proposition E.1 (Self-consistency of optimal denoiser) . Let ˆxϕ(xt, t ) denote a score model in 
+
+x-prediction form trained under the flow matching framework. If ˆxϕ is optimal, i.e., 
+
+ˆxϕ(xt, t ) = E[x0 | xt], ∀ t, 
+
+then for any t′′ < t ′:
+
+ˆxϕ(xt′ , t ′) = E˜xt′′ ∼p(xt′′ |xt′ )
+
+ ˆxϕ( ˜ xt′′ , t ′′ ).
+
+Proof. Under the forward process, xt = αtx0 + σtϵ with x0 ∼ p0, ϵ ∼ N (0, I), and (αt, σ t)
+
+specifying the noise schedule ( e.g. , αt = 1 − t, σt = t for the rectified-flow schedule). For t′′ < t ′,the Gaussian interpolation implies that (x0, xt′′ , xt′ ) forms a Markov chain in the increasing-noise direction, yielding 
+
+E[x0 | xt′′ , xt′ ] = E[x0 | xt′′ ].
+
+Starting from the right-hand side and applying optimality at t′′ :
+
+E˜xt′′ ∼p(xt′′ |xt′ )
+
+ ˆxϕ( ˜ xt′′ , t ′′ ) = EE[x0 | xt′′ ] xt′
+
+
+
+= EE[x0 | xt′′ , xt′ ] xt′
+
+
+
+= E[x0 | xt′ ] = ˆ xϕ(xt′ , t ′).
+
+The second equality uses the Markov property; the third is the tower rule. The consistency regularizer L(k)cons (Eq. (11)) penalizes deviations from this property, constraining the fake score model toward the optimal solution even as the generator distribution shifts during training. 
+
+F Practical Consistency Loss Estimator 
+
+Computing L(k)cons (Eq. (11)) requires evaluating E˜xt′′ [ ˆ xϕ( ˜ xt′′ , t ′′ )] , which is intractable in closed form. Following Daras et al. [12] , we draw two independent reverse-step samples ˜x1 
+
+> t′′
+
+, ˜x2 
+
+> t′′
+
+∼
+
+pϕ(xt′′ | xt′ ) to obtain the unbiased estimator: 
+
+L(k)cons (ϕ) ≈ Ext′ , ˜x1  
+
+> t′′ ,˜x2
+> t′′
+
+  ˆxϕ( ˜ x1 
+
+> t′′
+
+, t ′′ ) − ˆxϕ(xt′ , t ′)⊤  ˆxϕ( ˜ x2 
+
+> t′′
+
+, t ′′ ) − ˆxϕ(xt′ , t ′) . (22) In our experiments, we set t′ = tk and t′′ = tk+1 (adjacent endpoints of the timestep schedule), following Daras et al. [12]. 20 G Hybrid Policy Gradient 
+
+G.1 Derivation 
+
+We provide a formal derivation of the gradient estimator used for the reward term 
+
+∇θ Eˆx0∼pθ [r( ˆ x0)] .
+
+Since the few-step generator consists of K−1 stochastic transitions followed by one deterministic final step, the resulting gradient decomposes naturally into a contribution from the stochastic transitions and a contribution from the deterministic terminal mapping. 
+
+Proposition G.1 (Hybrid policy gradient) . Consider the few-step generative process 
+
+ˆxt0 → ˆxt1 → · · · → ˆxtK−1 → ˆx0,
+
+where for k = 1 , . . . , K − 1,
+
+π(k) 
+
+> θ
+
+( ˆ xtk | ˆxtk−1 ) = N  ˆxtk ; μ(k) 
+
+> θ
+
+( ˆ xtk−1 ), σ 2
+
+> k
+
+I,
+
+and the final output is deterministic: 
+
+ˆx0 = Gθ ( ˆ xtK−1 , t K−1).
+
+Define 
+
+J(θ) := Eˆx0∼pθ [r( ˆ x0)] .
+
+Then 
+
+∇θ J(θ) = 
+
+> K−1
+
+X
+
+> k=1
+
+Eτ ∼pθ
+
+h
+
+r( ˆ x0) ∇θ log π(k) 
+
+> θ
+
+( ˆ xtk | ˆxtk−1 )
+
+i
+
++ Eτ ∼pθ
+
+h ∇ˆx0 r( ˆ x0)⊤∂θ Gθ ( ˆ xtK−1 , t K−1)
+
+i
+
+.
+
+(23) 
+
+Proof. Because the last step is deterministic, it is convenient to separate the stochastic and determin-istic parts of the generation process. Let 
+
+ζ := ( ˆ xt1 , . . . , ˆxtK−1 )
+
+denote the intermediate random states. Conditioned on ˆxt0 , their density is 
+
+pθ (ζ) = 
+
+> K−1
+
+Y
+
+> k=1
+
+π(k) 
+
+> θ
+
+( ˆ xtk | ˆxtk−1 ). (24) The terminal sample is then determined by 
+
+ˆx0 = Gθ ( ˆ xtK−1 , t K−1),
+
+and the objective can be written as 
+
+J(θ) = Eζ∼pθ
+
+r Gθ ( ˆ xtK−1 , t K−1) . (25) Differentiating Eq. (25) under the integral sign gives 
+
+∇θ J(θ) = ∇θ
+
+Z
+
+pθ (ζ) r Gθ ( ˆ xtK−1 , t K−1) dζ 
+
+=
+
+Z
+
+∇θ pθ (ζ) r( ˆ x0) dζ +
+
+Z
+
+pθ (ζ) ∇θ r( ˆ x0) dζ. 
+
+(26) Using 
+
+∇θ pθ (ζ) = pθ (ζ)∇θ log pθ (ζ),
+
+we obtain 
+
+∇θ J(θ) = Eζ∼pθ [r( ˆ x0)∇θ log pθ (ζ)] + Eζ∼pθ [∇θ r( ˆ x0)] . (27) By Eq. (24), 
+
+log pθ (ζ) = 
+
+> K−1
+
+X
+
+> k=1
+
+log π(k) 
+
+> θ
+
+( ˆ xtk | ˆxtk−1 ),
+
+21 and therefore 
+
+∇θ log pθ (ζ) = 
+
+> K−1
+
+X
+
+> k=1
+
+∇θ log π(k) 
+
+> θ
+
+( ˆ xtk | ˆxtk−1 ). (28) Substituting Eq. (28) into Eq. (27) yields 
+
+∇θ J(θ) = 
+
+> K−1
+
+X
+
+> k=1
+
+Eζ∼pθ
+
+h
+
+r( ˆ x0) ∇θ log π(k) 
+
+> θ
+
+( ˆ xtk | ˆxtk−1 )
+
+i
+
++ Eζ∼pθ [∇θ r( ˆ x0)] . (29) For the second term, r( ˆ x0) depends on θ through the final deterministic mapping Gθ . Hence, by the chain rule, 
+
+∇θ r( ˆ x0) =  ∇ˆx0 r( ˆ x0)⊤∂θ Gθ ( ˆ xtK−1 , t K−1). (30) Combining Eqs. (29) and (30) proves Eq. (23). 
+
+G.2 Discussion 
+
+Prop. G.1 separates the gradient into two parts. The first part comes from how the parameters affect the distribution of the stochastic intermediate states, and therefore involves the log-derivatives of the transition densities. The second part comes from the explicit dependence of the final deterministic output on the parameters, and is obtained by directly differentiating the terminal mapping. A subtle point is that the above derivation applies the log-derivative identity only to the stochastic part of the trajectory. One could formally write the full trajectory distribution as 
+
+pθ (τ ) = p( ˆ xt0 )
+
+> K−1
+
+Y
+
+> k=1
+
+π(k) 
+
+> θ
+
+( ˆ xtk | ˆxtk−1 ) · δ  ˆx0 − Gθ ( ˆ xtK−1 , t K−1) ,
+
+but this representation contains a Dirac delta corresponding to the deterministic last step. For this reason, directly applying the log-derivative form to the entire trajectory is unnecessary and less clean. By isolating the random intermediate states ζ, the derivation remains fully standard and avoids manipulating the logarithm of a Dirac delta. Another potential concern is whether the second term in Eq. (23) ignores the dependence of ˆxtK−1
+
+on θ. It does not. In Eq. (27), the dependence of the random trajectory ζ on θ is already accounted for by the term Eζ∼pθ [r( ˆ x0)∇θ log pθ (ζ)] . Therefore, in the remaining term Eζ∼pθ [∇θ r( ˆ x0)] , the sampled ζ is treated as fixed, and only the explicit parameter dependence of the terminal mapping Gθ
+
+is differentiated. Re-introducing the dependence of ˆxtK−1 on θ in this term would count the same contribution twice. 
+
+H Background on GRPO and Its Application to Few-step Generators 
+
+Group relative policy optimization. GRPO [ 64 ] is a variance-reduced policy gradient method originally developed for language model alignment. Given a prompt c, GRPO samples a group of N
+
+responses, computes a group-normalized advantage for each, and updates the policy with a clipped objective. The key idea is to use the group mean reward as a baseline, eliminating the need for a separate value network. 
+
+Naive GRPO for few-step generators. In our setting, the few-step generator defines a K-step policy πθ with Gaussian transitions (Sec. 3.2). A direct (naive) application of GRPO proceeds as follows: for each prompt c, sample N independent trajectories {τi}Ni=1 by drawing independent noise 
+
+ϵ(i) 
+
+> k
+
+∼ N (0, I) at every stochastic step k = 1 , . . . , K − 1 of each trajectory i. Compute rewards 
+
+ri = r( ˆ x(i)0 , c ) and group-normalized advantages 
+
+Ai = ri − ¯r
+
+std( {rj }Nj=1 ) , ¯r = 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+rj .
+
+The naive GRPO gradient estimator for the stochastic part is then 
+
+∇θ LGRPO stoc = 1
+
+N
+
+> N
+
+X
+
+> i=1
+> K−1
+
+X
+
+> k=1
+
+Ai ∇θ log π(k) 
+
+> θ
+
+( ˆ x(i) 
+
+> tk
+
+| ˆx(i) 
+
+> tk−1
+
+), (31) 22 where the Gaussian log-likelihood is 
+
+log π(k) 
+
+> θ
+
+( ˆ xtk | ˆxtk−1 ) = − 12σ2
+
+> k
+
+∥ ˆxtk − μ(k) 
+
+> θ
+
+( ˆ xtk−1 )∥2 + const ,
+
+with μ(k) 
+
+> θ
+
+and σk = tk sin( ηπ/ 2) determined by the CPS update (App. C). 
+
+Limitation. Since all K − 1 steps use independent noise across trajectories, the reward difference between any two trajectories reflects the combined effect of noise injected at all steps simultaneously. The advantage Ai is therefore a noisy credit assignment signal, which means it cannot attribute reward variation to any specific step, leading to high gradient variance. This motivates our SubGRPO (Sec. 3.2), which shares noise at non-selected steps to isolate contributions from a chosen subset. 
+
+I Detailed Algorithm of RTDMD 
+
+We present a detailed algorithm pipeline of RTDMD in Algo. 1. 
+
+Algorithm 1 RTDMD: Reward-Tilted Distribution Matching Distillation 
+
+Require: Teacher score sψ , generator Gθ , fake score sϕ, reward r(·), K-step schedule {tk}Kk=0 ,reward weight β.
+
+Ensure: Reward-optimized K-step generator Gθ .
+
+Stage I: Ambient-Consistent Distribution Matching Distillation (cold start)  
+
+> 1:
+
+for u = 1 , . . . , T cold do  
+
+> 2:
+
+Roll out Gθ from noise; sample step index k and construct noised state x(k) 
+
+> t
+
+for t ∈ [tk, 1] . 
+
+> 3:
+
+Update sϕ via the fake score objective (Eq. (12)).  
+
+> 4:
+
+Update Gθ via the AC-DMD generator objective (Eq. (9)).  
+
+> 5:
+
+end for Stage II: Reinforcing the Few-step Generator  
+
+> 6:
+
+for u = 1 , . . . , T rl do  
+
+> 7:
+
+for each prompt cj in batch do  
+
+> 8:
+
+Sample step subset S ⊂ { 1, . . . , K −1}. 
+
+> 9:
+
+Generate N trajectories with shared/independent noise (Eq. (16)).  
+
+> 10:
+
+Compute rewards ri = r(ˆ x(i)0 , c j ) and group-normalized advantages Ai. 
+
+> 11:
+
+end for  
+
+> 12:
+
+Update sϕ via the fake score objective (Eq. (12)).  
+
+> 13:
+
+Update Gθ by descending along ∇θ Ltotal (Eq. (18)).  
+
+> 14:
+
+end for  
+
+> 15:
+
+return Gθ .
+
+J More Implementation Details 
+
+For the 4-step generator ( K = 4 ), we uniformly partition the interval [0 , 1] to obtain the pre-shift timestep schedule [1 .0, 0.75 , 0.5, 0.25] . For FLUX.2 4B, the Stage 1 generator is initialized from the FLUX.2 [klein] 4B checkpoint rather than the Base 4B model. All experiments use AdamW [ 42 ]with β1 = 0 .9, β2 = 0 .999 , and a constant learning rate. In Stage 1 (cold start), we use the same learning rate for the fake score model and generator. The learning rate is 1×10 −6 for FLUX.2 4B and 3×10 −5 for the SD series; in Stage 2, the fake score model retains its Stage 1 learning rate while the generator learning rate is uniformly set to 3×10 −6. LoRA [ 26 ] is applied to all linear layers within self-attention and cross-attention modules ( r = 64 , α = 32 ). The GRPO clipping range is 
+
+[1 −10 −5, 1+10 −5], and the reward-tilting coefficient β is set to 1.0 throughout. For multi-reward training, each reward is weighted equally. All training and rollout use bf16 precision. Stage 1 uses 8 NVIDIA H20 GPUs for all models; Stage 2 uses 16 GPUs for FLUX.2 4B and 8 GPUs for the SD series. 23 K Discussion on the Sampling Schedule and Connection to DMD2 
+
+Choice of η. As shown in Fig. 5, we find that performance is relatively insensitive to the specific value of η as long as sufficient stochasticity is introduced ( i.e. , η ≥ 0.8), with all such configurations yielding comparable results. We attribute this to the fact that the subsequent GRPO optimization relies on adequate stochasticity in the intermediate transitions to produce diverse trajectories for effective exploration. We therefore set η = 0 .9 throughout our experiments. 
+
+Connection and comparison to DMD2. We further find that the only difference between the original DMD2 [ 83 ] (which originally uses the CM scheduler) and our A-DMD with η = 1 .0 (where CPS reduces to the CM scheduler) lies in the noise-level interval used during training: t in Eq. (8) ranges over [0 , 1] for DMD2 but only over [tk, 1] for A-DMD. This stems from a different choice of conditioning data for score/denoising matching: A-DMD re-noises from the actually generated intermediate state ˆxtk and uses it directly as the training data, whereas DMD2 instead takes the generator’s x-prediction ˆx(k)pred as a clean sample x0 and re-noises it across the entire interval [0 , 1] .Our design is more general across different schedulers ( e.g. , CM and Euler ODE), because ˆx(k)pred can be safely treated as a clean sample only under the CM parameterization. In a CM-trained model, the consistency property forces the network to map any noisy input back to the same underlying clean x0 along the PF-ODE trajectory, so ˆx(k)pred behaves as a sample from the student’s clean-data distribution. Under non-CM schedulers ( e.g. , the Euler ODE schedule with η = 0 ), the model does not satisfy this consistency property and is not trained to directly map noisy inputs to clean samples, so ˆx(k)pred cannot be regarded as a sample from p0. Treating it as if it were a clean x0 and re-noising it over [0 , 1] would therefore introduce a scheduler-dependent bias in the score-matching objective [ 19 ]. By instead conditioning on the realized noisy state ˆxtk , which is by construction a sample from the student marginal p(k) 
+
+> θ
+
+(defined in Sec. 3.1), and matching the score only on the subinterval [tk, 1] ,A-DMD remains a valid re-derivation of distribution matching for any η ∈ [0 , 1] and any scheduler choice. Empirically, in the special case η = 1 .0 A-DMD becomes structurally equivalent to DMD2 up to this training-interval choice, and as shown in Fig. 5 the corresponding curve converges to nearly identical final performance as the standard DMD2 setting. This confirms that A-DMD does not sacrifice quality in the CM regime; rather, the re-derivation is introduced primarily to provide a unified, scheduler-agnostic framework. 0 200 400 600 800 1000 
+
+> Training Iteration
+> 0.3100
+> 0.3125
+> 0.3150
+> 0.3175
+> 0.3200
+> 0.3225
+> 0.3250
+> HPSv2
+> = 0.2
+> = 0.4
+> = 0.6
+> = 0.7
+> = 0.8
+> = 0.9
+> = 1.0
+> DMD2
+
+Figure 5: Evaluation curves when reinforcing the few-step generators with different η. We use SD3.5-M [1]with HPSv2 [ 76 ] as the sole training reward. Each curve is optimized by A-DMD with different η values combined with GRPO on stochastic transitions. 
+
+L GenEval Results 
+
+We further validate our framework using GenEval [ 22 ], a non-differentiable compositional generation benchmark, on SD3.5-M . Since the reward signal is non-differentiable, the hybrid policy gradient cannot backpropagate through the final deterministic step; optimization relies solely on AC-DMD and SubGRPO for the stochastic transitions. Despite this, as shown in Tab. 5, our method achieves an overall score of 0.94 with only 4 NFE, nearly matching Flow-GRPO [ 40 ] (0.95), which operates 24 Table 5: GenEval results. Results for models other than SD3.5-M are from Luo et al. [47] or original papers. 
+
+Model Overall Single Object Two Object Counting Colors Position Attribution Binding 
+
+Autoregressive Models 
+
+Show-o [78] 0.53 0.95 0.52 0.49 0.82 0.11 0.28 Emu3-Gen [73] 0.54 0.98 0.71 0.34 0.81 0.17 0.21 JanusFlow [49] 0.63 0.97 0.59 0.45 0.83 0.53 0.42 Janus-Pro-7B [9] 0.80 0.99 0.89 0.59 0.90 0.79 0.66 GPT-4o [27] 0.84 0.99 0.92 0.85 0.92 0.75 0.61 
+
+Diffusion Models 
+
+LDM [57] 0.37 0.92 0.29 0.23 0.70 0.02 0.05 
+
+SD1.5 [57] 0.43 0.97 0.38 0.35 0.76 0.04 0.06 
+
+SD2.1 [57] 0.50 0.98 0.51 0.44 0.85 0.07 0.17 
+
+SD-XL [54] 0.55 0.98 0.74 0.39 0.85 0.15 0.23 DALLE-2 [53] 0.52 0.94 0.66 0.49 0.77 0.10 0.19 DALLE-3 [2] 0.67 0.96 0.87 0.47 0.83 0.43 0.45 
+
+FLUX.1 Dev [33] 0.66 0.98 0.81 0.74 0.79 0.22 0.45 
+
+SD3.5-L [16] 0.71 0.98 0.89 0.73 0.83 0.34 0.47 SANA-1.5 4.8B [77] 0.81 0.99 0.93 0.86 0.84 0.59 0.65 
+
+SD3.5-M [16] 0.63 0.98 0.78 0.50 0.81 0.24 0.52 w/ Flow-GRPO [40] 0.95 1.00 0.99 0.95 0.92 0.99 0.86 
+
+Few-Step Diffusion Models (4 NFE) 
+
+SD3.5-L-Turbo [16] 0.70 0.94 0.84 0.55 0.79 0.58 0.56 
+
+SD3.5-M w/ TDM [46] 0.61 0.99 0.77 0.49 0.79 0.23 0.44 
+
+SD3.5-M w/ TDM-R1 [47] 0.92 1.00 0.96 0.88 0.85 0.93 0.91 
+
+SD3.5-M w/ RTDMD (Ours) 0.94 1.00 0.98 0.95 0.90 0.87 0.94 
+
+on the full multi-step model with 40 NFE and CFG [ 24 ], while outperforming TDM-R1 [ 47 ] (0.92) under the same 4-step setting. 
+
+M Qualitative comparison for Ablation 
+
+We provide qualitative visualizations corresponding to each ablation study in the main text. Specif-ically, Figs. 6–8 present samples generated by the configurations listed in Tabs. 3–4, respectively. None of the samples shown are cherry-picked, and all are produced using randomly drawn prompts and noise seeds. These visualizations offer direct visual evidence for the effectiveness of each proposed component, complementing the quantitative analysis in the main text.   
+
+> Text prompt: “ A portrait of a young Mark Hamill as Luke Skywalker from "Star Wars: Return of the Jedi" in shades of grey with touches of green by Jeremy Mann.”
+> Text prompt: “People are walking on the street on a rainy day.”
+
+Figure 6: Qualitative comparison of different distillation methods upon completion of cold-start training. From 
+
+left to right : AC-DMD ( γ = 0 .001 ), AC-DMD ( γ = 0 .005 ), AC-DMD ( γ = 0 .01 ), AC-DMD ( γ = 0 .1), A-DMD. The columns correspond to the configurations in Tab. 3, listed in bottom-to-top order. 
+
+25 Text prompt: “The image is a close-up portrait of a demon goddess with tribal elements and intricate artwork by multiple artists.”  
+
+> Text prompt: “A triangular pink stop sign. A pink stop sign in the shape of a triangle.”
+
+Figure 7: Qualitative comparison of different distillation methods upon completion of two-stage training. From 
+
+left to right : AC-DMD ( γ = 0 .001 ), AC-DMD ( γ = 0 .005 ), AC-DMD ( γ = 0 .01 ), AC-DMD ( γ = 0 .1), A-DMD. The columns correspond to the rows in Tab. 3 in bottom-to-top order.   
+
+> Text prompt: “A fluffy baby sloth with a knitted hat trying to figure out a laptop, close up, highly detailed, studio lighting, screen reflecting in its eyes.”
+> Text prompt: “Octothorpe.”
+
+Figure 8: Qualitative comparison of different reinforcement learning methods upon completion of two-stage training. From left to right : RTDMD ( M = 2 ), RTDMD ( M = 2 ) w/o Ldet , RTDMD ( M = 1 ), RTDMD w/o 
+
+Ldet , GRPO [64], and ∅. The columns correspond to the rows in Tab. 4 in bottom-to-top order. 
+
+N More Qualitative Results 
+
+We provide additional visual comparisons in Fig. 9, Fig. 10, and Fig. 11. Across diverse prompts, our RTDMD consistently produces images with superior visual quality and prompt adherence compared to baselines. 26 Text prompt: “ portrait of a beautiful woman wearing a futuristic headdress with daisies, puffballs, mushrooms, and other organic shapes.” 
+
+Text prompt: “Lee Jin-eun in cyberpunk-themed photograph emerging from pink water.” 
+
+Text prompt: “a couple of horse that are eating some grass.” 
+
+Text prompt: “Small personal bathroom with a tiny entrance door.” (a) RTDMD (Ours) (b) 𝑅 dm (c) SD3 -M (w/ CFG) (d) SD3 -M (w /o CFG) 
+
+Figure 9: Qualitative comparison for SD3-M [ 15 ]. Using identical noise inputs, our method outperforms others in both quality and prompt alignment, showing strong performance. 
+
+Text prompt: “A maglev train going vertically downward in high speed, New York Times photojournalism.” 
+
+Text prompt: “A white squirrel on a rocket in space.” 
+
+Text prompt: “A 3D portrait of anime schoolgirls with grey hair submerged in dark water with dramatic lighting.” (a) FLUX.2 4B 
+
+w/ RTDMD (Ours) 
+
+(b) FLUX.2 9B (c) FLUX.2 4B (d) Z-Image 6B 
+
+w/ TDM -R1 
+
+(e) Z-Image -Turbo 
+
+6B 
+
+Figure 10: Qualitative comparison for few-step diffusion models (4 NFE). Using identical noise inputs, our method outperforms others in both quality and prompt alignment, showing strong performance. 
+
+27 Figure 11: Visual generations produced by our RTDMD method under 4 NFE on FLUX.2 4B [ 34 ] without applying classifier-free guidance (CFG) [24]. 
+
+28
