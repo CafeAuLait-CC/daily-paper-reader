@@ -6,76 +6,73 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-04
-- 运行时间：2026-06-04 22:02:46 UTC
+- 最新运行日期：2026-06-05
+- 运行时间：2026-06-05 21:58:24 UTC
 - 运行状态：成功
-- 本次总论文数：18
-- 精读区：7
+- 本次总论文数：17
+- 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日共收录18篇论文，精读7篇，重点关注3D感知视频扩散与草图驱动动画。  
-最值得看的是《Towards 3D-Aware Video Diffusion Models》与《Sketch2Motion》，前者实现无渲染人体运动控制，后者通过草图优化骨架生成3D动画。  
-建议优先精读这两篇高分论文，深入理解网格令牌化与扩散引导骨架优化的创新思路。
-- 详情：[/202606/04/README](/202606/04/README)
+今日推荐17篇论文，重点聚焦人体运动控制与物理交互生成的突破，精读两篇高分论文探讨3D视频扩散模型和4D人-物动态生成。  
+建议关注《Towards 3D-Aware Video Diffusion Models》提出的无渲染人类运动控制方法和《PhyGenHOI》的物理感知4D生成，两者均实现高度真实的人体-场景交互。  
+普通读者可从速读列表的《Dex2HOI》和《KV-Control》入手，理解双手物体交互与轨迹控制的前沿趋势。
+- 详情：[/202606/05/README](/202606/05/README)
 
 ### 精读区论文标签
-1. [Towards 3D-Aware Video Diffusion Models: Render-Free Human Motion Control with Mesh Tokenization](/202606/04/2606.02000v1-towards-3d-aware-video-diffusion-models-render-free-human-motion-control-with-mesh-tokenization)  
+1. [Towards 3D-Aware Video Diffusion Models: Render-Free Human Motion Control with Mesh Tokenization](/202606/05/2606.02000v1-towards-3d-aware-video-diffusion-models-render-free-human-motion-control-with-mesh-tokenization)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：基于网格标记化的扩散模型用于3D感知人体运动控制
-2. [Sketch2Motion: Text-driven 2D Sketch to 3D Animation via Diffusion-guided Skeleton Optimization](/202606/04/2605.28394v1-sketch2motion-text-driven-2d-sketch-to-3d-animation-via-diffusion-guided-skeleton-optimization)  
+   evidence：基于网格标记化的3D人体运动生成扩散模型
+2. [PhyGenHOI: Physically-Aware 4D Generation of Dynamic Human-Object Interactions](/202606/05/2605.30268v1-phygenhoi-physically-aware-4d-generation-of-dynamic-human-object-interactions)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：扩散引导的骨架优化用于从2D草图生成3D动画
-3. [AnyMo: Scaling Any-Modality Conditional Motion Generation with Masked Modeling](/202606/04/2605.29488v1-anymo-scaling-any-modality-conditional-motion-generation-with-masked-modeling)  
+   evidence：使用运动扩散模型生成动态3D人-物交互
+3. [A Unifying View of Variational Generative Wasserstein Flows](/202606/05/2605.31369v1-a-unifying-view-of-variational-generative-wasserstein-flows)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：直接研究条件人体运动生成，使用掩码建模
-4. [AnyMo: Scaling Any-Modality Conditional Motion Generation with Masked Modeling](/202606/04/2605.29488v2-anymo-scaling-any-modality-conditional-motion-generation-with-masked-modeling)  
+   evidence：包含流匹配的Wasserstein流统一理论视图
+4. [Cross-Axis Feature Fusion with Joint-Wise Motion Difference Prediction for Text-Based 3D Human Motion Editing](/202606/05/2606.01014v1-cross-axis-feature-fusion-with-joint-wise-motion-difference-prediction-for-text-based-3d-human-motion-editing)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：条件人体运动生成与掩码建模
-5. [PhyGenHOI: Physically-Aware 4D Generation of Dynamic Human-Object Interactions](/202606/04/2605.30268v1-phygenhoi-physically-aware-4d-generation-of-dynamic-human-object-interactions)  
+   evidence：基于文本的三维人体运动编辑，使用扩散模型
+5. [MotionDreamer: Universal Skeletal Motion Generation for 3D Rigged Shapes](/202606/05/2606.01518v1-motiondreamer-universal-skeletal-motion-generation-for-3d-rigged-shapes)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：使用运动扩散模型生成动态人-物交互
-6. [Dex2HOI: Dexterous Bimanual Two-Object Interaction Generation](/202606/04/2605.30444v1-dex2hoi-dexterous-bimanual-two-object-interaction-generation)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：扩散模型用于生成人-物交互运动；灵巧双手双物体操作
-7. [MotionDreamer: Universal Skeletal Motion Generation for 3D Rigged Shapes](/202606/04/2606.01518v1-motiondreamer-universal-skeletal-motion-generation-for-3d-rigged-shapes)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：基于扩散的通用骨骼运动生成框架，应用于3D绑定形状
+   evidence：基于扩散的骨骼运动生成，用于三维蒙皮形状
+6. [Plan, Don't Pose: Long Composite Motion Generation with Text-Aligned BFM](/202606/05/2605.29906v1-plan-dont-pose-long-composite-motion-generation-with-text-aligned-bfm)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：从文本生成三维人体运动序列
 
 ### 速读区论文标签
-1. [Plan, Don't Pose: Long Composite Motion Generation with Text-Aligned BFM](/202606/04/2605.29906v1-plan-dont-pose-long-composite-motion-generation-with-text-aligned-bfm)  
+1. [Midpoint Generative Models](/202606/05/2605.29920v1-midpoint-generative-models)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：使用行为基础模型从文本生成长复合人体运动
-2. [Midpoint Generative Models](/202606/04/2605.29920v1-midpoint-generative-models)  
+   evidence：Flow Matching生成建模方法
+2. [Dex2HOI: Dexterous Bimanual Two-Object Interaction Generation](/202606/05/2605.30444v1-dex2hoi-dexterous-bimanual-two-object-interaction-generation)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：基于流匹配的一步生成模型
-3. [CamGeo: Sparse Camera-Conditioned Image-to-Video Generation with 3D Geometry Priors](/202606/04/2605.30895v2-camgeo-sparse-camera-conditioned-image-to-video-generation-with-3d-geometry-priors)  
+   evidence：扩散模型用于双手人-物交互运动合成
+3. [KV-Control: Parameter-Efficient K/V Injection for Trajectory-Controlled Text-to-Motion](/202606/05/2606.05624v1-kv-control-parameter-efficient-kv-injection-for-trajectory-controlled-text-to-motion)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：从稀疏相机生成3D运动，使用扩散模型和3D几何先验
-4. [MultiAct: Text-to-Motion Generation from Composite Text via Tailored Attention Guidance](/202606/04/2605.30925v1-multiact-text-to-motion-generation-from-composite-text-via-tailored-attention-guidance)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：文本到三维人体运动生成
-5. [Equivariant Latent Alignment via Flow Matching under Group Symmetries](/202606/04/2605.30705v1-equivariant-latent-alignment-via-flow-matching-under-group-symmetries)  
+   evidence：文本条件的3D人体运动生成及轨迹控制
+4. [AnyMo: Scaling Any-Modality Conditional Motion Generation with Masked Modeling](/202606/05/2605.29488v1-anymo-scaling-any-modality-conditional-motion-generation-with-masked-modeling)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：流匹配方法用于具有群对称性的生成建模
-6. [CamGeo: Sparse Camera-Conditioned Image-to-Video Generation with 3D Geometry Priors](/202606/04/2605.30895v1-camgeo-sparse-camera-conditioned-image-to-video-generation-with-3d-geometry-priors)  
+   evidence：从多种模态条件生成人类运动
+5. [AnyMo: Scaling Any-Modality Conditional Motion Generation with Masked Modeling](/202606/05/2605.29488v2-anymo-scaling-any-modality-conditional-motion-generation-with-masked-modeling)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：扩散模型用于3D运动生成；3D几何先验；视频到3D蒸馏
-7. [PointAction: 3D Points as Universal Action Representations for Robot Control](/202606/04/2606.03943v1-pointaction-3d-points-as-universal-action-representations-for-robot-control)  
+   evidence：多模态条件人类运动生成采用掩码建模
+6. [Equivariant Latent Alignment via Flow Matching under Group Symmetries](/202606/05/2605.30705v2-equivariant-latent-alignment-via-flow-matching-under-group-symmetries)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用预训练视频扩散模型生成3D运动
-8. [Physics-Informed Video Generation via Mixture-of-Experts Latent Alignment](/202606/04/2606.04737v1-physics-informed-video-generation-via-mixture-of-experts-latent-alignment)  
+   evidence：Flow Matching用于几何潜空间对齐
+7. [MultiAct: Text-to-Motion Generation from Composite Text via Tailored Attention Guidance](/202606/05/2605.30925v1-multiact-text-to-motion-generation-from-composite-text-via-tailored-attention-guidance)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用流匹配动力学生成视频并注入物理引导
-9. [Parameter-Efficient Generative Modeling with Controlled Vector Fields](/202606/04/2605.28267v1-parameter-efficient-generative-modeling-with-controlled-vector-fields)  
+   evidence：文本到3D人体运动生成
+8. [Strong Stochastic Flow Maps](/202606/05/2606.01086v1-strong-stochastic-flow-maps)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：强随机流映射方法，扩展Flow Matching和扩散模型
+9. [Ultra Diffusion Poser: Diffusion-Based Human Motion Tracking From Sparse Inertial Sensors and Ranging-Based Between-Sensor Distances](/202606/05/2606.02153v1-ultra-diffusion-poser-diffusion-based-human-motion-tracking-from-sparse-inertial-sensors-and-ranging-based-between-sensor-distances)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：连续时间生成模型基于向量场，类似流匹配
-10. [GAP3D: Generative Alignment of VLM Latents to Patch-Level Embeddings for 3D Generation](/202606/04/2605.28995v1-gap3d-generative-alignment-of-vlm-latents-to-patch-level-embeddings-for-3d-generation)  
+   evidence：基于扩散模型的人体姿态跟踪
+10. [Structured drift design for denoising diffusion models](/202606/05/2606.03360v1-structured-drift-design-for-denoising-diffusion-models)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：基于扩散的3D资产生成与VLM对齐
-11. [AdaState: Self-Evolving Anchors for Streaming Video Generation](/202606/04/2605.30349v1-adastate-self-evolving-anchors-for-streaming-video-generation)  
+   evidence：带结构化漂移设计的去噪扩散模型
+11. [Mamba-Enhanced Implicit Motion Learning for Audio-Driven Portrait Animation](/202606/05/2606.03402v2-mamba-enhanced-implicit-motion-learning-for-audio-driven-portrait-animation)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：自回归视频扩散模型用于流式生成
+   evidence：音频驱动的人体运动视频生成
 
 
 <div class="dpr-home-promo-card">
