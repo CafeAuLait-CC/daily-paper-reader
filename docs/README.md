@@ -6,71 +6,65 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-06
-- 运行时间：2026-06-06 20:49:03 UTC
+- 最新运行日期：2026-06-07
+- 运行时间：2026-06-07 21:10:49 UTC
 - 运行状态：成功
-- 本次总论文数：17
-- 精读区：6
+- 本次总论文数：15
+- 精读区：4
 - 速读区：11
 
 ### 今日简报（AI）
-今日共推荐17篇论文，精读6篇，其中两篇满分论文聚焦文本驱动的3D人体运动编辑与视频扩散模型的动作控制。最值得关注的方向是结合跨轴特征融合与联合运动差分预测的3D人体运动编辑，以及基于网格标记的无渲染自由运动控制。建议重点精读这两篇高分方法，速读中针对3D形状生成与等变潜空间对齐的工作也有启发。
-- 详情：[/202606/06/README](/202606/06/README)
+今日精读4篇，重点聚焦3D人物骨架运动生成与文本驱动运动编辑。最值得关注的是满分论文《MotionDreamer》实现通用3D骨架运动生成，以及9分论文《Cross-Axis Feature Fusion》提出文本到人体运动编辑新方法。普通读者可优先关注这两篇，它们代表了从运动生成到精细编辑的完整技术路径。
+- 详情：[/202606/07/README](/202606/07/README)
 
 ### 精读区论文标签
-1. [Cross-Axis Feature Fusion with Joint-Wise Motion Difference Prediction for Text-Based 3D Human Motion Editing](/202606/06/2606.01014v1-cross-axis-feature-fusion-with-joint-wise-motion-difference-prediction-for-text-based-3d-human-motion-editing)  
+1. [MotionDreamer: Universal Skeletal Motion Generation for 3D Rigged Shapes](/202606/07/2606.01518v1-motiondreamer-universal-skeletal-motion-generation-for-3d-rigged-shapes)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：生成三维人体运动序列
-2. [Towards 3D-Aware Video Diffusion Models: Render-Free Human Motion Control with Mesh Tokenization](/202606/06/2606.02000v1-towards-3d-aware-video-diffusion-models-render-free-human-motion-control-with-mesh-tokenization)  
-   标签：评分：10.0/10、query:3d-motion-generation
-   evidence：使用扩散模型进行3D人体运动控制与视频生成
-3. [MotionDreamer: Universal Skeletal Motion Generation for 3D Rigged Shapes](/202606/06/2606.01518v1-motiondreamer-universal-skeletal-motion-generation-for-3d-rigged-shapes)  
+   evidence：基于扩散的3D骨骼运动生成，针对不同拓扑形状
+2. [Cross-Axis Feature Fusion with Joint-Wise Motion Difference Prediction for Text-Based 3D Human Motion Editing](/202606/07/2606.01014v1-cross-axis-feature-fusion-with-joint-wise-motion-difference-prediction-for-text-based-3d-human-motion-editing)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：基于扩散的骨骼运动生成，用于3D绑定形状
-4. [KV-Control: Parameter-Efficient K/V Injection for Trajectory-Controlled Text-to-Motion](/202606/06/2606.05624v1-kv-control-parameter-efficient-kv-injection-for-trajectory-controlled-text-to-motion)  
+   evidence：基于文本的三维人体运动编辑，使用扩散模型
+3. [Towards 3D-Aware Video Diffusion Models: Render-Free Human Motion Control with Mesh Tokenization](/202606/07/2606.02000v1-towards-3d-aware-video-diffusion-models-render-free-human-motion-control-with-mesh-tokenization)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：文本条件的3D人体运动生成与轨迹控制
-5. [MultiAct: Text-to-Motion Generation from Composite Text via Tailored Attention Guidance](/202606/06/2605.30925v1-multiact-text-to-motion-generation-from-composite-text-via-tailored-attention-guidance)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：针对复合文本的文本到动作生成
-6. [Strong Stochastic Flow Maps](/202606/06/2606.01086v1-strong-stochastic-flow-maps)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：提出流映射方法用于高效生成建模，推广流匹配
+   evidence：使用扩散模型在视频生成中控制3D人体运动
+4. [KV-Control: Parameter-Efficient K/V Injection for Trajectory-Controlled Text-to-Motion](/202606/07/2606.05624v1-kv-control-parameter-efficient-kv-injection-for-trajectory-controlled-text-to-motion)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：文本到三维人体运动生成，带轨迹控制
 
 ### 速读区论文标签
-1. [GRAIL: Generating Humanoid Loco-Manipulation from 3D Assets and Video Priors](/202606/06/2606.05160v1-grail-generating-humanoid-loco-manipulation-from-3d-assets-and-video-priors)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：生成三维人体运动序列
-2. [Controllable Dynamic 3D Shape Generation via 3D Trajectories and Text](/202606/06/2606.05162v1-controllable-dynamic-3d-shape-generation-via-3d-trajectories-and-text)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：通过3D轨迹和文本控制生成动态3D形状
-3. [Equivariant Latent Alignment via Flow Matching under Group Symmetries](/202606/06/2605.30705v1-equivariant-latent-alignment-via-flow-matching-under-group-symmetries)  
+1. [DriveAnchor: Progressive Anchor-based Flow Learning for Autonomous Driving Planning](/202606/07/2606.00519v1-driveanchor-progressive-anchor-based-flow-learning-for-autonomous-driving-planning)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用Flow Matching在群对称性下进行等变潜在对齐
-4. [Equivariant Latent Alignment via Flow Matching under Group Symmetries](/202606/06/2605.30705v2-equivariant-latent-alignment-via-flow-matching-under-group-symmetries)  
+   evidence：在规划中使用流匹配进行轨迹生成
+2. [Ultra Diffusion Poser: Diffusion-Based Human Motion Tracking From Sparse Inertial Sensors and Ranging-Based Between-Sensor Distances](/202606/07/2606.02153v1-ultra-diffusion-poser-diffusion-based-human-motion-tracking-from-sparse-inertial-sensors-and-ranging-based-between-sensor-distances)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用流匹配进行群对称下的等变潜在对齐
-5. [VolFill: Single-View Amodal 3D Scene Reconstruction with Volumetric Flow Matching](/202606/06/2605.31466v1-volfill-single-view-amodal-3d-scene-reconstruction-with-volumetric-flow-matching)  
+   evidence：扩散模型用于稀疏传感器三维人体运动追踪
+3. [Mamba-Enhanced Implicit Motion Learning for Audio-Driven Portrait Animation](/202606/07/2606.03402v2-mamba-enhanced-implicit-motion-learning-for-audio-driven-portrait-animation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：Flow Matching用于3D场景重建
-6. [Learning Neural Deformation Representation for 4D Dynamic Shape Generation](/202606/06/2606.01021v1-learning-neural-deformation-representation-for-4d-dynamic-shape-generation)  
+   evidence：音频驱动的肖像人体运动视频生成
+4. [Bootstrap Your Generator: Unpaired Visual Editing with Flow Matching](/202606/07/2606.03911v1-bootstrap-your-generator-unpaired-visual-editing-with-flow-matching)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用神经变形表示生成4D动态形状（3D随时间变形），与运动生成相关
-7. [Ultra Diffusion Poser: Diffusion-Based Human Motion Tracking From Sparse Inertial Sensors and Ranging-Based Between-Sensor Distances](/202606/06/2606.02153v1-ultra-diffusion-poser-diffusion-based-human-motion-tracking-from-sparse-inertial-sensors-and-ranging-based-between-sensor-distances)  
+   evidence：提出流匹配用于无监督视觉编辑，是可迁移的生成建模方法
+5. [Optimal Transport Flow Matching by Design](/202606/07/2606.04092v1-optimal-transport-flow-matching-by-design)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用扩散模型从稀疏传感器估计人体姿态
-8. [MORPHOS: Autoregressive 4D Generation with Temporal Structured Latents](/202606/06/2606.02491v1-morphos-autoregressive-4d-generation-with-temporal-structured-latents)  
+   evidence：通过先验设计实现最优传输流匹配
+6. [MeshFlow: Efficient Artistic Mesh Generation via MeshVAE and Flow-based Diffusion Transformer](/202606/07/2606.04621v1-meshflow-efficient-artistic-mesh-generation-via-meshvae-and-flow-based-diffusion-transformer)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：从视频生成动态3D资产，可用于人体动作序列生成
-9. [(HB-ARFM) History-Bootstrapped Flow Matching for Inverse Boiling Reconstruction](/202606/06/2606.00349v1-hb-arfm-history-bootstrapped-flow-matching-for-inverse-boiling-reconstruction)  
+   evidence：基于流的扩散变压器用于3D网格生成
+7. [Physics-Informed Video Generation via Mixture-of-Experts Latent Alignment](/202606/07/2606.04737v1-physics-informed-video-generation-via-mixture-of-experts-latent-alignment)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：基于流匹配的视频生成，加入物理指导
+8. [Strong Stochastic Flow Maps](/202606/07/2606.01086v1-strong-stochastic-flow-maps)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：流匹配生成建模方法
-10. [Mamba-Enhanced Implicit Motion Learning for Audio-Driven Portrait Animation](/202606/06/2606.03402v2-mamba-enhanced-implicit-motion-learning-for-audio-driven-portrait-animation)  
+   evidence：提出强随机流映射用于扩散/流模型
+9. [Diffusing in the Right Space: A Systematic Study of Latent Diffusability](/202606/07/2606.03578v1-diffusing-in-the-right-space-a-systematic-study-of-latent-diffusability)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：音频驱动的人体运动视频生成
-11. [Let the Dynamics Flow: Stable Flow Matching Dynamical Systems](/202606/06/2606.03834v1-let-the-dynamics-flow-stable-flow-matching-dynamical-systems)  
+   evidence：潜在扩散空间的系统性研究
+10. [Let the Dynamics Flow: Stable Flow Matching Dynamical Systems](/202606/07/2606.03834v1-let-the-dynamics-flow-stable-flow-matching-dynamical-systems)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：稳定动力系统的流匹配
+   evidence：用于生成运动建模的流匹配方法
+11. [SymTRELLIS: Symmetry-Enforced Voxel Latents for 3D Generation](/202606/07/2606.04108v1-symtrellis-symmetry-enforced-voxel-latents-for-3d-generation)  
+   标签：评分：6.0/10、query:3d-motion-generation
+   evidence：在基于流的3D生成中强制对称性
 
 
 <div class="dpr-home-promo-card">
