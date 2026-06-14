@@ -6,64 +6,73 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-13
-- 运行时间：2026-06-13 21:03:55 UTC
+- 最新运行日期：2026-06-14
+- 运行时间：2026-06-14 20:42:27 UTC
 - 运行状态：成功
-- 本次总论文数：14
-- 精读区：3
+- 本次总论文数：17
+- 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日研读14篇论文，精读EgoPriMo和MoGeFlow两篇，分别聚焦人形机器人控制与文本驱动运动生成。  
-重点关注EgoPriMo的自我中心运动生成方法，以及MoGeFlow的流式几何运动码本技术，两者均获9.0高分。  
-建议普通读者优先精读这两篇高质量论文，再速读强化学习与流匹配相关的三篇（如Flow-DPPO）以拓展思路。
-- 详情：[/202606/13/README](/202606/13/README)
+今日17篇论文精读6篇，聚焦3D人体运动生成与扩散模型。
+最值得关注：VideoMDM（10分）从2D监督生成3D人体运动，EgoPriMo（9分）实现以自我为中心的运动控制。
+建议优先精读这两篇高分论文，关注低成本2D数据驱动3D运动生成的新路径。
+- 详情：[/202606/14/README](/202606/14/README)
 
 ### 精读区论文标签
-1. [EgoPriMo: Egocentric Motion Generation for Interactive Humanoid Control](/202606/13/2606.08495v1-egoprimo-egocentric-motion-generation-for-interactive-humanoid-control)  
+1. [VideoMDM: Towards 3D Human Motion Generation From 2D Supervision](/202606/14/2606.13364v1-videomdm-towards-3d-human-motion-generation-from-2d-supervision)  
+   标签：评分：10.0/10、query:3d-motion-generation
+   evidence：利用扩散模型从2D监督生成3D人体运动
+2. [EgoPriMo: Egocentric Motion Generation for Interactive Humanoid Control](/202606/14/2606.08495v1-egoprimo-egocentric-motion-generation-for-interactive-humanoid-control)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：使用扩散Transformer进行3D全身人体运动生成
-2. [MoGeFlow: Flowing Through Motion Codebook Geometry for Text-to-Motion Generation](/202606/13/2606.11656v1-mogeflow-flowing-through-motion-codebook-geometry-for-text-to-motion-generation)  
+   evidence：3D人体运动生成，扩散模型，基于SMPL的全身运动
+3. [MoGeFlow: Flowing Through Motion Codebook Geometry for Text-to-Motion Generation](/202606/14/2606.11656v1-mogeflow-flowing-through-motion-codebook-geometry-for-text-to-motion-generation)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：使用运动码本和流进行文本到动作生成
-3. [MotionWAM: Towards Foundation World Action Models for Real-Time Humanoid Loco-Manipulation](/202606/13/2606.09215v1-motionwam-towards-foundation-world-action-models-for-real-time-humanoid-loco-manipulation)  
+   evidence：文本到动作生成，利用运动码本几何
+4. [PhysAgent: Automating Physics-Based 4D Synthesis via Trajectory-Grounded Multi-Agent Feedback](/202606/14/2606.08688v1-physagent-automating-physics-based-4d-synthesis-via-trajectory-grounded-multi-agent-feedback)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：实时生成仿人机器人全身运动
+   evidence：自动化基于物理的3D运动合成
+5. [Mean Flow Distillation: Robust and Stable Distillation for Flow Matching Models](/202606/14/2606.11155v1-mean-flow-distillation-robust-and-stable-distillation-for-flow-matching-models)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：流匹配模型蒸馏
+6. [TopoCap: Learning Topology-Agnostic Motion Priors for Monocular Video-to-Animation](/202606/14/2606.12153v1-topocap-learning-topology-agnostic-motion-priors-for-monocular-video-to-animation)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：3D运动生成，视频转动画，通用运动先验
 
 ### 速读区论文标签
-1. [Reinforcement Learning for Flow-Matching Policies with Density Transport](/202606/13/2606.08602v1-reinforcement-learning-for-flow-matching-policies-with-density-transport)  
+1. [TBD-VLA: Temporal Block Diffusion Vision Language Action Model](/202606/14/2606.07895v1-tbd-vla-temporal-block-diffusion-vision-language-action-model)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：流匹配策略的强化学习算法
-2. [Self-Consistent Generative Paths via Admissible Random Variational Transport](/202606/13/2606.08953v1-self-consistent-generative-paths-via-admissible-random-variational-transport)  
+   evidence：块扩散生成动作序列
+2. [TIDE: Task-Isolated Diffusion for Unified Video Editing and Generation](/202606/14/2606.08260v1-tide-task-isolated-diffusion-for-unified-video-editing-and-generation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：统一扩散与流匹配路径的框架
-3. [Flow-DPPO: Divergence Proximal Policy Optimization for Flow Matching Models](/202606/13/2606.11025v1-flow-dppo-divergence-proximal-policy-optimization-for-flow-matching-models)  
+   evidence：扩散模型用于视频生成任务
+3. [Latent Diffusion Policy: Shaping Latent Spaces for Diffusion-Based Robotic Manipulation](/202606/14/2606.08657v1-latent-diffusion-policy-shaping-latent-spaces-for-diffusion-based-robotic-manipulation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：面向流匹配模型的在线强化学习算法
-4. [Mean Flow Distillation: Robust and Stable Distillation for Flow Matching Models](/202606/13/2606.11155v1-mean-flow-distillation-robust-and-stable-distillation-for-flow-matching-models)  
+   evidence：流匹配在潜在空间中生成轨迹
+4. [Learning to Solve Generative ODEs Beyond the Linear Span](/202606/14/2606.08672v1-learning-to-solve-generative-odes-beyond-the-linear-span)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：为流匹配模型提出蒸馏方法
-5. [MotionEnhancer: Leveraging Video Diffusion for Motion-Enhanced Vision-Language Models](/202606/13/2606.06853v1-motionenhancer-leveraging-video-diffusion-for-motion-enhanced-vision-language-models)  
+   evidence：提出改进的扩散和流模型的 ODE 求解器
+5. [Rethinking 3D Shape Generation: Diffusion over Superquadrics](/202606/14/2606.08957v1-rethinking-3d-shape-generation-diffusion-over-superquadrics)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：将扩散应用于 3D 形状生成，使用紧凑的超二次曲面参数
+6. [SpecLoR: Spectral Lookahead Rectification for Motion-Coherent Text-to-Video Generation](/202606/14/2606.11969v1-speclor-spectral-lookahead-rectification-for-motion-coherent-text-to-video-generation)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：流匹配用于运动连贯的文本到视频生成
+7. [Reinforcement Learning for Flow-Matching Policies with Density Transport](/202606/14/2606.08602v1-reinforcement-learning-for-flow-matching-policies-with-density-transport)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：视频扩散模型用于增强运动理解
-6. [Beyond Skeletons: Learning Animation Directly from Driving Videos with Same2X Training Strategy](/202606/13/2606.06903v1-beyond-skeletons-learning-animation-directly-from-driving-videos-with-same2x-training-strategy)  
+   evidence：面向流匹配策略的强化学习微调
+8. [WaveDiT: Distribution-Aware Wavelet Flow Matching for Efficient 3D Brain MRI Synthesis](/202606/14/2606.08670v1-wavedit-distribution-aware-wavelet-flow-matching-for-efficient-3d-brain-mri-synthesis)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：基于扩散变换器的人类图像动画
-7. [GenPO++: Generative Policy Optimization with Jacobian-free Likelihood Ratios](/202606/13/2606.06967v1-genpo-generative-policy-optimization-with-jacobian-free-likelihood-ratios)  
+   evidence：使用 Flow Matching 进行 3D 医学图像合成
+9. [MaskAlign: Token-Subset Representation Alignment for Efficient Diffusion Training](/202606/14/2606.08788v1-maskalign-token-subset-representation-alignment-for-efficient-diffusion-training)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：流基生成策略用于强化学习
-8. [Mitigating the Contractivity Trap in Diffusion ODEs via Stein Stabilization](/202606/13/2606.07835v1-mitigating-the-contractivity-trap-in-diffusion-odes-via-stein-stabilization)  
+   evidence：扩散变换器训练加速通过表示对齐
+10. [KPGrasp: Scalable Keypoint Flow Matching for Dexterous Grasp Generation](/202606/14/2606.09314v1-kpgrasp-scalable-keypoint-flow-matching-for-dexterous-grasp-generation)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：改善扩散模型ODE推理
-9. [Q-VGM: Q-Guided Value-Gradient Matching for Flow-Matching VLA Policies](/202606/13/2606.08015v1-q-vgm-q-guided-value-gradient-matching-for-flow-matching-vla-policies)  
+   evidence：流匹配用于抓取生成，方法相似但非人体运动
+11. [A Theory on Flow Matching with Neural Networks](/202606/14/2606.10089v1-a-theory-on-flow-matching-with-neural-networks)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：流匹配方法用于机器人生成建模
-10. [SMC-ITA: Sequential Monte Carlo Inference-Time Alignment for Video-to-Audio Generation](/202606/13/2606.08393v1-smc-ita-sequential-monte-carlo-inference-time-alignment-for-video-to-audio-generation)  
-   标签：评分：6.0/10、query:3d-motion-generation
-   evidence：基于流匹配的视频到音频生成
-11. [Learning to Solve Generative ODEs Beyond the Linear Span](/202606/13/2606.08672v1-learning-to-solve-generative-odes-beyond-the-linear-span)  
-   标签：评分：6.0/10、query:3d-motion-generation
-   evidence：改进扩散和流生成模型的ODE求解器
+   evidence：基于神经网络的流匹配理论
 
 
 <div class="dpr-home-promo-card">
