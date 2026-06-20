@@ -1,0 +1,1224 @@
+Title: Temporal Difference Learning for Diffusion Models
+
+URL Source: https://arxiv.org/pdf/2606.15048v1
+
+Published Time: Tue, 16 Jun 2026 00:21:29 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Temporal Difference Learning for Diffusion Models 
+
+Qizhen Ying 1 Yangchen Pan 1 Victor Adrian Prisacariu 1 Junfeng Wen 2
+
+## Abstract 
+
+Diffusion models are typically trained with objectives that focus on local denoising targets at individual time steps (or adjacent pairs), which do not enforce consistency between predictions along the denoising trajectory. This lack of cross-time consistency can degrade performance, especially for few-step samplers. We introduce a temporal difference (TD) objective that penalizes inconsistency of the model’s multi-step progress along the denoising path. By reformulating the diffusion process as a Markov reward process and casting denoising as a policy evaluation problem in reinforcement learning, we derive a unified TD approach that applies to both discrete-and continuous-time diffusion formulations. We further propose a principled sample-based reweighting method that stabilizes training. Em-pirically, we show that using our TD training can significantly improve sample quality measured by FID, with stronger advantages when the number of sampling steps is small, highlighting its practical utility under low-computation-budget scenarios. We provide ablation studies to justify our design choices, including pairwise loss reweighting, regularization weight, and one-step stride. Overall, our TD approach can be a general drop-in that enforces cross-time consistency and improves generation quality across different diffusion generative models.Code is available at https://github.com/StephenYing/ Temporal_Difference_Learning_ for_Diffusion_Models .
+
+> 1
+
+Department of Engineering Science, University of Oxford, Oxford, United Kingdom 2School of Computer Science, Carleton University, Ottawa, Canada. Correspondence to: Qizhen Ying 
+
+<qizhen.ying@eng.ox.ac.uk >.
+
+Proceedings of the 43 rd International Conference on Machine Learning , Seoul, South Korea. PMLR 306, 2026. Copyright 2026 by the author(s). 
+
+Figure 1. Overview of our algorithm. By matching the model drift (calculated from the posterior means) with diffusion drift, we enforce consistency over denoising time index/noise level. 
+
+## 1. Introduction 
+
+Diffusion models have become a standard tool for high-fidelity generative modeling across images, audio, and be-yond (Ho et al., 2020; Song et al., 2021b; Karras et al., 2022). Despite impressive progress in sampler design (e.g., probability-flow ODE/DDIM (Song et al., 2021a;b), high-order solvers such as DPM-Solver (Lu et al., 2022) and UniPC (Zhao et al., 2023)) and training-time accelera-tions (e.g., progressive distillation (Salimans & Ho, 2022) and consistency-style learning (Song et al., 2023)), the dominant training paradigm still optimizes single-time 
+
+reconstruction/noise-prediction losses. Such single-time objectives do not explicitly require that pre-dictions made at different noise levels form a time-consistent 
+
+trajectory under the known forward corruption process. The resulting cross-time mismatch can accumulate along the denoising path and becomes particularly detrimental when the sampler uses few steps, i.e., a small number of function evaluations (NFE), where local errors have limited opportu-nity to average out (Song et al., 2021b; Karras et al., 2022). This motivates treating diffusion training through the lens of sequential decision making, where predictions at different timesteps must be consistent over multiple steps rather than only locally accurate. Another line of recent work targets the same few-step sam-pling bottleneck by modifying the learned transport or de-noising map itself. Shortcut models condition the network on both the current noise level and a desired step size, en-abling the same model to take short or long denoising jumps at inference time (Frans et al., 2025). MeanFlow instead 1
+
+> arXiv:2606.15048v1 [cs.LG] 13 Jun 2026 Temporal Difference Learning for Diffusion Models
+
+learns an average velocity field for one-step generative mod-eling, providing a flow-based alternative to modeling only in-stantaneous velocities (Geng et al., 2026). These approaches are closely related in motivation to fast sampling, but they primarily redesign the generator or its parameterization for one-/few-step generation. Our goal is complementary: we keep the base diffusion or consistency-training objective and add a TD regularizer that enforces cross-time consistency of posterior-mean drifts along the denoising trajectory. Recent years have seen a surge of works that formulate diffusion sampling as a multi-step decision or control prob-lem and apply reinforcement learning (RL) or control-based methods to optimize non-differentiable rewards. DDPO casts denoising as a Markov decision process (MDP) and shows policy-gradient updates can align text-to-image mod-els with black-box objectives such as aesthetics and com-pressibility (Black et al., 2023). DPOK performs online RL with KL regularization to fine-tune diffusion models from human-trained reward functions, improving both alignment and fidelity (Fan et al., 2023). Adjoint Matching formulates reward fine-tuning for flow and diffusion models through stochastic optimal control, yielding a regression-style ob-jective for reward-guided model improvement (Domingo i Enrich et al., 2025). Other algorithmic variants include LOOP, which analyzes the efficiency–performance trade-off between REINFORCE and PPO and proposes a leave-one-out PPO scheme for dif-fusion fine-tuning (Gupta et al., 2025); and SEPO, which develops a policy-gradient method for discrete diffusion with theoretical justification and strong results across dis-crete generative tasks (Zekri & Boull ´e, 2025). Beyond images, RL fine-tuning has been applied to text-to-speech diffusion models via a loss-guided policy optimization ob-jective (DLPO) (Chen et al., 2024). Other directions include self-play (SPIN-Diffusion), where a model competes with its past checkpoints to iteratively improve under a reward signal (Yuan et al., 2024), and forward-process RL that integrates reinforcement signals into flow-/score-matching objectives for online fine-tuning (Zheng et al., 2025). Finally, at the theoretical level, Temporal Difference Flows connect TD learning with flow-based training, providing an RL interpretation of generative flows (Farebrother et al., 2025). Earlier work on generative TD learning proposed the γ-model framework, which reinterprets TD updates as a generative modeling problem for infinite-horizon prediction (Janner et al., 2020). While these methods highlight the syn-ergy between RL and generative models, they focus either on flow-based models or on predictive state distributions. A complementary strand leverages diffusion as the policy class for decision making in RL: Diffuser denoises entire trajectories to plan behaviors (Janner et al., 2022), Diffusion-QL represents policies with conditional diffusion models for offline RL (Wang et al., 2023), and hierarchical methods introduce subgoal-conditioned diffusion for long-horizon tasks (Li et al., 2023). These approaches focus on maxi-mizing environmental returns in external tasks rather than developing new training regimes for diffusion models. In contrast, our work performs policy evaluation over the de-noising process itself. We reformulate diffusion as a Markov reward process (MRP) and introduce a TD objective that enforces cross-time consistency of predictions along the denoising path, unified across discrete- and continuous-time formulations. Unlike prior consistency models (CM) (Song et al., 2023) that require the reconstructions to agree over time, our method encourages the change in posterior means between two times to match the true diffusion drift, as illus-trated in Figure 1. Furthermore, to stabilize optimization across different time pairs, we propose a principled sample-based loss reweighting scheme that equalizes loss scales. Rather than learning a new one-step generator or steering outputs through task-specific rewards, our TD formulation serves as a general-purpose training objective that improves fixed-NFE generation by aligning the model’s internal tem-poral dynamics. The rest of the paper is organized as follows. In Sec. 2, we review background and notation, including a unified two-time-mean form. Sec. 3 presents our TD objective (discrete derivation, unified form, design rules, etc.). We present the experiment results in Sec. 4 and discuss our method in Sec. 5. The appendices include implementation details, scheduler definitions, and additional derivations. 
+
+## 2. Background and Notation 
+
+Diffusion models corrupt data with a forward (noising) pro-cess and learn a denoiser or score function that inverts it (Ho et al., 2020; Song et al., 2021b). Discrete-time formulations such as DDPM (Ho et al., 2020; Nichol & Dhariwal, 2021) and the deterministic DDIM (Song et al., 2021a) provide simple training objectives and flexible sampling schedules, while continuous-time formulations based on differential equations (ODE/SDE) unify these views and support princi-pled SDE samplers (Song et al., 2021b). To address the com-plex design space of diffusion models, EDM (Karras et al., 2022) modularizes the framework, refines several design choices (e.g., noise grids, preconditioning, loss weighting, etc.) and achieves strong empirical results with few-step sampling. In this work, we adopt these foundations and focus on enforcing cross-time consistency at training time. 
+
+2.1. Unified Two-Time Posterior Mean 
+
+Let t denote the time index: a discrete time t ∈{0, . . . , T } (DDPM/DDIM), or a continuous time t ∈ [0 , T ]
+
+(ODE/SDE). Let τ < t be an earlier (cleaner) time step. 2Temporal Difference Learning for Diffusion Models Process At,τ κt,τ 
+
+DDPM 
+
+√¯ατ (1 − αt)1 − ¯αt
+
+√αt (1 − ¯ατ )1 − ¯αt
+
+DDIM √¯ατ −
+
+q 1− ¯ατ 
+
+> 1−¯αt
+
+√¯αt
+
+q 1− ¯ατ 
+
+> 1−¯αt
+
+VP-SDE α(τ ) − κt,τ α(t) α(t)
+
+α(τ ) · 1 − α(τ )2
+
+1 − α(t)2
+
+VE-SDE / EDM 1 − σ(τ )2
+
+σ(t)2
+
+σ(τ )2
+
+σ(t)2
+
+CM 1 − σ(τ )
+
+σ(t)
+
+σ(τ )
+
+σ(t)
+
+Table 1. Unified two-time posterior mean coefficients in 
+
+μtrue  
+
+> τ
+
+(xt, x0) = At,τ x0 + κt,τ xt for DDPM (Ho et al., 2020), DDIM (Song et al., 2021a), VP/VE-SDE (Song et al., 2021b), EDM (Karras et al., 2022), and CM (Song et al., 2023). For DDPM/DDIM, we often use the adjacent-step τ = t − 1 (though the formula holds for any τ < t ). For VP/VE/EDM/CM, (t, τ ) are continuous time indices (equivalently, noise levels) selected by the sampler. See Appendix B for definitions and derivations. 
+
+Across families, the mean of the posterior q(xτ |xt, x0) ad-mits the same linear form (derived in Appendix B) 
+
+μtrue  
+
+> τ
+
+(xt, x0) = At,τ x0 + κt,τ xt, (1) where x0 is a clean datum (e.g., original image) and xt
+
+is a noisy sample at level t. Family-specific choices for 
+
+(At,τ , κ t,τ ) are summarized in Table 1. This linear form will allow us to define a surrogate mean by predicting x0
+
+using a model xθ, 0(xt; t) ≈ x0 parametrized by θ (e.g., the 
+
+Dθ and fθ in the following paragraphs). This will be the main strategy for our TD objective (Sec.3). 
+
+EDM-style preconditioning. EDM (Karras et al., 2022) wraps a raw network Fθ in the preconditioned denoiser as 1
+
+Dθ (x; t) = cEDM skip (t) x + cEDM out (t) Fθ
+
+ cin (t) x; cnoise (t),
+
+(2) and trains this model with a weighted regression 
+
+LEDM = Et, x0,xt
+
+h
+
+w(t) Dθ (xt; t) − x0
+
+> 22
+
+i
+
+. (3) The specific choices of {cEDM skip , c EDM out , c in , c noise , w (t)} equal-ize the effective variance across noise levels and improve optimization conditioning (Karras et al., 2022). We will develop a weighting to achieve a similar effect later, and combine Equation (3) with our TD objective. 
+
+Preconditioning for consistency models. Similarly to EDM, CM (Song et al., 2023) parametrizes a prediction model fθ (xt; t) to predict xϵ using any t ∈ [ϵ, T ] where 
+
+ϵ > 0 is a small number. To ensure that the boundary condition fθ (xϵ; ϵ) = xϵ is satisfied by construction, CM 
+
+> 1
+
+Note that EDM adopts a noise scheme instead of a time scheme, but we use time here as they are equivalent and it can facilitate later discussion. 
+
+adopts a preconditioned form 
+
+fθ (x; t) = cCM skip (t) x + cCM out (t) Fθ (x; t), (4) satisfying cCM skip (ϵ) = 1 , c CM out (ϵ) = 0 , which is a boundary-shifted variant of EDM’s parameterization. When training from scratch (i.e., consistency training or CT), it optimizes 
+
+LCT = E
+
+h
+
+w(t) fθ (xt+1 ; t + 1) − fθ′ (xt, t ) 22
+
+i
+
+, (5) where θ′ is updated via exponential moving average (EMA). 
+
+2.2. Temporal Difference Learning 
+
+In this work, we will recast training diffusion models as policy evaluation problems in reinforcement learning (RL) (Pan et al., 2025). A finite-horizon Markov Reward Pro-cess (MRP) (Szepesv ´ari, 2022) is characterized by a tu-ple (X , r t, P t, T ) where X is the (common) state space, 
+
+rt : X × X 7 → R is the reward function at time t,
+
+Pt : X 7 → ∆( X ) is the transition kernel at time t and T is the length of the episode. However, to match the time nota-tion in diffusion models, here we let the MRP start from step 
+
+t = T and traverse backward to t = 0 . Specifically, when transitioning from xt to xt−1 according to Pt(·| xt), we receive a reward of rt−1(xt, xt−1). Let gt := Pti=1 rt−i
+
+denote the MRP return collected from time t until the termi-nal time 0, where rt−i is short for rt−i(xt−i+1 , x t−i). The state value function is then defined as the expected return when starting from a given state: 
+
+vt(x) := E [gt | xt = x] := E
+
+" tX
+
+> i=1
+
+rt−i xt = x
+
+#
+
+(6) where the expectation is taken over Pi for 0 < i ≤ t.One can use temporal difference (TD) learning (Sutton & Barto, 2018) to find vt. Given some parametrized functions 
+
+vθ,t , the TD error of the transition (xt, xt−1) is 
+
+δt := rt−1 + vθ,t −1(xt−1) − vθ,t (xt). (7) By minimizing the TD error using samples from the MRP and semi-gradient descent, vθ,t will converge to the true 
+
+vt (Bertsekas & Tsitsiklis, 1996; Tsitsiklis & Van Roy, 1996). 
+
+## 3. Temporal Difference Learning for Diffusion Models 
+
+This section develops TD training for diffusion models. We first derive the TD loss on a discrete time index grid, then lift it to a unified formulation that applies to both discrete-(DDPM/DDIM) and continuous-time (VP/VE/EDM) fami-lies. Whenever a posterior mean is needed, we do not restate family-specific formulas – rather, we directly use the unified form in Equation (1). 3Temporal Difference Learning for Diffusion Models 
+
+3.1. Discrete Time: MRP Formulation for DDPM MRP specifications on the time index grid. Following Sec. 2.2, we define an MRP, traversing backward in time from t = T to t = 0 . The construction is tied to a clean sample x0: the rewards and posterior transitions below are defined conditionally on a clean x0 sampled from the data distribution. In other words, x0 acts as an episode-level context throughout the derivation, and we omit it when no confusion arises. For training objectives, x0 ∼ qdata is a random variable, as shown later in Equation (16); within a sampled episode, the realized x0 is treated as fixed. In our context of diffusion model training, rewards, returns, and values are all data-space vector-valued quantities, which cor-responds to a multiple-reward setting. The MRP is specified as follows: • State space: X is the data space. In the case of image generation, X is the set of images. • Reward function: rt−1 := rt−1(xt, xt−1) := 
+
+μtrue 
+
+> t−1
+
+(xt, x0) − μtrue 
+
+> t−2
+
+(xt−1, x0) is the posterior mean difference. Note that rt−1 is a vector in the data space, as opposed to a scalar reward common in reinforcement learning. In the final step when transitioning from x1 to 
+
+x0, the reward is defined as r0 := μtrue  
+
+> 0
+
+(x1, x0)−x0 = 0.The last equation is because μtrue  
+
+> 0
+
+(x1, x0), the conditional mean, must be x0 given x0.• Transition kernel: Pt(xt−1 | xt) := q(xt−1|xt, x0) is induced by the posterior of the predecessor in the diffusion process (stochastic in xt−1 through the forward coupling). 
+
+Return, value, TD(0) and k-step return. In this diffusion MRP setup, the cumulative reward has a simple form. Based on the definition of reward, the return gt (conditioned on 
+
+x0) then equals the displacement of the posterior mean from the data: 
+
+gt | x0 = μtrue 
+
+> t−1
+
+(xt, x0) − x0, (8) It satisfies the usual return recursion, here written backward in diffusion time, gt = rt−1 + gt−1. Moreover, it ensures that g1 = μtrue  
+
+> 0
+
+(x1, x0) − x0 = x0 −x0 = 0. Because the posterior mean in Equation (8) is determined once (xt, x0)
+
+is known, the corresponding value function reduces to this conditional return: 
+
+vt(xt) := E[ gt | xt, x0 ] = μtrue 
+
+> t−1
+
+(xt, x0) − x0. (9) Here, the subscript t in vt denotes the diffusion-time index of the quantity being estimated (namely gt), while xt is the conditioning state in the expectation. We approximate vt
+
+using the preconditioned denoiser, e.g., (2) or (4) earlier, as the model xθ, 0:
+
+vt(xt) ≈ vθ,t (xt) := μθ,t −1(xt) − x0 (10) 
+
+μθ,t −1(xt) := At,t −1 xθ, 0(xt; t) + κt,t −1 xt. (11) We learn θ by constructing a bootstrap target with fixed parameters. The “next”-state’s value is estimated by 
+
+vt−1(xt−1) ≈ vθ′,t −1(xt−1) := μθ′,t −2(xt−1)−x0 (12) 
+
+μθ′,t −2(xt−1) = At−1,t −2 xθ′,0(xt−1; t − 1) + κt−1,t −2 xt−1, (13) where θ′ is the fixed (stop-gradient) target network’s param-eters, updated using EMA. By the definition of the reward, the bootstrap target is 
+
+rt−1 + vθ′,t −1(xt−1) = μtrue 
+
+> t−1
+
+(xt, x0) − μtrue 
+
+> t−2
+
+(xt−1, x0)+ μθ′,t −2(xt−1) − x0. (14) Combining it with Equation (10) gives the TD error 
+
+δt := rt−1 + vθ′,t −1(xt−1) − vθ,t (xt)= [ μtrue 
+
+> t−1
+
+(xt, x0) − μtrue 
+
+> t−2
+
+(xt−1, x0)] 
+
+| {z }
+
+> one-step diffusion drift
+
+− [μθ,t −1(xt) − μθ′,t −2(xt−1)] 
+
+| {z }
+
+> one-step model drift
+
+. (15) The TD(0) objective is then 
+
+LTD(0) := Et, x0,xt−1,xt
+
+∥δt∥22
+
+ , (16) where t ∼ U{ 2, . . . , T }, x0 ∼ qdata , xt−1 ∼ q(xt−1 |
+
+x0), and xt ∼ q(xt | xt−1).Minimizing the TD error can be interpreted as aligning diffusion progression across time steps as shown in Equa-tion (15). If the true mean has drifted in one step, the model should shift in the same way, thus enforcing consistency 
+
+between time steps. The same derivation applies to DDIM (Song et al., 2021a) by substituting its (At,t −1, κ t,t −1) from Table 1. We can also use k-step return as the bootstrap target. Keep expanding Equation (14) over k steps gives the following 
+
+k-step objective 
+
+L(k)TD := E
+
+h
+
+[μtrue 
+
+> t−1
+
+(xt, x0) − μtrue 
+
+> t−k−1
+
+(xt−k, x0)] 
+
+| {z }
+
+> k-step diffusion drift
+
+− [μθ,t −1(xt) − μθ′,t −k−1(xt−k)] 
+
+| {z }
+
+> k-step model drift
+> 22
+
+i
+
+. (17) where the expectation is over t ∼ U{ k + 1 , T }, x0 ∼
+
+qdata (x0), xt−k ∼ q(xt−k|x0), xt ∼ q(xt|xt−k). The matching process is illustrated in Figure 1. 
+
+Aligning model with posterior. Note that there is no need to bootstrap when a t ≤ k is sampled because we do know the rest of the episode and the corresponding true return. In 4Temporal Difference Learning for Diffusion Models 
+
+this case, the TD loss actually reduces to posterior mean matching (cf. (8) and (10)), similar to the DDPM loss 
+
+LDDPM = E
+
+h
+
+w(t)∥μtrue 
+
+> t−1
+
+(xt, x0) − μθ,t −1(xt)∥22
+
+i
+
+, (18) with a specific weighting w(t) defined by DDPM. In prac-tice, we combine the TD loss with the DDPM loss even when t > k to facilitate training and speed up convergence, and the final objective is 
+
+L(k)TD+DDPM = L(k)TD + λ LDDPM , (19) where λ > 0 is a hyper-parameter. In other words, if a time t > k is sampled during training, the TD loss can be used and we optimize L(k)TD+DDPM . Otherwise, we optimize 
+
+(1 + λ)LDDPM since the TD loss reduces to the DDPM loss in this case and the (1 + λ) factor maintains the scale of the objective. 
+
+3.2. Discrete and Continuous Time: A Unified TD Objective 
+
+The derivations based on discrete time steps above can be easily extended to continuous-time scenarios with ODE/SDE thanks to the unified mean (Equation (1) from Sec. 2.1). Instead of matching drifts that are k-step away in the discrete case, here we pick two time indices t, t ′ ∈ [0 , T ]. Time t
+
+(resp. t′) induces a true posterior mean for an earlier time 
+
+τ < t (resp. τ ′ < t ′). Their corresponding means can be expressed as 
+
+μtrue  
+
+> τ
+
+(xt, x0) = At,τ x0 + κt,τ xt (20) 
+
+μtrue   
+
+> τ′
+
+(xt′ , x0) = At′,τ ′ x0 + κt′,τ ′ xt′ . (21) For the discrete-time case (Equation (17)), μtrue 
+
+> t−1
+
+(xt, x0)
+
+is the posterior mean in the previous time step (hence the subscript t − 1). In analogy, τ here can be considered as the “previous time step” of t in the continuous case. In our experiments, we set τ ′ < t ′ < τ < t with span k := t − t′
+
+and stride ∆ := t′ − τ ′ = t − τ < k , imitating the discrete case. Accordingly, the model is defined as 
+
+μθ,τ (xt) := At,τ xθ, 0(xt; t) + κt,τ xt, (22) where xθ, 0 predicting x0, instantiated as Dθ for EDM (2) or (4) for CM parameterizations (Sec. 2.1). The TD loss for continuous time reads 
+
+Lcont TD = Ex0,t,t ′,xt,xt′
+
+h μtrue  
+
+> τ
+
+(xt, x0) − μtrue   
+
+> τ′
+
+(xt′ , x0)
+
+− μθ,τ (xt) − μθ′,τ ′ (xt′ ) 22
+
+i
+
+. (23) Inspired by prior work, it is preferable to include a weighting scheme wTD (t, t ′) for loss per sample within the expecta-tion of Equation (23) to avoid drastic changes in gradient magnitudes across time steps. The weighting scheme then depends on the parametrization of the prediction model and the training strategies of the base algorithm. In the follow-ing, we will incorporate our TD objective into two widely used continuous-time training paradigms, EDM and CT, and show specific recipes for stable training. 
+
+3.3. Training Recipes: TD+EDM and TD+CT Weighting for EDM parameterization. Here we expand the TD error (23) by substituting (22) into it 
+
+δt,t ′ := μtrue  
+
+> τ
+
+(xt, x0) − μtrue   
+
+> τ′
+
+(xt′ , x0)
+
+− μθ,τ (xt) − μθ′,τ ′ (xt′ ) (24) 
+
+= At,τ x0 − At′,τ ′ x0
+
+
+
+− At,τ xθ, 0(xt, t ) − At′,τ ′ xθ′,0(xt′ , t ′). (25) When using the EDM preconditioned denoiser Dθ (2) as 
+
+xθ, 0, the TD error can be decomposed further by using the raw network Fθ
+
+δt,t ′ = At,τ x0 − At′,τ ′ x0
+
+
+
+− At,τ cEDM skip (t)xt − At′,τ ′ cEDM skip (t′)xt′
+
+ (26) 
+
+− At,τ cEDM out (t)Fθ,t (xt) − At′,τ ′ cEDM out (t′)Fθ′,t ′ (xt′ ).
+
+where we use Fθ,t (xt) = Fθ (cin (t)xt; cnoise (t)) for short. Following EDM, which balances the per-sample losses for the raw model Fθ , here we also equalize the loss scale for 
+
+Fθ and Fθ′ . Minimizing the TD error effectively minimizes the normalized errors eEDM  
+
+> t
+
+, eEDM 
+
+> t′
+
+eEDM  
+
+> t
+
+:= x0 − cEDM  
+
+> skip
+
+(t) xt
+
+cEDM  
+
+> out
+
+(t) − Fθ,t (xt),
+
+eEDM  
+
+> t′
+
+:= x0 − cEDM  
+
+> skip
+
+(t′) xt′
+
+cEDM  
+
+> out
+
+(t′) − Fθ′,t ′ (xt′ ).
+
+(27) rescaled by At,τ cEDM out (t) (resp. At′,τ ′ cEDM out (t′)). That is, 
+
+δt,t ′ = B eEDM  
+
+> t,t ′
+
+where 
+
+B :=  At,τ cEDM  
+
+> out
+
+(t) I, −At′,τ ′ cEDM  
+
+> out
+
+(t′) I  ∈ Rd×2d,
+
+eEDM  
+
+> t,t ′
+
+:= 
+
+eEDM 
+
+> t
+
+eEDM 
+
+> t′
+
+
+
+∈ R2d. (28) Then we can see that 
+
+∥δt,t ′ ∥22 = ∥B et,t ′ ∥22 ≤ ∥B∥ 22 ∥eEDM  
+
+> t,t ′
+
+∥22 (29) 
+
+=
+
+
+
+A2 
+
+> t,τ
+
+cEDM  
+
+> out
+
+(t)2 + A2  
+
+> t′,τ ′
+
+cEDM  
+
+> out
+
+(t′)2
+
+∥eEDM  
+
+> t,t ′
+
+∥22.
+
+Since ∥eEDM  
+
+> t,t ′
+
+∥22 is the normalized error w.r.t. the raw models 
+
+Fθ , F θ′ , it would be helpful to set a uniform scale that is not affected by the choice of time indices, which leads to the following pairwise weighting: 
+
+wEDM TD (t, t ′) = 1
+
+A2 
+
+> t,τ
+
+cEDM  
+
+> out
+
+(t)2 + A2  
+
+> t′,τ ′
+
+cEDM  
+
+> out
+
+(t′)2 . (30) 5Temporal Difference Learning for Diffusion Models 
+
+Then wTD (t, t ′)∥δt,t ′ ∥22 ≤ ∥ eEDM  
+
+> t,t ′
+
+∥22, and the weighted TD objective is 
+
+Lcont wTD+EDM = Ex0,t,t ′
+
+h
+
+wEDM TD (t, t ′) δt,t ′
+
+> 22
+
+i
+
+. (31) 
+
+Weighting for CM parameterization. Similarly, we can apply CM’s model fθ (4) to Equation (25). Instead of bal-ancing losses for the raw model Fθ , consistency training (CT) applies a uniform weighting w(t) ≡ 1 in (5) (Song et al., 2023), equalizing the losses for fθ directly. Following this practice, we focus on the errors for fθ
+
+eCT  
+
+> t
+
+:= x0 − fθ (xt; t), eCT  
+
+> t′
+
+:= x0 − fθ′ (xt′ ; t′). (32) Substituting these into Equation (25) and following the same derivation, we bound the TD error as 
+
+∥δt,t ′ ∥22 ≤
+
+
+
+A2 
+
+> t,τ
+
++ A2 
+
+> t′,τ ′
+
+
+
+∥eCT  
+
+> t,t ′
+
+∥22. (33) Hence, we have the CT-specific pairwise weight: 
+
+wCT TD (t, t ′) := 1
+
+A2 
+
+> t,τ
+
++ A2 
+
+> t′,τ ′
+
+. (34) The general weighted TD objective is then 
+
+Lcont wTD+CT = Ex0,t,t ′ [wCT TD (t, t ′)∥δt,t ′ ∥22]. (35) 
+
+Aligning model with posterior. During training, t is sam-pled within [0 , T ], which can make τ ′ invalid given fixed span k and stride ∆. Specifically, when τ ′ = t − k − ∆ falls outside the valid time window (or equivalently, when the corresponding noise level goes below the minimum noise of the sampler), the TD loss reduces to a mean matching objective, similar to the discrete-time case. Therefore, for a base continuous-time algorithm (e.g., EDM or CT), we can incorporate our TD loss into the original loss, and optimize an objective based on the sampled time-step or noise-level. For EDM, our objective is 
+
+LTD+EDM = Lcont wTD+EDM + λLEDM , (36) when τ ′ is valid, and (1 + λ)LEDM otherwise. Similarly, for CT, our objective is 
+
+LTD+CT = Lcont wTD+CT + λLCT . (37) when τ ′ is valid, and (1 + λ)LCT otherwise. Our method is flexible in that, given a base continuous-time algorithm, we can incorporate our TD loss (23) into the base loss Lbase depending on the original algorithm and its model parametrization for predicting x0. The procedure is summarized in Algorithm 1. 
+
+Noise-grid index mapping and TD pairing. In imple-mentation, we parameterize TD time indices using the sam-pler’s noise grid of EDM (Karras et al., 2022): 
+
+σ(i) = 
+
+
+
+σ1/ρ  
+
+> max
+
++ iN − 1
+
+ σ1/ρ  
+
+> min
+
+− σ1/ρ 
+
+> max
+
+ρ
+
+, (38) where i ∈ { 0, . . . , N − 1}, N is the grid size, ρ is the sched-ule exponent, and (σmin , σ max ) are the upper and lower bounds of the sampler noise level. Given a noise level σ
+
+within [σmin , σ max ], we identify its corresponding (possi-bly non-integer) index i from Equation (38) and treat it as the TD time index t. We then set 2 t′ = t + k and define 
+
+τ = t + ∆ and τ ′ = τ + k to construct the TD pair in Equa-tion (23). We apply TD only when σ(τ ′) ∈ [σmin , σ max ];otherwise we fall back to the base loss mentioned above. 
+
+Algorithm 1 TD training (general recipe) 
+
+Input : Preconditioned denoiser xθ, 0 (e.g., Dθ for EDM or 
+
+fθ for CT); target network θ′; noise grid σ(i); span k; stride 
+
+∆; mixing coefficient λ; base loss Lbase (EDM or CT); pair-wise TD weight wTD (·, ·).
+
+1: Sample x0 ∼ qdata (x0) and select a grid/noise index t
+
+according to the base method. 
+
+2: Compute the base loss Lbase (EDM or CT) using xθ, 0
+
+3: if t ≤ N − 1 − k − ∆ then 
+
+4: Compute the TD error δt,t ′ .
+
+5: LwTD = wTD (t, t ′) ∥δt,t ′ ∥22 (EDM: (30); CT: (34)) 
+
+6: L = LwTD + λLbase 
+
+7: else 
+
+8: L = (1 + λ)Lbase 
+
+9: end if 
+
+10: Perform gradient descent on L and update θ′ using exponential moving average. 
+
+## 4. Empirical Study 
+
+We evaluate our TD objective with (i) EDM training (TD+EDM) and (ii) Consistency model training (TD+CT). 
+
+Experimental Setup. In all experiments, we utilize the probability-flow ODE with the Heun integrator, where the NFE is NFE = 2 × steps − 1. We report the last-15% FID-50k , defined as the average FID-50k over the last 15% of evaluation checkpoints to ensure a stable performance measure. For TD+EDM, unless otherwise stated, we use the default TD setup selected by the EDM ablations: ∆ = 0.25 , k = 1 , λ = 0 .5, and the TD pairwise weighting proposed in Section 3.3. See App. A for implementation details. 
+
+> 2
+
+We use t′ = t + k instead of t′ = t − k because then t′ will correspond to a smaller noise level, thus closer to the real data as common in the ODE/SDE formulations ( t = 0 ). In noise grid larger i corresponding to smaller noise level. 
+
+6Temporal Difference Learning for Diffusion Models                              
+
+> Table 2. Cross-dataset comparison under the same TD+EDM setting. FID-50k ↓(last-15% average). Dataset Steps TD+EDM EDM Cond. CIFAR-10 (32 ×32) 93.799 3.703
+> 12 2.270 2.365 15 2.235 2.311 18 2.129 2.170 AFHQv2 (64 ×64) 95.935 5.985 12 4.108 4.060
+> 15 3.554 3.588 18 3.386 3.402 FFHQ (64 ×64) 97.463 7.829 12 4.400 4.499 15 3.564 3.695 18 3.246 3.370
+
+4.1. Performance and Applicability TD+EDM. We first apply our TD training with EDM and evaluate performance across different inference steps un-der the standard EDM configuration (Karras et al., 2022) (App. A.1). Table 2 reports results on three benchmarks: class-conditional CIFAR-10 ( 32 ×32 ), AFHQv2 ( 64 ×64 ), and FFHQ ( 64 ×64 ). Across these datasets, TD+EDM matches or improves upon the EDM baseline in the mod-erate few-step regime (12–18 steps). On FFHQ (and on AFHQv2 for most step budgets) specifically, our method allows the model to maintain higher fidelity than the base-line, which relies solely on local denoising targets. These results suggest that by aligning the model drift and diffusion drift, TD training makes the model more robust to the larger discretization intervals inherent in few-step solvers. 
+
+TD+CT. We further evaluate TD training within the con-sistency training (CT) framework, following the same CT baseline setup and evaluation setting in consistency mod-els (Song et al., 2023) (App. A.2). For TD+CT, we also sweep the TD-specific hyperparameters, i.e., λ and ∆,over the same ranges as the EDM ablations. The best set-ting is λ = 0 .5, ∆ = 0 .5 (one-step stride = 1 /2), with 
+
+k = 1 , which we use for both AFHQv2 ( 64 ×64 ) and FFHQ (64 ×64 ). As shown in Table 3, TD+CT improves one-step FID on both benchmarks. On AFHQv2, FID improves from 12.97 to 12.87, and on FFHQ, FID improves from 19.45 to 15.93. The advantage of our TD objective is more evident by the learning curves and the multi-step sampling profiles. As illustrated in Figure 2, TD+CT consistently exhibits better convergence and lower FID across different sampling steps for FFHQ throughout the training process, while remaining competitive or better on AFHQ. To investigate whether the learned consistency generalizes across various sampling densities, we evaluate the FID              
+
+> Table 3. TD+CT vs. CT baseline under one-step sampling (steps =1, NFE = 1 ). FID-50k ↓(last-15% average over evaluation check-points). Dataset (setting) Step CT TD+CT AFHQv2 (64 ×64), adaptive N112.97 12.87
+> FFHQ (64 ×64), adaptive N119.45 15.93
+
+difference ∆FID (s) := FID TD+CT (s) − FID CT (s) for step 
+
+s ∈ { 1, 2, 3, 4, 6, 8}. As illustrated in Figure 3, although mi-nor fluctuations exist where ∆FID occasionally approaches or crosses the zero line (notably for 4 and 8 steps dur-ing early or middle training phases), the FID difference remains predominantly negative throughout the majority of the training process across all evaluated step counts. This demonstrates that TD+CT generally maintains a better per-formance profile over the baseline across different inference budgets. 
+
+Computational Cost. The additional computational cost of our method mainly arises from maintaining and updating the target network θ′. For TD+EDM, on class-conditional CIFAR-10 with the 55M-parameter UNet trained for 200M images, the baseline training takes 50h 33m 30s (45.7 s/tick), while training with TD takes 71h 36m 48s (64.7 s/tick) on the same hardware. CPU memory increases from 2.29 GB to 2.74 GB ( ≈20%), and GPU memory from 16.58 GB to 17.51 GB ( ≈6%). In contrast, for TD+CT, the overhead is minimal because CT itself already utilizes a target network. For 5,000 training steps, TD+CT takes 95min (AFHQv2) and 92min (FFHQ), compared to 80min (AFHQv2) and 78min (FFHQ) for the CT baseline, respectively. These indicate that our method can effectively improve generation quality without incurring significant overhead. 
+
+4.2. Ablation Study 
+
+Given compute constraints, all ablations use CIFAR-10 with a smaller UNet and report last-15% FID-50k (mean 
+
+± std over 3 seeds; App. A.3) using TD+EDM. Unless a factor is being swept, the default hyperparameters are 
+
+∆=0 .25 , k =1 , λ =0 .5, with the weighted TD in Equa-tion (30). 
+
+Effect of pairwise TD weighting. We first validate the necessity of our sample-wise (pairwise) weighting wTD in Equation (30) by comparing it against a constant weight (unweighted TD). Table 4 shows that weighting yields a clear improvement across step budgets. 
+
+Sensitivity to the regularization weight λ. To study the balance between TD and EDM losses, we sweep λ while keeping ∆=0 .25 , k=1 , and weighted TD fixed. Table 5 shows that the best performance is achieved with relatively small λ, and performance is stable across a low-λ range. Moreover, the improvement over EDM is consistent. 7Temporal Difference Learning for Diffusion Models        
+
+> (a) AFHQv2 ( 64 ×64 )
+> (b) FFHQ ( 64 ×64 )
+> Figure 2. Learning curves (FID-50k vs. training steps) for TD+CT and CT baseline. Each plot shows 1-step and 2-step sampling results.
+
+Sensitivity to the stride ∆. We next investigate sensitivity to the stride ∆ introduced by our TD formulation. Table 6 shows that, under a fixed step budget, varying ∆ typically leads to only minor differences, suggesting robustness to this hyperparameter. 
+
+## 5. Discussions 
+
+We have introduced a temporal difference (TD) learning framework for diffusion models that reformulates denoising across the time axis as a policy evaluation problem. By casting the denoising trajectory as a Markov reward process                                                                                                    
+
+> Table 4. Effects of pairwise weighting and sampling steps (CIFAR-10, small UNet). FID-50k ↓(last-15% avg.; mean ±std over 3 seeds). weighted steps=12 steps=15 steps=18 None 11.059 ±0.110 10.589 ±0.155 10.435 ±0.183
+> wTD (30) 10.224 ±0.194 9.755 ±0.107 9.751 ±0.093
+> EDM 10.576 ±0.109 10.201 ±0.056 9.978 ±0.042
+> Figure 3. Relative improvement of TD+CT over CT baseline on FFHQ ( 64 ×64 ) across different inference steps. Negative values indicate that TD+CT achieves lower FID than the baseline.
+> Table 5. Ablation on weight λ. We vary λ∈ { 0.01 ,0.5,1.0,2.0}
+> under ∆=0 .25 ,k=1 . CIFAR-10 FID-50k ↓(last-15% avg.; mean
+> ±std over 3 seeds).
+> λsteps=12 steps=15 steps=18 0.01 10.212 ±0.067 9.793 ±0.153 9.750 ±0.219
+> 0.50 10.224 ±0.194 9.755 ±0.107 9.751 ±0.093 1.00 10.367 ±0.117 9.977 ±0.141 9.635 ±0.170 2.00 10.413 ±0.144 9.994 ±0.078 9.839 ±0.103 EDM 10.576 ±0.109 10.201 ±0.056 9.978 ±0.042
+
+(MRP), we derive a novel TD objective that explicitly pe-nalizes inconsistencies in the model’s multi-step progress, thereby enforcing cross-time agreement. A key theoretical and practical element of our work is the derivation of a prin-cipled, sample-based loss reweighting scheme, wTD , which ensures stable optimization by balancing the loss scales across heterogeneous time pairs. 
+
+Insights from Empirical Results. Our evaluations with TD+EDM and TD+CT provide empirical evidence for the benefits of temporal consistency training: • FID Improvements: Across multiple standard bench-marks, including CIFAR-10, AFHQv2, and FFHQ, our TD objective generally matches or improves sample qual-ity. For TD+EDM, we observe clear FID reductions in the 12–18 step range on most settings, demonstrating that enforcing cross-time agreement can suppress discretiza-tion error accumulation in few-step regimes. For TD+CT, we also observe improved one-step performance on both AFHQv2 and FFHQ, with a particularly large gain on FFHQ (Table 3). • Robustness Across Sampling Budgets: A significant finding is the robustness of the TD+CT model across a wide range of inference steps. As shown in Figure 3, the relative improvement ( ∆FID) remains predominantly negative across all evaluated step counts (1–8 steps), indi-8Temporal Difference Learning for Diffusion Models                                                            
+
+> Table 6. Ablation on stride ∆∈ { 1/2,1/3,1/4,1/5}(weighted). CIFAR-10 FID-50k ↓(last-15% avg.; mean ±std over 3 seeds).
+> ∆steps=12 steps=15 steps=18
+> 1/210.331 ±0.183 9.698 ±0.110 9.688 ±0.082
+> 1/310.264 ±0.106 9.634 ±0.110 9.800 ±0.069
+> 1/410.224 ±0.194 9.755 ±0.107 9.751 ±0.093
+> 1/510.232 ±0.056 9.787 ±0.126 9.706 ±0.054 EDM 10.576 ±0.109 10.201 ±0.056 9.978 ±0.042
+
+cating a broadly improved performance profile that is not tied to a single inference budget. • Reliability of Hyperparameter Choices: Our ablation studies demonstrate that the TD framework is robust across various configurations. While the pairwise weight-ing wTD is essential for achieving substantial and stable gains, the performance remains consistently superior over the baseline across a broad range of regularization weights 
+
+λ and temporal strides ∆. This confirms the reliability of our proposed default training scheme. 
+
+Limitations. While effective, our approach has several lim-itations. First, compared with EDM (Karras et al., 2022), the TD objective may introduce additional constant-factor 
+
+∼ 1.5× computational and memory overhead when a sepa-rate TD target network is maintained and updated. However, this overhead is largely amortized in training pipelines that already rely on a target/teacher network (e.g., consistency training with EMA teachers), where our method can reuse the existing target network with little marginal cost. Sec-ond, the current empirical scope is primarily focused on the generation at resolutions up to 64 × 64 using a probability-flow ODE solver. While this setting is consistent with prior algorithmic studies (Ho et al., 2020; Karras et al., 2022), validation on higher-resolution models, broader architec-tures, and specialized one-/few-step generators remains an important direction. 
+
+Future work. These findings motivate several promising research directions. The computational cost could be miti-gated by amortizing target-network updates or employing lightweight adapter modules. The framework also invites adaptive training curricula, such as progressively widening the step span k or annealing the mixing coefficient λ during training (Karras et al., 2022). Related approaches, such as SDPO, have demonstrated the value of dense stepwise rewards (Zhang et al., 2024), and noise-correlation meth-ods like ARTDiff (Lu et al., 2024) could be combined with TD learning to further enhance temporal stability. Finally, given its formulation as a drop-in objective, we anticipate strong synergies with distillation techniques (Salimans & Ho, 2022) and solver-aware training policies (Lu et al., 2022; Zhao et al., 2023). 
+
+## Impact Statement 
+
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here. 
+
+## Acknowledgement 
+
+Qizhen Ying and Yangchen Pan acknowledge the support from the Engineering and Physical Sciences Research Coun-cil (EPSRC) New Investigator Award under grant reference UKRI2775. Junfeng Wen acknowledges the support of NSERC, RGPIN-2024-05357. Qizhen Ying acknowledges the use of resources provided by the Isambard-AI National AI Research Resource (AIRR). Isambard-AI is operated by the University of Bristol and is funded by the UK Govern-ment’s Department for Science, Innovation and Technology (DSIT) via UK Research and Innovation; and the Science and Technology Facilities Council [ST/AIRR/I-A-I/1023] (McIntosh-Smith et al., 2024). 
+
+## References 
+
+Bertsekas, D. and Tsitsiklis, J. Neuro-Dynamic Program-ming . Athena Scientific, 1996. Black, K., Janner, M., Du, Y., Kostrikov, I., and Levine, S. Training diffusion models with reinforcement learning. 
+
+arXiv preprint arXiv:2305.13301 , 2023. Chen, J., Byun, J.-S., Elsner, M., and Perrault, A. Dlpo: Dif-fusion model loss-guided reinforcement learning for fine-tuning text-to-speech diffusion models. arXiv preprint arXiv:2405.14632 , 2024. Domingo i Enrich, C., Drozdzal, M., Karrer, B., and Chen, R. T. Adjoint matching: Fine-tuning flow and diffusion generative models with memoryless stochastic optimal control. In International Conference on Learning Repre-sentations , volume 2025, pp. 53791–53846, 2025. Fan, Y., Watkins, O., Du, Y., Liu, H., Ryu, M., Boutilier, C., Abbeel, P., Ghavamzadeh, M., Lee, K., and Lee, K. Dpok: Reinforcement learning for fine-tuning text-to-image diffusion models. Advances in Neural Information Processing Systems , 2023. Farebrother, J., Pirotta, M., Tirinzoni, A., Munos, R., Lazaric, A., and Touati, A. Temporal difference flows. 
+
+International Conference on Machine Learning , 2025. Frans, K., Hafner, D., Levine, S., and Abbeel, P. One step diffusion via shortcut models. In International Con-ference on Learning Representations , volume 2025, pp. 34668–34684, 2025. 9Temporal Difference Learning for Diffusion Models 
+
+Geng, Z., Deng, M., Bai, X., Kolter, Z., and He, K. Mean flows for one-step generative modeling. Advances in Neu-ral Information Processing Systems , 38:75460–75482, 2026. Gupta, S., Ahuja, C., Lin, T.-Y., Roy, S. D., Oosterhuis, H., de Rijke, M., and Shukla, S. N. A simple and effective re-inforcement learning method for text-to-image diffusion fine-tuning. arXiv preprint arXiv:2503.00897 , 2025. Ho, J., Jain, A., and Abbeel, P. Denoising diffusion proba-bilistic models. Advances in neural information process-ing systems , 2020. Janner, M., Mordatch, I., and Levine, S. Gamma-models: Generative temporal difference learning for infinite-horizon prediction. Advances in neural information pro-cessing systems , 2020. Janner, M., Du, Y., Tenenbaum, J. B., and Levine, S. Plan-ning with diffusion for flexible behavior synthesis. Inter-national Conference on Machine Learning , 2022. Karras, T., Aittala, M., Aila, T., and Laine, S. Elucidat-ing the design space of diffusion-based generative mod-els. Advances in Neural Information Processing Systems ,2022. Li, W., Wang, X., Jin, B., and Zha, H. Hierarchical diffusion for offline decision making. International Conference on Machine Learning , 2023. Lu, C., Zhou, Y., Bao, F., Chen, J., Li, C., and Zhu, J. Dpm-solver: A fast ode solver for diffusion probabilistic model sampling in around 10 steps. Advances in Neural Information Processing Systems , 2022. Lu, K., Yuxi, C., Li, L., Qin, D., and Li, G. Improve temporal consistency in diffusion models through noise correlations. Openreview , 2024. Luo, C. Understanding diffusion models: A unified perspec-tive. arXiv preprint arXiv:2208.11970 , 2022. McIntosh-Smith, S., Alam, S. R., and Woods, C. Isambard-ai: a leadership class supercomputer optimised specifically for artificial intelligence. arXiv preprint arXiv:2410.11199 , 2024. Nichol, A. Q. and Dhariwal, P. Improved denoising diffu-sion probabilistic models. International Conference on Machine Learning , 2021. Pan, Y., Wen, J., Xiao, C., and Torr, P. H. An mrp for-mulation for supervised learning: Generalized temporal difference learning models. Journal of Artificial Intelli-gence Research , 2025. Salimans, T. and Ho, J. Progressive distillation for fast sampling of diffusion models. arXiv preprint arXiv:2202.00512 , 2022. Song, J., Meng, C., and Ermon, S. Denoising diffusion implicit models. International Conference on Learning Representations , 2021a. Song, Y., Sohl-Dickstein, J., Kingma, D. P., Kumar, A., Er-mon, S., and Poole, B. Score-based generative modeling through stochastic differential equations. International Conference on Learning Representations , 2021b. Song, Y., Dhariwal, P., Chen, M., and Sutskever, I. Con-sistency models. International Conference on Machine Learning , 2023. Sutton, R. and Barto, A. Reinforcement Learning, second edition: An Introduction . MIT Press, 2018. Szepesv ´ari, C. Algorithms for reinforcement learning .Springer nature, 2022. Tsitsiklis, J. and Van Roy, B. Analysis of temporal-diffference learning with function approximation. Ad-vances in neural information processing systems , 9, 1996. Wang, Z., Hunt, J. J., and Zhou, M. Diffusion policies as an expressive policy class for offline reinforcement learning. 
+
+International Conference on Learning Representations ,2023. Yuan, H., Chen, Z., Ji, K., and Gu, Q. Self-play fine-tuning of diffusion models for text-to-image generation. Ad-vances in Neural Information Processing Systems , 2024. Zekri, O. and Boull ´e, N. Fine-tuning discrete diffusion models with policy gradient methods. Advances in Neural Information Processing Systems , 2025. Zhang, Z., Shen, L., Zhang, S., Ye, D., Luo, Y., Shi, M., Du, B., and Tao, D. Aligning few-step diffusion models with dense reward difference learning. arXiv preprint arXiv:2411.11727 , 2024. Zhao, W., Bai, L., Rao, Y., Zhou, J., and Lu, J. Unipc: A unified predictor-corrector framework for fast sampling of diffusion models. Advances in Neural Information Processing Systems , 2023. Zheng, K., Chen, H., Ye, H., Wang, H., Zhang, Q., Jiang, K., Su, H., Ermon, S., Zhu, J., and Liu, M.-Y. Diffusion-nft: Online diffusion reinforcement with forward process. 
+
+arXiv preprint arXiv:2509.16117 , 2025. 10 Temporal Difference Learning for Diffusion Models  
+
+> Table 7. TD+EDM: shared EDM constants.
+
+Item Value 
+
+σdata (preconditioning) 0.5
+
+Log-normal noise sampling (Pmean , P std ) −1.2, 1.2
+
+Sampling grid (σmin , σ max , ρ ) 2×10 −3, 80 , 7
+
+Loss weight w(σ) EDM default Solver / sampler Probability-flow ODE + Heun  
+
+> Table 8. TD+EDM: TD regularizer settings.
+
+Item Value Stride ∆ (index unit) 0.25 
+
+Span k 1.0
+
+Mixing λ (Eq. 36) 0.5
+
+Pairwise weight wTD (Eq. 30) on Coupling Markov increments EMA teacher decay & freq. 0.999 ; every step Boundary masking window i ∈ [0 , N −1−k−∆] 
+
+## A. Implementation Details 
+
+This section provides full implementation settings for all experiments in Sec. 4. We follow the same order as the main text: TD+EDM (Table 2), TD+CT (Table 3, Fig. 2–3), and the ablation study (Tables 4–6). 
+
+A.1. TD+EDM: Full Settings (Table 2) Common EDM setup. Unless stated otherwise, TD+EDM follows the standard EDM configuration (Karras et al., 2022) (training pipeline, EDM preconditioning, noise sampling distribution, and the probability-flow ODE sampler with Heun’s method). We summarize the shared EDM constants in Table 7. 
+
+Datasets & preprocessing. Official train/test split; images normalized to [−1, 1] ; AugmentPipe with p = 0 .12 (xflip, yflip, scale, rotate, aniso, translate), following the official PyTorch implementation of Karras et al. (2022). In Table 2, CIFAR-10 experiments are class-conditional , while FFHQ and AFHQv2 are unconditional .
+
+Model architecture (EDM default setting). We use the EDM default SongUNet (DDPM++) backbone with EDM preconditioning and ˆx0 parameterization. 
+
+TD objective settings (ours). Default TD hyperparameters: stride ∆ = 0 .25 (index unit), span k = 1 , mixing λ = 0 .5, and the TD pairwise weighting proposed in Sec. 3.3. Coupling: Markov increments. EMA target network decay τ = 0 .999 ,updated every step. Boundary mask near σmin with valid index range i ∈ [0 , N − 1 − k − ∆] . Pair sampling: uniform over valid indices. 
+
+Optimization and schedule (EDM default setting). Adam, learning rate 2×10 −4, betas (0 .9, 0.999) ; no weight decay, no grad clip; constant LR, no warmup; batch 128 per GPU, global 512 , no accumulation; precision fp32 (static scale 1); training length 200 M images ( ∼4000 ticks) for all datasets in Table 2. 
+
+Sampler & inference (EDM default setting). Probability-flow ODE; Heun (order 2). We evaluate inference steps among {9, 12 , 15 , 18 }, and report NFE = 2 × steps − 1 (i.e., NFE ∈ { 17 , 23 , 29 , 35 }). We use the same ρ-power grid 
+
+(σmin , σ max , ρ ) = (2 ×10 −3, 80 , 7) .
+
+Evaluation protocol. FID-50k with deterministic evaluation seeds 0–49999 ; we report the last-15% average over evaluation checkpoints (as described in Sec. 4.1). 
+
+Computational resources: 4×H100 80GB 11 Temporal Difference Learning for Diffusion Models 
+
+A.2. TD+CT Experimental Details (Table 3) Experiment setup. TD+CT follows the consistency training (CT) setup of Song et al. (2023) for each dataset (architecture, parameterization, schedules, solver, and evaluation protocol), unless explicitly stated otherwise. 
+
+Training and hyperparameters. For both datasets, we use the adaptive N schedule in Song et al. (2023), where the number of discretization steps N (·) increases during training. Models are trained for a total of 300,000 iterations . We sweep the TD-specific hyperparameters λ and ∆ for TD+CT, and select ∆ = 0 .5, k = 1 , and λ = 0 .5 based on the last-15% one-step FID-50k, together with the CT-specific pairwise TD weight and the same boundary masking rule as in Sec. 3.3. 
+
+Evaluation. We evaluate every 5,000 training iterations. We report one-step FID-50k (steps = 1 , NFE = 1 ) using a single Heun update and plot the resulting learning curves in Fig. 2. For multi-step analysis (Fig. 3), we also evaluate 
+
+s ∈ { 1, 2, 3, 4, 6, 8} at each evaluation point and report ∆FID (s) as defined in the main text. 
+
+Computational resources: 4×H100 80GB 
+
+A.3. Small-model Ablations (Tables 4–6) Scope. All ablations use CIFAR-10 with a smaller UNet and report last-15% FID-50k (mean ± std over 3 seeds), as described in Sec. 4.2. Unless a factor is being swept, we anchor hyperparameters at ∆ = 0 .25 , k = 1 , λ = 0 .5 with the 
+
+weighted TD in Eq. 30. 
+
+Datasets & preprocessing. CIFAR-10; official split; resolution 32 ×32 for train/eval; normalized to [−1, 1] ; AugmentPipe with p = 0 .12 (xflip, yflip, scale, rotate, aniso, translate). Notice: in contrast to Table 2 (conditional CIFAR-10 for TD+EDM), all ablations on CIFAR-10 are unconditional. 
+
+Model architecture. SongUNet (DDPM++), ∼13M parameters; base channels ch =64 , multipliers [1 , 2, 2] ; 2 res-blocks/level; attention at 16 with 1 head, head dim 64 ; GroupNorm + SiLU; dropout 0.10 ; time/noise embed dims 
+
+256 (positional); output parameterization ˆx0 (EDM). 
+
+EDM constants & TD settings. We use the same EDM constants as in Table 7. Unless swept, we use the same TD settings as in Table 8. The ablated ranges of ∆, λ, and weighting are summarized in Table 9. 
+
+Optimization and training length. Follow the EDM default optimizer setup (Table 2) with Adam (LR 2×10 −4, betas 
+
+(0 .9, 0.999) ), no weight decay, no grad clip, constant LR, no warmup. We train each configuration for 120 M images ( ∼2400 ticks). 
+
+Sampler & evaluation. Probability-flow ODE + Heun (order 2). We evaluate steps among {12 , 15 , 18 } and report 
+
+NFE = 2 × steps − 1 (i.e., NFE ∈ { 23 , 29 , 35 }). FID-50k with deterministic evaluation seeds 0–49999 ; last-15% average. 
+
+Computational resources: single NVIDIA RTX4090.  
+
+> Table 9. Ablation ranges for TD hyperparameters on CIFAR-10 (small UNet).
+
+Item Value “One-step” stride (index unit) 1/2, 1/3, 1/4, 1/5
+
+“k-step” span k 1.0
+
+Mixing λ (Eq. 36) 0.01 , 0.5, 1.0, 2.0
+
+Pairwise weight wTD (Eq. 30) weighted, unweighted EMA teacher decay & freq. 0.999 ; every step Boundary masking window i ∈ [0 , N −1−k−∆] 
+
+## B. Forward Processes and Two-Time Means 
+
+This appendix consolidates the forward/noising processes considered in the paper and rewrites their two-time posterior means in the unified linear form 
+
+μtrue  
+
+> τ
+
+(xt, x0) = At,τ x0 + κt,τ xt, τ < t, (39) 12 Temporal Difference Learning for Diffusion Models 
+
+where x0 ∈ Rd is the clean datum and xt is a noisy observation at level t on the same time/noise axis as τ . For discrete-time models (DDPM/DDIM), t, τ ∈ { 0, . . . , T } and we typically take τ = t−1 on the native grid. For continuous-time models (VP/VE/EDM), t, τ ∈ [0 , T ] (or a monotone reparameterization such as σ) chosen by the sampler. 
+
+Notation. For DDPM/DDIM, set αt = 1 − βt and ¯αt = Qts=1 αs. For VP-SDE, let α(t) = exp   − 12
+
+R t 
+
+> 0
+
+β(s) ds  and 
+
+σ(t) = p1 − α(t)2. For VE/EDM, σ(·) denotes the noise scale with xt = x0 + σ(t) ϵ, ϵ ∼ N (0, I ). All random vectors are in Rd, and I is the identity matrix. 
+
+B.1. DDPM (discrete time) Forward one-step transition. The DDPM forward transition and the marginal w.r.t. x0 are (Luo (2022, Eq.(31); Eq.(69)-(70))): 
+
+q(xt | xt−1) = N √αt xt−1, (1 − αt)I, (DDPM-Forward) (40) 
+
+q(xt | x0) = N √¯αt x0, (1 − ¯αt)I, (DDPM-Marginal) (41) with the equivalent reparameterization 
+
+xt = √¯αt x0 + √1 − ¯αt ϵ, ϵ ∼ N (0, I ). (DDPM-Reparam) (42) 
+
+Posterior toward t−1 (mean and variance). By linear-Gaussian conditioning, 
+
+q(xt−1 | xt, x0) = N μtrue 
+
+> t−1
+
+(xt, x0), ˜βt I, (DDPM-Posterior) (43) where μtrue 
+
+> t−1
+
+(xt, x0) = 
+
+√¯αt−1 (1 − αt)1 − ¯αt
+
+x0 +
+
+√αt (1 − ¯αt−1)1 − ¯αt
+
+xt, (DDPM-PosteriorMean) (44) 
+
+˜βt = (1 − αt)(1 − ¯αt−1)1 − ¯αt
+
+. (DDPM-PosteriorVar) (45) Equations (44)-(45) from Luo (2022, Eq.(84)-(85), p.12). 
+
+SNR identity. We will also refer to the signal-to-noise ratio 
+
+SNR( t) = ¯αt
+
+1 − ¯αt
+
+, (DDPM-SNR) (46) as used to simplify weighting expressions (Luo (2022, Eq.(109), p.14)). 
+
+Two-time mean in unified form. Taking τ = t−1, the DDPM two-time mean μtrue 
+
+> t−1
+
+(xt, x0) equals Equation (44), i.e., the unified form equation (39) with 
+
+At,τ =
+
+√¯αt−1 (1 − αt)1 − ¯αt
+
+, κt,τ =
+
+√αt (1 − ¯αt−1)1 − ¯αt
+
+.
+
+B.2. DDIM: Two-Time Mean and Parameters (short) 
+
+Use the same notation as DDPM, let αt = 1 − βt and ¯αt = Qts=1 αs. DDIM specifies a non-Markovian reverse conditional whose mean depends on (xt, x0) Song et al. (2021a, Eq. 7)): 
+
+qσ (xt−1 | xt, x0) = N
+
+√¯αt−1 x0 +
+
+q 1− ¯αt−1−σ2 
+
+> t
+> 1−¯αt
+
+ xt − √¯αt x0
+
+| {z }
+
+> mean
+
+, σ 2 
+
+> t
+
+I
+
+
+
+. (47) Hence in our unified linear form, we have 
+
+κt,t −1 =
+
+s
+
+1 − ¯αt−1 − σ2
+
+> t
+
+1 − ¯αt
+
+, At,t −1 = √¯αt−1 − κt,t −1
+
+√¯αt. (48) 13 Temporal Difference Learning for Diffusion Models 
+
+Stochasticity and the η-parameterization (DDIM Eq. (16)). A convenient schedule for the reverse variance is 
+
+σt(η) = η
+
+r 1 − ¯αt−1
+
+1 − ¯αt
+
+r
+
+1 − ¯αt
+
+¯αt−1
+
+, η ∈ [0 , 1] . (49) Special cases: (i) η=0 ⇒ σt=0 gives the deterministic DDIM, where κt,t −1 =
+
+q 1− ¯αt−1  
+
+> 1−¯αt
+
+and At,t −1 = √¯αt−1 −
+
+q 1− ¯αt−1 
+
+> 1−¯αt
+
+√¯αt; (ii) η=1 recovers the DDPM variance choice at step t.
+
+B.3. VP–SDE (variance preserving) Forward dynamics and one-time marginals. The VP SDE is 
+
+dxt = − 12 β(t) xt dt + pβ(t) d wt, t ∈ [0 , 1] , (VP-SDE) as stated in Eq. (11) of Song et al. (2021b). Let 
+
+α(t) := exp 
+
+
+
+− 12
+
+Z t
+
+> 0
+
+β(s) ds 
+
+
+
+, σ(t) := p1 − α(t)2. (50) Solving Equation (VP-SDE) gives the Gaussian marginal 
+
+p0t(xt | x0) = N α(t) x0, (1 − α(t)2)I, (VP-kernel) which appears as the VP case of Eq. (29) in Song et al. (2021b). 
+
+Two-time conditional mean. Fix 0 ≤ τ < t ≤ 1. From the linear solution of equation (VP-SDE), we can write 
+
+xt = α(t) x0 + α(t)
+
+Z t
+
+> 0
+
+pβ(s)
+
+α(s) dws, xτ = α(τ ) x0 + α(τ )
+
+Z τ
+
+> 0
+
+pβ(s)
+
+α(s) dws.
+
+Conditioned on x0, (xτ , xt) is jointly Gaussian with 
+
+E[xτ | x0] = α(τ )x0, E[xt | x0] = α(t)x0,
+
+Cov( xτ | x0) = (1 − α(τ )2)I, Cov( xt | x0) = (1 − α(t)2)I, 
+
+Cov( xτ , xt | x0) = α(t)
+
+α(τ )
+
+ 1 − α(τ )2I, 
+
+where cross-covariance follows It ˆo isometry: Cov( xτ , xt | x0) = α(t)α(τ ) R τ 
+
+> 0
+
+α(s)−2β(s) ds = α(t) 
+
+> α(τ)
+
+ 1 − α(τ )2I.Applying the Gaussian conditioning formula—for jointly Gaussian vectors (y1, y 2), the conditional mean is E[y1 | y2] = 
+
+μ1 + Σ 12 Σ−122 (y2 − μ2)—then yields 
+
+μtrue  
+
+> τ
+
+(xt, x0) = α(τ ) x0 +
+
+ α(t)
+
+α(τ ) · 1 − α(τ )2
+
+1 − α(t)2
+
+| {z }
+
+κt,τ 
+
+ xt − α(t) x0
+
+. (VP-TwoTime) Equivalently, in the unified linear form μtrue  
+
+> τ
+
+(xt, x0) = At,τ x0 + κt,τ xt,
+
+At,τ = α(τ ) − κt,τ α(t), κt,τ = α(t)
+
+α(τ ) · 1 − α(τ )2
+
+1 − α(t)2 . (51) 
+
+Remark. With the commonly used linear schedule β(t) = ¯βmin + t( ¯βmax − ¯βmin ), the corresponding p0t(xt | x0) is given explicitly in Eqs. (32)–(33) of Song et al. (2021b). 14 Temporal Difference Learning for Diffusion Models 
+
+B.4. VE-SDE and EDM (variance exploding & σ-parameterization) Forward dynamics and one-time marginals. The VE SDE reads 
+
+dxt =
+
+q ddt σ(t)2 dwt, σ(0) = 0 , (VE-SDE) see Eq. (9) in Song et al. (2021b). It induces the additive-noise marginal 
+
+p0t(xt | x0) = N x0, σ (t)2I, (VE-kernel) the VE case of Eq. (29) in Song et al. (2021b). xt = xτ + pσ(t)2 − σ(τ )2 z with z ∼ N (0, I ) independent of xτ .
+
+Two-time conditional mean for VE. With the above coupling, conditioned on x0,
+
+Cov( xt | x0) = σ(t)2I, Cov( xτ | x0) = σ(τ )2I, Cov( xτ , xt | x0) = σ(τ )2I. 
+
+Thus for τ > 0 and t > τ ,
+
+μtrue  
+
+> τ
+
+(xt, x0) = x0 + σ(τ )2
+
+σ(t)2
+
+| {z } 
+
+κt,τ 
+
+ xt − x0
+
+ =
+
+
+
+1 − σ(τ )2
+
+σ(t)2
+
+
+
+x0 + σ(τ )2
+
+σ(t)2 xt. (VE-TwoTime) Hence the unified coefficients are At,τ = 1 − σ(τ )2 
+
+> σ(t)2
+
+and κt,τ = σ(τ )2 
+
+> σ(t)2
+
+.
+
+EDM uses the same corruption and thus the same two-time mean. EDM (Karras et al., 2022) parameterizes “time” directly by the noise scale σ and corrupts clean data additively: x = x0 + n, n ∼ N (0, σ 2I). Under the same Markov-increments coupling as in VE, the joint (xτ , xt) | x0 is Gaussian with the same covariances as above, so the two-time mean of EDM coincides with VE’s formula. 
+
+Shared-noise coupling for CT. Consistency training uses the same noise across times: 
+
+xτ = x0 + σ(τ ) ϵ, xt = x0 + σ(t) ϵ, ϵ ∼ N (0, I ).
+
+In this case xτ − x0 = σ(τ ) 
+
+> σ(t)
+
+(xt − x0) deterministically, so the posterior collapses and the mean is 
+
+μtrue  
+
+> τ
+
+(xt, x0) = x0 + σ(τ )
+
+σ(t)
+
+| {z } 
+
+κt,τ 
+
+ xt − x0
+
+ =
+
+
+
+1 − σ(τ )
+
+σ(t)
+
+
+
+x0 + σ(τ )
+
+σ(t) xt. (CT-TwoTime) Hence At,τ = 1 − σ(τ ) 
+
+> σ(t)
+
+and κt,τ = σ(τ ) 
+
+> σ(t)
+
+.15
