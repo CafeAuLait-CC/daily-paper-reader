@@ -6,62 +6,73 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-22
-- 运行时间：2026-06-22 22:10:26 UTC
+- 最新运行日期：2026-06-23
+- 运行时间：2026-06-23 22:21:53 UTC
 - 运行状态：成功
-- 本次总论文数：14
-- 精读区：4
-- 速读区：10
+- 本次总论文数：17
+- 精读区：6
+- 速读区：11
 
 ### 今日简报（AI）
-今日推荐14篇论文，精读4篇速读10篇，聚焦扩散模型与流模型前沿进展。最值得关注两篇高分精读：Masked扩散模型的递归缩放研究（9.0分）与基于流模型的视觉-语言-动作模型不确定性量化（9.0分）。建议优先阅读这两篇精读论文，把握递归扩展和不确定性量化两个关键方向。
-- 详情：[/202606/22/README](/202606/22/README)
+今日处理17篇论文，精读6篇，重点推荐2篇高分成果。
+最值得关注的方向是人体运动生成（《Odoriko》）与4D运动插值（《Feed-forward Motion In-betweening》）。
+建议优先精读这两篇高分论文，尤其《Odoriko》的10分满分内容。
+- 详情：[/202606/23/README](/202606/23/README)
 
 ### 精读区论文标签
-1. [Recursive Scaling in Masked Diffusion Models](/202606/22/2606.18022v1-recursive-scaling-in-masked-diffusion-models)  
+1. [Odoriko: A Shape-Aware Multimodal Diffusion Framework for Human Motion](/202606/23/2606.21135v1-odoriko-a-shape-aware-multimodal-diffusion-framework-for-human-motion)  
+   标签：评分：10.0/10、query:3d-motion-generation
+   evidence：使用扩散模型生成人体运动
+2. [Feed-forward Motion In-betweening for Any 4D](/202606/23/2606.22131v1-feed-forward-motion-in-betweening-for-any-4d)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：掩码扩散模型用于序列生成
-2. [Uncertainty Quantification for Flow-Based Vision-Language-Action Models](/202606/22/2606.18043v1-uncertainty-quantification-for-flow-based-vision-language-action-models)  
+   evidence：直接处理4D动力学（随时间变化的3D几何）生成，与3D人体运动序列相关。
+3. [Text Dictates, Music Decorates: Energy-based Attention for Editable Dance Motion Generation](/202606/23/2606.22726v1-text-dictates-music-decorates-energy-based-attention-for-editable-dance-motion-generation)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：使用流匹配进行机器人动作生成建模
-3. [TriFlow: Generating Artist-Like 3D Mesh Topology via Nearest-Vertex Vector Fields](/202606/22/2606.20131v1-triflow-generating-artist-like-3d-mesh-topology-via-nearest-vertex-vector-fields)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：流匹配用于3D网格拓扑生成建模
-4. [Residual-Space Evolutionary Optimization via Flow-based Generative Models](/202606/22/2606.20084v1-residual-space-evolutionary-optimization-via-flow-based-generative-models)  
+   evidence：扩散Transformer用于可控舞蹈动作生成
+4. [PhysDrift: Bridging the Embodiment Gap in Humanoid Co-Speech Motion Generation](/202606/23/2606.19935v1-physdrift-bridging-the-embodiment-gap-in-humanoid-co-speech-motion-generation)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：基于流的生成模型用于数据编辑与进化优化
+   evidence：解决人形机器人语音同步三维动作生成问题
+5. [Policy-as-Data: Learning Generalizable HOI Diffusion Models from Simulated Physics](/202606/23/2606.22806v1-policy-as-data-learning-generalizable-hoi-diffusion-models-from-simulated-physics)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：生成真实的人-物交互，包含人体运动
+6. [IMAGIN-4D: Image-Guided Controllable Interaction Generation](/202606/23/2606.23675v1-imagin-4d-image-guided-controllable-interaction-generation)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：使用基于扩散的人-物交互生成器合成3D人体运动与物体轨迹
 
 ### 速读区论文标签
-1. [Variational Test-time Optimization for Diffusion Synchronization](/202606/22/2606.15614v2-variational-test-time-optimization-for-diffusion-synchronization)  
+1. [Diffusion Flow Matching: Dimension-Improved KL Bounds and Wasserstein Guarantees](/202606/23/2606.16610v1-diffusion-flow-matching-dimension-improved-kl-bounds-and-wasserstein-guarantees)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：扩散同步方法
-2. [Wasserstein Convergence of ODE-Based Samplers in Decentralized Diffusion Model via Velocity Field Decomposition](/202606/22/2606.15835v1-wasserstein-convergence-of-ode-based-samplers-in-decentralized-diffusion-model-via-velocity-field-decomposition)  
+   evidence：扩散流匹配的理论保证
+2. [Learning When to Denoise: Optimizing Asynchronous Schedules for Latent Diffusion](/202606/23/2606.19662v1-learning-when-to-denoise-optimizing-asynchronous-schedules-for-latent-diffusion)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：分散式扩散模型的ODE采样与收敛理论
-3. [Diffusion Flow Matching: Dimension-Improved KL Bounds and Wasserstein Guarantees](/202606/22/2606.16610v1-diffusion-flow-matching-dimension-improved-kl-bounds-and-wasserstein-guarantees)  
+   evidence：异步流匹配和扩散用于图像合成
+3. [CrossFlow: One-Step Generation Across Latent and Pixel Spaces](/202606/23/2606.19970v1-crossflow-one-step-generation-across-latent-and-pixel-spaces)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：扩散流匹配的理论分析，改进KL界
-4. [Visual Retrieval-Augmented Generation for Silhouette-Guided Animal Art](/202606/22/2606.17431v1-visual-retrieval-augmented-generation-for-silhouette-guided-animal-art)  
+   evidence：提出CrossFlow，一种跨空间的流匹配生成方法
+4. [FlowMaps: Modeling Long-Term Multimodal Object Dynamics with Flow Matching](/202606/23/2606.20209v1-flowmaps-modeling-long-term-multimodal-object-dynamics-with-flow-matching)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用扩散模型进行图像生成
-5. [Perron--Frobenius Operator Matching for Generative Modeling](/202606/22/2606.17465v1-perron--frobenius-operator-matching-for-generative-modeling)  
+   evidence：流匹配用于3D物体动态建模
+5. [BayesFP: Posterior Estimation for Flow-Based Policies via Feynman-Kac Sampling](/202606/23/2606.21014v1-bayesfp-posterior-estimation-for-flow-based-policies-via-feynman-kac-sampling)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：统一流匹配和扩散模型的生成框架
-6. [Invertible Neural Network Adapter for One-Step Flow Matching in Robot Manipulation](/202606/22/2606.19194v1-invertible-neural-network-adapter-for-one-step-flow-matching-in-robot-manipulation)  
+   evidence：应用流匹配和扩散模型进行轨迹生成
+6. [Flow as Flow: Modeling Robot Velocity Fields as Probability Velocity Fields for Flow-Based Object Manipulation](/202606/23/2606.23090v1-flow-as-flow-modeling-robot-velocity-fields-as-probability-velocity-fields-for-flow-based-object-manipulation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：流匹配用于机器人动作生成
-7. [FlowObject: Flow Steering for Bridging Generative Priors and Reconstruction Fidelity](/202606/22/2606.19019v1-flowobject-flow-steering-for-bridging-generative-priors-and-reconstruction-fidelity)  
+   evidence：使用flow matching方法生成机器人速度场
+7. [MeshFlow: Mesh Generation with Equivariant Flow Matching](/202606/23/2606.23489v1-meshflow-mesh-generation-with-equivariant-flow-matching)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：等变流匹配用于3D网格生成
+8. [XmoPipe: A Pipeline for Large-Scale In-the-Wild Human Motion Dataset Construction](/202606/23/2606.20731v1-xmopipe-a-pipeline-for-large-scale-in-the-wild-human-motion-dataset-construction)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：流匹配用于3D重建
-8. [Learning When to Denoise: Optimizing Asynchronous Schedules for Latent Diffusion](/202606/22/2606.19662v1-learning-when-to-denoise-optimizing-asynchronous-schedules-for-latent-diffusion)  
+   evidence：构建大规模野外人体运动数据集的流水线
+9. [Curvature-Adaptive Consistency Flow Matching: Autonomous Trajectory Optimization via Reinforcement Learning](/202606/23/2606.22394v1-curvature-adaptive-consistency-flow-matching-autonomous-trajectory-optimization-via-reinforcement-learning)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：多表示空间上的异步流匹配
-9. [CrossFlow: One-Step Generation Across Latent and Pixel Spaces](/202606/22/2606.19970v1-crossflow-one-step-generation-across-latent-and-pixel-spaces)  
+   evidence：一致性流匹配用于轨迹优化
+10. [NullFlow: One-Step Generative Reconstruction](/202606/23/2606.22696v1-nullflow-one-step-generative-reconstruction)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：跨空间流匹配实现一步生成
-10. [FlowBender: Feedback-Aware Training for Self-Correcting Conditional Flows](/202606/22/2606.20404v1-flowbender-feedback-aware-training-for-self-correcting-conditional-flows)  
+   evidence：一步流匹配生成式重建
+11. [Flow6D: Discrete-to-Continuous Flow Matching for Efficient and Accurate Category-Level 6D Pose Estimation](/202606/23/2606.23293v1-flow6d-discrete-to-continuous-flow-matching-for-efficient-and-accurate-category-level-6d-pose-estimation)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：用于条件生成中约束满足的流匹配方法
+   evidence：用于6D姿态估计的流匹配方法
 
 
 <div class="dpr-home-promo-card">
