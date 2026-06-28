@@ -507,7 +507,7 @@ function testSidebarPaperVisualStateCssContract() {
 
   const actionsRule = cssRule(css, '.dpr-sidebar-paper-actions');
   assert.ok(/position:\s*absolute/i.test(actionsRule));
-  assert.ok(/right:\s*6px/i.test(actionsRule));
+  assert.ok(/right:\s*10px/i.test(actionsRule));
   assert.ok(/top:\s*50%/i.test(actionsRule));
   assert.ok(/transform:\s*translateY\(-50%\)/i.test(actionsRule));
   assert.ok(/width:\s*39px/i.test(actionsRule));
