@@ -6,71 +6,75 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-29
-- 运行时间：2026-06-29 20:59:51 UTC
+- 最新运行日期：2026-06-30
+- 运行时间：2026-06-30 22:18:45 UTC
 - 运行状态：成功
 - 本次总论文数：17
 - 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日共推荐17篇论文，精读6篇，速读11篇，重点关注3D人际交互生成与AI编舞两大方向。最值得精读的是满分10分的《Social Structure Matters in 3D Human-Human Interaction Generation》和《DanceDuo: Bridging Human Movement and AI Choreography》，前者揭示社交结构在3D交互生成中的核心作用，后者创新融合人类动作与AI编舞。建议下一步优先精读这两篇论文，并关注速读中《Beyond MoCap》关于合成运动数据扩展生成模型的方法。
-- 详情：[/202606/29/README](/202606/29/README)
+今日推荐17篇论文，精读6篇聚焦舞蹈生成与骨骼动画控制，其中《Text Dictates, Music Decorates》与《Follow Your Track》获9.0高分。
+
+最值得精读的是：用能量注意力实现可编辑舞蹈运动生成，以及通过3D轨迹精确控制骨骼动画——两大方向均展现了动作生成的灵活性与精准性。
+
+建议下一步关注速读中的《Social Structure Matters》与《Directing the World》，分别深入社交互动与人机视频控制，拓展动作生成的应用场景。
+- 详情：[/202606/30/README](/202606/30/README)
 
 ### 精读区论文标签
-1. [Social Structure Matters in 3D Human-Human Interaction Generation](/202606/29/2606.24255v1-social-structure-matters-in-3d-human-human-interaction-generation)  
-   标签：评分：10.0/10、query:3d-motion-generation
-   evidence：直接从文本生成3D人-人交互动作，满足三维人体运动序列生成
-2. [DanceDuo: Bridging Human Movement and AI Choreography](/202606/29/2606.26507v1-danceduo-bridging-human-movement-and-ai-choreography)  
-   标签：评分：10.0/10、query:3d-motion-generation
-   evidence：利用扩散模型生成3D人体舞蹈动作
-3. [Text Dictates, Music Decorates: Energy-based Attention for Editable Dance Motion Generation](/202606/29/2606.22726v1-text-dictates-music-decorates-energy-based-attention-for-editable-dance-motion-generation)  
+1. [Text Dictates, Music Decorates: Energy-based Attention for Editable Dance Motion Generation](/202606/30/2606.22726v1-text-dictates-music-decorates-energy-based-attention-for-editable-dance-motion-generation)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：基于扩散的舞蹈动作生成，支持文本和音乐条件
-4. [Policy-as-Data: Learning Generalizable HOI Diffusion Models from Simulated Physics](/202606/29/2606.22806v1-policy-as-data-learning-generalizable-hoi-diffusion-models-from-simulated-physics)  
+   evidence：使用扩散变压器生成舞蹈动作，结合文本和音乐条件
+2. [Follow Your Track: Precise Skeleton Animation Controlled by 3D Trajectories](/202606/30/2606.25344v1-follow-your-track-precise-skeleton-animation-controlled-by-3d-trajectories)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：通过3D轨迹控制骨骼动画
+3. [EMOSH: Expressive Motion and Shape Disentanglement for Human Animation](/202606/30/2606.28026v1-emosh-expressive-motion-and-shape-disentanglement-for-human-animation)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：表现性人类动画与运动解缠
+4. [FacePlex: Full-Duplex Joint Speech-Facial Motion Generation for Conversational Avatars](/202606/30/2606.30145v1-faceplex-full-duplex-joint-speech-facial-motion-generation-for-conversational-avatars)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：提出FacePlex，使用滚动流匹配进行在线联合语音-面部运动生成
+5. [A Time-Reparameterized Cumulative Intensity Extrapolation Sampler for Discrete Flow Matching](/202606/30/2606.24140v1-a-time-reparameterized-cumulative-intensity-extrapolation-sampler-for-discrete-flow-matching)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：使用扩散模型合成人-物交互，与3D动作合成相关
-5. [A Time-Reparameterized Cumulative Intensity Extrapolation Sampler for Discrete Flow Matching](/202606/29/2606.24140v1-a-time-reparameterized-cumulative-intensity-extrapolation-sampler-for-discrete-flow-matching)  
+   evidence：流匹配采样改进
+6. [A Time-Reparameterized Cumulative Intensity Extrapolation Sampler for Discrete Flow Matching](/202606/30/2606.24140v2-a-time-reparameterized-cumulative-intensity-extrapolation-sampler-for-discrete-flow-matching)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：离散流匹配采样方法
-6. [In-Context Model Predictive Generation: Open-Vocabulary Motion Synthesis from Language Models to Physics](/202606/29/2606.26981v1-in-context-model-predictive-generation-open-vocabulary-motion-synthesis-from-language-models-to-physics)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：文本到人体运动合成结合物理反馈
+   evidence：流匹配采样改进
 
 ### 速读区论文标签
-1. [Beyond MoCap: Scaling Motion Tokenizers with Synthetic Human Motion for Generative Modeling](/202606/29/2606.27547v1-beyond-mocap-scaling-motion-tokenizers-with-synthetic-human-motion-for-generative-modeling)  
+1. [Social Structure Matters in 3D Human-Human Interaction Generation](/202606/30/2606.24255v1-social-structure-matters-in-3d-human-human-interaction-generation)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：使用VQ-VAE的概率生成模型用于人体运动
-2. [DreamUV: Unwrap Artist-like UV by End-to-End Flow Matching](/202606/29/2606.22445v1-dreamuv-unwrap-artist-like-uv-by-end-to-end-flow-matching)  
+   evidence：提出社会结构建模方法用于文本驱动的3D人与人交互运动生成
+2. [In-Context Model Predictive Generation: Open-Vocabulary Motion Synthesis from Language Models to Physics](/202606/30/2606.26981v1-in-context-model-predictive-generation-open-vocabulary-motion-synthesis-from-language-models-to-physics)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：从文本描述合成人体运动，处理开放词汇动作合成
+3. [Directing the World: Fast Autoregressive Video Generation with Compositional Human-Camera Control](/202606/30/2606.27964v1-directing-the-world-fast-autoregressive-video-generation-with-compositional-human-camera-control)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：具有人体运动控制的自回归视频生成
+4. [Notes on generative modeling: flow matching, diffusion, optimal transport and Schr{ö}dinger bridge](/202606/30/2606.30053v1-notes-on-generative-modeling-flow-matching-diffusion-optimal-transport-and-schrdinger-bridge)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：流匹配、扩散、最优传输和薛定谔桥的笔记
+5. [NullFlow: One-Step Generative Reconstruction](/202606/30/2606.22696v1-nullflow-one-step-generative-reconstruction)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：Flow Matching生成方法用于3D内容创建
-3. [Flow as Flow: Modeling Robot Velocity Fields as Probability Velocity Fields for Flow-Based Object Manipulation](/202606/29/2606.23090v1-flow-as-flow-modeling-robot-velocity-fields-as-probability-velocity-fields-for-flow-based-object-manipulation)  
+   evidence：使用流匹配的单步生成重建
+6. [One-Step Flow Matching for Generative Modeling of Path-Dependent Physical Fields](/202606/30/2606.22752v1-one-step-flow-matching-for-generative-modeling-of-path-dependent-physical-fields)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用流匹配方法建模机器人速度场
-4. [Flow as Flow: Modeling Robot Velocity Fields as Probability Velocity Fields for Flow-Based Object Manipulation](/202606/29/2606.23090v2-flow-as-flow-modeling-robot-velocity-fields-as-probability-velocity-fields-for-flow-based-object-manipulation)  
+   evidence：Flow Matching方法用于物理场生成建模
+7. [PhysiFormer: Learning to Simulate Mechanics in World Space](/202606/30/2606.27364v1-physiformer-learning-to-simulate-mechanics-in-world-space)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：Flow Matching用于机器人流生成
-5. [Flowing With Purpose: Latent Action Guided Flow Matching Policies For Robotic Manipulation](/202606/29/2606.23420v1-flowing-with-purpose-latent-action-guided-flow-matching-policies-for-robotic-manipulation)  
+   evidence：利用扩散Transformer在世界坐标系中生成物理合理的3D物体运动
+8. [Beyond MoCap: Scaling Motion Tokenizers with Synthetic Human Motion for Generative Modeling](/202606/30/2606.27547v1-beyond-mocap-scaling-motion-tokenizers-with-synthetic-human-motion-for-generative-modeling)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：提出潜在动作引导的流匹配方法，用于机器人操作中的生成建模
-6. [A Time-Reparameterized Cumulative Intensity Extrapolation Sampler for Discrete Flow Matching](/202606/29/2606.24140v2-a-time-reparameterized-cumulative-intensity-extrapolation-sampler-for-discrete-flow-matching)  
-   标签：评分：7.0/10、query:3d-motion-generation
-   evidence：离散流匹配采样器
-7. [PhysiFormer: Learning to Simulate Mechanics in World Space](/202606/29/2606.27364v1-physiformer-learning-to-simulate-mechanics-in-world-space)  
-   标签：评分：7.0/10、query:3d-motion-generation
-   evidence：扩散模型用于世界坐标系下的3D物体运动合成
-8. [SIFT: Self-Imagination Fine-Tuning for Physically Plausible Motion in Video Diffusion Models](/202606/29/2606.27741v1-sift-self-imagination-fine-tuning-for-physically-plausible-motion-in-video-diffusion-models)  
-   标签：评分：7.0/10、query:3d-motion-generation
-   evidence：视频扩散模型用于物理合理的运动生成
-9. [Towards Error-Free Long Video Generation](/202606/29/2606.22370v1-towards-error-free-long-video-generation)  
+   evidence：使用合成数据和分词器的人体动作生成
+9. [PG-MAP: Joint MAP Optimization for Inference-Time Alignment of Diffusion and Flow-Matching Models](/202606/30/2606.22958v1-pg-map-joint-map-optimization-for-inference-time-alignment-of-diffusion-and-flow-matching-models)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：使用扩散模型进行长视频生成
-10. [NullFlow: One-Step Generative Reconstruction](/202606/29/2606.22696v1-nullflow-one-step-generative-reconstruction)  
+   evidence：扩散与流匹配模型的联合推理时对齐
+10. [Flow as Flow: Modeling Robot Velocity Fields as Probability Velocity Fields for Flow-Based Object Manipulation](/202606/30/2606.23090v1-flow-as-flow-modeling-robot-velocity-fields-as-probability-velocity-fields-for-flow-based-object-manipulation)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：一步流匹配用于重建
-11. [One-Step Flow Matching for Generative Modeling of Path-Dependent Physical Fields](/202606/29/2606.22752v1-one-step-flow-matching-for-generative-modeling-of-path-dependent-physical-fields)  
+   evidence：流匹配用于机器人速度场生成
+11. [Flow as Flow: Modeling Robot Velocity Fields as Probability Velocity Fields for Flow-Based Object Manipulation](/202606/30/2606.23090v2-flow-as-flow-modeling-robot-velocity-fields-as-probability-velocity-fields-for-flow-based-object-manipulation)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：一步流匹配用于物理场生成建模
+   evidence：使用流匹配将机器人速度场建模为概率流
 
 
 <div class="dpr-home-promo-card">
