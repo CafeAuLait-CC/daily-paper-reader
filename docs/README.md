@@ -6,73 +6,76 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-06
-- 运行时间：2026-07-06 21:50:11 UTC
+- 最新运行日期：2026-07-07
+- 运行时间：2026-07-07 22:10:38 UTC
 - 运行状态：成功
-- 本次总论文数：17
-- 精读区：6
+- 本次总论文数：18
+- 精读区：7
 - 速读区：11
 
 ### 今日简报（AI）
-今日聚焦运动智能前沿，精读两篇9分论文：持续运动语言智能体与无训练可控运动生成。  
-最值得关注的方向是LoRA变体实现运动理解与生成的增量学习，以及无需训练即可处理异质约束的人体运动控制。  
-建议普通读者优先尝试无训练控制方法（如Training-free Controllable），并留意持续学习技术在虚拟角色和机器人中的应用潜力。
-- 详情：[/202607/06/README](/202607/06/README)
+1) 今日精读1篇高分论文（10分），速读3篇8分论文，聚焦3D动画与手部运动重建。
+2) 最值得关注「3D场景自适应轨迹可控人物动画与相机运动」，以及「视频扩散模型在手部运动重建中的意外有效性」。
+3) 建议优先精读高分论文，再探索雅可比头像重建等速读方向的互补技术。
+- 详情：[/202607/07/README](/202607/07/README)
 
 ### 精读区论文标签
-1. [Towards Continual Motion-Language Agents: LoRA Variants for Incremental Motion Understanding and Generation](/202607/06/2606.30266v1-towards-continual-motion-language-agents-lora-variants-for-incremental-motion-understanding-and-generation)  
+1. [3D Scene-Adaptive Trajectory-Controllable Human Image Animation with Camera Movement](/202607/07/2606.30514v1-3d-scene-adaptive-trajectory-controllable-human-image-animation-with-camera-movement)  
+   标签：评分：10.0/10、query:3d-motion-generation
+   evidence：使用扩散/流基模型进行3D人体运动动画
+2. [3D Scene-Adaptive Trajectory-Controllable Human Image Animation with Camera Movement](/202607/07/2606.30514v2-3d-scene-adaptive-trajectory-controllable-human-image-animation-with-camera-movement)  
+   标签：评分：10.0/10、query:3d-motion-generation
+   evidence：使用扩散/流基模型进行3D人体运动动画
+3. [PoseShield: Neural Collision Fields for Human Self-Collision Resolution](/202607/07/2606.29686v1-poseshield-neural-collision-fields-for-human-self-collision-resolution)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：文本到运动生成与持续学习
-2. [Training-free Controllable Human Motion Generation under Heterogeneous Constraints](/202607/06/2607.01990v1-training-free-controllable-human-motion-generation-under-heterogeneous-constraints)  
+   evidence：直接处理人体运动生成中的自碰撞问题
+4. [Towards Continual Motion-Language Agents: LoRA Variants for Incremental Motion Understanding and Generation](/202607/07/2606.30266v1-towards-continual-motion-language-agents-lora-variants-for-incremental-motion-understanding-and-generation)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：基于扩散的无训练可控人体运动生成
-3. [Zero-Gated Language-conditioned Human Motion Prediction](/202607/06/2606.29208v1-zero-gated-language-conditioned-human-motion-prediction)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：语言条件的人体运动预测
-4. [Notes on generative modeling: flow matching, diffusion, optimal transport and Schr{ö}dinger bridge](/202607/06/2606.30053v1-notes-on-generative-modeling-flow-matching-diffusion-optimal-transport-and-schrdinger-bridge)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：生成模型中流匹配和扩散的数学原理
-5. [FlowAWR: Online Adaptive Flow Reinforcement via Advantage-Weighted Rectification](/202607/06/2606.30376v1-flowawr-online-adaptive-flow-reinforcement-via-advantage-weighted-rectification)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：流匹配强化学习用于生成模型
-6. [3D Scene-Adaptive Trajectory-Controllable Human Image Animation with Camera Movement](/202607/06/2606.30514v1-3d-scene-adaptive-trajectory-controllable-human-image-animation-with-camera-movement)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：使用扩散/流模型进行3D人体动画生成并控制运动轨迹
+   evidence：直接处理文本到运动生成，涉及3D人体运动
+5. [Training-free Controllable Human Motion Generation under Heterogeneous Constraints](/202607/07/2607.01990v1-training-free-controllable-human-motion-generation-under-heterogeneous-constraints)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：使用扩散模型生成人类运动
+6. [SAMoR: Motion Modelling for Articulated Objects of Any Skeleton and Topology](/202607/07/2607.02148v1-samor-motion-modelling-for-articulated-objects-of-any-skeleton-and-topology)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：包括人体骨架在内的关节物体运动建模
+7. [Constrained Flow Matching via Lagrangian Dual Flows](/202607/07/2607.04513v1-constrained-flow-matching-via-lagrangian-dual-flows)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：引入拉格朗日对偶流实现约束流匹配
 
 ### 速读区论文标签
-1. [LUNA: Learning Universal 3D Human Animation Beyond Skinning](/202607/06/2606.31981v1-luna-learning-universal-3d-human-animation-beyond-skinning)  
+1. [Notes on generative modeling: flow matching, diffusion, optimal transport and Schr{ö}dinger bridge](/202607/07/2606.30053v1-notes-on-generative-modeling-flow-matching-diffusion-optimal-transport-and-schrdinger-bridge)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：从2D控制生成3D人体动画
-2. [Beyond Trajectory Matching: Reflow with Marginal Distribution Alignment](/202607/06/2606.29287v1-beyond-trajectory-matching-reflow-with-marginal-distribution-alignment)  
+   evidence：涵盖用于生成建模的流匹配和扩散方法
+2. [The Surprising Effectiveness of Video Diffusion Models for Hand Motion Reconstruction](/202607/07/2606.30308v1-the-surprising-effectiveness-of-video-diffusion-models-for-hand-motion-reconstruction)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：利用视频扩散模型进行4D手部运动重建
+3. [JacobianAvatar: Temporally Consistent Semi-rigid Avatar Reconstruction from a Monocular Video](/202607/07/2606.31115v1-jacobianavatar-temporally-consistent-semi-rigid-avatar-reconstruction-from-a-monocular-video)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：从单目视频生成具有复杂运动的3D人体化身
+4. [LUNA: Learning Universal 3D Human Animation Beyond Skinning](/202607/07/2606.31981v1-luna-learning-universal-3d-human-animation-beyond-skinning)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：从2D控制直接生成3D人体动画
+5. [PoseShield: Neural Collision Fields for Human Self-Collision Resolution](/202607/07/2606.29686v2-poseshield-neural-collision-fields-for-human-self-collision-resolution)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：用于流匹配和扩散模型的Reflow蒸馏方法
-3. [FacePlex: Full-Duplex Joint Speech-Facial Motion Generation for Conversational Avatars](/202607/06/2606.30145v1-faceplex-full-duplex-joint-speech-facial-motion-generation-for-conversational-avatars)  
+   evidence：人类运动生成中的自碰撞解决
+6. [Simplifying Flow Matching Transformations with Low-Rank Mixture Models](/202607/07/2606.29724v1-simplifying-flow-matching-transformations-with-low-rank-mixture-models)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：滚动流匹配用于面部运动生成
-4. [The Surprising Effectiveness of Video Diffusion Models for Hand Motion Reconstruction](/202607/06/2606.30308v1-the-surprising-effectiveness-of-video-diffusion-models-for-hand-motion-reconstruction)  
+   evidence：流匹配生成建模方法
+7. [OpenSPM: An Environment-Transferable Robotic Key Spatial Pose Memory and Closed-Loop High-Frequency Flow-Matching Action Generation Model](/202607/07/2606.29936v2-openspm-an-environment-transferable-robotic-key-spatial-pose-memory-and-closed-loop-high-frequency-flow-matching-action-generation-model)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：视频扩散模型用于手部运动重建
-5. [3D Scene-Adaptive Trajectory-Controllable Human Image Animation with Camera Movement](/202607/06/2606.30514v2-3d-scene-adaptive-trajectory-controllable-human-image-animation-with-camera-movement)  
+   evidence：使用流匹配方法生成机器人动作
+8. [Accelerated Likelihood Maximization for Diffusion-based Versatile Content Generation](/202607/07/2606.31323v1-accelerated-likelihood-maximization-for-diffusion-based-versatile-content-generation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用基于扩散/流的视频基础模型进行人体图像动画，控制3D运动
-6. [Multi-Resolution Flow Matching: Training-Free Diffusion Acceleration via Staged Sampling](/202607/06/2607.01642v1-multi-resolution-flow-matching-training-free-diffusion-acceleration-via-staged-sampling)  
-   标签：评分：7.0/10、query:3d-motion-generation
-   evidence：流匹配用于生成建模的多分辨率加速
-7. [JointHOI: Jointly Generating Contact Maps Enhances Hand Object Interaction Generation](/202607/06/2607.01768v1-jointhoi-jointly-generating-contact-maps-enhances-hand-object-interaction-generation)  
-   标签：评分：7.0/10、query:3d-motion-generation
-   evidence：扩散框架用于3D手物运动生成，联合生成接触图
-8. [SAMoR: Motion Modelling for Articulated Objects of Any Skeleton and Topology](/202607/06/2607.02148v1-samor-motion-modelling-for-articulated-objects-of-any-skeleton-and-topology)  
-   标签：评分：7.0/10、query:3d-motion-generation
-   evidence：包含人类在内的铰接物体运动建模
-9. [Panel Flow Matching: A Generative Approach to Learning Distributions of Longitudinal Data](/202607/06/2606.29105v1-panel-flow-matching-a-generative-approach-to-learning-distributions-of-longitudinal-data)  
+   evidence：扩散概率模型用于生成
+9. [OpenSPM: An Environment-Transferable Robotic Key Spatial Pose Memory and Closed-Loop High-Frequency Flow-Matching Action Generation Model](/202607/07/2606.29936v1-openspm-an-environment-transferable-robotic-key-spatial-pose-memory-and-closed-loop-high-frequency-flow-matching-action-generation-model)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：流匹配方法用于纵向数据生成建模
-10. [Simplifying Flow Matching Transformations with Low-Rank Mixture Models](/202607/06/2606.29724v1-simplifying-flow-matching-transformations-with-low-rank-mixture-models)  
+   evidence：面向机器人的流匹配动作生成模型
+10. [FacePlex: Full-Duplex Joint Speech-Facial Motion Generation for Conversational Avatars](/202607/07/2606.30145v1-faceplex-full-duplex-joint-speech-facial-motion-generation-for-conversational-avatars)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：提出使用低秩混合模型简化流匹配变换
-11. [OpenSPM: An Environment-Transferable Robotic Key Spatial Pose Memory and Closed-Loop High-Frequency Flow-Matching Action Generation Model](/202607/06/2606.29936v1-openspm-an-environment-transferable-robotic-key-spatial-pose-memory-and-closed-loop-high-frequency-flow-matching-action-generation-model)  
+   evidence：滚动流匹配用于在线面部运动生成
+11. [Accelerating Discrete Diffusion Models with Parallel-In-Time Sampling](/202607/07/2607.00773v1-accelerating-discrete-diffusion-models-with-parallel-in-time-sampling)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：流匹配用于机器人动作生成
+   evidence：加速离散扩散模型采样，有益于生成任务
 
 
 <div class="dpr-home-promo-card">
