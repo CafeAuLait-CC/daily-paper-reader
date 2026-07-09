@@ -6,71 +6,70 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-08
-- 运行时间：2026-07-08 21:53:29 UTC
+- 最新运行日期：2026-07-09
+- 运行时间：2026-07-09 21:51:06 UTC
 - 运行状态：成功
-- 本次总论文数：17
-- 精读区：6
+- 本次总论文数：16
+- 精读区：5
 - 速读区：11
 
 ### 今日简报（AI）
-今日17篇论文聚焦人体运动生成与关节物体建模，精读部分亮点突出。最值得关注的是《Training-free Controllable Human Motion Generation》与《SAMoR》，前者实现无训练异构约束控制，后者攻克任意骨架拓扑的运动建模。建议同步速读SEAM和ARMS，探索动作序列平滑与社会-单人运动无缝切换。
-- 详情：[/202607/08/README](/202607/08/README)
+今日聚焦人体运动与4D生成，两篇9分精读文章带来无训练可控运动与对齐式4D方案。  
+最值得关注的方向是无需训练即可处理异构约束的人体运动生成，以及基于对齐的X到4D生成方法。  
+建议普通读者优先了解多分辨率流匹配带来的训练加速思路，以及手物交互和复杂环境互动模仿的实用技术。
+- 详情：[/202607/09/README](/202607/09/README)
 
 ### 精读区论文标签
-1. [Training-free Controllable Human Motion Generation under Heterogeneous Constraints](/202607/08/2607.01990v1-training-free-controllable-human-motion-generation-under-heterogeneous-constraints)  
+1. [Training-free Controllable Human Motion Generation under Heterogeneous Constraints](/202607/09/2607.01990v1-training-free-controllable-human-motion-generation-under-heterogeneous-constraints)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：直接使用扩散模型进行无训练可控三维人体运动生成
-2. [SAMoR: Motion Modelling for Articulated Objects of Any Skeleton and Topology](/202607/08/2607.02148v1-samor-motion-modelling-for-articulated-objects-of-any-skeleton-and-topology)  
+   evidence：使用扩散模型的无训练可控人体运动生成
+2. [Alignment Is All You Need For X-to-4D Generation](/202607/09/2607.02516v1-alignment-is-all-you-need-for-x-to-4d-generation)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：扩散模型用于4D（3D+时间）生成，直接相关于3D动作生成
+3. [Retrieving and Refining Winning Noise Tickets for Diffusion-Based Motion Generation](/202607/09/2607.06843v1-retrieving-and-refining-winning-noise-tickets-for-diffusion-based-motion-generation)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：基于扩散的文本到运动生成
+4. [Generating Personalized Lower-Limb Kinematics Across Walking Speeds Using Subject-Conditioned Diffusion](/202607/09/2607.07533v1-generating-personalized-lower-limb-kinematics-across-walking-speeds-using-subject-conditioned-diffusion)  
+   标签：评分：9.0/10、query:3d-motion-generation
+   evidence：使用扩散模型生成个性化的三维下肢运动学数据
+5. [ARMS: Anchor-Relational Motion Streaming for Seamless Solo-Social Motion Transitions](/202607/09/2607.05733v1-arms-anchor-relational-motion-streaming-for-seamless-solo-social-motion-transitions)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：针对包括人类在内的铰接物体的运动建模
-3. [Alignment Is All You Need For X-to-4D Generation](/202607/08/2607.02516v1-alignment-is-all-you-need-for-x-to-4d-generation)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：使用扩散模型生成4D内容（视频+3D），包含运动合成
-4. [Perceptual Flow Matching for Few-Step Generative Modeling](/202607/08/2607.03524v1-perceptual-flow-matching-for-few-step-generative-modeling)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：使用感知特征的流匹配生成建模方法
-5. [High-Fidelity One-Step Generative Visuomotor Policy via Recursive Correction, Frequency Consistency, and Contrastive Flow Matching](/202607/08/2607.03865v1-high-fidelity-one-step-generative-visuomotor-policy-via-recursive-correction-frequency-consistency-and-contrastive-flow-matching)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：使用对比流匹配进行单步视觉运动策略生成
-6. [XS-VLA: Coupling Coarse-grained Spatial Distillation with Latent Flow Matching for Lightweight Robotic Control](/202607/08/2607.04171v1-xs-vla-coupling-coarse-grained-spatial-distillation-with-latent-flow-matching-for-lightweight-robotic-control)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：使用潜在流匹配生成轻量机器人控制策略
+   evidence：从文本生成人体运动
 
 ### 速读区论文标签
-1. [SEAM: Smooth Execution of Action-Chunked Motion for Vision-Language-Action Policies](/202607/08/2607.04609v1-seam-smooth-execution-of-action-chunked-motion-for-vision-language-action-policies)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：在视觉-语言-动作策略中使用流匹配进行动作分块生成
-2. [ARMS: Anchor-Relational Motion Streaming for Seamless Solo-Social Motion Transitions](/202607/08/2607.05733v1-arms-anchor-relational-motion-streaming-for-seamless-solo-social-motion-transitions)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：从文本生成连续人体运动
-3. [Accelerated Likelihood Maximization for Diffusion-based Versatile Content Generation](/202607/08/2606.31323v1-accelerated-likelihood-maximization-for-diffusion-based-versatile-content-generation)  
+1. [Multi-Resolution Flow Matching: Training-Free Diffusion Acceleration via Staged Sampling](/202607/09/2607.01642v1-multi-resolution-flow-matching-training-free-diffusion-acceleration-via-staged-sampling)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：提出ALM，一种无训练的扩散模型采样策略，扩展其应用范围
-4. [DeSeG: Decoupling Semantic Intent and Geometric Constraints for Physically Plausible Human-Scene Interaction](/202607/08/2607.05787v1-deseg-decoupling-semantic-intent-and-geometric-constraints-for-physically-plausible-human-scene-interaction)  
+   evidence：用于生成模型的流匹配加速方法
+2. [JointHOI: Jointly Generating Contact Maps Enhances Hand Object Interaction Generation](/202607/09/2607.01768v1-jointhoi-jointly-generating-contact-maps-enhances-hand-object-interaction-generation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：人体运动合成与交互
-5. [ComplexMimic: Human-Scene Interaction Imitation in Complex 3D Environments](/202607/08/2607.02034v2-complexmimic-human-scene-interaction-imitation-in-complex-3d-environments)  
+   evidence：基于扩散框架的3D手物运动生成，联合生成接触图
+3. [ComplexMimic: Human-Scene Interaction Imitation in Complex 3D Environments](/202607/09/2607.02034v1-complexmimic-human-scene-interaction-imitation-in-complex-3d-environments)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：使用双流策略在复杂3D环境中进行人-场景交互模仿
+4. [Tensor-Train Joint Modeling for Few-Step Discrete Diffusion](/202607/09/2607.03788v1-tensor-train-joint-modeling-for-few-step-discrete-diffusion)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：通过张量分解进行联合分布建模的离散扩散模型
+5. [High-Fidelity One-Step Generative Visuomotor Policy via Recursive Correction, Frequency Consistency, and Contrastive Flow Matching](/202607/09/2607.03865v1-high-fidelity-one-step-generative-visuomotor-policy-via-recursive-correction-frequency-consistency-and-contrastive-flow-matching)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：Flow Matching用于生成式视觉运动策略
+6. [Tightening the Score Matching Gap for Diffusion Models](/202607/09/2607.04442v1-tightening-the-score-matching-gap-for-diffusion-models)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：扩散模型评分匹配差距的理论收紧分析
+7. [QWERTY: Training-Free Motion Control via Query-Warped Video Diffusion Transformers](/202607/09/2607.01869v1-qwerty-training-free-motion-control-via-query-warped-video-diffusion-transformers)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：复杂环境下的3D人体运动生成，使用双流策略
-6. [Flex-Forcing: Towards a Unified Autoregressive and Bidirectional Video Diffusion Model](/202607/08/2607.03509v1-flex-forcing-towards-a-unified-autoregressive-and-bidirectional-video-diffusion-model)  
+   evidence：扩散变换器用于视频生成中的运动控制，与运动合成相关
+8. [SAMoR: Motion Modelling for Articulated Objects of Any Skeleton and Topology](/202607/09/2607.02148v1-samor-motion-modelling-for-articulated-objects-of-any-skeleton-and-topology)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：结合双向与自回归模式的视频扩散模型
-7. [Reflected Schrödinger Bridge Matching](/202607/08/2607.03626v1-reflected-schrdinger-bridge-matching)  
+   evidence：铰接物体运动建模
+9. [From SRA to Self-Flow: Data Augmentation or Self-Supervision?](/202607/09/2607.02508v1-from-sra-to-self-flow-data-augmentation-or-self-supervision)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：将flow matching扩展到反射薛定谔桥，一种生成建模方法
-8. [Asymptotic-Preserving A Posteriori Analysis of Diffusion and Flow-Matching Samplers](/202607/08/2607.04113v1-asymptotic-preserving-a-posteriori-analysis-of-diffusion-and-flow-matching-samplers)  
+   evidence：扩散模型中表示对齐的研究，与扩散模型训练相关
+10. [Perceptual Flow Matching for Few-Step Generative Modeling](/202607/09/2607.03524v1-perceptual-flow-matching-for-few-step-generative-modeling)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：对扩散和流匹配采样器进行理论分析
-9. [Tightening the Score Matching Gap for Diffusion Models](/202607/08/2607.04442v1-tightening-the-score-matching-gap-for-diffusion-models)  
+   evidence：通过感知监督改进流匹配生成
+11. [Reflected Schrödinger Bridge Matching](/202607/09/2607.03626v1-reflected-schrdinger-bridge-matching)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：扩散模型得分匹配差距的理论分析
-10. [Constrained Flow Matching via Lagrangian Dual Flows](/202607/08/2607.04513v1-constrained-flow-matching-via-lagrangian-dual-flows)  
-   标签：评分：6.0/10、query:3d-motion-generation
-   evidence：流匹配生成建模与约束处理
-11. [KAM-WM: Kinematic Affordance Maps from Latent World Models for Robot Manipulation](/202607/08/2607.04652v1-kam-wm-kinematic-affordance-maps-from-latent-world-models-for-robot-manipulation)  
-   标签：评分：6.0/10、query:3d-motion-generation
-   evidence：使用Flow Matching图像到视频骨干提取运动可供性图
+   evidence：Flow Matching用于Schrödinger桥
 
 
 <div class="dpr-home-promo-card">
