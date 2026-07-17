@@ -6,73 +6,71 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-16
-- 运行时间：2026-07-16 21:20:26 UTC
+- 最新运行日期：2026-07-17
+- 运行时间：2026-07-17 21:25:52 UTC
 - 运行状态：成功
 - 本次总论文数：17
 - 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日17篇论文精读6篇，重点聚焦运动生成与扩散模型。
-最值得关注ARDY（10分）的混合自回归扩散框架与Winning Noise Tickets（9分）的噪声优化创新，两者均显著提升交互式人体运动生成质量。
-建议普通读者优先精读这两篇高分论文，掌握自回归与扩散模型协同优化的核心思路。
-- 详情：[/202607/16/README](/202607/16/README)
+今日共处理17篇论文，精读6篇，重点聚焦音乐到舞蹈生成与3D手语生成两大方向。最值得关注的是两篇满分精读论文：《Wan-Dancer》实现分钟级连贯舞蹈生成，《Physics-Informed Diffusion》将物理约束融入扩散模型生成手语。建议普通读者优先翻阅这两篇精读论文的技术思路，同时留意速读中《GNOCHI》的人体交互建模与《Velocity Scheduled Flow Matching》的流匹配改进。
+- 详情：[/202607/17/README](/202607/17/README)
 
 ### 精读区论文标签
-1. [ARDY: Autoregressive Diffusion with Hybrid Representation for Interactive Human Motion Generation](/202607/16/2607.08741v1-ardy-autoregressive-diffusion-with-hybrid-representation-for-interactive-human-motion-generation)  
+1. [Wan-Dancer: A Hierarchical Framework for Minute-scale Coherent Music-to-Dance Generation](/202607/17/2607.09581v1-wan-dancer-a-hierarchical-framework-for-minute-scale-coherent-music-to-dance-generation)  
    标签：评分：10.0/10、query:3d-motion-generation
-   evidence：使用自回归扩散生成逼真的3D人体运动
-2. [Retrieving and Refining Winning Noise Tickets for Diffusion-Based Motion Generation](/202607/16/2607.06843v1-retrieving-and-refining-winning-noise-tickets-for-diffusion-based-motion-generation)  
+   evidence：使用扩散模型从音乐生成长时程3D舞蹈动作
+2. [Physics-Informed Diffusion for Biomechanically Plausible 3D Sign Language Generation](/202607/17/2607.14836v1-physics-informed-diffusion-for-biomechanically-plausible-3d-sign-language-generation)  
+   标签：评分：10.0/10、query:3d-motion-generation
+   evidence：用于生物力学合理3D骨骼运动生成的扩散模型
+3. [ARDY: Autoregressive Diffusion with Hybrid Representation for Interactive Human Motion Generation](/202607/17/2607.08741v1-ardy-autoregressive-diffusion-with-hybrid-representation-for-interactive-human-motion-generation)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：基于扩散的文本到3D人体运动序列生成
-3. [SkelGen4D: Weakly-Supervised Skeleton-Based 4D Generation for Text-Driven Mesh Animation](/202607/16/2607.08246v1-skelgen4d-weakly-supervised-skeleton-based-4d-generation-for-text-driven-mesh-animation)  
+   evidence：自回归扩散用于交互式3D人体运动生成
+4. [HandFlow: Fully Generative 4D Hand Recovery with Flow Matching](/202607/17/2607.11221v1-handflow-fully-generative-4d-hand-recovery-with-flow-matching)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：生成文本驱动的网格动画骨架运动序列
-4. [Source-Lifted Flow Matching for Intervenable Multimodal Imitation](/202607/16/2607.10206v1-source-lifted-flow-matching-for-intervenable-multimodal-imitation)  
+   evidence：基于流匹配的生成式4D手部姿态和形状恢复
+5. [ConFlow: Constraints-Guided Learning with Flow Matching for Motion Generation](/202607/17/2607.14424v1-conflow-constraints-guided-learning-with-flow-matching-for-motion-generation)  
    标签：评分：9.0/10、query:3d-motion-generation
-   evidence：Flow Matching 方法用于生成建模
-5. [EquiFusion: Kinematics-Agnostic Human Motion Prediction via Equivariant Latent Diffusion](/202607/16/2607.10984v1-equifusion-kinematics-agnostic-human-motion-prediction-via-equivariant-latent-diffusion)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：用于3D人体运动预测的潜在扩散模型
-6. [Discrete Diffusion Models: A Unified Framework from Tokenization to Generation](/202607/16/2607.13431v1-discrete-diffusion-models-a-unified-framework-from-tokenization-to-generation)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：离散扩散模型的统一框架，涵盖从分词到生成
+   evidence：基于流匹配的约束引导运动生成
+6. [SkelGen4D: Weakly-Supervised Skeleton-Based 4D Generation for Text-Driven Mesh Animation](/202607/17/2607.08246v1-skelgen4d-weakly-supervised-skeleton-based-4d-generation-for-text-driven-mesh-animation)  
+   标签：评分：8.0/10、query:3d-motion-generation
+   evidence：生成文本条件的骨架运动序列用于4D网格动画
 
 ### 速读区论文标签
-1. [Projected Energy Matching for Generative 3D Priors](/202607/16/2607.07749v1-projected-energy-matching-for-generative-3d-priors)  
+1. [GNOCHI: Generative Neural mOdel for Close Human-Human Interactions](/202607/17/2607.10408v1-gnochi-generative-neural-model-for-close-human-human-interactions)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：通过投影能量匹配实现Flow Matching用于3D数据生成
-2. [Wan-Dancer: A Hierarchical Framework for Minute-scale Coherent Music-to-Dance Generation](/202607/16/2607.09581v1-wan-dancer-a-hierarchical-framework-for-minute-scale-coherent-music-to-dance-generation)  
+   evidence：生成3D人与人交互姿态，直接产生三维人体运动数据
+2. [Velocity Scheduled Flow Matching](/202607/17/2607.11442v1-velocity-scheduled-flow-matching)  
    标签：评分：8.0/10、query:3d-motion-generation
-   evidence：使用扩散模型生成长时间舞蹈动作序列
-3. [InterPet4D: A Multimodal 4D Human-Pet Interaction Dataset for Pet Motion Generation](/202607/16/2607.10287v1-interpet4d-a-multimodal-4d-human-pet-interaction-dataset-for-pet-motion-generation)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：生成包含宠物交互的三维人体运动序列
-4. [GNOCHI: Generative Neural mOdel for Close Human-Human Interactions](/202607/16/2607.10408v1-gnochi-generative-neural-model-for-close-human-human-interactions)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：生成逼真的3D人-人交互运动
-5. [ColorFM: An Optimization-to-Learning Framework for Color Transfer via Flow Matching](/202607/16/2607.07119v1-colorfm-an-optimization-to-learning-framework-for-color-transfer-via-flow-matching)  
+   evidence：提出速度调度流匹配改进采样过程
+3. [FabriVLA: A Lightweight Vision-Language-Action Model for Precise Multi-Task Manipulation](/202607/17/2607.08575v1-fabrivla-a-lightweight-vision-language-action-model-for-precise-multi-task-manipulation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：提出ColorFM使用Flow Matching进行颜色传递
-6. [GIRAF: Towards Generalizable Human Interactions with Articulated Objects](/202607/16/2607.07880v1-giraf-towards-generalizable-human-interactions-with-articulated-objects)  
+   evidence：使用流匹配动作头构建视觉-语言-动作模型
+4. [SUREFlow: State-space Uncertainty-aware REsidual Flow Matching for Robust Robot Manipulation](/202607/17/2607.10504v1-sureflow-state-space-uncertainty-aware-residual-flow-matching-for-robust-robot-manipulation)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：合成与物体交互的全身人类运动
-7. [An exact information theory of generalization phase transitions in Bayesian diffusion models](/202607/16/2607.08041v1-an-exact-information-theory-of-generalization-phase-transitions-in-bayesian-diffusion-models)  
+   evidence：提出带不确定性的残差流匹配用于机器人操作
+5. [Diversify Diffusion with Temperature Sampling and Variance-Corrective Time Shifting](/202607/17/2607.10853v1-diversify-diffusion-with-temperature-sampling-and-variance-corrective-time-shifting)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：贝叶斯扩散模型泛化的信息理论
-8. [Neural Motion Blending Across Arbitrary Character Topologies](/202607/16/2607.10370v1-neural-motion-blending-across-arbitrary-character-topologies)  
+   evidence：扩散模型温度采样与方差校正
+6. [Self-Consistent Flow: Unifying Velocity and Endpoint Prediction for Rectified Flow Models](/202607/17/2607.12171v1-self-consistent-flow-unifying-velocity-and-endpoint-prediction-for-rectified-flow-models)  
    标签：评分：7.0/10、query:3d-motion-generation
-   evidence：使用基于扩散的解码器实现跨异构骨架的运动混合，与3D运动合成中的扩散模型相关。
-9. [LATO.2: Factorized 3D Mesh Generation with Vertex and Topology Flow](/202607/16/2607.10623v1-lato2-factorized-3d-mesh-generation-with-vertex-and-topology-flow)  
+   evidence：整流流模型统一速度和终点预测
+7. [The Geometry of Memorization: Finite-Time Spectral Sensitivity as a Diagnostic for Flow Matching Models](/202607/17/2607.12616v1-the-geometry-of-memorization-finite-time-spectral-sensitivity-as-a-diagnostic-for-flow-matching-models)  
+   标签：评分：7.0/10、query:3d-motion-generation
+   evidence：流匹配模型的理论分析和诊断指标
+8. [ReGen: Hierarchical Multi-Prompt Representation Generation for Efficient Waveform Diffusion Models](/202607/17/2607.09134v1-regen-hierarchical-multi-prompt-representation-generation-for-efficient-waveform-diffusion-models)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：采用流匹配进行3D网格生成
-10. [Diversify Diffusion with Temperature Sampling and Variance-Corrective Time Shifting](/202607/16/2607.10853v1-diversify-diffusion-with-temperature-sampling-and-variance-corrective-time-shifting)  
+   evidence：用于生成的扩散概率模型与广义流匹配
+9. [Diffusion for Long-Horizon Multi-Robot Path Planning in Human-Shared Environments](/202607/17/2607.09911v1-diffusion-for-long-horizon-multi-robot-path-planning-in-human-shared-environments)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：通过温度采样和时间偏移提升扩散模型多样性
-11. [Controlling Motion Transfer in Diffusion Transformers via Attention Heads](/202607/16/2607.11081v1-controlling-motion-transfer-in-diffusion-transformers-via-attention-heads)  
+   evidence：使用扩散模型生成路径
+10. [Source-Lifted Flow Matching for Intervenable Multimodal Imitation](/202607/17/2607.10206v1-source-lifted-flow-matching-for-intervenable-multimodal-imitation)  
    标签：评分：6.0/10、query:3d-motion-generation
-   evidence：扩散变换器用于运动迁移
+   evidence：用于生成建模的流匹配方法
+11. [LATO.2: Factorized 3D Mesh Generation with Vertex and Topology Flow](/202607/17/2607.10623v1-lato2-factorized-3d-mesh-generation-with-vertex-and-topology-flow)  
+   标签：评分：6.0/10、query:3d-motion-generation
+   evidence：使用流匹配生成3D网格
 
 
 <div class="dpr-home-promo-card">
