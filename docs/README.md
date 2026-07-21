@@ -1,81 +1,106 @@
-<div class="dpr-home-notice-card">
-  <h3 class="dpr-home-notice-title">🚀 Start Here</h3>
-  <ul class="dpr-home-notice-list">
-    <li><a href="#/tutorial/README">使用教程</a></li>
-  </ul>
+<div class="dpr-home-notice-card dpr-home-panel">
+  <div class="dpr-home-notice-header dpr-home-panel-header">
+    <h3 class="dpr-home-notice-title">公告与更新</h3>
+    <a class="dpr-home-notice-tutorial" href="#/tutorial/README">使用教程 <span aria-hidden="true">›</span></a>
+  </div>
+  <div class="dpr-home-notice-entry">
+    <time class="dpr-home-notice-date" datetime="2026-07-20">07.20</time>
+    <div>
+      <strong class="dpr-home-notice-entry-title">反馈功能上线</strong>
+      <span class="dpr-home-notice-entry-summary">新增反馈功能，欢迎大家踊跃反馈各种建议，我们会第一时间查看并协调处理。</span>
+    </div>
+  </div>
+  <div class="dpr-home-notice-entry">
+    <time class="dpr-home-notice-date" datetime="2026-07-19">07.19</time>
+    <div>
+      <strong class="dpr-home-notice-entry-title">首页新增社区统计</strong>
+      <span class="dpr-home-notice-entry-summary">现在可以看到今天看论文的人数和项目加入人数。</span>
+    </div>
+  </div>
+  <div class="dpr-home-site-stats" data-dpr-site-stats hidden aria-live="polite">
+    <span>今天有 <strong class="dpr-home-site-stat-value" data-dpr-daily-readers>--</strong> 人在看论文</span>
+    <span class="dpr-home-site-stat-separator" aria-hidden="true">·</span>
+    <span>昨天有 <strong class="dpr-home-site-stat-value" data-dpr-yesterday-readers>--</strong> 人在看论文</span>
+    <span class="dpr-home-site-stat-separator" aria-hidden="true">·</span>
+    <span>已有 <strong class="dpr-home-site-stat-value" data-dpr-fork-count>--</strong> 人加入 Daily Paper Reader</span>
+    <span class="dpr-home-history">
+      <button type="button" class="dpr-home-history-trigger" data-dpr-history-trigger aria-label="查看最近 14 天阅读趋势"><span aria-hidden="true">🔍</span></button>
+      <span class="dpr-home-history-popover" data-dpr-history-popover role="tooltip">
+        <span class="dpr-home-history-header">近 14 天阅读趋势</span>
+        <span class="dpr-home-history-meta">
+          <span data-dpr-history-range>--</span>
+          <span>峰值 <strong data-dpr-history-peak>--</strong></span>
+        </span>
+        <span class="dpr-home-history-chart" data-dpr-history-chart></span>
+      </span>
+    </span>
+  </div>
 </div>
 
-## 每次日报
-- 最新运行日期：2026-07-20
-- 运行时间：2026-07-20 21:38:26 UTC
-- 运行状态：成功
-- 本次总论文数：16
-- 精读区：6
-- 速读区：10
+<div class="dpr-home-dashboard-grid">
+<section class="dpr-home-dashboard-card dpr-home-report-card">
+  <div class="dpr-home-dashboard-header">
+    <div>
+      <span class="dpr-home-dashboard-kicker">2026-07-21</span>
+      <h3 class="dpr-home-dashboard-title">今日汇总</h3>
+    </div>
+    <strong class="dpr-home-dashboard-count">共 15 篇</strong>
+  </div>
+  <dl class="dpr-home-dashboard-stats">
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>9</dd></div>
+  </dl>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-21 21:41:29 UTC<br>状态：成功</p>
+</section>
+<section class="dpr-home-dashboard-card dpr-home-brief-card">
+  <div class="dpr-home-dashboard-header">
+    <div>
+      <span class="dpr-home-dashboard-kicker">合并后生成</span>
+      <h3 class="dpr-home-dashboard-title">今日简报</h3>
+    </div>
+    <strong class="dpr-home-dashboard-count">AI</strong>
+  </div>
+  <div class="dpr-home-dashboard-body">
+<p>今日精选6篇精读与9篇速读，重点关注生成式模型与人体运动预测的物理一致性。最值得看《Physics-Informed Diffusion for Biomechanically Plausible 3D Sign Language Generation》（10分）与《EquiFusion》（9分）——前者用物理约束生成逼真手语，后者实现与运动学无关的等变潜扩散预测。建议研究者探索物理引导扩散与等变架构的融合，普通读者可关注物理规则如何提升AI生成内容的可信度。</p>
+  </div>
+</section>
+<section class="dpr-home-dashboard-card dpr-home-deep-card">
+  <div class="dpr-home-dashboard-header">
+    <div>
+      <span class="dpr-home-dashboard-kicker">今日累计</span>
+      <h3 class="dpr-home-dashboard-title">精读推荐</h3>
+    </div>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
+  </div>
+  <div class="dpr-home-dashboard-body">
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Physics-Informed Diffusion for Biomechanically Plausible 3D Sign Language Generation">Physics-Informed Diffusion for Biomechanically Plausible 3D Sign Language Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="EquiFusion: Kinematics-Agnostic Human Motion Prediction via Equivariant Latent Diffusion">EquiFusion: Kinematics-Agnostic Human Motion Prediction via Equivariant Latent Diffusion</span></li><li><span class="dpr-home-dashboard-paper-title" title="HandFlow: Fully Generative 4D Hand Recovery with Flow Matching">HandFlow: Fully Generative 4D Hand Recovery with Flow Matching</span></li></ul>
+  </div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>6</strong></span></div>
+</section>
+<section class="dpr-home-dashboard-card dpr-home-skim-card">
+  <div class="dpr-home-dashboard-header">
+    <div>
+      <span class="dpr-home-dashboard-kicker">今日累计</span>
+      <h3 class="dpr-home-dashboard-title">速读推荐</h3>
+    </div>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
+  </div>
+  <div class="dpr-home-dashboard-body">
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Self-Consistent Flow: Unifying Velocity and Endpoint Prediction for Rectified Flow Models">Self-Consistent Flow: Unifying Velocity and Endpoint Prediction for Rectified Flow Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Contrastive-Augmented Flow Matching for Style-Content Disentanglement">Contrastive-Augmented Flow Matching for Style-Content Disentanglement</span></li><li><span class="dpr-home-dashboard-paper-title" title="MeanFlowNFT: Bringing Forward-Process RL to Average-Velocity Generators">MeanFlowNFT: Bringing Forward-Process RL to Average-Velocity Generators</span></li></ul>
+  </div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>9</strong></span></div>
+</section>
+</div>
 
-### 今日简报（AI）
-今日共扫描16篇论文，精读2篇高分工作：运动预测与流匹配生成。  
-最值得关注的是等变潜扩散模型EquiFusion（9.0）和速度调度流匹配（9.0），前者实现运动学无关的人体运动预测，后者优化生成采样效率。  
-建议优先精读这两篇高分论文，并关注流匹配在运动生成中的约束优化（ConFlow、SUREFlow）技术。
-- 详情：[/202607/20/README](/202607/20/README)
-
-### 精读区论文标签
-1. [EquiFusion: Kinematics-Agnostic Human Motion Prediction via Equivariant Latent Diffusion](/202607/20/2607.10984v1-equifusion-kinematics-agnostic-human-motion-prediction-via-equivariant-latent-diffusion)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：生成三维人体运动序列
-2. [Velocity Scheduled Flow Matching](/202607/20/2607.11442v1-velocity-scheduled-flow-matching)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：提出速度调度的流匹配方法，直接改进流匹配生成模型
-3. [Physics-Informed Diffusion for Biomechanically Plausible 3D Sign Language Generation](/202607/20/2607.14836v1-physics-informed-diffusion-for-biomechanically-plausible-3d-sign-language-generation)  
-   标签：评分：9.0/10、query:3d-motion-generation
-   evidence：使用扩散模型进行三维骨骼运动生成
-4. [HandFlow: Fully Generative 4D Hand Recovery with Flow Matching](/202607/20/2607.11221v1-handflow-fully-generative-4d-hand-recovery-with-flow-matching)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：使用流匹配进行4D手部重建
-5. [Self-Consistent Flow: Unifying Velocity and Endpoint Prediction for Rectified Flow Models](/202607/20/2607.12171v1-self-consistent-flow-unifying-velocity-and-endpoint-prediction-for-rectified-flow-models)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：流匹配方法用于生成建模
-6. [Lyapunov Guidance: A Unified Framework for Stabilizing Generative Flows](/202607/20/2607.14272v1-lyapunov-guidance-a-unified-framework-for-stabilizing-generative-flows)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：流匹配指导框架
-
-### 速读区论文标签
-1. [ConFlow: Constraints-Guided Learning with Flow Matching for Motion Generation](/202607/20/2607.14424v1-conflow-constraints-guided-learning-with-flow-matching-for-motion-generation)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：流匹配用于带约束的运动生成
-2. [Motion Planning with Model-Based Diffusion via Constraint Optimization and Adaptive Scheduling](/202607/20/2607.14455v1-motion-planning-with-model-based-diffusion-via-constraint-optimization-and-adaptive-scheduling)  
-   标签：评分：8.0/10、query:3d-motion-generation
-   evidence：基于模型的扩散用于运动规划和轨迹优化
-3. [SUREFlow: State-space Uncertainty-aware REsidual Flow Matching for Robust Robot Manipulation](/202607/20/2607.10504v1-sureflow-state-space-uncertainty-aware-residual-flow-matching-for-robust-robot-manipulation)  
-   标签：评分：7.0/10、query:3d-motion-generation
-   evidence：提出带不确定性的流匹配用于机器人操作，方法可迁移
-4. [TanGO: Training-Free 3D Editing via Tangent-Space Guidance and Optimization](/202607/20/2607.14927v1-tango-training-free-3d-editing-via-tangent-space-guidance-and-optimization)  
-   标签：评分：7.0/10、query:3d-motion-generation
-   evidence：流匹配在3D生成与编辑中的应用
-5. [LATO.2: Factorized 3D Mesh Generation with Vertex and Topology Flow](/202607/20/2607.10623v1-lato2-factorized-3d-mesh-generation-with-vertex-and-topology-flow)  
-   标签：评分：6.0/10、query:3d-motion-generation
-   evidence：流匹配用于3D网格生成
-6. [Diversify Diffusion with Temperature Sampling and Variance-Corrective Time Shifting](/202607/20/2607.10853v1-diversify-diffusion-with-temperature-sampling-and-variance-corrective-time-shifting)  
-   标签：评分：6.0/10、query:3d-motion-generation
-   evidence：通过温度采样和时间偏移改进扩散采样
-7. [SegDiff: Segmented Trajectory Diffusion for Consistent and Adaptive Robot Manipulation](/202607/20/2607.11027v1-segdiff-segmented-trajectory-diffusion-for-consistent-and-adaptive-robot-manipulation)  
-   标签：评分：6.0/10、query:3d-motion-generation
-   evidence：扩散模型用于轨迹生成
-8. [The Geometry of Memorization: Finite-Time Spectral Sensitivity as a Diagnostic for Flow Matching Models](/202607/20/2607.12616v1-the-geometry-of-memorization-finite-time-spectral-sensitivity-as-a-diagnostic-for-flow-matching-models)  
-   标签：评分：6.0/10、query:3d-motion-generation
-   evidence：为流匹配模型提供诊断度量
-9. [Integration Matters: Rollout-Based Training for Constrained Diffusion Models](/202607/20/2607.14398v1-integration-matters-rollout-based-training-for-constrained-diffusion-models)  
-   标签：评分：6.0/10、query:3d-motion-generation
-   evidence：扩散模型用于约束生成
-10. [MeanFlowNFT: Bringing Forward-Process RL to Average-Velocity Generators](/202607/20/2607.15273v1-meanflownft-bringing-forward-process-rl-to-average-velocity-generators)  
-   标签：评分：6.0/10、query:3d-motion-generation
-   evidence：Flow Matching生成建模方法
-
-
-<div class="dpr-home-promo-card">
-  <h3 class="dpr-home-promo-title">💬 社区与支持</h3>
-  <ul class="dpr-home-promo-list">
-    <li>欢迎 Star / Fork / Issue / PR</li>
-    <li>QQ群：583867967（欢迎交流，已有：1151人）</li>
-  </ul>
+<div class="dpr-home-promo-card dpr-home-panel">
+  <div class="dpr-home-panel-header">
+    <h3 class="dpr-home-promo-title">社区与支持</h3>
+  </div>
+  <p class="dpr-home-promo-copy">欢迎通过 Star、Fork、Issue 或 PR 一起完善 Daily Paper Reader。</p>
+  <div class="dpr-home-promo-meta">
+    <span>QQ群 <strong>583867967</strong></span>
+    <span class="dpr-home-promo-separator" aria-hidden="true">·</span>
+    <span>已有 <strong>1,491</strong> 人参与交流</span>
+  </div>
 </div>
