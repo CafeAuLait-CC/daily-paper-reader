@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-07-21</span>
+      <span class="dpr-home-dashboard-kicker">2026-07-22</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 15 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>9</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-21 21:41:29 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-22 21:40:20 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精选6篇精读与9篇速读，重点关注生成式模型与人体运动预测的物理一致性。最值得看《Physics-Informed Diffusion for Biomechanically Plausible 3D Sign Language Generation》（10分）与《EquiFusion》（9分）——前者用物理约束生成逼真手语，后者实现与运动学无关的等变潜扩散预测。建议研究者探索物理引导扩散与等变架构的融合，普通读者可关注物理规则如何提升AI生成内容的可信度。</p>
+<p>今日精读6篇速读9篇，聚焦物理信息扩散生成手语及多视角手物交互合成两大亮点。最值得关注的是《Physics-Informed Diffusion...》（10分）与《HarmoHOI》（9分），分别开拓了生物力学合理的手语生成和外观-运动协同的手物交互。建议读者优先精读这两篇，并留意ConFlow等流匹配约束生成方法，紧跟运动生成与实时控制的前沿融合。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,7 +74,7 @@
     <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Physics-Informed Diffusion for Biomechanically Plausible 3D Sign Language Generation">Physics-Informed Diffusion for Biomechanically Plausible 3D Sign Language Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="EquiFusion: Kinematics-Agnostic Human Motion Prediction via Equivariant Latent Diffusion">EquiFusion: Kinematics-Agnostic Human Motion Prediction via Equivariant Latent Diffusion</span></li><li><span class="dpr-home-dashboard-paper-title" title="HandFlow: Fully Generative 4D Hand Recovery with Flow Matching">HandFlow: Fully Generative 4D Hand Recovery with Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Physics-Informed Diffusion for Biomechanically Plausible 3D Sign Language Generation">Physics-Informed Diffusion for Biomechanically Plausible 3D Sign Language Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="HarmoHOI: Harmonizing Appearance and 3D Motion for Multi-view Hand-Object Interaction Synthesis">HarmoHOI: Harmonizing Appearance and 3D Motion for Multi-view Hand-Object Interaction Synthesis</span></li><li><span class="dpr-home-dashboard-paper-title" title="ROMS-IMLE: A Minimalist Approach to Competitive Single-Step Generative Modelling">ROMS-IMLE: A Minimalist Approach to Competitive Single-Step Generative Modelling</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>6</strong></span></div>
 </section>
@@ -87,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Self-Consistent Flow: Unifying Velocity and Endpoint Prediction for Rectified Flow Models">Self-Consistent Flow: Unifying Velocity and Endpoint Prediction for Rectified Flow Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Contrastive-Augmented Flow Matching for Style-Content Disentanglement">Contrastive-Augmented Flow Matching for Style-Content Disentanglement</span></li><li><span class="dpr-home-dashboard-paper-title" title="MeanFlowNFT: Bringing Forward-Process RL to Average-Velocity Generators">MeanFlowNFT: Bringing Forward-Process RL to Average-Velocity Generators</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ConFlow: Constraints-Guided Learning with Flow Matching for Motion Generation">ConFlow: Constraints-Guided Learning with Flow Matching for Motion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Reflex: Real-Time VLA Control through Streaming Inference">Reflex: Real-Time VLA Control through Streaming Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="AniGS: Bridging Rendering and Diffusion Prior for 3D Scene Animation">AniGS: Bridging Rendering and Diffusion Prior for 3D Scene Animation</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>9</strong></span></div>
 </section>
