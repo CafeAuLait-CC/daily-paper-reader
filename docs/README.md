@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-07-25</span>
+      <span class="dpr-home-dashboard-kicker">2026-07-26</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 11 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-25 21:03:32 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-26 20:02:17 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日聚焦离散流匹配与手物交互合成，精读两篇高分论文。</p>
-<p>推荐《Context-weighted Discrete Flow Matching》（9分）在离散生成中的创新，以及《HarmoHOI》（8分）在多视角手物交互中的外观与运动协调。</p>
-<p>建议普通读者重点关注离散流匹配方法在文本、图像等离散数据生成中的应用潜力。</p>
+<p>今日推荐11篇论文，精选4篇深度解析，速览7篇前沿动态。最值得关注的是手语生成到人形执行的视觉语言引导重定向（9.0分）与动态网络条件流匹配预测（8.0分）。建议优先精读碰撞缓解机制和时间变化轨迹生成方法，为实际应用提供理论基础。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Context-weighted Discrete Flow Matching">Context-weighted Discrete Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="HarmoHOI: Harmonizing Appearance and 3D Motion for Multi-view Hand-Object Interaction Synthesis">HarmoHOI: Harmonizing Appearance and 3D Motion for Multi-view Hand-Object Interaction Synthesis</span></li><li><span class="dpr-home-dashboard-paper-title" title="ROMS-IMLE: A Minimalist Approach to Competitive Single-Step Generative Modelling">ROMS-IMLE: A Minimalist Approach to Competitive Single-Step Generative Modelling</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="From Sign Language Generation to Humanoid Execution: Vision-Language Guided Retargeting with Collision Mitigation">From Sign Language Generation to Humanoid Execution: Vision-Language Guided Retargeting with Collision Mitigation</span></li><li><span class="dpr-home-dashboard-paper-title" title="TVGL-CFM:Generating and Forecasting Time-Varying Trajectories of Dynamic Networks with Conditional Flow Matching">TVGL-CFM:Generating and Forecasting Time-Varying Trajectories of Dynamic Networks with Conditional Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="HarmoHOI: Harmonizing Appearance and 3D Motion for Multi-view Hand-Object Interaction Synthesis">HarmoHOI: Harmonizing Appearance and 3D Motion for Multi-view Hand-Object Interaction Synthesis</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>4</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TVGL-CFM:Generating and Forecasting Time-Varying Trajectories of Dynamic Networks with Conditional Flow Matching">TVGL-CFM:Generating and Forecasting Time-Varying Trajectories of Dynamic Networks with Conditional Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="From Sign Language Generation to Humanoid Execution: Vision-Language Guided Retargeting with Collision Mitigation">From Sign Language Generation to Humanoid Execution: Vision-Language Guided Retargeting with Collision Mitigation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Twisted Schrödinger Bridge Matching">Twisted Schrödinger Bridge Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Mage-Flow: An Efficient Native-Resolution Foundation Model for Image Generation and Editing">Mage-Flow: An Efficient Native-Resolution Foundation Model for Image Generation and Editing</span></li><li><span class="dpr-home-dashboard-paper-title" title="Latent Riemannian Flow Matching for Geometry-Grounded 3D Foundation Models">Latent Riemannian Flow Matching for Geometry-Grounded 3D Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Optimal Sensor Placement via Graph-constrained Flow Matching">Optimal Sensor Placement via Graph-constrained Flow Matching</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>7</strong></span></div>
 </section>
