@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-07-27</span>
+      <span class="dpr-home-dashboard-kicker">2026-07-28</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 16 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 13 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>10</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-27 20:21:19 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-28 20:21:37 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日聚焦人型机器人任务学习与人机交互合成。最值得关注的是《Learning Diverse Humanoid Tasks via Synthetic Video Scenarios without Real World Data》实现零真实数据训练，以及《From Sign Language Generation to Humanoid Execution》实现手语到机器人动作的跨模态迁移。建议关注合成数据与跨模态对齐技术，这对降低真实数据依赖有重要意义。</p>
+<p>今日精选13篇AI论文，精读3篇，聚焦生成式模型与流映射的最新进展。最值得关注的方向是Mean-Field Game设计与Expanding Flow Maps，分别获得9.0和8.0的高分推荐。建议读者优先精读这两篇，深入理解生成式建模的新范式。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Diverse Humanoid Tasks via Synthetic Video Scenarios without Real World Data">Learning Diverse Humanoid Tasks via Synthetic Video Scenarios without Real World Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="From Sign Language Generation to Humanoid Execution: Vision-Language Guided Retargeting with Collision Mitigation">From Sign Language Generation to Humanoid Execution: Vision-Language Guided Retargeting with Collision Mitigation</span></li><li><span class="dpr-home-dashboard-paper-title" title="DiFA: Inference-Time Forward-Process Alignment for Diffusion Models">DiFA: Inference-Time Forward-Process Alignment for Diffusion Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="All in One: Generative Modeling as Mean-Field Game Design">All in One: Generative Modeling as Mean-Field Game Design</span></li><li><span class="dpr-home-dashboard-paper-title" title="Expanding Flow Maps">Expanding Flow Maps</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Diverse Humanoid Tasks via Synthetic Video Scenarios without Real World Data">Learning Diverse Humanoid Tasks via Synthetic Video Scenarios without Real World Data</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>5</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>3</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">11 篇</strong>
+    <strong class="dpr-home-dashboard-count">10 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="HarmoHOI: Harmonizing Appearance and 3D Motion for Multi-view Hand-Object Interaction Synthesis">HarmoHOI: Harmonizing Appearance and 3D Motion for Multi-view Hand-Object Interaction Synthesis</span></li><li><span class="dpr-home-dashboard-paper-title" title="AniGS: Bridging Rendering and Diffusion Prior for 3D Scene Animation">AniGS: Bridging Rendering and Diffusion Prior for 3D Scene Animation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Decafs: Disentangled Conditional adversarial Flows">Decafs: Disentangled Conditional adversarial Flows</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AniGS: Bridging Rendering and Diffusion Prior for 3D Scene Animation">AniGS: Bridging Rendering and Diffusion Prior for 3D Scene Animation</span></li><li><span class="dpr-home-dashboard-paper-title" title="DS@GT ARC at ImageCLEFmed GANs 2026: Geometric Filtering for Privacy-Preserving CT Slice Generation">DS@GT ARC at ImageCLEFmed GANs 2026: Geometric Filtering for Privacy-Preserving CT Slice Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Real-Time Human-Centric World Modeling for Upper-Body Human-Object Interaction">Real-Time Human-Centric World Modeling for Upper-Body Human-Object Interaction</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>11</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>10</strong></span></div>
 </section>
 </div>
 
