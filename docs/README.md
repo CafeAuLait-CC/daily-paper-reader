@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-07-30</span>
+      <span class="dpr-home-dashboard-kicker">2026-07-31</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 16 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>10</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-30 21:55:32 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-31 21:22:12 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读6篇速读10篇，聚焦人形机器人合成训练与实时人机交互模型。最值得关注的方向是无需真实数据即可学习多样化人形机器人任务，以及实时人类中心世界建模实现上半身人-物交互。建议深入理解这两项技术如何降低机器人部署成本并提升交互自然度。</p>
+<p>今日精读聚焦4D动态人体生成与实时人机交互建模，并速读多篇流匹配优化工作。</p>
+<p>最值得关注的是《4DHumanDiff》以9.0分实现文本到4DGS的一致360度动态人体生成，其次是《Real-Time Human-Centric World Modeling》支撑上肢交互建模。</p>
+<p>建议优先精读上述两篇，并关注流匹配在减少采样步数及优化电力潮流中的效率提升思路。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,7 +76,7 @@
     <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Diverse Humanoid Tasks via Synthetic Video Scenarios without Real World Data">Learning Diverse Humanoid Tasks via Synthetic Video Scenarios without Real World Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="Real-Time Human-Centric World Modeling for Upper-Body Human-Object Interaction">Real-Time Human-Centric World Modeling for Upper-Body Human-Object Interaction</span></li><li><span class="dpr-home-dashboard-paper-title" title="Context-weighted Discrete Flow Matching">Context-weighted Discrete Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="4DHumanDiff: Direct Text-to-4DGS Generation for Consistent 360-Degree Dynamic Humans">4DHumanDiff: Direct Text-to-4DGS Generation for Consistent 360-Degree Dynamic Humans</span></li><li><span class="dpr-home-dashboard-paper-title" title="Real-Time Human-Centric World Modeling for Upper-Body Human-Object Interaction">Real-Time Human-Centric World Modeling for Upper-Body Human-Object Interaction</span></li><li><span class="dpr-home-dashboard-paper-title" title="STEER: Steerable Dyadic Head Avatars">STEER: Steerable Dyadic Head Avatars</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>6</strong></span></div>
 </section>
@@ -84,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">10 篇</strong>
+    <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Parallel Decoding Distillation for Fast Image and Video Generation">Parallel Decoding Distillation for Fast Image and Video Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Flow Map Learning via Nongradient Vector Flow">Flow Map Learning via Nongradient Vector Flow</span></li><li><span class="dpr-home-dashboard-paper-title" title="AgentHOI: Multi-Agent Reasoning for Human-Object-Interaction Video Generation via Implicit Representation Alignment">AgentHOI: Multi-Agent Reasoning for Human-Object-Interaction Video Generation via Implicit Representation Alignment</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Context-weighted Discrete Flow Matching">Context-weighted Discrete Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Expanding Flow Maps">Expanding Flow Maps</span></li><li><span class="dpr-home-dashboard-paper-title" title="FMOPF: Latent Flow Matching with Constraint-Aware Interaction Priors for AC Optimal Power Flow">FMOPF: Latent Flow Matching with Constraint-Aware Interaction Priors for AC Optimal Power Flow</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>10</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>11</strong></span></div>
 </section>
 </div>
 
