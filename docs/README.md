@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-01</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-02</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 17 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-01 20:45:45 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-02 21:05:16 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读6篇、速读11篇，重点关注4D动态人体生成与交互视频推理两大突破。最值得看：满分论文《4DHumanDiff》实现文本到360度动态人体的一致生成，《AgentHOI》通过隐式对齐提升人-物交互视频质量。下一步建议：先体验4DHumanDiff的动捕生成效果，再结合AgentHOI探索交互视频创作。</p>
+<p>今日聚焦扩散模型理论与实时人机交互建模，共读17篇论文，精读2篇高分工作。</p>
+<p>最值得关注：扩散模型端到端泛化分析（9.0分）与全身人-物交互实时建模（9.0分），其次可关注生成模型与表格数据建模新思路。</p>
+<p>若想快速入门，建议从精读两篇高分论文入手，再按兴趣延伸至世界模型或离散化采样方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,9 +76,9 @@
     <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="4DHumanDiff: Direct Text-to-4DGS Generation for Consistent 360-Degree Dynamic Humans">4DHumanDiff: Direct Text-to-4DGS Generation for Consistent 360-Degree Dynamic Humans</span></li><li><span class="dpr-home-dashboard-paper-title" title="AgentHOI: Multi-Agent Reasoning for Human-Object-Interaction Video Generation via Implicit Representation Alignment">AgentHOI: Multi-Agent Reasoning for Human-Object-Interaction Video Generation via Implicit Representation Alignment</span></li><li><span class="dpr-home-dashboard-paper-title" title="Parallel Decoding Distillation for Fast Image and Video Generation">Parallel Decoding Distillation for Fast Image and Video Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="From Score Learning to Discretized Sampling: An End-to-End Generalization Analysis of Diffusion Models">From Score Learning to Discretized Sampling: An End-to-End Generalization Analysis of Diffusion Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Real-Time Human-Centric World Modeling for Upper-Body Human-Object Interaction">Real-Time Human-Centric World Modeling for Upper-Body Human-Object Interaction</span></li><li><span class="dpr-home-dashboard-paper-title" title="Joint Flow Matching for Generator-Consistent Classification">Joint Flow Matching for Generator-Consistent Classification</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MUGEN: A Unified Framework for Efficient Motion Understanding and Generation">MUGEN: A Unified Framework for Efficient Motion Understanding and Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="All in One: Generative Modeling as Mean-Field Game Design">All in One: Generative Modeling as Mean-Field Game Design</span></li><li><span class="dpr-home-dashboard-paper-title" title="From Score Learning to Discretized Sampling: An End-to-End Generalization Analysis of Diffusion Models">From Score Learning to Discretized Sampling: An End-to-End Generalization Analysis of Diffusion Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="All in One: Generative Modeling as Mean-Field Game Design">All in One: Generative Modeling as Mean-Field Game Design</span></li><li><span class="dpr-home-dashboard-paper-title" title="Logit-Coordinate Generative Models for Mixed Continuous-Categorical Tabular Data">Logit-Coordinate Generative Models for Mixed Continuous-Categorical Tabular Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="WorldDiT: A Unified Diffusion Architecture for World and Action Modeling">WorldDiT: A Unified Diffusion Architecture for World and Action Modeling</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">3d-motion-generation <strong>11</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>11</strong></span></div>
 </section>
 </div>
 
