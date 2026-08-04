@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-03</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-04</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 17 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-03 21:33:19 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-04 20:56:24 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日聚焦 flow 模型生成优化，共处理论文 17 篇，其中精读 6 篇。最值得关注文本到动作生成的 MoRAE（9.0）与连续轨迹监督的 FlowCTS（8.0）。建议下一步深入理解 flow-matching 的轨迹与频率感知机制，可迁移到视频生成任务。</p>
+<p>今日精读聚焦噪声鲁棒的条件流匹配与流匹配不确定性几何分析，速读覆盖文本引导图像融合及无人机世界动作建模。最值得关注的是流匹配在噪声数据下的鲁棒性提升，以及其不确定性度量的新代理方法。建议普通读者优先精读两篇高分论文，掌握流匹配核心进展。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,7 +74,7 @@
     <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MoRAE: Flow-Friendly Self-Supervised Latents for Text-to-Motion Generation">MoRAE: Flow-Friendly Self-Supervised Latents for Text-to-Motion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="FlowCTS: On-policy Continuous Trajectory Supervision of Flow Models">FlowCTS: On-policy Continuous Trajectory Supervision of Flow Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Low-Latency Generative Semantic Communication via Channel-Realization Flow Matching">Low-Latency Generative Semantic Communication via Channel-Realization Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Noise-Robust Conditional Flow Matching: Generating Clean Samples from Noisy Datasets">Noise-Robust Conditional Flow Matching: Generating Clean Samples from Noisy Datasets</span></li><li><span class="dpr-home-dashboard-paper-title" title="The Geometric Nature and a Free Proxy for Flow-Matching Uncertainty">The Geometric Nature and a Free Proxy for Flow-Matching Uncertainty</span></li><li><span class="dpr-home-dashboard-paper-title" title="Hybrid-Domain Posterior Sampling for Inverse Problems via Latent Flow Matching">Hybrid-Domain Posterior Sampling for Inverse Problems via Latent Flow Matching</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
 </section>
@@ -87,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="WaiT for the Signal: Simple Frequency-Aware Flow-Matching">WaiT for the Signal: Simple Frequency-Aware Flow-Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Parallel Decoding Distillation for Fast Image and Video Generation">Parallel Decoding Distillation for Fast Image and Video Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Flow Map Learning via Nongradient Vector Flow">Flow Map Learning via Nongradient Vector Flow</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="EgoGenesis: Egocentric World-Action Modeling with Online Anchored Projective Memory and Action-3D RoPE">EgoGenesis: Egocentric World-Action Modeling with Online Anchored Projective Memory and Action-3D RoPE</span></li><li><span class="dpr-home-dashboard-paper-title" title="Unleashing the Power of Text: Text-Guided Flow Matching for Image Fusion under Complex Degradations">Unleashing the Power of Text: Text-Guided Flow Matching for Image Fusion under Complex Degradations</span></li><li><span class="dpr-home-dashboard-paper-title" title="FlowPilot: Real-Time World-Action Modeling for Agile UAV Navigation">FlowPilot: Real-Time World-Action Modeling for Agile UAV Navigation</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>11</strong></span></div>
 </section>
