@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-04</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-05</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 11 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-04 20:56:24 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-05 21:09:59 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读聚焦噪声鲁棒的条件流匹配与流匹配不确定性几何分析，速读覆盖文本引导图像融合及无人机世界动作建模。最值得关注的是流匹配在噪声数据下的鲁棒性提升，以及其不确定性度量的新代理方法。建议普通读者优先精读两篇高分论文，掌握流匹配核心进展。</p>
+<p>今日共读11篇论文，精读5篇、速读6篇，核心聚焦“流匹配”在运动预测与生成领域的应用。 最值得精读的是9.0分的《Residual Flow Matching with Dynamic Cross-Interaction for 3D Multi-Person Motion Prediction》和8.0分的《Latent Flow Matching for Arbitrage-Aware Implied Volatility Surface Generation》。 建议优先研读高分3D多人运动预测论文，并搭配速读中的人形机器人流匹配研究，把握流匹配的统一建模思路。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Noise-Robust Conditional Flow Matching: Generating Clean Samples from Noisy Datasets">Noise-Robust Conditional Flow Matching: Generating Clean Samples from Noisy Datasets</span></li><li><span class="dpr-home-dashboard-paper-title" title="The Geometric Nature and a Free Proxy for Flow-Matching Uncertainty">The Geometric Nature and a Free Proxy for Flow-Matching Uncertainty</span></li><li><span class="dpr-home-dashboard-paper-title" title="Hybrid-Domain Posterior Sampling for Inverse Problems via Latent Flow Matching">Hybrid-Domain Posterior Sampling for Inverse Problems via Latent Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Residual Flow Matching with Dynamic Cross-Interaction for 3D Multi-Person Motion Prediction">Residual Flow Matching with Dynamic Cross-Interaction for 3D Multi-Person Motion Prediction</span></li><li><span class="dpr-home-dashboard-paper-title" title="Latent Flow Matching for Arbitrage-Aware Implied Volatility Surface Generation">Latent Flow Matching for Arbitrage-Aware Implied Volatility Surface Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="SPARE: Structural Parameter-Free Affinity Regularization for Flow Matching">SPARE: Structural Parameter-Free Affinity Regularization for Flow Matching</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">11 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="EgoGenesis: Egocentric World-Action Modeling with Online Anchored Projective Memory and Action-3D RoPE">EgoGenesis: Egocentric World-Action Modeling with Online Anchored Projective Memory and Action-3D RoPE</span></li><li><span class="dpr-home-dashboard-paper-title" title="Unleashing the Power of Text: Text-Guided Flow Matching for Image Fusion under Complex Degradations">Unleashing the Power of Text: Text-Guided Flow Matching for Image Fusion under Complex Degradations</span></li><li><span class="dpr-home-dashboard-paper-title" title="FlowPilot: Real-Time World-Action Modeling for Agile UAV Navigation">FlowPilot: Real-Time World-Action Modeling for Agile UAV Navigation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PFM-HR: Pose Flow Matching for Humanoid Robots">PFM-HR: Pose Flow Matching for Humanoid Robots</span></li><li><span class="dpr-home-dashboard-paper-title" title="Mitigating Compounding Error via Video Representation Regularization">Mitigating Compounding Error via Video Representation Regularization</span></li><li><span class="dpr-home-dashboard-paper-title" title="Safe Vision Language Action Models via Barrier Enhanced Flow Matching">Safe Vision Language Action Models via Barrier Enhanced Flow Matching</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>11</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
 </section>
 </div>
 

@@ -1,0 +1,2923 @@
+Title: GraspMeanFlow: SE(3)-Equivariant MeanFlow for Few-Step 6-DoF Grasp Generation
+
+URL Source: https://arxiv.org/pdf/2608.03295v1
+
+Published Time: Wed, 05 Aug 2026 00:42:38 GMT
+
+Number of Pages: 30
+
+Markdown Content:
+# GraspMeanFlow: SE(3)-Equivariant MeanFlow for Few-Step 6-DoF Grasp Generation 
+
+## Jiyong Kwon 1∗, Yikun Bai 2∗† , Amirhossein Mollaali 1, Guang Lin 1,2 †
+
+> 1
+
+School of Mechanical Engineering, Purdue University 
+
+> 2
+
+Department of Mathematics, Purdue University West Lafayette, IN 47907, USA kwon165@purdue.edu, bai195@purdue.edu, amollaal@purdue.edu, guanglin@purdue.edu 
+
+Abstract 
+
+Recent data-driven methods for synthesizing 6-DoF grasp poses use generative models to learn complex grasp pose distributions and generate diverse candidate poses. In particu-lar, SE(3)-equivariant flow-based models generate grasp poses that transform consistently with object rotations and transla-tions. However, these methods sample by iterative numerical integration, requiring tens of function evaluations per grasp and limiting their use in real-time manipulation. We propose GraspMeanFlow, an SE(3)-equivariant MeanFlow framework for few-step 6-DoF grasp generation. Our method learns the average velocity over a finite time interval, defined through the time-ordered exponential so that it reproduces exactly the rigid-body displacement accumulated over that interval. We prove that a point-cloud-conditioned distribution transported by an equivariant average-velocity flow map remains invari-ant, so equivariance is retained under few-step sampling, and we condition the field on a pair of times by lifting both to equiv-ariant vectors, leaving the backbone otherwise unchanged. For stable training, we pair a flow-matching boundary term with either of two consistency terms: the differential MeanFlow identity, whose target requires a Jacobian-vector product, or an equivalent semigroup loss that avoids it. Experiments on ACRONYM show that a single function evaluation of Grasp-MeanFlow reaches the EMD that an iterative SE(3) flow model needs five steps to approach, that a second instantiation of the same framework improves grasp success by up to 24.3 points in the few-step regime, and that both generate grasp distribu-tions transforming exactly with the object. 
+
+## 1 Introduction 
+
+Synthesizing six degrees of freedom (DoF) grasp poses from 3D observations of an object, such as a surface point cloud P,is a fundamental task in robotics. A grasp pose for a parallel-jaw gripper is a rigid transformation T = ( R, x ) ∈ SE(3) ,and since the set of successful grasps is highly multimodal, the task is naturally posed as conditional generative mod-eling of p(T | P) on the SE(3) manifold. Data-driven generative approaches have accordingly become dominant, from variational autoencoders (Mousavian, Eppner, and Fox 2019) and energy-based diffusion (Urain et al. 2023) to stochastic-interpolant bridges (Chen et al. 2024). Most re-cently, EquiGraspFlow (Lim et al. 2024) proposed a condi-
+
+> ∗
+
+These authors contributed equally. 
+
+> †
+
+Corresponding author. 
+
+tional continuous normalizing flow whose architecture guar-antees SE(3) -equivariance by construction, so that generated grasps transform identically with the object without any data augmentation. However, a limitation shared by all of these models is that sampling is iterative . Flow-based models numerically integrate a time-dependent velocity field and diffusion-based models repeatedly denoise, so a single sample costs tens of network evaluations; EquiGraspFlow, for instance, uses a fourth-order Runge–Kutta–Munthe-Kaas solver over 20 
+
+steps, amounting to 80 evaluations of the velocity field. Since a manipulation pipeline generates, filters, and ranks a hun-dred candidates every time the scene changes, an ideal model should reproduce the same grasp distribution in one or a few evaluations. MeanFlow (Geng et al. 2025b,a) offers a route to such a model, replacing the instantaneous velocity of flow matching with the average velocity over a finite interval and yielding a training objective for few-step generation that requires nei-ther a teacher nor distillation. Grasp poses, however, do not live in a Euclidean vector space, and the extension is not merely notational. Because so (3) is non-commutative, the average angular velocity cannot be obtained by integrating instantaneous velocities, as the naive integral does not re-produce the endpoint rotation of the trajectory. Flattening rotations into a Euclidean representation sidesteps this dif-ficulty, but forfeits both the geometry of the manifold and the equivariance that makes SE(3) grasp generators robust to object rotations. In this paper, we propose GraspMeanFlow , an SE(3) -equivariant few-step 6-DoF grasp pose generative model. We define the average velocity on SE(3) through the time-ordered exponential, so that the learned Lie-algebra element reproduces exactly the rigid-body displacement accumulated over an interval, and develop the conditional and equivariant theory that grasp generation requires but that existing man-ifold MeanFlow formulations do not address. Realizing this model raises two further difficulties—a MeanFlow field is conditioned on a pair of times, which equivariant point-cloud backbones cannot accommodate through the usual scalar em-beddings, and the differential MeanFlow identity is numer-ically fragile on SO(3) —both of which we resolve while leaving the equivariance guarantee intact. Our contributions are as follows: 1arXiv:2608.03295v1 [cs.RO] 4 Aug 2026 • Conditional and Equivariant SE(3) MeanFlow. We formulate average-velocity generation for point-cloud-conditioned distributions on SE(3) , defining the average velocity through the time-ordered exponential. We prove that a conditional distribution transported by an equiv-ariant average-velocity flow map remains invariant, so equivariance survives the reduction in sampling steps. 
+
+• Equivariance-Preserving Network for Two-Time Fields. We extend the Vector Neuron (Deng et al. 2021) backbone of EquiGraspFlow from a single time to a time pair (s, t ) while retaining its SO(3) -equivariance, by lift-ing both times through its existing equivariant lifting mechanism. The extension adds no parameters beyond the embedding, so our comparison isolates the training objective from model capacity. 
+
+• Two Instantiations and Practical Recipes. The interval field can be trained by any consistency term anchored to a flow-matching boundary. We report two: GMF-SG ,which uses a finite semigroup identity and avoids the Jacobian–vector product entirely, and GMF-JVP , which uses the differential identity in an inverse-Jacobian target form together with a per-object optimal-transport cou-pling. They are complementary — GMF-SG is stronger on distributional fidelity, GMF-JVP on simulated grasp success — and on four ACRONYM categories improve success by up to 24 .3 points in the few-step regime. 
+
+## 2 Background 
+
+Rigid Transformations and Grasp Poses 
+
+The special Euclidean group is 
+
+SE(3) = {(R, x ) : R ∈ SO(3) , x ∈ R3},
+
+acting on a point p ∈ R3 by p 7 → Rp + x, and we represent a grasp pose as T = ( R, x ). For an angular velocity ω ∈ R3
+
+and a linear velocity v ∈ R3, a rigid-pose trajectory satisfies 
+
+˙Rt = [ ωt] Rt, ˙xt = vt, (1) where [·] : R3 → so (3) maps a three-vector to the skew-symmetric matrix satisfying [ω] p = ω × p for any p ∈ R3:
+
+[ω] = 
+
+0 −ω3 ω2
+
+ω3 0 −ω1
+
+−ω2 ω1 0
+
+!
+
+, ω = ( ω1, ω 2, ω 3)⊤.
+
+Its inverse (·)∨ : so (3) → R3 recovers the three-vector from a skew-symmetric matrix. We identify so (3) ∼= R3
+
+through this pair and write angular velocities as three-vectors throughout, the matrix form [ω] appearing only inside exp 
+
+and T exp .
+
+Flow matching for 6-DoF grasp generation 
+
+A flow-based grasp generator constructs a probability path from a simple prior distribution p1(T | P ) to the data dis-tribution p0(T | P ). For training pairs (T0, T 1) with T0 asuccessful grasp and T1 a prior sample, we define an inter-polation 
+
+Rt = exp  t log( R1R⊤ 
+
+> 0
+
+) R0, (2) 
+
+xt = (1 − t)x0 + tx 1. (3) The corresponding instantaneous velocity under this conven-tion is 
+
+ω0→1 = log( R1R⊤ 
+
+> 0
+
+)∨, v0→1 = x1 − x0.
+
+A standard flow-matching model learns a time-dependent vector field (ωθ , v θ )( Tt, t, P) and samples by numerical in-tegration from t = 1 to t = 0 .
+
+MeanFlow and Finite-Interval Average Velocity 
+
+MeanFlow (Geng et al. 2025b) predicts the finite-interval 
+
+average velocity in place of the instantaneous velocity of flow matching. For a Euclidean trajectory zτ ∈ Rn with 
+
+˙zτ = vτ , the average velocity over [s, t ] is 
+
+us,t = 1
+
+t − s
+
+Z ts
+
+vτ dτ, (4) which the model predicts from the state zt and the time pair 
+
+(s, t ). Differentiating (t − s) us,t in t gives the MeanFlow identity 
+
+vt = us,t + ( t − s) ddt us,t , (5) whose second term is a Jacobian–vector product; regressing the left-hand side against the model output is the MeanFlow training objective. Two concurrent works (Zhong et al. 2026; Woo et al. 2026) extend MeanFlow to Riemannian manifolds, evalu-ated on synthetic geometries. We instead develop Mean-Flow on SE(3) through its closed form Lie group struc-ture (Section 3), integrating spatial-frame angular and linear velocities in the Lie algebra; for the geodesic interpolation used here, the average velocity has a closed form through the Lie logarithm, which serves as the training target. The same SE(3) average-velocity formulation is applied to pro-tein backbone generation by Bai et al. (2026), in the body frame ˙Rt = Rt[ωt] rather than the spatial frame used here, which our equivariance guarantee requires (Section 3). 
+
+## 3 Our Method: SE(3)-MeanFlow for 6-DoF Grasp Generation 
+
+Problem Formulation 
+
+Point cloud, pose and dataset. Given an object point cloud 
+
+P := {pk ∈ R3}Kk=1 , we aim to sample a set of candidate grasps 
+
+{T (m) = ( R(m), x (m))}Mm=1 ∼ p(T | P ),
+
+where R ∈ SO(3) , x ∈ R3. At training time, the dataset 
+
+D = {(Pi, {Tij }Ji
+
+> j=1
+
+)}Ni=1 
+
+contains N objects, where each point cloud Pi is annotated with Ji successful grasp poses {Tij } drawn from the ground-truth conditional distribution q(T | P i). Our generator is trained on these positive grasps to approximate q. Figure 1 gives an overview of the framework. 2Current/ Prior  
+
+> Grasp Pose
+> Time Pair
+> Point Cloud
+> Euler / exp -SO(3) Sampler
+> Generate in steps
+> Given interval
+> VN -DGCNN encoder
+> + VN velocity head
+> Trained with FM boundary +
+> consistency (semigroup / JVP identity)
+> SE(3) -Equivariant
+> Transform the object;
+> the grasp pose transforms accordingly
+> SE(3) -Equivariant
+> Average -Velocity Network
+> Few -Step
+> SE(3) Sampling
+> Generated
+> Grasp Pose
+
+Figure 1: Overview of the proposed GraspMeanFlow framework. Given an object point cloud P, a current grasp pose Tt initialized from the object-centered prior at t = 1 ,and a time pair (s, t ) with s < t , the SE(3)-equivariant average-velocity network predicts the interval-averaged an-gular and linear velocities (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+). An Euler or exp-
+
+SO (3) sampler then uses these predictions to transport Tt to the earlier-time pose Ts and generate a grasp pose in a few steps. The network is trained using a flow-matching boundary loss together with a consistency term (semigroup or differ-ential/JVP), while preserving SE(3)-equivariance. 
+
+Conditional prior and interpolation. We use an object-centered prior p1(T | P ) = p1(R) p1(x | P ), with p1(R)
+
+uniform on SO(3) and p1(x | P ) Gaussian centered at the point-cloud mean ¯p = 1
+
+> K
+
+P 
+
+> k
+
+pk:
+
+R1 ∼ U (SO(3)) , x1 ∼ N (¯ p, σ 2I).
+
+We use σ = 1 throughout, so that in the mean-centered frame in which the network operates the translation prior is stan-dard normal. Centering at ¯p makes the prior SE(3) -invariant, which is a prerequisite for the equivariance guarantee of Sec-tion 3. Given a data grasp T0 = ( R0, x 0) and a prior sam-ple T1 = ( R1, x 1), the intermediate pose Tt is obtained by geodesic interpolation on SO(3) and linear interpolation in 
+
+R3.
+
+Average Velocity on SE(3) 
+
+We decompose the flow on SE(3) into its SO(3) and R3 com-ponents. The rotation branch is where non-commutativity of the group enters and is our focus below; the translation branch is the abelian degenerate case and coincides with Euclidean MeanFlow. Consider a rigid-pose trajectory Tτ = ( Rτ , x τ ) on SE(3) 
+
+governed by instantaneous angular and linear velocities 
+
+(ωτ , v τ ) ∈ R3 × R3,
+
+˙Rτ = [ ωτ ] Rτ , ˙xτ = vτ . (6) For an interval [s, t ] with s < t , we define the SE(3) average velocity (ωavg , v avg )( s, t, T t) as the constant Lie-algebra ve-locity whose endpoint update over [s, t ] matches that of the trajectory: 
+
+exp  (t − s) [ ωavg ] = T exp 
+
+ Z ts
+
+[ωτ ] dτ 
+
+
+
+, (7) 
+
+(t − s) vavg =
+
+Z ts
+
+vτ dτ. (8) Here T exp denotes the time-ordered matrix exponential, re-quired because so (3) is non-commutative: integrating ωτ
+
+as a vector does not in general recover the endpoint rota-tion. Integrating (6) gives Rt = D(s, t ) Rs with D(s, t ) = 
+
+RtR⊤ 
+
+> s
+
+= exp  (t − s)[ ωavg ], so that (ωavg , v avg ) encode the rigid-body displacement accumulated over [s, t ] in a sin-gle Lie-algebra element. We suppress the dependence on P
+
+where unambiguous. 
+
+Differential form. Along the geodesic interpolation of Section 2, the instantaneous angular velocity is the constant 
+
+ωt = log( R1R⊤ 
+
+> 0
+
+)∨, so that Rt = exp( t [ωt]) R0. Writing 
+
+ωs→t := ( t − s) ωavg (s, t, T t) ∈ R3 (9) for the rotation log-displacement, so that exp  [ωs→t] =
+
+D(s, t ), and differentiating (7) with respect to t yields the 
+
+SE(3) counterpart of the MeanFlow identity, 
+
+J ωs→t ddt ωs→t = ωt, (10) where ddt is the total derivative along the trajectory,  
+
+> ddt
+
+ωs→t = ∂tωs→t + ∇Rωs→t, ˙Rt + ∇xωs→t, ˙xt ,
+
+(11) and J : R3 → R3×3 is the left Jacobian of SO(3) ,
+
+J(ϕ) := 
+
+Z 10
+
+eα[ϕ] dα =
+
+> ∞
+
+X
+
+> k=0
+
+1(k + 1)! 
+
+ [ϕ]k. (12) Its closed form and small-∥ϕ∥ expansion are given in Ap-pendix C 1, together with a derivation of (10). Equation (10) is the differential characterization of the definition (7) and suggests a regression target in the manner of Euclidean MeanFlow. 
+
+Remark 1 (Translation branch) . Since R3 is abelian, (8) is a plain time integral, the left Jacobian satisfies J ≡ I, and 
+
+(10) collapses to the Euclidean MeanFlow identity (5) . We therefore treat the translation branch exactly as in Mean-Flow (Geng et al. 2025b). 
+
+Training Objective 
+
+The differential objective. Equation (10) provides a re-gression target for the average velocity, in direct analogy with Euclidean MeanFlow. Let fθ output (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( s, t, T t)
+
+and write ωs→tθ := ( t − s) ωavg  
+
+> θ
+
+. Solving (10) for the aver-age velocity and applying a stop-gradient, as in (Geng et al. 2025b), gives the target 
+
+ωavg tgt = J ωs→tθ
+
+−1ωt − (t − s) ddt ωavg  
+
+> θ
+
+, (13) 
+
+> 1
+
+All appendices referenced in this paper are provided in the technical supplement. 
+
+3and the SE(3) MeanFlow objective 
+
+Ldiff = Es<t 
+
+h
+
+ωavg  
+
+> θ
+
+− sg  ωavg tgt 
+
+ 22
+
+i
+
+, (14) where ddt ωavg  
+
+> θ
+
+is computed as a single Jacobian–vector prod-uct along the tangent ( ˙Rt, ˙xt, ˙t, ˙s) = ([ ωt]Rt, v t, 1, 0) . The translation branch is the J ≡ I case, recovering the Eu-clidean MeanFlow target vt − (t − s) ddt vavg  
+
+> θ
+
+verbatim. In practice, however, we find the Jacobian–vector product in (14) to be numerically unstable on SO(3) . We therefore turn to an equivalent characterization of the same definition that avoids it. 
+
+Semigroup property. Write D(s, t ) = RtR⊤ 
+
+> s
+
+=exp  [ωs→t] for the rotation accumulated over [s, t ] and 
+
+ps→t := ( t − s) vavg (s, t, T t) for the translation displace-ment. Inserting R⊤
+
+> m
+
+Rm = I gives, for any intermediate 
+
+m ∈ [s, t ],
+
+exp  [ωs→t] = exp  [ωm→t] exp  [ωs→m],ps→t = ps→m + pm→t. (15) The rotation composition is exact and curvature-free: it is nothing but the associativity of group multiplication. Cur-vature enters only if one collapses the product into a single Lie-algebra sum, where Baker–Campbell–Hausdorff cross terms appear; we never do, and therefore never need J.
+
+Consistency loss. Given m ∼ U ([ s, t ]) , we form the inter-mediate state by stepping back the near segment [m, t ],
+
+Rm = exp   − [ωm→tθ ]Rt, xm = xt − pm→tθ , (16) and regress the model’s direct one-step prediction on [s, t ]
+
+onto the stop-gradient composed two-step target given by (15): 
+
+Lsg = E
+
+h
+
+ωs→tθ − sg  ωs→t
+
+> tgt
+
+ 22 + ps→tθ − sg  ps→t
+
+> tgt
+
+ 22
+
+i
+
+,
+
+(17) 
+
+ωs→t 
+
+> tgt
+
+= log 
+
+
+
+exp  [ωm→tθ ] exp  [ωs→mθ ]∨
+
+,ps→t 
+
+> tgt
+
+= ps→mθ + pm→tθ .
+
+Equivalently, the same constraint can be imposed on the transported states rather than the displacements, 
+
+Lsg geo = E
+
+h
+
+log( RdR⊤ 
+
+> c
+
+)∨ 22 + xd − xc
+
+> 22
+
+i
+
+, (18) where (Rd, x d) and (Rc, x c) are the poses reached from 
+
+(Rt, x t) by the direct update on [s, t ] and by the composed update through m. The two residuals agree to first order and share the same minimizer, differing only in how they weight errors away from it (Appendix E); we train with (18). The state-space form (18) is also arrived at, indepen-dently and concurrently, by Woo et al. (2026) as a manifold flow-map consistency objective; we reach it instead as the finite, derivative-free counterpart of the differential SE(3) 
+
+MeanFlow identity (10), which is what lets us drop both the Jacobian–vector product and the left Jacobian J.Neither form carries a 1/(t−s) factor, since both compare bounded quantities rather than velocities; the normalization scalar must in any case stay outside log(exp · exp) , since rescaling the two non-commuting segment generators would corrupt the BCH cross term. 
+
+Boundary anchor. The semigroup term alone admits col-lapsed minimizers, so we anchor it at the diagonal s → t
+
+with a flow-matching boundary, 
+
+Lbd = Et
+
+h
+
+ωavg  
+
+> θ
+
+(t, t, T t) − ωt 
+
+> 22
+
++ vavg  
+
+> θ
+
+(t, t, T t) − vt
+
+> 22
+
+i
+
+,
+
+(19) giving the total objective L = λbd Lbd + λsg Lsg (Ap-pendix E). 
+
+α-Flow warm-up. The consistency loss (17) uses the model’s own prediction on the near segment [m, t ], which is unreliable early in training. We therefore warm up with an SE(3) α-Flow objective (Cheng et al. 2025), a special case of (17) in which the near segment is supplied by the 
+
+data velocity rather than the model. We describe the ro-tation branch; the translation branch is the Euclidean α-Flow objective of Cheng et al. (2025) verbatim. Place the split point at m = αs + (1 − α)t with α ∈ [αmin , 1] ,so that the near segment spans [m, t ] of length α(t − s).Its accumulated rotation is taken from the data velocity, 
+
+D(m, t ) = exp  α(t−s)[ ωt], while the far segment [s, m ]
+
+uses the stop-gradient model evaluation at the stepped-back state, D(s, m ) = exp  [ωs→mθ ]. By the semigroup identity (15), the composed target is 
+
+ωs→t 
+
+> tgt
+
+= log 
+
+
+
+exp  α(t−s)[ ωt] exp  [ωs→mθ ]∨
+
+, (20) which the model regresses against as in (17). Like the semi-group loss, this uses only exp and log on SO(3) and no Jacobian–vector product. The parameter α interpolates be-tween flow matching at α = 1 , where the near segment fills the interval and (20) reduces to the boundary term (19), and the differential target (14) as α → 0; we anneal α down-ward over warm-up before switching to the semigroup ob-jective. Full derivations, including the α → 0 limit, are in Appendix D. 
+
+SE(3)-Equivariant Conditional Generation 
+
+An element T ′ = ( R′, x ′) ∈ SE(3) acts on a point cloud by T ′P := {R′pk + x′}Kk=1 and on a grasp pose by 
+
+T ′T := (R′R, R ′x + x′). Equivariant grasp generation means that rigidly transforming the object transforms the generated grasps identically, which in the language of distri-butions is the following invariance. 
+
+Definition 1 (Invariant conditional distribution) . A distri-bution on SE(3) conditioned on a point cloud is SE(3) -invariant if p(T ′T | T ′P) = p(T | P ) for all T ′ ∈ SE(3) .
+
+Definition 2 (Equivariant average-velocity field) . The pair 
+
+(ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+) is SE(3) -equivariant if, for all T ′ = ( R′, x ′),
+
+(ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( s, t, T ′P, T ′T ) = R′ (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( s, t, P, T ).
+
+(21) Sampling applies the average-velocity step (see details in Appendix L), which for s ≤ t defines the map 
+
+Φt→s(P, T t) = 
+
+
+
+exp  −(t−s)[ ωavg  
+
+> θ
+
+]Rt, x t −(t−s) vavg 
+
+> θ
+
+
+
+.
+
+(22) 4Proposition 1 (Equivariance of the flow map) . If 
+
+(ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+) is equivariant, then Φt→s(T ′P, T ′Tt) =
+
+T ′ Φt→s(P, T t), and so is any composition Φt1→t0 ◦ · · · ◦ 
+
+ΦtK →tK−1 .
+
+Proposition 2 (Few-step invariance) . Let the prior p1(T |P) be SE(3) -invariant and let ΦP be any composition of equivariant steps (22) . Then the generated distribution 
+
+(Φ P )#p1 is SE(3) -invariant. 
+
+We refer to Appendix H for detailed proofs. 
+
+Remark 2. Proposition 2 is stated for pushforward mea-sures rather than densities, which is what makes it valid in the few-step regime: the change-of-variables argument used for continuous normalizing flows (Katsman et al. 2021; Lim et al. 2024) requires the transport map to be a diffeo-morphism, whereas a learned one-step map carries no such guarantee. Invariance of the generated distribution needs only equivariance of the map. 
+
+Both hypotheses hold in our construction: the prior of Sec-tion 3 is invariant because the rotation component is uniform on SO(3) and the translation component is centered at ¯p,which transforms with the object; and the two-time velocity network (See Appendix G) is SE(3) -equivariant, which we prove in Proposition 10. The training targets inherit equiv-ariance as well — (16) and (17) are built from equivariant field evaluations composed by exp , log and addition, all of which commute with the group action — so the objective is invariant, and training does not break the guarantee. 
+
+Sampling 
+
+Because fθ already represents the interval-averaged field, sampling replaces numerical integration by a direct average-velocity step. Given a prior sample T1 = ( R1, x 1) ∼ p1(T |P), few-step generation applies this update on each subinter-val of a schedule 1 = tK > · · · > t 0 = 0 ,
+
+Rtk−1 = exp   − (tk −tk−1)[ ωavg  
+
+> θ
+
+]Rtk ,xtk−1 = xtk − (tk −tk−1) vavg  
+
+> θ
+
+, (23) so that the number of function evaluations equals the number of steps; one-step generation is the case K = 1 . We report results for two samplers built on (23): Euler integration as written, and an exp-SO(3) variant that takes the rotation update toward the endpoint implied by the interval-averaged field; pseudocode for both is given in Appendix L. Guidance is applied at no additional cost. Following EquiGraspFlow (Lim et al. 2024), the point cloud is replaced by a null condition with fixed probability during training, and the network models the guided average velocity directly rather than combining two evaluations at sampling time. Be-ing an affine combination of the conditional and uncondi-tional fields, the guided field is equivariant whenever both are, so Propositions 1 and 2 apply unchanged. 
+
+## 4 Experiments 
+
+We evaluate GraspMeanFlow on conditional 6-DoF grasp generation against recent diffusion and flow-based baselines, reporting both generation quality and sampling efficiency as the step budget is reduced. We evaluate two instantiations of the framework, which share the network and training budget and differ in the consistency term and the prior–data cou-pling: GMF-SG pairs the flow-matching boundary with the semigroup loss under independent coupling, and GMF-JVP 
+
+pairs it with the differential MeanFlow identity, supervised through a Jacobian–vector product, under per-object optimal-transport coupling. 
+
+Datasets 
+
+Following EquiGraspFlow (Lim et al. 2024), we conduct ex-periments on four object categories from ACRONYM (Epp-ner, Mousavian, and Fox 2021): Bowl, Laptop, Mug, and Pencil, with their train/test splits. Each training example con-sists of an object point cloud and a set of successful 6-DoF parallel-jaw grasp poses. A single model is trained jointly on all four categories, and every method is evaluated on the same randomly rotated test objects. 
+
+Baselines 
+
+We compare with three released models. EquiGraspFlow learns an instantaneous SE(3) -equivariant flow and is the most closely related baseline: our model shares its back-bone and benchmark, so the comparison isolates the training objective. SE(3)-DiffusionFields (Urain et al. 2023) gener-ates grasps with a score-based diffusion process on SE(3) .BRIDGER (Chen et al. 2024) transports samples from a heuristic prior with a stochastic-interpolant bridge. Earlier and excluded grasp generators are discussed in Appendix F. 
+
+Implementation Details 
+
+We use the publicly released checkpoints of all baselines un-der a consistent evaluation protocol; SE(3)-DiffusionFields and BRIDGER are trained on supersets of our categories. The baselines are integrated with first-order Euler solvers at step counts matched to the reported NFE; EquiGraspFlow’s released RK-MK sampler would otherwise spend four field evaluations per step, and the diffusion baselines are addition-ally reported at their native settings. Evaluation seeds are fixed and shared across methods. 
+
+Training Details 
+
+Model and trainer. We implement our method within the publicly released EquiGraspFlow codebase and depart from it in three respects. (i) Model. The field is conditioned on a time pair (s, t ) through a shared two-time embedding; the VN-DGCNN encoder and vector-neuron head are otherwise inherited unchanged (Appendix G). (ii) Objective. In place of the flow-matching loss, we train with the SE(3) MeanFlow objective in decomposed form: a flow-matching boundary term together with a consistency term. We report two in-stantiations, which share this identical network — GMF-SG uses semigroup consistency, GMF-JVP the differential iden-tity (10) in its inverse-Jacobian form (Appendix K). (iii) Coupling. GMF-JVP additionally pairs each data grasp with a prior sample by a per-object SE(3) optimal-transport as-signment rather than by independent sampling (Appendix I); GMF-SG retains the independent coupling. 5Bowl Laptop Mug Pencil NFE 2 5 10 20 2 5 10 20 2 5 10 20 2 5 10 20 SE(3)-DiF 14.1 21.7 34.3 52.3 8.0 14.9 22.9 34.5 10.4 19.9 31.0 44.6 11.4 23.6 36.2 51.2 BRIDGER 22 .0 77.8 90.9 93.0 9.8 56.4 79.0 84.1 40 .0 90 .6∗ 93.0 94.4 5.4 72.6 98 .8∗ 99 .0
+
+EquiGraspFlow 58 .6∗ 75.1 95 .1 98.0 25 .6∗ 61.2 85 .5 95 .8∗ 57 .8∗ 85.1 91.7 97 .5∗ 65 .0∗ 81 .3 92.5 99 .6∗
+
+GMF-SG (exp-SO(3) ) 15.0 93 .6 98 .7 99 .2∗ 8.2 82 .6 83.6 85.6 23.4 87.8 94 .8 95 .0 30 .4 77.9 85.3 84.8 GMF-JVP (exp-SO(3) ) 10.7 96 .8∗ 98 .9∗ 99 .0 6.3 85 .5∗ 90 .5∗ 87 .6 17.5 88 .1 97 .5∗ 97 .5∗ 26.9 94 .1∗ 98 .2 98.1 Ground truth 97.7 97.1 96.7 99.7 
+
+Table 1: Per-category grasp success rate (%) vs. NFE, with the exp-SO(3) sampler for both GraspMeanFlow variants. Higher is better. Best and second-best in each column are highlighted; the best is marked with ∗.1 2 5 10 20 
+
+> NFE
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> EMD
+> SE(3)-DiF
+> BRIDGER
+> EquiGraspFlow
+> GMF-SG (Euler)
+> GMF-JVP (Euler)
+
+Figure 2: EMD versus NFE, averaged over the four cate-gories, with Euler integration. Both GraspMeanFlow config-urations are within 0.05 of their converged EMD after a single evaluation, whereas EquiGraspFlow collapses at NFE 1 and the diffusion-based baselines stay above 0.44 throughout. 
+
+Two-stage training. Stage 1 is an α-Flow warm-up (the first 18k steps, with α annealed 1→0.2); Stage 2 switches to the boundary-plus-consistency objective for the remain-ing 102k steps. The warm-up is optional (Appendix P). The consistency weight of GMF-JVP is set so that the two loss terms contribute comparably. Full hyperparameters for both configurations and all stages are listed in Appendix J. 
+
+Evaluation Metrics and Settings 
+
+Distribution fidelity is measured by Hungarian EMD un-der the benchmark SE(3) pose cost. Grasp feasibility is measured by simulated lift success under an NVIDIA Isaac Gym (Makoviychuk et al. 2021) protocol, identical for ev-ery method. Inference efficiency is measured by the number of function evaluations (NFE) and model-only wall-clock latency; for every sampler used here, each integration step uses one velocity-field evaluation, so NFE equals the num-ber of sampling steps, and the two configurations share the same network and therefore the same cost per step. All la-tency measurements use a single A100 with batch size one and include model inference only. EMD is reported with Eu-ler integration for both configurations. Success is reported with the exp-SO(3) sampler, an endpoint-style sampler on the interval-averaged field: at each step it forms the data-Laptop Mug Bowl Pencil 
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Grasp success rate (%)
+> SE(3)-DiF
+> BRIDGER
+> EquiGraspFlow
+> GMF-SG (exp-SO(3))
+> GMF-JVP (exp-SO(3))
+
+Figure 3: Per-category grasp success at NFE 5 with the exp-
+
+SO(3) sampler. Error bars denote the standard error of the mean over rotated test instances. endpoint prediction from the average velocity and moves the rotation along the geodesic toward it at a fixed rate, following the exponential rotation scheduler of ReQFlow (Yue, Wang, and Xu 2025). The accelerated schedule applies only to the rotational component; the translational update is always lin-ear, and the sampler requires NFE ≥2. Success under Euler integration is reported in Appendix O. Full protocol and sim-ulation details are in Appendices M and N. 
+
+Results 
+
+Distributional fidelity. With a single function evalua-tion, GMF-SG obtains 0.418 EMD and remains the best-performing method through NFE 5, demonstrating high dis-tributional fidelity in the few-step regime; GMF-JVP reaches 
+
+0.466 under the same budget (Figure 2). Both are far below the baselines at NFE 1, where the closest competitor is at 
+
+0.694 , and EquiGraspFlow collapses to 0.734 . With addi-tional steps, the two equivariant flow models stabilize. Both configurations therefore reach an accurate grasp distribution with substantially fewer function evaluations, and the cou-pling that makes GMF-JVP the stronger model for grasp success costs it roughly 0.05 EMD throughout. 
+
+Grasp success. At NFE 1 , 2 no method is usable: the best four-category average is 53 .9. The exp-SO(3) schedule is particularly ill-suited to this budget, since η saturates at 1
+
+6SE(3)-DiF BRIDGER EquiGraspFlow GMF-SG GMF-JVP 
+
+> Laptop Mug Bowl Pencil
+
+Figure 4: Grasps generated at NFE 5 for one test instance per category (rows), colored by simulated outcome (green: suc-cess, red: failure). Every column is generated from the same rotated object with the same protocol; the two GraspMean-Flow configurations (red box) use the exp-SO(3) sampler and the baselines their own samplers. and the first update therefore commits the rotation to an endpoint predicted from a nearly untransported prior sam-ple. We therefore focus on NFE 5 and above. At NFE 5, GMF-JVP is the strongest method on most categories, ex-ceeding EquiGraspFlow by 21 .7, 24 .3, 3.0, and 12 .8 points on Bowl, Laptop, Mug, and Pencil, while GMF-SG trails EquiGraspFlow only on Pencil, by 3.4 points (Figure 3). BRIDGER is marginally stronger on Mug ( 90 .6 versus 88 .1), benefiting from its informative heuristic prior, but trails by 
+
+19 .0 and 29 .1 points on Bowl and Laptop. At NFE 10, GMF-JVP averages 96 .3% against EquiGraspFlow’s 91 .2% , and at NFE 20 the fully converged baseline takes the lead ( 97 .7% 
+
+versus 95 .6% ): the advantage of average-velocity modeling is concentrated in the intended few-step regime. Per-category results at every budget are in Table 1, and success under Euler integration is in Table 7 in the appendix. 
+
+Ablation. Supervising the differential MeanFlow identity requires the spatial-frame formulation of Sec. 3: pairing the body-frame trajectory tangent with the left Jacobian, as an earlier implementation of ours did, diverges on the rota-tionally symmetric Bowl ( 1.11 one-step EMD, against 0.53 
+
+for the boundary-plus-semigroup objective); with the frame-consistent tangent and the inverse-Jacobian target the same identity trains stably and yields GMF-JVP. Either consis-tency term must be paired with a data-anchored loss, since self-consistency alone admits collapsed minimizers (Ap-pendix E). Complete ablations are in Appendix P. 
+
+Inference cost. Latency should be compared at matched quality rather than at matched step counts, since the base-lines use smaller networks and are cheaper per evaluation. GMF-SG reaches an EMD of 0.418 in 31 .5 ms with a sin-gle evaluation, where EquiGraspFlow needs 44 .7 ms and neither diffusion baseline reaches that EMD at any bud-get; GMF-JVP reaches 96 .3% success in 56 .3 ms, where SE(3)-DiffusionFields needs 1338 .7 ms for 96 .1% . Full la-tency curves are in Appendix Q. 
+
+Training budget and model size. GraspMeanFlow adds no capacity over its flow-matching counterpart: the network has 633 k parameters, the EquiGraspFlow trunk with only a two-time embedding added, and both configurations are trained for 120k steps ( ∼7 hours on one A100). GMF-JVP additionally solves one assignment problem per object per step, which is negligible next to the forward and backward passes. Few-step performance therefore comes from the ob-jective, not from model scale or training budget. 
+
+## 5 Discussion and Limitations 
+
+Our results locate the advantage of average-velocity model-ing squarely in the few-step regime. At NFE 5, GraspMean-Flow improves simulated success over EquiGraspFlow by up to 24 .3 points, whereas at NFE 20 the iterative baseline has integrated its instantaneous field accurately enough that little remains to be gained, and the two are comparable on Bowl and Mug. This is the expected trade-off: the average-velocity field absorbs the integration error that a solver would other-wise accumulate, which matters most when the step budget is small. The network, dataset, and pre-training budget are shared with EquiGraspFlow, so the gain does not come from capacity. It comes from the objective together with the sam-pler the objective makes available: an interval-averaged field admits an endpoint prediction at every step, which an instan-taneous field does not. Figure 4 shows the generated grasps for one instance per category at NFE 5. Two limitations are worth stating. First, Pencil is the cate-gory on which our gains are least consistent: GMF-SG trails EquiGraspFlow at every step budget, and GMF-JVP, while ahead at NFE 5 and 10, falls behind at NFE 20. We attribute this to symmetry: a pencil is nearly invariant under rotations about its long axis, so grasp orientations that are physically equivalent differ by a rotation that our log -displacement tar-get treats as a genuine distance. A symmetry-aware target— taking the logarithm to the nearest representative in the ob-ject’s symmetry group—would remove this mismatch, and we leave it to future work. Second, how to schedule the end-point rate as a function of the step budget remains an open question. We also report a negative result: post-training on success-filtered self-generated samples helps the Euler sam-pler but degrades the endpoint-style sampler (Table 7). 
+
+## 6 Conclusion 
+
+We introduced GraspMeanFlow, an SE(3) -equivariant few-step generative model for 6-DoF grasp poses, in which the av-erage velocity is defined through the time-ordered exponen-tial and therefore reproduces exactly the rigid-body displace-ment accumulated over an interval. We proved that a point-cloud-conditioned distribution transported by an equivariant average-velocity flow map remains invariant, so the equivari-ance guarantee survives the reduction in sampling steps, at no architectural cost beyond a two-scalar time embedding. Two instantiations sharing this network prove complementary on ACRONYM, one on distributional fidelity and the other on simulated success. A symmetry-aware training target and a step-budget-aware sampler schedule remain open. 7Acknowledgments 
+
+We gratefully acknowledge support from the National Sci-ence Foundation (DMS-2533878, DMS-2053746, DMS-2134209, ECCS-2328241, CBET-2347401, and OAC-2311848) and the U.S. Department of Energy (DOE) Office of Science, Advanced Scientific Computing Research pro-gram, under the “Uncertainty Quantification for Multifidelity Operator Learning (MOLUcQ)” project (Project No. 81739), DE-SC0023161, the SciDAC LEADS Institute, and DOE Fu-sion Energy Sciences under Grant No. DE-SC0024583. 
+
+## References 
+
+Bai, Y.; Lu, B.; Liu, Y.; Akbari, E.; Kolouri, S.; Wang, L.; He, P.; Wang, S.; Zhang, R.; and Lin, G. 2026. SE(3)-MeanFlow: Few-Step Protein Backbone Generation on Lie Groups. arXiv preprint arXiv:2607.27431 .Bose, A. J.; Akhound-Sadegh, T.; Huguet, G.; Fatras, K.; Rector-Brooks, J.; Liu, C.-H.; Nica, A. C.; Korablyov, M.; Bronstein, M.; and Tong, A. 2023. Se (3)-stochastic flow matching for protein backbone generation. arXiv preprint arXiv:2310.02391 .Breyer, M.; Chung, J. J.; Ott, L.; Siegwart, R.; and Nieto, J. 2021. Volumetric Grasping Network: Real-time 6 DOF Grasp Detection in Clutter. In Kober, J.; Ramos, F.; and Tomlin, C., eds., Proceedings of the 2020 Conference on Robot Learning , volume 155 of Proceedings of Machine Learning Research , 1602–1611. PMLR. Chen, K.; Lim, E.; Lin, K.; Chen, Y.; and Soh, H. 2024. Don’t Start From Scratch: Behavioral Refinement via Interpolant-based Policy Diffusion. In Proceedings of Robotics: Science and Systems (RSS) . Delft, Netherlands. Cheng, C.; Li, J.; Fan, J.; and Liu, G. 2025. α-Flow: A Unified Framework for Continuous-State Discrete Flow Matching Models. arXiv preprint arXiv:2504.10283 .Deng, C.; Litany, O.; Duan, Y.; Poulenard, A.; Tagliasac-chi, A.; and Guibas, L. J. 2021. Vector neurons: A general framework for so (3)-equivariant networks. In Proceedings of the IEEE/CVF international conference on computer vision ,12200–12209. Eppner, C.; Mousavian, A.; and Fox, D. 2021. ACRONYM: A Large-Scale Grasp Dataset Based on Simulation. In Pro-ceedings of the IEEE International Conference on Robotics and Automation (ICRA) .Geng, Z.; Lu, Y.; Wu, Z.; Shechtman, E.; Kolter, J. Z.; and He, K. 2025a. Improved Mean Flows: On the Chal-lenges of Fastforward Generative Models. arXiv preprint arXiv:2512.02012 .Geng, Z.; et al. 2025b. MeanFlow: One-step generative mod-eling via average velocity. Katsman, I.; Lou, A.; Lim, D.; Jiang, Q.; Lim, S. N.; and De Sa, C. M. 2021. Equivariant manifold flows. Advances in Neural Information Processing Systems , 34: 10600–10612. Liang, H.; Ma, X.; Li, S.; Görner, M.; Tang, S.; Fang, B.; Sun, F.; and Zhang, J. 2019. PointNetGPD: Detecting Grasp Configurations from Point Sets. In 2019 International Con-ference on Robotics and Automation (ICRA) , 3629–3635. IEEE. Lim, B.; Kim, J.; Kim, J.; Lee, Y.; and Park, F. C. 2024. EquiGraspFlow: SE(3)-Equivariant 6-DoF Grasp Pose Gen-erative Flows. In Conference on Robot Learning (CoRL) .Liu, X.; Gong, C.; and Liu, Q. 2023. Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow. In International Conference on Learning Representations .Makoviychuk, V.; Wawrzyniak, L.; Guo, Y.; Lu, M.; Storey, K.; Macklin, M.; Hoeller, D.; Rudin, N.; Allshire, A.; Handa, A.; and State, G. 2021. Isaac Gym: High Performance GPU-Based Physics Simulation For Robot Learning. In Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 2) .Mousavian, A.; Eppner, C.; and Fox, D. 2019. 6-dof grasp-net: Variational grasp generation for object manipulation. In 
+
+Proceedings of the IEEE/CVF international conference on computer vision , 2901–2910. Pooladian, A.-A.; Ben-Hamu, H.; Domingo-Enrich, C.; Amos, B.; Lipman, Y.; and Chen, R. T. 2023. Multisam-ple flow matching: Straightening flows with minibatch cou-plings. arXiv preprint arXiv:2304.14772 .Qin, Y.; Chen, R.; Zhu, H.; Song, M.; Xu, J.; and Su, H. 2020. S4G: Amodal Single-view Single-Shot SE(3) Grasp Detection in Cluttered Scenes. In Kaelbling, L. P.; Kragic, D.; and Sugiura, K., eds., Proceedings of the Conference on Robot Learning , volume 100 of Proceedings of Machine Learning Research , 53–65. PMLR. Sundermeyer, M.; Mousavian, A.; Triebel, R.; and Fox, D. 2021. Contact-GraspNet: Efficient 6-DoF Grasp Generation in Cluttered Scenes. In 2021 IEEE International Conference on Robotics and Automation (ICRA) , 13438–13444. IEEE. ten Pas, A.; Gualtieri, M.; Saenko, K.; and Platt, R. 2017. Grasp Pose Detection in Point Clouds. The International Journal of Robotics Research , 36(13–14): 1455–1473. Tong, A.; Fatras, K.; Malkin, N.; Huguet, G.; Zhang, Y.; Rector-Brooks, J.; Wolf, G.; and Bengio, Y. 2023. Improving and generalizing flow-based generative models with mini-batch optimal transport. arXiv preprint arXiv:2302.00482 .Urain, J.; Funk, N.; Peters, J.; and Chalvatzaki, G. 2023. 
+
+SE(3) -DiffusionFields: Learning Smooth Cost Functions for Joint Grasp and Motion Optimization through Diffusion. In Proceedings of the IEEE International Conference on Robotics and Automation (ICRA) .Villani, C.; et al. 2009. Optimal transport: old and new ,volume 338. Springer. Weng, Z.; Lu, H.; Lundell, J.; and Kragic, D. 2024. CAP-Grasp: An R3 × SO(2) -Equivariant Continuous Approach-Constrained Generative Grasp Sampler. IEEE Robotics and Automation Letters , 9(4): 3641–3647. Woo, D.; Skreta, M.; Park, S.; Neklyudov, K.; and Ahn, S. 2026. Riemannian MeanFlow. arXiv preprint arXiv:2602.07744 .Yue, A.; Wang, Z.; and Xu, H. 2025. Reqflow: Rectified quaternion flow for efficient and high-quality protein back-bone generation. arXiv preprint arXiv:2502.14637 .Zhong, Z.; Sun, H.; Zhao, Y.; Gong, Y.; and Yin, Y. 2026. Riemannian MeanFlow for One-Step Generation on Mani-folds. arXiv preprint arXiv:2603.10718 .8Appendix Contents 
+
+A Background: SO(3) Space 10 B Background: MeanFlow in Euclidean Space 11 C Detailed Formulation of the SE(3) MeanFlow Method 12 D JVP-Free Training via SE(3) α-Flow 15 E Semigroup Formulation of SE(3)-MeanFlow and the Semigroup Loss 18 F Related Work 21 G Architecture 22 H Theoretical Properties of Equivariant Flows 23 I Optimal-Transport Coupling: Minibatch versus Per-Object 25 J Training Configuration 25 K Training Algorithm 26 L Sampling Algorithm 26 M Evaluation Protocol 27 N Simulation Details 27 O Full Quantitative Results 28 P Additional Ablations 28 Q Latency Details 29 R Post-Training with Success-Filtered ReFlow 30 
+
+9A Background: SO(3) Space 
+
+Basic Concepts in SO(3) Space 
+
+The special orthogonal group in three dimensions is 
+
+SO(3) := {R ∈ R3×3 : RR ⊤ = R⊤R = I3, det( R) = 1 }.
+
+The constraint RR ⊤ = I3 consists of smooth polynomial equations, so SO(3) is a smooth embedded submanifold of R9.Equipped with matrix multiplication (S1, S 2) 7 → S1S2 it forms a Lie group, with identity I3 and inverse R−1 = R⊤.
+
+Tangent space. Let R ∈ SO(3) be fixed and let R(t) be a smooth curve with R(0) = R. Differentiating R(t)R(t)⊤ = I3 at 
+
+t = 0 yields ˙R(0) R⊤ + R ˙R(0) ⊤ = 0 ,
+
+so ˙R(0) R⊤ is skew-symmetric. The tangent space at R is therefore 
+
+TRSO(3) = { [ω] R : ω ∈ R3 },
+
+where the Lie algebra 
+
+so (3) := {Ω ∈ R3×3 : Ω ⊤ = −Ω}
+
+is identified with R3 through the hat map [·] and its inverse (·)∨ defined in Section 2. This gives a global linear parameterization of tangent vectors, in which ω is the angular velocity measured in the world frame. 
+
+Lie algebra and Lie bracket. The Lie bracket on so (3) is the matrix commutator 
+
+[ω1], [ω2] = [ ω1][ ω2] − [ω2][ ω1],
+
+which preserves skew-symmetry, so so (3) is closed under it. In vector coordinates it is the cross product, [ω1], [ω2] = [ ω1 ×ω2 ].
+
+Curves and Flows in SO(3) 
+
+In Euclidean space a curve starting from x0 is defined by the ODE ˙Xt = v(t, X t), giving X1 = x0 + R 10 v(t, x t) dt . We now extend this construction to the Lie group SO(3) .
+
+ODE-defined curves on SO(3) . Let Rt : [0 , 1] → SO(3) be a time-dependent curve. Its evolution is given by 
+
+R0 = r0,
+
+˙Rt = [ ωt] Rt, ωt ∈ R3.
+
+This guarantees that Rt remains in SO(3) for all t, since 
+
+ddt 
+
+ RtR⊤
+
+> t
+
+ = [ ωt]RtR⊤ 
+
+> t
+
++ RtR⊤ 
+
+> t
+
+[ωt]⊤ = [ ωt] + [ ωt]⊤ = 0 .
+
+Exponential map and geodesics. When the angular velocity is constant, ωt = ω, the ODE admits the closed-form solution 
+
+Rt = exp  t[ω] R0,
+
+and under the canonical bi-invariant Riemannian metric on SO(3) , curves of this form are geodesics. Given two points 
+
+R0, R 1 ∈ SO(3) , requiring R1 = exp([ ω]) R0 gives exp([ ω]) = R1R⊤ 
+
+> 0
+
+, so the geodesic connecting them is 
+
+Rt = exp  t log( R1R⊤ 
+
+> 0
+
+) R0, t ∈ [0 , 1] ,
+
+where log denotes the matrix logarithm mapping SO(3) to so (3) . This curve minimizes path length among all smooth curves on SO(3) connecting R0 and R1.
+
+Inner product and geodesic distance in SO(3) . Under the canonical bi-invariant Riemannian metric we identify TRSO(3) = 
+
+{[ω]R} and define the inner product 
+
+[ω1]R, [ω2]R R = 12 tr  [ω1]⊤[ω2] = ω⊤ 
+
+> 1
+
+ω2,
+
+which is invariant under both left and right multiplication. The induced geodesic distance between R0, R 1 ∈ SO(3) is 
+
+dist( R0, R 1) = 1
+
+√2 log( R1R⊤ 
+
+> 0
+
+) F = log( R1R⊤ 
+
+> 0
+
+)∨
+
+> 2
+
+,
+
+where ∥ · ∥ F denotes the Frobenius norm; this is the rotation angle between the two frames. 10 Integration in SO(3). In Euclidean space, x1 = x0 +R 10 v(t, x t) dt . Due to the non-commutative group structure, the endpoint in SO(3) cannot be written as a simple integral. Instead, the solution at t = 1 admits the group-valued representation 
+
+R(1) = T exp 
+
+ Z 10
+
+[ωt] dt 
+
+
+
+R(0) ,
+
+where T denotes the time-ordering operator 
+
+T exp 
+
+ Z 10
+
+A(t) dt 
+
+
+
+= I3 +
+
+> ∞
+
+X
+
+> k=1
+
+Z 
+
+> 0≤tk≤···≤ t1≤1
+
+A(t1) · · · A(tk) dt 1 · · · dt k,
+
+which orders the matrix products chronologically, with the latest time on the left. More generally, for s ≤ t,
+
+T exp 
+
+ Z ts
+
+[ωτ ] dτ 
+
+
+
+= RtR⊤ 
+
+> s
+
+,
+
+the quantity denoted D(s, t ) in Section 3. 
+
+## B Background: MeanFlow in Euclidean Space 
+
+This appendix restates the MeanFlow framework of Geng et al. (2025b) in Euclidean space, using the time convention of the main text ( t = 0 data, t = 1 prior, s < t ). It is included for completeness; the SE(3) formulation of Section 3 specializes to this construction on the flat translation branch. 
+
+Average Velocity and the MeanFlow Identity 
+
+Flow matching learns an instantaneous velocity field. Given data x ∼ pdata and prior ϵ ∼ pprior , the linear path zt = (1 −t)x+tϵ 
+
+has conditional velocity vt = ϵ − x, and a network vθ (zt, t ) is trained to regress it; sampling integrates ˙zτ = vθ (zτ , τ ) from 
+
+t = 1 to t = 0 .MeanFlow instead models the average velocity over an interval [s, t ],
+
+u(s, t, z t) ≜ 1
+
+t − s
+
+Z ts
+
+v(zτ , τ ) dτ, (24) a field jointly conditioned on the pair (s, t ). The displacement form (t−s) u(s, t, z t) = R ts v dτ makes two properties immediate: the diagonal limit 
+
+lim  
+
+> s→t
+
+u(s, t, z t) = v(zt, t ), (25) and, from additivity of the integral, the interval-consistency relation 
+
+(t − s) u(s, t, z t) = ( m − s) u(zm, s, m ) + ( t − m) u(zt, m, t ), s ≤ m ≤ t. (26) Differentiating the displacement form with respect to t (with s held fixed) and using the fundamental theorem of calculus yields the MeanFlow identity , which expresses the average velocity through the instantaneous velocity and a trajectory derivative: 
+
+u(s, t, z t) = v(zt, t ) − (t − s) ddt u(s, t, z t). (27) 
+
+Training Objective 
+
+The total derivative in (27) expands, via the chain rule and ˙zt = v(zt, t ), ˙s = 0 , ˙t = 1 , into a Jacobian–vector product (JVP): 
+
+ddt u(s, t, z t) = v(zt, t ) ∂z u + ∂tu, (28) computable in a single forward-mode pass (e.g. torch.func.jvp ). Parameterizing uθ and using the conditional velocity 
+
+vt = ϵ − x as the only ground-truth signal, the objective regresses uθ against a stop-gradient target, 
+
+L(θ) = E uθ (s, t, z t) − sg( utgt ) 22, utgt = vt − (t − s) vt ∂z uθ + ∂tuθ
+
+. (29) The stop-gradient avoids double backpropagation through the JVP. When s = t the correction term vanishes and (29) reduces exactly to flow matching; in practice a fixed fraction of each batch is drawn with s = t to anchor the diagonal boundary (25). 
+
+Sampling 
+
+Because uθ already represents the interval-averaged field, sampling replaces the integral by a direct average-velocity step, 
+
+zs = zt − (t − s) uθ (s, t, z t), (30) and one-step generation is z0 = z1 − uθ (z1, 0, 1) with z1 = ϵ ∼ pprior ; few-step sampling applies (30) on a schedule 
+
+1 = tK > · · · > t 0 = 0 .11 Conditioning on the Time Pair 
+
+The field uθ (z, s, t ) is conditioned on two time variables. Following Geng et al. (2025b), each of t and the interval t − s is passed through a positional embedding and a small MLP, and the two are combined into the network conditioning; the JVP in (28) is always taken with respect to uθ (·, s, t ) regardless of the embedding used. In the Euclidean implementation this conditioning is injected through adaptive layer normalization (adaLN). We depart from this choice in the equivariant setting, where an additive normalization shift would break SO(3) -equivariance. 
+
+Classifier-Free Guidance at a Single Evaluation 
+
+MeanFlow folds classifier-free guidance into the target field so that guided sampling retains its nominal number of function evaluations, rather than combining two evaluations per step. For a condition c and guidance weight β, the guided instantaneous field is the affine combination 
+
+vcfg (zt, t | c) = β v (zt, t | c) + (1 − β) v(zt, t ), (31) and the network directly models the corresponding guided average velocity ucfg  
+
+> θ
+
+. Using the diagonal identity vcfg (zt, t ) = 
+
+ucfg (zt, t, t ), the training target takes the same form as (29) with vt replaced by the guided data velocity 
+
+˜vt = β v t + (1 − β) ucfg  
+
+> θ
+
+(zt, t, t ), (32) and the condition c is dropped with a fixed probability during training. Because ucfg  
+
+> θ
+
+already models the guided field, sampling uses it directly in (30): no combination is formed at inference, so guidance incurs no additional function evaluations. Setting 
+
+β = 1 recovers the unguided objective (29). 
+
+## C Detailed Formulation of the SE(3) MeanFlow Method 
+
+Model and Loss Function 
+
+We first collect the differential-geometric facts used below. 
+
+Remark 3. • The hat map does not contribute to the derivative. Let ω : [0 , 1] → R3 be a smooth curve. Since [·] is linear and independent of t, the chain rule gives 
+
+ddt [ω(t)] = 
+
+h dω dt 
+
+i
+
+∈ R3×3.
+
+• Fréchet derivative of the matrix exponential. Let M (t) : [0 , 1] → R3×3 be a smooth matrix curve and F (t) = exp( M (t)) .By the chain rule on Banach spaces, ˙F (t) = d(exp) M (t)[ ˙M (t)] , where d(exp) M admits the integral (Wilcox) representation 
+
+d(exp) M (H) = 
+
+Z 10
+
+e(1 −α)M H e αM dα. 
+
+• Conjugation identity. For any Q ∈ SO(3) and ω ∈ R3, Q [ω] Q⊤ = [ Qω ].
+
+• Derivative with respect to a point on a manifold. For a smooth curve t 7 → R(t) on SO(3) and a smooth f : SO(3) → R, 
+
+> ddt
+
+f (R(t)) = df R(t)[ ˙R(t)] = ∇M 
+
+> R
+
+f (R(t)) , ˙R(t) ,
+
+with ∇M 
+
+> R
+
+f the Riemannian gradient. Under the canonical inner product ⟨A, B ⟩ = Tr( A⊤B) on SO(3) ⊂ R3×3, the Riemannian gradient coincides with the Euclidean gradient of any smooth extension. 
+
+Recall the definition of the average velocity from (7), which we restate here in the notation of this appendix: 
+
+exp  [ωs→t] := T exp 
+
+ Z ts
+
+[ω(τ, R τ , x τ )] dτ 
+
+
+
+, ωs→t = ( t − s) ωavg (s, t, R t, x t). (33) 
+
+Remark 4. SO(3) is not commutative, so in general T exp   R ts [ωτ ]dτ ̸ = exp   R ts [ωτ ]dτ  unless ωτ is constant. The average velocity therefore cannot be defined by integrating ωτ directly. 
+
+Since each [ω(τ, R τ , x τ )] ∈ so (3) , we have ωavg (s, t, R t, x t) ∈ R3. In the extreme case s = 0 , t = 1 , the average velocity transports the data sample to the prior sample and back: 
+
+(R1 = exp  [ω0→1]R0 (forward) ,R0 = exp   − [ω0→1]R1 (backward) .
+
+12 Proposition 3 (Derivative of the averaged angular velocity) . Treating s and t as independent and writing ωs→t = ( t −
+
+s) ωavg (s, t, R t, x t), differentiating both sides of (33) with respect to t yields 
+
+(L.H.S. =
+
+h
+
+J ωs→t ddt ωs→t
+
+i
+
+RtR⊤ 
+
+> s
+
+,
+
+R.H.S. = ω(t, R t, x t) RtR⊤ 
+
+> s
+
+, (34) 
+
+and hence J(ωs→t) ddt ωs→t = ω(t, R t, x t), which is (10) .Proof. Differentiate both sides of (33) with respect to t.For the right-hand side, the derivative rule for the time-ordered exponential under the spatial convention ˙Rτ = [ ωτ ]Rτ places the generator on the left :
+
+ddt T exp 
+
+ Z ts
+
+[ωτ ] dτ 
+
+
+
+= ω(t, R t, x t) T exp 
+
+ Z ts
+
+[ωτ ] dτ 
+
+
+
+= ω(t, R t, x t) exp  [ωs→t], (35) where exp([ ωs→t]) = RtR⊤ 
+
+> s
+
+by definition. For the left-hand side, the Wilcox formula, with the exponential factored out on the left, gives 
+
+ddt exp  [ωs→t] =
+
+Z 10
+
+e(1 −α)[ ωs→t]h ddt ωs→ti
+
+eα[ωs→t] dα 
+
+=
+
+ Z 10
+
+eα[ωs→t]h ddt ωs→ti
+
+e−α[ωs→t] dα 
+
+
+
+exp  [ωs→t]
+
+=
+
+ Z 10
+
+h
+
+eα[ωs→t] ddt ωs→ti
+
+dα 
+
+
+
+exp  [ωs→t]
+
+=
+
+h Z 10
+
+eα[ωs→t]dα 
+
+ ddt ωs→ti
+
+exp  [ωs→t]. (36) The second line substitutes α 7 → 1−α and factors exp([ ωs→t]) to the right; the third uses the conjugation identity Q[a]Q⊤ = [ Qa ]
+
+with Q = eα[ωs→t] ∈ SO(3) ; the last uses linearity of [·] in α. Recognizing 
+
+J ωs→t =
+
+Z 10
+
+eα[ωs→t] dα 
+
+as the left Jacobian (12) and equating (35) with (36) gives (34); canceling the common right factor exp([ ωs→t]) and applying 
+
+(·)∨ completes the proof. 
+
+Remark 5 (Closed form of the left Jacobian) . Evaluating the integral gives, for ϕ ∈ R3 with ∥ϕ∦ = 0 ,
+
+J(ϕ) = I + 1 − cos ∥ϕ∥∥ϕ∥2 [ϕ] + ∥ϕ∥ − sin ∥ϕ∥∥ϕ∥3 [ϕ]2,
+
+with J(ϕ) → I as ∥ϕ∥ → 0; in practice we use the Taylor expansion of this expression for numerical stability in that regime. 
+
+Remark 6 (Constant angular velocity) . If the angular velocity is constant, ωτ = ω, then ωs→t = ( t − s)ω and ddt ωs→t = ω.Since [ω] ω = ω × ω = 0 , every term of the series (12) beyond k = 0 annihilates ω, so J(ωs→t) ω = ω: the Jacobian does not distort the velocity when the rotation axis is fixed. 
+
+Proposition 4. The total derivative of ωavg along the trajectory is 
+
+ddt ωavg (s, t, R t, x t) = ∂tωavg + ∇Rωavg , ˙Rt + ∇xωavg , ˙xt .
+
+Proof. By Remark 3, dRωavg [ · ] agrees with the Euclidean differential on TRt SO(3) , and similarly for the Euclidean component. Applying the chain rule along t 7 → (Rt, x t) gives the claim. Substituting the network output ωavg  
+
+> θ
+
+(s, t, R t, x t) and writing ωs→tθ = ( t − s) ωavg  
+
+> θ
+
+, the differential objective of (14) reads 
+
+Ldiff := Es<t, (( R0,x 0),(R1,x 1)) ∼q0,1
+
+h
+
+J ωs→tθ
+
+ ddt ωs→tθ − ω(t, R t, x t) 22
+
+i
+
+, (37) where q0,1 is a coupling between the data and prior distributions. The interpolation and its velocity are 
+
+ω(t) = log( R1R⊤ 
+
+> 0
+
+)∨, Rt = exp  t[ω(t)] R0, ˙Rt = [ ω(t)] Rt.
+
+13 10 −14 10 −11 10 −8 10 −5 10 −2 10 1
+
+relative residual of J(!s ! t) ddt !s ! t = !t
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100   
+
+> count
+> left Jacobian (ours)
+> no Jacobian ( J=I, control)
+
+Figure 5: Relative residual of (10) over 256 random smooth trajectories, computed with the left Jacobian (red) and with the Jacobian dropped ( J=I, gray). Thirteen orders of magnitude separate the exact identity from its linearization. 
+
+Proposition 5. If Ldiff = 0 , i.e., J(ωs→tθ ) ddt ωs→tθ = ω(t, R t, x t) for all s < t ∈ [0 , 1] , then exp  [ωs→tθ ] = RtR⊤ 
+
+> s
+
+.Proof. Take s = 0 for simplicity and define the candidate reconstruction ˜Rt := exp  [ω0→tθ ]R0. By the Fréchet derivative computed in (36), 
+
+ddt exp  [ω0→tθ ] =
+
+h
+
+J ω0→tθ
+
+ ddt ω0→tθ
+
+i
+
+exp  [ω0→tθ ],
+
+so the zero-loss condition gives ˙˜Rt = [ ω(t, R t, x t)] ˜Rt. The interpolation satisfies the same equation, ˙Rt = [ ω(t, R t, x t)] Rt,with the same initial condition ˜R0 = R0. By uniqueness of solutions on SO(3) , ˜Rt = Rt for all t, i.e., exp([ ω0→tθ ]) = RtR⊤ 
+
+> 0
+
+.The same argument for general s < t gives exp([ ωs→tθ ]) = RtR⊤ 
+
+> s
+
+.Finally, expanding ddt ωs→tθ by the product rule and Proposition 4, 
+
+ddt ωs→tθ = ωavg  
+
+> θ
+
++ ( t − s)
+
+
+
+∂tωavg  
+
+> θ
+
++ ∇Rωavg  
+
+> θ
+
+, ˙Rt + ∇xωavg  
+
+> θ
+
+, ˙xt
+
+
+
+, (38) which is the quantity computed as a single Jacobian–vector product in (14). Algorithm 1: Differential SE(3) MeanFlow training step (not used in our final model) 
+
+Require: dataset D, encoder fenc , two-time field fθ , dropout puncond , diagonal probability pdiag 
+
+1: while not converged do 
+
+2: Sample (P, R 0, x 0) ∼ D ; z ← fenc (P); z ← 0 w.p. puncond 
+
+3: Sample R1 ∼ Unif(SO(3)) , x1 ∼ N (0 , I ), t ∼ Unif(0 , 1] , s ∼ Unif(0 , t ) ▷ s ← t w.p. pdiag 
+
+4: ωt ← log( R1R⊤ 
+
+> 0
+
+)∨; vt ← x1 − x0
+
+5: Rt ← exp  t[ωt]R0; xt ← (1 −t)x0 + tx 1
+
+6: ˙s ← 0; ˙t ← 1; ˙Rt ← [ωt]Rt; ˙xt ← vt ▷ trajectory tangent 
+
+7:  ωavg  
+
+> θ
+
+, v avg 
+
+> θ
+
+,   ˙ωavg  
+
+> θ
+
+, ˙vavg 
+
+> θ
+
+ ← jvp  fθ ; ( s, t, R t, x t), ( ˙Rt, ˙xt, ˙s, ˙t) ▷ one forward-mode pass, both branches 
+
+8: ωs→tθ ← (t − s) ωavg 
+
+> θ
+
+9: ωavg tgt ← J ωs→tθ
+
+−1ωt − (t − s) ˙ ωavg  
+
+> θ
+
+▷ rotation: J̸ = I
+
+10: vavg tgt ← vt − (t − s) ˙ vavg  
+
+> θ
+
+▷ translation: J ≡ I
+
+11: Ldiff ← ∥ ωavg  
+
+> θ
+
+− sg  ωavg tgt 
+
+∥2 + ∥vavg  
+
+> θ
+
+− sg  vavg tgt 
+
+∥2
+
+12: Adam step on Ldiff ; EMA update 
+
+13: end while Numerical validation of (10) . We evaluate the identity on closed-form, non-geodesic trajectories Rt = exp([ ϕ(t)]) with ϕ
+
+random smooth curves, for which the spatial velocity ωt = J(ϕ) ˙ϕ is available in closed form; ωs→t = log( RtR⊤ 
+
+> s
+
+)∨ and the total derivative (11) are computed by automatic differentiation, so the state dependence along the trajectory is treated exactly. In double precision, the residual is at most 2 × 10 −10 and concentrates at 10 −15 (Figure 5); the small tail stems from the numerical guards of the matrix logarithm near π. Dropping the Jacobian instead leaves residuals of order one, so the identity is genuinely the J-weighted relation and not its small-rotation linearization. 14 D JVP-Free Training via SE(3) α-Flow 
+
+The differential objective (14) requires the trajectory derivative ddt ωs→tθ through a Jacobian–vector product of fθ , composed with the left Jacobian J. We adopt the α-Flow framework of Cheng et al. (2025), which replaces this differential target with a two-evaluation, JVP-free consistency target, and we develop it on SE(3) . Throughout, the model outputs the average velocity pair (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( s, t, T t), and we write ωs→tθ = ( t − s)ωavg  
+
+> θ
+
+and ps→tθ = ( t − s)vavg  
+
+> θ
+
+for the rotation log-displacement and the translation displacement. 
+
+Time Grid 
+
+Let α ∈ [αmin , 1] be the consistency-step ratio, floored at a small αmin > 0. For 0 ≤ s ≤ t ≤ 1 define the intermediate time and step 
+
+m = αs + (1 − α)t, δ = t − m = α(t − s), s ≤ m ≤ t. 
+
+Write ωt and vt for the data-side instantaneous velocities of the interpolation (2)–(3), and define the stepped-back intermediate state 
+
+Rm = exp   − δ[ωt]Rt, xm = xt − δ v t.
+
+Translation Target 
+
+The average velocity over [s, t ] decomposes through the velocities over [s, m ] and [m, t ]. For the near segment [m, t ] we use the shift velocity 
+
+˜vt =
+
+(vt, (data velocity; flow-matching / MeanFlow choice) ,vavg  
+
+> θ
+
+(m, t, T t), (model prediction; Shortcut choice) ,
+
+and adopt the data velocity ˜vt = vt. For the far segment [s, m ] we use the stop-gradient model prediction at the intermediate state. The α-Flow target is the convex combination 
+
+vavg tgt = α ˜vt + (1 − α) vavg  
+
+> θ
+
+(s, m, T m), (39) equivalently, in displacement form, ps→t 
+
+> tgt
+
+= δ ˜vt + ( m − s) vavg  
+
+> θ
+
+(s, m, T m). The loss is 
+
+Lα 
+
+> trans
+
+= 1
+
+α E
+
+h
+
+ps→tθ − sg  ps→t
+
+> tgt
+
+ 22
+
+i
+
+. (40) 
+
+Rotation Target 
+
+We mirror the translation target on SO(3) , replacing vector addition by group composition. For 0 ≤ a ≤ b ≤ 1 the accumulated relative rotation is 
+
+D(a, b ) := T exp 
+
+ Z ba
+
+[ωτ ] dτ 
+
+
+
+= exp  [ωa→b] = RbR⊤ 
+
+> a
+
+∈ SO(3) , (41) where the middle equality is the definition (7) of ωa→b and the last follows by integrating ˙Rτ = [ ωτ ]Rτ ; both hold for an arbitrary velocity field, and ωa→b is unique on the principal branch ∥ωa→b∥ ≤ π.
+
+Proposition 6 (Interval additivity) . For any s ≤ m ≤ t, D(s, t ) = D(m, t ) D(s, m ).Proof. D(s, t ) = RtR⊤ 
+
+> s
+
+= ( RtR⊤
+
+> m
+
+)( RmR⊤ 
+
+> s
+
+) = D(m, t )D(s, m ). The regrouping is exact and independent of the geodesic assumption; it is the non-commutative SO(3) analogue of Euclidean displacement additivity, with addition replaced by group multiplication and the near segment [m, t ] ordered to the left of the far segment [s, m ].Mirroring (39), the near segment uses the shift angular velocity 
+
+˜ωt =
+
+(ωt, (data angular velocity) ,ωavg  
+
+> θ
+
+(m, t, T t), (model prediction; Shortcut choice) ,
+
+and we adopt ˜ωt = ωt, so that D(m, t ) = exp( δ[˜ ωt]) . The far segment uses the stop-gradient model evaluation at the stepped-back state, 
+
+ωs→mθ = ( m − s) ωavg  
+
+> θ
+
+(s, m, T m), D(s, m ) = exp  [ωs→mθ ].
+
+By Proposition 6, the composed rotation target is 
+
+ωs→t 
+
+> tgt
+
+= log 
+
+
+
+exp  δ[˜ ωt]| {z }
+
+> D(m,t )
+
+exp  [ωs→mθ ]| {z }
+
+> D(s,m )
+
+∨
+
+. (42) 15 The two segment generators do not commute, so the composition must be formed as log(exp · exp) rather than collapsed into a Lie-algebra sum: rescaling or adding the two segment angles would corrupt the Baker–Campbell–Hausdorff (BCH) cross term and no longer produce log D(s, t ).The target requires one logarithm, two exponentials, and no differentiation of fθ . Both segment angles are bounded — 
+
+∥ωs→mθ ∥ ≤ π by the principal branch of log , and ∥δ ˜ωt∥ ≤ α(t − s)π — so the target is bounded by 2π and free of small-denominator blow-up. For t − s below machine tolerance tε, where log( ·) near the identity loses precision, we use the first-order BCH limit, whose O(t − s) correction is then negligible: 
+
+ωs→t 
+
+> tgt
+
+=
+
+(log  D(m, t ) D(s, m )∨, t − s ≥ tε,δ ˜ωt + ωs→mθ , t − s < t ε.
+
+The rotation loss is then 
+
+Lα 
+
+> rot
+
+= 1
+
+α E
+
+h
+
+ωs→tθ − sg  ωs→t
+
+> tgt
+
+ 22
+
+i
+
+, (43) identical in form to (40). 
+
+Remark 7 (Fallback at α = 1 and choice of normalization) . At α = 1 the intermediate time hits the far end, m = s and 
+
+δ = t − s, so the far segment vanishes ( D(s, m ) = I) and ωs→t 
+
+> tgt
+
+= log D(m, t )∨ = ( t − s) ˜ ωt: the objective reduces to flow matching (19) , anchoring the branch to the data velocity and supplying the boundary condition that prevents collapse. The opposite limit α → 0 recovers the differential MeanFlow objective and is analyzed in Section D. The group composition log(exp · exp) is essential throughout: the naive Lie sum δ ˜ωt + ωs→mθ drops the BCH/Jacobian correction and is not equivalent. 
+
+The α → 0 Limit Recovers MeanFlow 
+
+In this subsection we show that the α-Flow loss converges to the differential MeanFlow loss as α → 0. We treat the rotation branch; the translation branch is the abelian case ( J ≡ I, no BCH correction) and reduces to Euclidean MeanFlow (29) verbatim. 
+
+Remark 8 (α-Flow normalization) . If α-Flow is to interpolate exactly between flow matching and MeanFlow, the prefactor should be 1/α 2 rather than 1/α , since the residual regressed in (43) is O(α) (Proposition 7). We therefore analyze 
+
+eLrot := 1
+
+α2 ωavg  
+
+> θ
+
+(s, t, T t) − sg  ωavg tgt 
+
+ 22, (44) 
+
+with ωavg tgt = ωs→t 
+
+> tgt
+
+/(t − s) from (42) ; the 1/α prefactor of (43) follows the style of Cheng et al. (2025) and is what we train with, because 1/α 2 is less stable in practice. We also use only the first case of (42) , the second being a small-(t − s) fallback introduced for numerical convenience. 
+
+Proposition 7 (α → 0 recovers the MeanFlow loss) . Let g(τ ) := ( τ − s) ωavg  
+
+> θ
+
+(s, τ, T τ ) denote the model log-displacement along the interpolation path, so that g(t) = ( t − s) ωavg  
+
+> θ
+
+(s, t ) and, by the product rule, ˙g(t) = ωavg  
+
+> θ
+
++ ( t − s) ddt ωavg  
+
+> θ
+
+is the quantity ddt ωs→t appearing in (10) , and hence the quantity that (13) regresses against. If g is C2 at t, then the target (42) 
+
+expands as 
+
+ωavg tgt = g(t)
+
+t − s + α
+
+
+
+J g(t)−1ωt − ˙g(t)
+
+
+
++ O(α2) (45) 
+
+and consequently 
+
+eLrot = ˙g(t) − J g(t)−1ωt 
+
+> 22
+
++ O(α). (46) 
+
+The leading term is exactly the per-sample rotation residual of the differential MeanFlow loss (14) : by (13) and the definition of 
+
+g, ωavg  
+
+> θ
+
+− ωavg tgt = ˙ g(t) − J(g(t)) −1ωt. The α-Flow objective therefore converges to the differential MeanFlow loss itself, and does so without ever forming a Jacobian–vector product. Proof. Write m = t − δ with δ = α(t − s), and J := J(g(t)) .Since the data velocities ωt and vt are constant along the interpolation path (Section 2), the stepped-back state satisfies 
+
+exp( −δ[ωt]) Rt = Rm and xt − δv t = xm exactly . The two factors of (42) are therefore D(s, m ) = exp  [g(m)]  and 
+
+D(m, t ) = exp  δ[ωt], with g the same function appearing in the statement; this is what lets the finite difference below capture the total derivative (11) rather than ∂t alone. The first-order BCH formula, expanded in the small left factor, gives log( eX eY ) = Y + ad Y  
+
+> ead Y−1
+
+X + O(∥X∥2). On so (3) one has ad [ϕ][ψ] = [ϕ]ψ (Remark 10), so in vector coordinates the coefficient is the matrix  e[ϕ] − I−1[ϕ] = J(ϕ)−1, using the 16 closed form of Remark 5. This is invertible: J(ϕ) is a power series in the skew matrix [ϕ], so its eigenvalues are 1 and e±iθ −1
+
+> ±iθ
+
+with θ = ∥ϕ∥ ≤ π, all nonzero. Taking X = δ[ωt] = O(α) and Y = [ g(m)] ,
+
+log  D(m, t ) D(s, m )∨ = g(m) + δ J  g(m)−1ωt + O(δ2).
+
+Substituting g(m) = g(t) − δ ˙g(t) + O(δ2) and J(g(m)) −1 = J−1 + O(δ), we have 
+
+ωavg tgt = 1
+
+t − s log  D(m, t ) D(s, m )∨
+
+= 1
+
+t − s
+
+
+
+g(m) + δ J  g(m)−1ωt + O(δ2)
+
+
+
+= 1
+
+t − s
+
+
+
+g(t) − δ ˙g(t) + δ J −1ωt + O(δ2)
+
+
+
+= g(t)
+
+t − s + α(t − s)
+
+t − s
+
+
+
+J−1ωt − ˙g(t)
+
+
+
++ O α2(t − s)2
+
+t − s
+
+= ωavg  
+
+> θ
+
+(s, t ) − α
+
+
+
+˙g(t) − J−1ωt
+
+
+
++ O(α2),
+
+which is (45). Substituting into (44), 
+
+eLrot = 1
+
+α2 ωavg  
+
+> θ
+
+(s, t ) − sg  ωavg tgt 
+
+ 22
+
+= 1
+
+α2 ωavg  
+
+> θ
+
+(s, t ) −
+
+
+
+ωavg  
+
+> θ
+
+(s, t ) − α  ˙g(t) − J−1ωt
+
+ + O(α2)
+
+ 22
+
+= 1
+
+α2 α  ˙g(t) − J−1ωt
+
+ + O(α2) 22
+
+= 1
+
+α2
+
+
+
+α2 ˙g(t) − J−1ωt 
+
+> 22
+
++ O(α3)
+
+
+
+= ˙g(t) − J−1ωt 
+
+> 22
+
++ O(α),
+
+which is (46). 
+
+Numerical verification of Proposition 7. Figure 6 verifies Eq. (46) on the released implementation. The scaled loss eLrot (α)
+
+of (44) is computed with the target evaluated exactly , through the group composition of the ratio-α consistency step — not through the expansion (45) being tested. Since the proposition is an identity valid for any C2 model, no training is required: we instantiate synthetic smooth two-time velocity heads (Rt, x t, t, s ) 7 → ωavg  
+
+> θ
+
+, random C∞ functions of the state and both times so that the total-derivative cross terms in ˙g are exercised. The gap to the differential MeanFlow loss (13) vanishes linearly in 
+
+α (empirical log–log slope 0.98 , matching the O(α) remainder), and at α = 1 the scaled loss equals the flow-matching loss to machine precision ( ∼ 10 −16 ), since the target reduces to ωt exactly. The inverse Jacobian in the regression target of (13) is essential to this limit: replacing J−1ωt by ωt (equivalently, measuring the gap to the residual J ˙g − ωt) leaves a nonzero plateau (≈ 2 × 10 −2 in this setup) as α → 0, so the α-Flow objective converges to the differential MeanFlow loss (14) itself and not to its Jacobian-free variant. 
+
+Remark 9 (The fallback branch does not admit this limit) . Proposition 7 concerns the group-composition branch of (42) . The first-order fallback ωs→t 
+
+> tgt
+
+= δ ˜ωt + ωs→mθ drops the BCH correction, and repeating the argument above with it in place yields 
+
+(46) with J ≡ I — i.e., the wrong identity. The fallback is therefore a numerical device for t − s < t ε, where the two branches agree to O(t − s) and log( ·) near the identity loses precision, and not an alternative formulation of the target. 
+
+Remark 10 (The adjoint action on so (3) ). For a Lie algebra element Y , the adjoint action ad Y is the linear operator 
+
+ad Y (X) := [ Y, X ] = Y X − XY , and an analytic function f applied to ad Y is understood through its power series, each term being an iterated bracket. On so (3) the bracket is the cross product, 
+
+ad [g]
+
+ [ψ] = [ g][ ψ] − [ψ][ g] = [ g × ψ ] = [g] ψ,
+
+so under the identification so (3) ∼= R3 the operator ad [g] is the matrix [g] acting on R3. Any f (ad [g]) therefore reduces to the 
+
+3 × 3 matrix f ([ g]) — a simplification specific to so (3) that we use below. In particular, comparing with (12) ,
+
+J(ϕ) = 
+
+Z 10
+
+eα[ϕ]dα =  e[ϕ] − I[ϕ]−1, J(ϕ)−1 = ad [ϕ]
+
+ead [ϕ] − I , (47) 
+
+where the quotients denote the corresponding power series, since [ϕ] is singular. The left Jacobian is thus the operator that transports a Lie-algebra perturbation to the group, and it appears both as the Fréchet derivative of exp (Proposition 3) and as the first-order Baker–Campbell–Hausdorff coefficient (above); these are two readings of the same object. 
+
+17 0.0 0.2 0.4 0.6 0.8 1.0          
+
+> consistency-step ratio ®
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> loss-value gap
+> gap to MeanFlow loss k_g¡J¡1!tk22
+> gap to flow-matching loss k!avg
+> μ¡!tk22
+
+Figure 6: Numerical verification of Proposition 7, Eq. (46): gap between the scaled α-Flow rotation loss eLrot (α) and its two predicted limits, averaged over 256 random SE(3) instances ( α ∈ [10 −2, 1] , linear grid). The gap to the differential MeanFlow loss ∥ ˙g − J−1ωt∥22 (blue) vanishes as O(α); the gap to the flow-matching loss (orange) vanishes at α = 1 : the α-Flow objective interpolates between the two. Algorithm 2: JVP-free SE(3) α-Flow training step 
+
+Require: state (Rt, x t); times s ≤ t; data velocities (ωt, v t); field fθ ; α ∈ [αmin , 1] 
+
+1: m ← αs + (1 − α)t, δ ← t − m
+
+2: Rm ← exp( −δ[ωt]) Rt, xm ← xt − δ v t
+
+3: (ωavg  
+
+> m
+
+, v avg  
+
+> m
+
+) ← sg fθ (s, m, R m, x m)
+
+4: ωs→m ← (m − s) ωavg  
+
+> m
+
+, ps→m ← (m − s) vavg 
+
+> m
+
+5: ωs→t 
+
+> tgt
+
+← log   exp( δ[ωt]) exp([ ωs→m]) ∨
+
+6: ps→t 
+
+> tgt
+
+← δ v t + ps→m
+
+7: (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+) ← fθ (s, t, R t, x t) ▷ only gradient path 
+
+8: ωs→tθ ← (t − s) ωavg  
+
+> θ
+
+, ps→tθ ← (t − s) vavg 
+
+> θ
+
+9: Form Lα
+
+> rot
+
+, Lα 
+
+> trans
+
+(Eqs. (43), (40)) 
+
+Remark 11 (Why α is floored) . The 1/α normalization makes Lα 
+
+> rot
+
+= O(α), so the loss vanishes for every θ at exactly α = 0 :the limit is informative only as the leading-order direction, not as a usable objective at α = 0 . We therefore sample α ∈ [αmin , 1] 
+
+with αmin > 0; the two endpoints interpolate between flow matching ( α = 1 ) and the differential MeanFlow target ( α → 0). 
+
+## E Semigroup Formulation of SE(3)-MeanFlow and the Semigroup Loss 
+
+The MeanFlow identity (10) is the differential form of our average velocity: it is obtained by differentiating (33) with respect to t, and its training target carries both a Jacobian–vector product (for ddt ωs→tθ ) and the left Jacobian J. In this section we show that the same definition (33) also admits a finite , derivative-free characterization: the average-velocity flow map is a genuine two-parameter semigroup on SE(3) , and consistency with this semigroup yields a JVP-free, J-free training objective. Throughout r ≤ s ≤ t ∈ [0 , 1] , and ωt = log( R1R⊤ 
+
+> 0
+
+)∨, vt = x1 − x0 denote the data-side instantaneous velocities of the geodesic interpolation (2)–(3), which are constant along the path. 
+
+The Average-Velocity Flow Map 
+
+Recall from (33) that the average angular velocity over [s, t ] is defined by 
+
+exp  [ωs→t] = T exp 
+
+ Z ts
+
+[ω(τ, R τ , x τ )] dτ 
+
+
+
+=: D(s, t ) ∈ SO(3) , (48) where the last equality D(s, t ) = RtR⊤ 
+
+> s
+
+holds by integrating the spatial ODE ˙Rτ = [ ωτ ]Rτ ; this is (41). We write ωs→t = ( t −
+
+s) ωavg (s, t, T t) ∈ R3 for the rotation log-displacement and, on the flat translation branch, ps→t := xt−xs = ( t−s) vavg (s, t, T t)
+
+for the displacement. 
+
+Definition 3 (Average-velocity flow map) . For s ≤ t define Ψs→t : SE(3) → SE(3) by 
+
+Ψs→t(R, x ) := 
+
+
+
+D(s, t ) R, x + ps→t 
+
+=
+
+
+
+exp  [ωs→t] R, x + ( t − s) vavg (s, t )
+
+
+
+.
+
+18 Here ωs→t and ps→t are evaluated at Tt, which is determined by Ts along the interpolation path; Ψs→t is therefore well defined on that path, where Ψs→t(Rs, x s) = ( Rt, x t) by construction. The sampling map Φt→s of (22) is its inverse, Φt→s = Ψ −1
+
+> s→t
+
+:the flow map runs from data toward the prior, while generation runs the other way. 
+
+The Semigroup Property 
+
+Proposition 8 (Semigroup property of the average-velocity flow) . The family {Ψs→t}0≤s≤t≤1 of Definition 3 satisfies, for all 
+
+r ≤ s ≤ t,
+
+Ψs→t ◦ Ψr→s = Ψ r→t, Ψt→t = id . (49) 
+
+Equivalently, in terms of the average velocities, 
+
+(rotation) exp  [ωs→t] exp  [ωr→s] = exp  [ωr→t], (50) 
+
+(translation) (s − r) vavg (r, s ) + ( t − s) vavg (s, t ) = ( t − r) vavg (r, t ). (51) 
+
+Proof. On SO(3) the transition operators compose by inserting R⊤ 
+
+> s
+
+Rs = I:
+
+D(r, t ) = RtR⊤ 
+
+> r
+
+= ( RtR⊤ 
+
+> s
+
+)( RsR⊤ 
+
+> r
+
+) = D(s, t ) D(r, s ),
+
+the near interval appearing to the left of the far one; this is Proposition 6. (Equivalently, it is the multiplicativity of the time-ordered exponential T exp( R tr ) = T exp( R ts ) T exp( R sr ), so the statement holds for an arbitrary velocity field, not only the geodesic path.) Substituting D(a, b ) = exp([ ωa→b]) gives (50). On the flat translation factor displacements add, xt −xr = ( xt −xs)+( xs −xr ),which is (51). Combining the two factors, Ψs→t(Ψ r→s(R, x )) =  D(s, t )D(r, s )R, x + pr→s + ps→t =  D(r, t )R, x +
+
+pr→t = Ψ r→t(R, x ), i.e., (49). 
+
+Remark 12 (Where SO(3) curvature enters) . The composition (50) is exact and independent of curvature: it is the associativity of group multiplication. Curvature appears only if one tries to collapse the product of exponentials into a single Lie-algebra sum. By the Baker–Campbell–Hausdorff (BCH) formula, 
+
+ωr→t = log 
+
+
+
+exp  [ωs→t] exp  [ωr→s]∨
+
+= ωs→t + ωr→s + 12 ωs→t × ωr→s + · · · ,
+
+so the naive additive law ωr→t = ωr→s + ωs→t holds only when the two axes are collinear; in general it drops the BCH cross terms. The translation identity (51) has no such correction because R3 is abelian. This is the single place where the rotation branch departs from the Euclidean MeanFlow semigroup. 
+
+The Semigroup-Consistency Loss 
+
+Proposition 8 characterizes the correct average-velocity field without any time derivative: the field is consistent iff its one-step prediction on [s, t ] equals the two-step composition through any intermediate m ∈ [s, t ]. We turn this into a regression objective. Let fθ output (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( s, t, T t) and write ωs→tθ = ( t−s) ωavg  
+
+> θ
+
+, ps→tθ = ( t−s) vavg  
+
+> θ
+
+. Given s < m < t , form the intermediate state by stepping back the near segment [m, t ],
+
+Rm = exp   − [ωm→tθ ]Rt, xm = xt − pm→tθ ,
+
+and define the composed (two-step) targets by (50)–(51): 
+
+ωs→t 
+
+> tgt
+
+:= log 
+
+
+
+exp  [ωm→tθ ]| {z }
+
+> D(m,t )
+
+exp  [ωs→mθ ]| {z }
+
+> D(s,m )
+
+∨
+
+, (52) 
+
+ps→t 
+
+> tgt
+
+:= ps→mθ + pm→tθ , (53) where ωs→mθ = ( m − s) ωavg  
+
+> θ
+
+(s, m, T m) and ps→mθ = ( m − s) vavg  
+
+> θ
+
+(s, m, T m) are evaluated at the stepped-back state. The model regresses its direct one-step prediction on [s, t ] onto these stop-gradient targets: 
+
+Lsg rot = Es<m<t ωs→tθ − sg  ωs→t
+
+> tgt
+
+ 22
+
+, (54) 
+
+Lsg trans = Es<m<t ps→tθ − sg  ps→t
+
+> tgt
+
+ 22
+
+. (55) The semigroup constraint alone admits trivial (collapsed) minimizers; it must be anchored at the diagonal s → t, where (48) degenerates to the instantaneous velocity. This boundary term is exactly flow matching: 
+
+Lbd rot = Et ωavg  
+
+> θ
+
+(t, t, T t) − ωt
+
+> 22
+
+, Lbd trans = Et vavg  
+
+> θ
+
+(t, t, T t) − vt
+
+> 22
+
+, (56) 19 and the total objective is 
+
+Lsg -MF = Lbd rot + Lbd trans 
+
+| {z }
+
+> flow matching (anchor)
+
++ Lsg rot + Lsg trans 
+
+| {z }
+
+> semigroup consistency
+
+. (57) Every term uses only forward evaluations of fθ together with exp and log on SO(3) and addition on R3: there is no Jacobian– vector product and no explicit left Jacobian J.
+
+Remark 13 (The normalization scalar must stay outside log(exp · exp) ). If one prefers to regress the average velocity ωavg  
+
+> θ
+
+(s, t )
+
+itself rather than the log-displacement, the target is ωavg tgt = 1 
+
+> t−s
+
+ωs→t 
+
+> tgt
+
+with ωs→t 
+
+> tgt
+
+from (52) . The scalar 1 
+
+> t−s
+
+must remain outside 
+
+log(exp · exp) : because the two segment generators do not commute, absorbing it into the two exponentials would rescale each segment angle and corrupt the BCH cross term, no longer producing log D(s, t ). On the translation branch the same normalization is harmlessly absorbed into the linear weights. This is the finite-interval counterpart of the observation made for 
+
+(42) .
+
+In the implementation we impose the same constraint on the transported states rather than the displacements, replacing 
+
+Lsg rot + Lsg trans by 
+
+Lsg geo = Es<m<t 
+
+h
+
+log  RdR⊤
+
+> c
+
+∨ 22 + xd − xc
+
+> 22
+
+i
+
+,
+
+(Rd, x d) = Φ t→s(Tt),
+
+(Rc, x c) = Φ m→s
+
+ Φt→m(Tt), (58) with the composed branch under a stop-gradient. Remark 14 relates the two forms. 
+
+Remark 14 (Two variants of the semigroup residual) . Equations (54) –(55) impose the semigroup constraint on the displacements .The same constraint can be imposed on the transported states : writing Rd = exp( −[ωs→tθ ]) Rt and Rc = exp( −[ωs→t 
+
+> tgt
+
+]) Rt for the directly and compositionally transported rotations, the geodesic residual is ∥ log( RdR⊤ 
+
+> c
+
+)∨∥22, which is (18) . By the BCH formula, 
+
+log  RdR⊤
+
+> c
+
+∨ = −ωs→tθ + ωs→t 
+
+> tgt
+
+− 12 ωs→tθ × ωs→t 
+
+> tgt
+
++ · · · ,
+
+so the two residuals agree to first order and differ from second order on by the cross term. Both vanish exactly at the field characterized in Proposition 9, so they share the same global minimizer; they differ only in how errors are weighted away from it. The translation branch is identical in both, since R3 is abelian. We train with the geodesic form (Algorithm 3). 
+
+Consistency: Zero Loss Implies Exact Reconstruction 
+
+The boundary term fixes the instantaneous limit and the semigroup term propagates it to all intervals; together they pin down the unique correct flow map. The following is the finite (JVP-free) analogue of Proposition 5. 
+
+Proposition 9 (Uniqueness of the semigroup minimizer) . Suppose ωavg  
+
+> θ
+
+is continuous and, along the interpolation path, satisfies the boundary condition ωavg  
+
+> θ
+
+(t, t, T t) = ωt for all t, together with the rotation semigroup identity 
+
+exp  [ωs→tθ ] exp  [ωr→sθ ] = exp  [ωr→tθ ], ∀ r ≤ s ≤ t, 
+
+where ωa→bθ := ( b − a) ωavg  
+
+> θ
+
+(a, b, T b). Then exp  [ωs→tθ ] = RtR⊤ 
+
+> s
+
+for all s ≤ t; in particular, with s = 0 , t = 1 ,
+
+ˆR0 := exp   − [ω0→1 
+
+> θ
+
+]R1 = R0. The analogous statement holds for translation with vavg  
+
+> θ
+
+(t, t ) = vt.Proof. Fix t and set G(s) := exp  [ωs→tθ ] ∈ SO(3) , so G(t) = I. For h > 0 the semigroup identity applied to s ≤ s + h ≤ t
+
+gives G(s) = G(s + h) exp  [ωs→s+hθ ], hence 
+
+G(s + h) = G(s) exp   − [ωs→s+hθ ].
+
+By the boundary condition and continuity, ωs→s+hθ = h ω avg  
+
+> θ
+
+(s, s +h) = h ω s +o(h), so exp  −[ωs→s+hθ ] = I −h[ωs]+ o(h)
+
+and therefore dds G(s) = − G(s) [ ωs], G(t) = I. 
+
+On the other hand D(s, t ) = RtR⊤ 
+
+> s
+
+obeys, using ˙Rs = [ ωs]Rs and skew-symmetry, 
+
+dds D(s, t ) = Rt
+
+ ∂sR⊤
+
+> s
+
+ = − RtR⊤ 
+
+> s
+
+[ωs] = − D(s, t ) [ ωs], D(t, t ) = I. G and D(·, t ) solve the same linear ODE with the same terminal condition, so by uniqueness G(s) = D(s, t ) = RtR⊤ 
+
+> s
+
+for all 
+
+s ≤ t. Taking s = 0 , t = 1 gives exp  [ω0→1 
+
+> θ
+
+] = R1R⊤ 
+
+> 0
+
+, i.e., ˆR0 = R0. For translation, the additive cocycle pθ (s, t ) with diagonal derivative vavg  
+
+> θ
+
+(t, t ) = vt integrates to pθ (s, t ) = xt − xs, giving ˆx0 = x0.Proposition 9 shows that (57) is a valid training objective: its global minimizer is the exact average-velocity field, and both ingredients are necessary — the boundary term supplies the instantaneous data velocity, and the semigroup term is the curvature-exact propagation rule that extends it to every interval. 20 Relation to the Differential Identity and to α-Flow 
+
+Remark 15 (Relation to the left-Jacobian identity) . The semigroup loss (57) and the differential MeanFlow loss (14) have the same minimizer but realize the left Jacobian differently. Differentiating the boundary-anchored semigroup identity (50) with respect to t at s → t reproduces the differential identity (10) , in which J appears explicitly as the Fréchet derivative of exp . In the finite form J never appears as a separate factor: its entire effect is absorbed into the BCH series of log(exp · exp) in (52) .The two formulations are thus gradient-equivalent to first order, but the finite form is JVP-free and, because all segment angles are bounded by π, requires no differentiation of fθ at any point. 
+
+Remark 16 (α-Flow as an instance) . The JVP-free α-Flow objective of Section D is a particular instantiation of (57) . Choosing the split point m = αs + (1 − α)t and replacing the near-segment model prediction by the data velocity ˜ωt = ωt (so that 
+
+D(m, t ) = exp( δ[ωt]) with δ = α(t − s)), while keeping the far segment as the stop-gradient model evaluation, turns (52) into the α-Flow target (42) and (53) into its translation counterpart. The limit α = 1 makes the far segment vanish and reduces 
+
+(57) to the flow-matching boundary (56) ; the limit α → 0 recovers, via BCH, the differential loss (Proposition 7). The “pure” semigroup form (52) –(53) , using the model on both segments, corresponds to the Shortcut choice ˜ωt = ωavg  
+
+> θ
+
+(m, t, T t).
+
+## F Related Work 
+
+Earlier and alternative 6-DoF grasp generators. Learned 6-DoF parallel-jaw grasp synthesis spans several paradigms that predate or complement diffusion and flow-based generators. Candidate-based methods first construct grasp hypotheses and then learn to score them. GPD samples geometrically plausible candidates and classifies them using local point-cloud geometry (ten Pas et al. 2017), while PointNetGPD uses a PointNet-based evaluator on the points observed within the gripper volume (Liang et al. 2019). 6-DoF GraspNet introduced a distributional alternative based on a conditional variational autoencoder, together with a learned evaluator for scoring and iterative refinement (Mousavian, Eppner, and Fox 2019). A complementary line amortizes candidate generation using dense or single-shot predictors: S4G directly predicts scene-level SE(3) grasp proposals (Qin et al. 2020), Contact-GraspNet anchors full poses at observed contact points (Sundermeyer et al. 2021), and VGN predicts grasp quality, orientation, and gripper width over a TSDF volume (Breyer et al. 2021). CAPGrasp is a more recent task-specific generative sampler that enforces R3 ×SO(2) equivariance under a prescribed approach-direction constraint (Weng et al. 2024). These methods are complementary to our approach but are not included in the NFE-matched comparison. Their computational budgets are governed by candidate or anchor counts, evaluator or refinement passes, and method-specific post-processing rather than by evaluations of an iterative pose-space field; CAPGrasp additionally targets approach-constrained generation. We therefore restrict the NFE sweep to iterative generative baselines evaluated under the shared pose-distribution protocol. 
+
+EquiGraspFlow. Lim et al. (2024) generate grasp poses with a conditional continuous normalizing flow on SE(3) , driven by time-dependent angular and linear velocity fields (their time convention runs prior t=0 → data t=1 ; we keep their notation in this subsection): 
+
+˙R = [ ωθ (t, P, T )] R, ˙x = vϕ(t, P, T ), t ∈ [0 , 1] ,
+
+which transports the prior p0(T |P ) = p0(R) p0(x|P ), uniform on SO(3) times a Gaussian centered at the point-cloud mean, to the distribution of successful grasps. Training uses flow matching with a geodesic rotation path and a straight translation path, whose per-sample targets are 
+
+[ω∗ 
+
+> t
+
+(R | R1)] = log( R⊤R1)1 − t , v∗ 
+
+> t
+
+(x | x1) = x1 − x
+
+1 − t ,
+
+and the loss 
+
+L = Et, T 1∼q(T |P ), T ∼pt(T |T1)
+
+h 12 [ωθ (t, P, T )] − [ω∗ 
+
+> t
+
+(R|R1)] 2 
+
+> F
+
++ vϕ(t, P, T ) − v∗ 
+
+> t
+
+(x|x1) 2i
+
+.
+
+Equivariance is obtained by construction: if the prior is SE(3) -invariant and the fields satisfy u(t, T ′P, T ′T ) = R′ u(t, P, T ) for all T ′ = ( R′, x ′) ∈ SE(3) , then every intermediate distribution pt(T |P ) is SE(3) -invariant (their Prop. 1). This is implemented with a VN-DGCNN encoder, VN-MLP heads, and an equivariant lifting layer that maps the scalar time onto a learned equivariant direction. Conditioning uses classifier-free guidance for flow matching (condition dropout 20% ; guidance β=2 at sampling), and the native sampler is a fourth-order Runge–Kutta–Munthe-Kaas integrator with 20 steps (i.e.„ 80 field evaluations). 
+
+Relation to our work. GraspMeanFlow keeps this entire construction — encoder, heads, prior, guidance, and the equivariance argument — changes only what the field means : instead of the instantaneous velocity at a single time, our field outputs the interval-averaged velocity conditioned on (t, h =t−s), lifted through the same equivariant-direction mechanism as their time input. Equivariance therefore carries over unchanged, while one evaluation of the field executes a full interval jump rather than one integration step. 21 SE(3)-DiffusionFields. Urain et al. (2023) learn a smooth energy field Eθ (H, k ) over grasp poses H ∈ SE(3) (conditioned on a learned object shape code) and define the score as its Lie derivative, sθ (H, k ) = −DE θ (H, k )/DH ∈ R6. Training is denoising score matching with Gaussian perturbations in the Lie algebra: with noise scales σ1 < · · · < σ L,
+
+ˆH = H Expmap( ϵ), ϵ ∼ N (0 , σ 2
+
+> k
+
+I), Ldsm = 1
+
+L
+
+X
+
+> k
+
+EH, ˆH sθ ( ˆH, k ) − D log q( ˆH | H, σ kI)
+
+D ˆH ,
+
+jointly with an object-SDF regression. Sampling runs inverse annealed Langevin MCMC on SE(3) ,
+
+Hk−1 = Expmap 
+
+ α2 
+
+> k
+> 2
+
+sθ (Hk, k ) + αk ϵ
+
+
+
+Hk, ϵ ∼ N (0 , I ),
+
+annealing from the largest noise scale down; the learned energy doubles as a differentiable grasp cost for joint grasp-and-motion optimization. 
+
+Relation to our work. Because it is an annealed MCMC sampler, generation quality depends on a long chain (its native operating point in our protocol is T =240 ), and it degrades sharply in the few-step regime (Table 1). Our simulated success protocol ports their public isaac_evaluation harness, applied identically to every method (Appendix N). 
+
+BRIDGER. Chen et al. (2024) replace the uninformative noise prior of diffusion policies with an arbitrary source policy via stochastic interpolants. With source samples a0 ∼ π0(·| x) (for grasping, a hand-crafted heuristic prior that places poses around the object) and expert samples a1 ∼ π1(·| x), the interpolant 
+
+at = α(t) a0 + β(t) a1 + γ(t) z, z ∼ N (0 , I ), γ(t) = dp2t(1 − t),
+
+(with, e.g., α(t) = (1 − t)3, β(t) = 1 − (1 − t)3) connects the two at t: 0 → 1. Two networks are trained — a velocity bθ
+
+regressing ∂tI + ˙ γz and a reparameterized score ˆsη regressing −z — and generation integrates the forward SDE 
+
+da t = b(t, a t, x ) + ϵ(t) s(t, a t, x ) dt + p2ϵ(t) dW t
+
+by Euler–Maruyama from a source sample. 
+
+Relation to our work. BRIDGER injects prior knowledge through the source distribution rather than the objective; its released sampler additionally suppresses noise over the final 30% of the trajectory and amplifies the learned drift, which explains its non-monotone behavior at very small step counts (Appendix M). Our approach is complementary: we keep the standard noise-to-data formulation and make the field itself represent finite intervals, which is what enables few-step generation without an informative prior. 
+
+Riemannian MeanFlow (concurrent work). Two concurrent works, both titled Riemannian MeanFlow (Zhong et al. 2026; Woo et al. 2026), extend MeanFlow to general Riemannian manifolds. Both are manifold-generative methods evaluated on synthetic geometries (spheres, tori, SO(3) ), DNA sequence design, and unconditional protein backbones; neither targets 6-DoF grasp synthesis, point-cloud conditioning, or SE(3) -equivariance. They also differ from our formulation in how the interval-averaged velocity is defined. Zhong et al. (2026) define it by parallel-transporting instantaneous velocities along the trajectory into a common tangent space, which is path-dependent : it requires the full trajectory {xτ } rather than the endpoints alone. We instead define the average velocity through the time-ordered exponential exp  (t−s)[ ωavg ] = T exp   R ts [ωτ ] d τ , which depends only on the endpoints Rs, R t and closes exactly under a single exponential step; the two definitions agree only for a constant (geodesic) field, and otherwise differ because the transported integral accumulates the tangent contributions along the path while ours depends only on the endpoints. For training, Woo et al. (2026) use an endpoint semigroup objective on a sampled intermediate time. Our Stage-2 objective is closest to this, but is anchored differently: we pair semigroup consistency with an explicit flow-matching boundary term (19) on the diagonal s = t, which ties the field to the marginal flow at every t,and we warm up with an α-Flow stage (20) whose near segment is supplied by the data velocity. 
+
+SE(3)-MeanFlow for protein backbones (concurrent work). Bai et al. (2026) use the same SE(3) average-velocity for-mulation as ours, including the time-ordered exponential definition and the α-Flow warm-up, for few-step protein backbone generation. The difference is the frame: they express the Lie-algebra velocity in the body frame ˙Rt = Rt[ωt], whereas we use the spatial frame ˙Rt = [ ωt]Rt, since under a scene rotation the spatial velocity transforms covariantly and matches the output type of a vector-neuron head, while the body-frame velocity is rotation-invariant (Appendix G). 
+
+## G Architecture 
+
+Our network is the EquiGraspFlow (Lim et al. 2024) backbone, unchanged except for the additions required to turn a single-time flow-matching model into a two-time MeanFlow model. This section describes the modifications and explains why the 
+
+SE(3) -equivariance of the original design is preserved; the formal statement and proof are given in Proposition 10. 22 rot trans SE(3) Euler exp-SO(3) 
+
+> 10 −14
+> 10 −13
+> 10 −12
+> relative equivariance error
+
+Figure 7: Equivariance of the trained model in double precision. Each dot is one random T ′: the first three columns probe the two-time field under rotation-only, translation-only, and full SE(3) actions; the last two probe the composed guided samplers (NFE 5 ). All deviations sit at machine precision. 
+
+Backbone. The point-cloud encoder is a VN-DGCNN with channel widths 1−21 −21 −42 −85 −170 −341 and k=40 
+
+neighbors, producing an equivariant object feature z ∈ R341 ×3; the velocity head is a vector-neuron MLP with widths 
+
+347 −256 −256 −128 −128 −128 −2 that maps the object feature, the current pose (fed as the vector channels (R1, R 2, R 3, x ),the columns of R plus the translation), and the time inputs to a rotational and a translational velocity. Translation equivariance is handled, as in EquiGraspFlow, by centering the point cloud and pose at the point-cloud mean. The trunk, widths, and all other components are inherited unchanged; the full model has 633 ,803 parameters versus 633 ,291 for the backbone — the modification below accounts for 512 parameters ( <0.1% ). 
+
+Two-time conditioning. A MeanFlow field is conditioned on a time pair rather than a single time. We condition on (t, h ) with 
+
+h = t − s (current time and interval length, following MeanFlow), reusing EquiGraspFlow’s equivariant lifting mechanism: each scalar multiplies a single shared learned equivariant direction d = fequi (V ), a linear vector-neuron projection of the concatenated feature and pose channels V . The two resulting channels t d and h d are appended to the head input (width 347 vs. the baseline’s 346, which appends only t d ). Because fequi (V Q ⊤) = fequi (V ) Q⊤ for any rotation Q and the times are rotation-invariant scalars, the added channels transform exactly like every other vector channel, so the field remains equivariant with two time inputs for the same reason it was with one. 
+
+Output frame and equivariance. Throughout, angular velocities are expressed in the spatial frame ( ˙R = [ ω] R, the standard robotics convention), and our formulation, training targets, and samplers are all built in this frame. The head therefore outputs the rotational velocity in the spatial frame, and the sampler applies it directly through the left-invariant exponential update 
+
+exp   − (t − s)[ ωavg ]R, with no change of frame. This choice is forced by equivariance: under a scene rotation Q, the spatial angular velocity transforms covariantly ( ω 7 → Qω ), matching the transformation type of a vector-neuron output. The body-frame velocity ωbody = vee( R⊤ ˙R), by contrast, is rotation-invariant , since R⊤ ˙R is unchanged when R 7 → QR . An equivariant vector head regressing a rotation-invariant target has zero conditional mean over rotation-augmented data, so a body-frame parameterization cannot represent the average-velocity field with an equivariant head; the spatial parameterization is what makes an equivariant average-velocity field trainable. 
+
+Distributional equivariance. The prior is SE(3) -invariant (uniform rotations; translations from a standard Gaussian, which is centered at the point-cloud centroid because the loader zero-centers every cloud), the guided field is a convex combination of two equivariant fields (the null condition z=0 is itself fixed under rotations), and every inference update — the Euler jump and the exponential-SO(3) endpoint step — composes equivariant maps. By the same argument as EquiGraspFlow’s Prop. 1, extended to interval-averaged velocities in Proposition 10, transporting an invariant prior through an equivariant flow map yields an SE(3) -invariant conditional grasp distribution: rotating the object rotates the generated grasp set identically. 
+
+## H Theoretical Properties of Equivariant Flows 
+
+Proposition 10 (Equivariance of the two-time velocity field) . The two-time average-velocity field (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( s, t, P, T ) of Appendix G is SE(3) -equivariant in the sense of Definition 2: for every T ′ = ( R′, x ′) ∈ SE(3) ,
+
+(ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( s, t, T ′P, T ′T ) = R′ (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( s, t, P, T ).
+
+23 Numerical validation of Proposition 10. We apply random rigid transformations (Haar-uniform rotations, translations ∼N (0 , 32I)) to the point cloud and grasp poses of a test instance, re-apply the pipeline’s mean-centering, and compare the trained network’s output against R′ times the untransformed output at 16 poses and random time pairs. The field deviates by at most 
+
+8 × 10 −14 , and running the Euler and exp-SO(3) samplers from the transformed inputs and the correspondingly transformed prior noise reproduces the T ′-transformed grasps to 1 × 10 −12 (Figure 7) — the flow-map equivariance of Proposition 1 realized by the implementation. In single precision, the translation test degrades to 8 × 10 −4 because of k-nearest-neighbor ties in the encoder graph under the centering round-off, rather than because of the architecture. 
+
+Lemma 1 (The single-time VN backbone is SE(3) -equivariant) . Let a vector-list feature be V = ( v1, . . . , v C ) ∈ (R3)C , and let Q ∈ SO(3) act channelwise, Q · V := ( Qv 1, . . . , Qv C ). Every layer of the vector-neuron backbone of Lim et al. (2024)—the equivariant encoder Φ, the channel-linear map VNLin , and the nonlinearity VNReLU —commutes with this action, 
+
+Φ( Q · P ) = Q · Φ( P), L(Q · V ) = Q · L(V ) for L ∈ { VNLin , VNReLU },
+
+and hence so does any composition of them. Proof. A channel-linear map acts only on the channel index, (VNLin V )j = P 
+
+> c
+
+Wjc vc, so VNLin( Q·V )j = P 
+
+> c
+
+Wjc (Qv c) = 
+
+Q P 
+
+> c
+
+Wjc vc = ( Q·VNLin V )j . For VNReLU , write p = VNLin pV , d = VNLin dV ; the gate depends on the data only through the inner products ⟨pc, d c⟩ and ⟨dc, d c⟩, which are invariant since ⟨Qp c, Qd c⟩ = ⟨pc, d c⟩. Thus the output is a combination of the equivariant p, d with invariant scalar coefficients, whence VNReLU( Q · V ) = Q · VNReLU( V ). Equivariance of Φ is Lim et al. (2024, Prop. 1). Composition preserves the intertwining relation, so the whole backbone is equivariant. 
+
+Lemma 2 (The two-time injection preserves equivariance) . Fix (s, t ) and set h := t − s. Let L = VNLin be equivariant and define the injection 
+
+ι(V, s, t ) :=  V ; t L (V ) ; h L (V ) ,
+
+appending the two channels t L (V ) and h L (V ) to the vector-list V . Then ι is SO(3) -equivariant in V : ι(Q·V, s, t ) = Q·ι(V, s, t )
+
+for all Q ∈ SO(3) .Proof. The scalars t and h = t − s are functions of (s, t ) alone, hence invariant under the action on V . By Lemma 1, 
+
+L(Q · V ) = Q L (V ), so each appended channel transforms covariantly, 
+
+t L (Q · V ) = t  Q L (V ) = Q  t L (V ), h L (Q · V ) = Q  h L (V ),
+
+using that t, h are invariant scalars commuting with Q. Since concatenation of covariant channels is covariant, ι(Q · V, s, t ) = 
+
+Q · ι(V, s, t ).
+
+Proof of Proposition 10. The point cloud and pose are mean-centered before the network, which removes the absolute translation 
+
+x′; it therefore suffices to treat T ′ = ( R′, 0) , so that the scene action is P 7 → R′P, T = ( R, x ) 7 → R′T = ( R′R, R ′x), while 
+
+(s, t ) is unchanged. Write the network as the composition 
+
+(ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( s, t, P, T ) = F
+
+
+
+ι V (P, T ), s, t 
+
+, V (P, T ) = Φ( P) ; ( R, x ),
+
+where V collects the equivariant encoder features and the pose vectors, ι is the two-time injection of Lemma 2, and F is the VN-MLP head whose six output coordinates are read as the two equivariant 3-vectors (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+).Under T ′ = ( R′, 0) the input vector-list transforms covariantly, V (R′P, R ′T ) = R′ · V (P, T ), by equivariance of Φ
+
+(Lemma 1) and by R 7 → R′R, x 7 → R′x. Applying Lemma 2 and then Lemma 1 to F ,
+
+F  ι(V (R′P, R ′T ), s, t ) = F  ι(R′ · V (P, T ), s, t ) = F  R′ · ι(V (P, T ), s, t ) = R′ F  ι(V (P, T ), s, t ).
+
+Reading off the two output 3-vectors, this is exactly 
+
+(ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( s, t, T ′P, T ′T ) = R′ (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( s, t, P, T ),
+
+which is the claimed equivariance of Definition 2. The only departure from the single-time architecture of Lim et al. (2024) is the extra input h = t − s, an invariant scalar, which by Lemma 2 leaves the intertwining relation intact. 
+
+Proof of Proposition 1 
+
+Proof. Write ω = ωavg  
+
+> θ
+
+(s, t, P, T t), v = vavg  
+
+> θ
+
+(s, t, P, T t), and h = t − s. Using [R′ω] = R′[ω]R′⊤ and hence exp( −h[R′ω]) = 
+
+R′ exp( −h[ω]) R′⊤ , the rotation component is R′ exp( −h[ω]) R′⊤ R′Rt = R′ exp( −h[ω]) Rt, and the translation component is (R′xt + x′) − hR ′v = R′(xt − hv ) + x′. Closure under composition is immediate. The same argument covers the endpoint-style samplers of Section 3, in both their linear and exponential rotation sched-ules. Each forms the data-endpoint prediction ˆR0, equivariant by ˆR0(s, t, T ′P, T ′Tt) = R′ ˆR0(s, t, P, T t), and updates the rotation as exp( −∆t [A]) Rt with A proportional to the spatial log-displacement log( Rt ˆR⊤ 
+
+> 0
+
+)∨. Under a scene rotation this is covariant, log  R′(Rt ˆR⊤ 
+
+> 0
+
+)R′⊤ ∨ = R′ log( Rt ˆR⊤ 
+
+> 0
+
+)∨, by the conjugation identity, so A 7 → R′A and exp( −∆t [R′A]) R′Rt =
+
+R′ exp( −∆t [A]) Rt. The two schedules differ only in the scalar rate on log( Rt ˆR⊤ 
+
+> 0
+
+)∨, which does not affect equivariance; the translation update is linear and equivariant in both. 24 Proof of Proposition 2 
+
+Proof. For measurable A ⊆ SE(3) , equivariance gives Φ−1  
+
+> T′P
+
+(T ′A) = T ′Φ−1 
+
+> P
+
+(A): writing T = T ′S, ΦT ′P (T ′S) = T ′ΦP (S) ∈
+
+T ′A iff S ∈ Φ−1 
+
+> P
+
+(A). Hence 
+
+(Φ #p1)( T ′A | T ′P) = p1
+
+ T ′Φ−1 
+
+> P
+
+(A) | T ′P
+
+= p1
+
+ Φ−1 
+
+> P
+
+(A) | P  = (Φ #p1)( A | P ),
+
+the middle step by invariance of the prior. 
+
+## I Optimal-Transport Coupling: Minibatch versus Per-Object 
+
+Flow matching is trained on pairs (T0, T 1) of a data grasp and a prior sample. Rather than pairing them independently at random, we couple them within each minibatch by optimal transport (Villani et al. 2009), which straightens the interpolation paths and lowers gradient variance (Bose et al. 2023; Tong et al. 2023; Pooladian et al. 2023). On SE(3) we use the squared geodesic cost 
+
+c(T0, T 1) = wR log( R1R⊤ 
+
+> 0
+
+)∨ 22 + wx x0 − x1
+
+> 22
+
+, (59) and solve a linear assignment to obtain the coupling. There are two ways to pose this assignment, and the choice matters for both correctness and cost. 
+
+Global (minibatch) OT. The standard choice (Pooladian et al. 2023; Bose et al. 2023) solves a single assignment over 
+
+all B′ = P 
+
+> i
+
+Ji grasp–noise pairs in the minibatch, mixing the Ji grasps of every object Pi into one problem. In the conditional setting this is a mismatch on two counts. First, the field is conditioned per object: what it learns is the transport 
+
+p1(· | P i) → q(· | P i) for each object separately, so the coupling should be a coupling of those two conditionals. A global plan is instead a joint assignment across objects, and the prior samples it allots to object i are a subset selected for proximity to that object’s grasps, so the per-object prior marginal it induces is no longer p1. Second, a linear assignment over B′ elements costs 
+
+O(B′3), and B′ is the number of objects per batch times the grasps per object: our batch of 4 objects × up to 256 grasps already gives a 1024 × 1024 problem, and it grows rapidly as the batch mixes more objects. 
+
+Per-object OT. We instead solve one Ji × Ji assignment within each object, pairing that object’s grasps only with that object’s prior samples: 
+
+πi = arg min 
+
+> π∈S Ji
+> Ji
+
+X
+
+> j=1
+
+c T0,ij , T 1,iπ (j)
+
+, i = 1 , . . . , N batch . (60) Since only a permutation within each object is applied, the prior sample set of every object is left unchanged and its marginal is exactly p1, matching the independent-per-object prior used at inference. It is also far cheaper: for a batch of n objects with 
+
+J grasps each, global OT costs O(n3J3) while per-object OT costs O(n J 3), an O(n2) reduction. We therefore use per-object OT throughout; with wR = wx = 1 , the coupling adds negligible overhead to each training step. 
+
+The coupling preserves equivariance. The cost (59) is invariant under a global rigid motion: for any T ′ = ( R′, x ′) one has 
+
+log  (R′R1)( R′R0)⊤ = R′ log( R1R⊤ 
+
+> 0
+
+)R′⊤ , whose ∨-norm is unchanged, and ∥(R′x0+x′) − (R′x1+x′)∥ = ∥x0 − x1∥, so 
+
+c(T ′T0, T ′T1) = c(T0, T 1). Since the prior of Section 3 is SE(3) -invariant, (R1, x 1) ∼ p1(· | P ) implies T ′(R1, x 1) ∼ p1(· | 
+
+T ′P), so transforming an object and its grasps leaves the Ji × Ji cost matrix entrywise unchanged; the assignment solver is deterministic given the matrix, so πi is unchanged even in the presence of ties. The coupled pairs, and therefore the training targets built from them, are the T ′-transforms of the untransformed ones: the coupling does not break the guarantee of Section 3. 
+
+## J Training Configuration 
+
+Training runs on a single NVIDIA A100 (40 GB): 120k steps take ∼7 hours at ∼204 ms/step with a 6.3 GB memory footprint. Evaluation and simulation run on nodes with 4×A100 (one evaluation lane per GPU) using Isaac Gym Preview 4; the software stack is Python 3.10.20 with PyTorch 2.11.0 (CUDA 12.8), Open3D 0.16.0, and POT 0.9.6 under Linux (kernel 6.4). Training uses seed 0; evaluation seeds are 100+NFE , shared across all methods. Each reported configuration is a single training run, and the objective ablation of Appendix P averages three seeds; the lift test is deterministic given the exported grasps. Table 2 lists the hyperparameters of both stages for the two reported models. 
+
+Values tried and how the final setting was chosen. Hyperparameters carried over from EquiGraspFlow (network widths, optimizer, batch composition, point-cloud scaling) were not re-tuned. The values we did search were tuned under a reduced protocol: a single category trained for 30k steps; the selected setting was then trained at full scale, so no selection was made on the reported four-category runs. For the consistency weight of GMF-JVP, we tried {0.05 , 1.7} and kept 1.7, the value at which the two loss terms contribute comparably (their raw magnitudes stand in a ratio of about 0.6, so the smaller weight leaves the consistency term inactive). For the Huber radius on the rotation residual, we tried {20 , 50 , 100 }; the three differ by at most 0.007 
+
+EMD, and we kept the loosest, which almost never fires. For the number of objects per step, we tried {4, 16 } and kept 4, since 25 Hyperparameter Stage 1 ( α-Flow) Stage 2: GMF-SG Stage 2: GMF-JVP Objective α-Flow (JVP-free) FM boundary + consistency Initialization from scratch Stage-1 Steps 18k 102k 102k 
+
+α schedule 1 → 0.2 (sigmoid) — —Boundary term — flow matching Consistency term — geodesic semigroup (18) differential identity (JVP) Consistency weight — 1.0 1.7
+
+Jacobian form — — inverse (left) Rotation Huber radius — — 100 
+
+Coupling independent (GMF-SG) / per-object optimal transport (GMF-JVP), both stages Loss weights (rot, trans) (0 .5, 0.5) 
+
+Loss normalization off Rotation output frame spatial Two-time input ( s ≤ t) yes Time sampler t ∼ Unif(0 , 1] , s ∼ Unif(0 , t ) (s=t w.p. 0.25 )CFG dropout / guidance 0.2 / 2.0
+
+EMA decay 0.999 (EMA weights evaluated) Optimizer Adam, lr 10 −4, weight decay 10 −6
+
+Batch 4 objects × up to 256 grasps Devices 1× NVIDIA A100 (40 GB) 
+
+Table 2: Training hyperparameters of the two reported models. The network, schedule, optimizer, and budget are shared; the two differ in the consistency term, its weight, and the coupling. the larger batch gave no improvement at a matched number of steps. The α-Flow warm-up fraction was tried at {0, 0.15 } and the training length at {120k , 200k }: the warm-up is optional (Appendix P) and 200k steps leave EMD flat and move NFE-20 success by at most 1.6 points, so we report 18k +102k steps. Selection used the four-category averages of the evaluation protocol: EMD for GMF-SG, and simulated success at NFE 5 for GMF-JVP. 
+
+## K Training Algorithm 
+
+Algorithm 3 summarizes one training iteration of the decomposed SE(3) MeanFlow objective (Stage 2; Stage 1 replaces lines 6–11 with the α-Flow loss of Section D, which additionally samples a second time s ∼ Unif(0 , t ), set to t with probability 
+
+0.25 ). Point clouds are mean-centered as a preprocessing step, so the translation prior of Section 3 is standard normal in the centered space. The map Φθ (s, t, R, x ) is the average-velocity step (22), i.e.,   exp( −(t − s)[ ωavg  
+
+> θ
+
+]) R, x − (t − s)vavg 
+
+> θ
+
+.Algorithm 3: GraspMeanFlow training (Stage 2) 
+
+Require: dataset D, encoder fenc , two-time field fθ , weight λsg , dropout puncond 
+
+1: while not converged do 
+
+2: Sample (P, R 0, x 0) ∼ D ; z ← fenc (P); z ← 0 w.p. puncond 
+
+3: Sample R1 ∼ Unif(SO(3)) , x1 ∼ N (0 , I ), t ∼ Unif(0 , 1] 
+
+4: ωt ← log( R1R⊤ 
+
+> 0
+
+)∨; vt ← x1 − x0
+
+5: Rt ← exp  t [ωt] R0; xt ← (1 −t) x0 + t x 1
+
+6: (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+) ← fθ (t, t, R t, x t)
+
+7: Lfm ← ∥ ωavg  
+
+> θ
+
+− ωt∥2 + ∥vavg  
+
+> θ
+
+− vt∥2
+
+8: s ∼ Unif(0 , t ); m ∼ Unif( s, t )
+
+9: (Rc, x c) ← Φθ
+
+ s, m, Φθ (m, t, R t, x t) ▷ composed; stop-grad 
+
+10: (Rd, x d) ← Φθ (s, t, R t, x t) ▷ direct 
+
+11: Lsg ← ∥ log( RdR⊤ 
+
+> c
+
+)∨∥2 + ∥xd − xc∥2
+
+12: Adam step on Lfm + λsg Lsg ; EMA update 
+
+13: end while 
+
+## L Sampling Algorithm 
+
+We report two samplers. The Euler sampler applies (23) directly on the step schedule: each step subtracts the interval-averaged velocity over [tk−1, t k], and no pseudocode beyond (23) is needed. The endpoint-style sampler of Algorithm 4 instead queries the field over [0 , t ] at every step, forms the data-endpoint prediction that the interval-averaged field implies, and moves the 26 current pose a fraction η of the way toward it. This is available only because the field is interval-averaged: an instantaneous field has no endpoint to predict. Two rotation schedules are covered. The linear schedule uses the natural remaining-time rate η = ∆ t/t , which reproduces the Euler update on the geodesic. The exp schedule uses a constant rate η = min( c ∆t, 1) , following the exponential rotation scheduler of ReQFlow (Yue, Wang, and Xu 2025); we use c = 10 and tmin = 10 −6. At the step sizes reported in the paper (NFE ≤ 10 ), η saturates at 1, so each update snaps the rotation to the currently predicted endpoint, which favors high-feasibility modes when the step budget is small. The accelerated schedule applies to the rotation only; the translation update is linear in both. Equivariance of both schedules is verified in Appendix H. Algorithm 4: Few-step inference with endpoint prediction (linear and exponential rotation schedules) 
+
+Require: prior sample (R1, x 1); guided two-time field (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+); steps T ≥ 2; tmin > 0; rotation schedule ∈ { linear , exp };exp rate c > 0
+
+Ensure: ( ˆR0, ˆx0) 
+
+> 1:
+
+{ti}T −1 
+
+> i=0
+
+← linspace(1 , t min , T ) 
+
+> 2:
+
+(R, x ) ← (R1, x 1) 
+
+> 3:
+
+for i = 0 , . . . , T − 2 do  
+
+> 4:
+
+t ← ti; ∆t ← ti − ti+1  
+
+> 5:
+
+(¯ ω, ¯v) ← (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)( t − ∆t, t, R, x ) ▷ average velocity over [t − ∆t, t ] 
+
+> 6:
+
+ˆRθ 
+
+> 0
+
+← exp( −t[¯ ω]) R; ˆxθ 
+
+> 0
+
+← x − t ¯v ▷ predicted data endpoint  
+
+> 7:
+
+u ← log   ˆRθ
+
+> 0
+
+R⊤∨ ▷ log-map from R toward ˆRθ 
+
+> 0
+> 8:
+
+if schedule = linear then  
+
+> 9:
+
+η ← ∆t/t ▷ natural ODE rate (remaining time)  
+
+> 10:
+
+else  
+
+> 11:
+
+η ← min( c ∆t, 1) ▷ exp : constant rate c, capped at the endpoint  
+
+> 12:
+
+end if  
+
+> 13:
+
+R ← exp( η[u]) R 
+
+> 14:
+
+x ← x − ∆t ¯v ▷ translation: linear in both schedules  
+
+> 15:
+
+end for  
+
+> 16:
+
+(¯ ω, ¯v) ← (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+)(0 , t min , R, x ) 
+
+> 17:
+
+( ˆR0, ˆx0) ←   exp( −tmin [¯ ω]) R, x − tmin ¯v ▷ final full jump to the endpoint 
+
+## M Evaluation Protocol 
+
+EMD. For each test instance, we generate as many grasps as the instance’s ground-truth set contains and compute a Hungarian matching under the cost q
+
+∥log( R⊤ 
+
+> g
+
+Rgt )∨∥22 + ∥xg − xgt ∥22
+
+with translations in meters (the benchmark loader’s ×8-normalized coordinates rescaled back). Scores are averaged over the three rotations and all objects of a category, then macro-averaged over categories. Our implementation agrees with EquiGraspFlow’s released SE3_geodesic_dist to four decimals on identical samples, and running their model at its native setting reproduces their published EMD within 0.004 .
+
+NFE-1 success. The main success table starts at NFE 2; for completeness, average NFE-1 success rates are: SE(3)-DiF 6.7% ,BRIDGER 46 .0% , EquiGraspFlow 17 .5% , GraspMeanFlow (Euler) 18 .7% . BRIDGER’s NFE-1 spike (and its NFE-2 collapse and rising EMD beyond NFE 5) traces to its released sampler, which suppresses noise over the final 30% of the trajectory and amplifies the learned drift fivefold; at T =1 this yields a single strongly mode-seeking step from its heuristic prior. Consistent with this, its sample spread doubles from T =1 to T =2 and then shrinks monotonically. At its native T =40 setting, BRIDGER averages 92 .6% .
+
+## N Simulation Details 
+
+Success is evaluated with a floating-gripper lift-and-hold test ported from SE(3)-DiffusionFields’ public isaac_evaluation :the Panda hand closes with constant torque, gravity is applied to the object, and the grasp succeeds if the object stays near its held pose. Table 3 lists all simulator settings, which are identical for every method. The harness is validated in both directions: ground-truth ACRONYM grasps score 97 .8% on average while negative controls score ∼0% . It is insensitive to judge settings — halving the success threshold to 0.15 m or reducing friction to 2 moves every method by at most one point and changes no ranking. One mesh whose convex decomposition fails in PhysX is excluded 27 Algorithm 5: GraspMeanFlow-JVP training (Stage 2) 
+
+Require: dataset D, encoder fenc , two-time field fθ , weight λmf , dropout puncond , Huber radius c
+
+1: while not converged do 
+
+2: Sample objects {P o}Bo=1 with grasp sets {(Ro,i  
+
+> 0
+
+, x o,i  
+
+> 0
+
+)}Ki=1 ∼ D ; zo ← fenc (Po); zo ← 0 w.p. puncond 
+
+3: Sample Ro,i  
+
+> 1
+
+∼ Unif(SO(3)) , xo,i  
+
+> 1
+
+∼ N (0 , I )
+
+4: for each object o do ▷ per-object OT coupling 
+
+5: Coij ← wR∥log( Ro,j  
+
+> 1
+
+(Ro,i  
+
+> 0
+
+)⊤)∨∥2 + wx∥xo,j  
+
+> 1
+
+− xo,i  
+
+> 0
+
+∥2
+
+6: σo ← arg min σ∈SK
+
+P 
+
+> i
+
+Coi σ (i); (Ro,i  
+
+> 1
+
+, x o,i  
+
+> 1
+
+) ← (Ro,σ o(i)1 , x o,σ o(i)1 )
+
+7: end for 
+
+8: Sample t ∼ Unif(0 , 1] , s ∼ Unif(0 , t )
+
+9: ωt ← log( R1R⊤ 
+
+> 0
+
+)∨; vt ← x1 − x0
+
+10: Rt ← exp  t [ωt] R0; xt ← (1 −t) x0 + t x 1
+
+11: (ωavg  
+
+> θ
+
+, v avg  
+
+> θ
+
+) ← fθ (t, t, R t, x t) ▷ flow-matching boundary 
+
+12: Lfm ← ∥ ωavg  
+
+> θ
+
+− ωt∥2 + ∥vavg  
+
+> θ
+
+− vt∥2
+
+13: ˙s ← 0; ˙t ← 1; ˙Rt ← [ωt]Rt; ˙xt ← vt ▷ trajectory tangent 
+
+14:  ¯ωθ , ¯vθ
+
+,   ˙¯ωθ , ˙¯vθ
+
+ ← jvp  fθ ; ( s, t, R t, x t), ( ˙Rt, ˙xt, ˙s, ˙t)
+
+15: ωs→tθ ← (t − s) ¯ ωθ
+
+16: ωtgt ← J sg( ωs→tθ )−1ωt − (t − s) ˙ ¯ωθ ; vtgt ← vt − (t − s) ˙ ¯vθ
+
+17: Lmf ← ∥ ¯ωθ − sg (ωtgt )∥2 + ∥¯vθ − sg( vtgt )∥2 ▷ Huber on the rotation residual 
+
+18: Adam step on Lfm + λmf Lmf with gradient-norm clipping; EMA update 
+
+19: end while 
+
+Simulation step / substeps 1/250 s / 2 Solver position iterations 25 Finger closing effort / steps 25 N / 120 Gravity / hold duration 9.81 m/s 2 / 150 steps ( 0.6 s) Success threshold 0.30 m displacement Friction coefficient 3Convex decomposition V-HACD, 2×10 5 resolution Grasps per instance 100 Rotated instances (B/L/M/P) 30 / 105 / 66 / 48 
+
+Table 3: Isaac Gym lift-test settings, identical for all methods. Each method–NFE cell simulates 24 ,900 grasps. identically for all methods. Removing the test-time SO(3) rotations changes aggregate metrics negligibly for both equivariant models. 
+
+## O Full Quantitative Results 
+
+Table 4 reports the category-averaged EMD over the NFE grid for both configurations. GMF-SG is lowest through NFE 5; its single evaluation already matches what EquiGraspFlow reaches with two to five ( 0.418 against 0.420 and 0.416 ), and EquiGraspFlow needs ten evaluations to draw level ( 0.002 ) and twenty to lead by 0.012 . GMF-JVP trails GMF-SG by 0.04 to 
+
+0.06 at every budget, and both configurations stay far below every baseline at NFE 1 and 2. Table 1 breaks success down by category and NFE; Figure 3 plots the NFE-5 column. The exp-SO(3) sampler holds the best Bowl results at NFE 5, 10, and 20. Success under Euler integration, for both configurations and at every budget, is listed in Table 7, alongside the post-training results. 
+
+## P Additional Ablations 
+
+Objective ablation. Table 5 compares one-step EMD for five objectives under a matched lighter protocol (per-category models warm-started from a shared α-annealed initialization, three seeds). Adding the semigroup term improves the JVP MeanFlow objective on every category, and the flow-matching boundary is the most stable anchor. The MF column uses the body-frame trajectory tangent paired with the left Jacobian, which diverges on the rotationally symmetric Bowl; the frame-consistent inverse-Jacobian target used by GMF-JVP is described in the main text. 28 Method NFE 1 2 5 10 20 SE(3)-DiF 0.694 0.628 0.512 0.456 0.449 BRIDGER 0.717 0.657 0.547 0.598 0.650 EquiGraspFlow 0.734 0.420 0.416 0.380 ∗ 0.369 ∗          
+
+> GMF-SG (Euler) 0.418 ∗0.399 ∗0.390 ∗0.382 0.381
+> GMF-JVP (Euler) 0.466 0.456 0.432 0.425 0.422
+
+Table 4: EMD on the randomly rotated four-category test sets, averaged over categories, with Euler integration for both GraspMeanFlow variants. Lower is better. Best and second-best in each column are in bold; the best is marked with ∗.
+
+Coupling. The two reported configurations differ in both the consistency term and the prior–data coupling: GMF-SG uses independent pairing and GMF-JVP per-object optimal transport (Appendix I). The four-way comparison that would separate the two effects was outside our compute budget, so the gap between the two configurations should not be attributed to either factor alone. We report them as two instantiations of one framework rather than as a controlled comparison of consistency terms. The comparison against EquiGraspFlow is unaffected for GMF-SG, which shares the baseline’s independent coupling.                              
+
+> MF MF+sg αα+sg FM+sg Mug 0.634 0.599 0.568 0.551 0.549
+> Laptop 0.640 0.610 0.592 0.557 0.509
+> Pencil 0.553 0.503 0.420 0.411 0.409
+> Bowl 1.110 0.978 0.513 0.763 0.534 Average 0.734 0.673 0.523 0.571 0.500
+
+Table 5: One-step EMD by training objective (MF = JVP MeanFlow identity, α = α-annealed instantaneous–average interpolation, sg = semigroup consistency; three-seed means under the ablation protocol). 
+
+Boundary variants. Replacing the flow-matching boundary with an endpoint-prediction boundary is competitive overall and notably better on the rotationally symmetric Bowl (one-step EMD ∼0.40 vs. ∼0.53 ), suggesting endpoint regression suits symmetric, multimodal targets; we keep the flow-matching boundary as the default for its robustness across categories. 
+
+Warm-up and training length. Training the decomposed objective from scratch is on par with the α-annealed warm-up (NFE-20 success 93 .4% vs. 94 .2% under the unrotated Euler ablation protocol; EMD curves overlap), so the warm-up is optional. Extending training from 120k to 200k steps leaves EMD flat and moves NFE-20 success by at most 1.6 points, so all reported results use the 120k checkpoint. 
+
+## Q Latency Details 
+
+Table 6 reports wall-clock latency per NFE setting, measured on a single A100 with batch size one, timing model inference only (dataset loading, mesh handling, and simulation excluded) after warm-up. Because GMF-SG and GMF-JVP share the same network, their latency is identical at every step count and is reported once.                              
+
+> NFE 1 2510 20 native GraspMeanFlow 31.5 32.5 41.4 56.3 87.0 –EquiGraspFlow 34.1 33.8 44.7 62.8 99.0 315.0 BRIDGER 8.3 10.7 17.1 28.6 51.4 97.1 SE(3)-DiF 10.9 16.6 33.7 63.1 119.2 1338.7
+
+Table 6: Wall-clock latency (ms, A100, batch 1, model inference only, after warm-up). NFE columns run every method’s own sampler at matched step counts; native is the released default configuration, at which each baseline’s published quality is obtained: RK-MK with 20 steps ( 80 field evaluations) for EquiGraspFlow, 40 steps for BRIDGER, and annealed Langevin with 
+
+240 evaluations for SE(3)-DiffusionFields. The two GraspMeanFlow configurations share a network and therefore a latency. The point-cloud encoder ( ∼29 ms) is evaluated once regardless of step count and dominates the equivariant models at small NFE; the baselines use smaller networks and are cheaper per step. In batched mode (batch 100), GraspMeanFlow takes 0.34 ms/grasp at NFE 1 (a 100-candidate set in ∼34 ms). 29 Model Sampler NFE 2 5 10 20 GMF-SG Euler 36.8 68.3 81.7 94.7 GMF-SG exp-SO(3) 19.2 85.5 90.6 91.1 GMF-SG + ReFlow Euler 48.6 83.0 89.7 93.4 GMF-SG + ReFlow exp-SO(3) 7.8 76.8 90.2 91.8 GMF-JVP Euler 53.9 81.7 93.2 94.6 GMF-JVP exp-SO(3) 15.4 91.1 96.3 95.6           
+
+> GMF-JVP + ReFlow Euler 47.6 83.0 92.0 92.2 GMF-JVP + ReFlow exp-SO(3) 8.2 76.7 92.4 94.3
+
+Table 7: Four-category average success rate (%) for every sampler and post-training combination. Post-training improves the Euler sampler of GMF-SG but degrades the endpoint-style sampler of both configurations, and on GMF-JVP it helps at no budget except Euler at NFE 5. 
+
+## R Post-Training with Success-Filtered ReFlow 
+
+The model reported in the main text is trained only on the ACRONYM grasp annotations. A natural question is whether the simulator itself can be used as a training signal: the lift test provides a binary label for any generated grasp, so the model can be refined on its own successful samples. We report such an experiment here. It improves the Euler sampler substantially at small step budgets but does not surpass the endpoint-style sampler of Section 3, which is why the main text reports the pre-trained model only. 
+
+Procedure. Starting from the converged Stage-2 checkpoint, we generate (noise, grasp) pairs on the training objects with 20-step Euler sampling, discard the pairs whose grasp fails the simulated lift test of Appendix N ( 94 .3% pass), and continue training for 15k steps on the surviving pairs. This is a success-filtered instance of ReFlow (Liu, Gong, and Liu 2023): the coupling between prior and data samples is replaced by the model’s own transport, so the straightened paths are those the model already traverses successfully. All other settings follow the Stage-2 column of Table 2, except that the batch uses 8 objects instead of 4 and the coupling is self-generated rather than independent. The filtered pairs are regenerated once at the start of the stage and not refreshed. 
+
+Results. Table 7 reports every combination of the two configurations with the two samplers, before and after post-training. On GMF-SG the Euler sampler gains 11 .8, 14 .7, and 8.0 points at NFE 2, 5, and 10. This is the effect ReFlow is designed for: independently drawn (noise, grasp) pairs induce curved transport that few steps cannot follow, and re-pairing each grasp with the noise the model itself maps to it straightens those paths. At NFE 20 the gain reverses, costing 1.3 points, consistent with the same reading — once the solver has enough steps, the restricted coupling is a loss of coverage rather than a gain in straightness. On GMF-JVP the stage gives nothing. Its per-object optimal-transport assignment (Appendix I) already supplies a straightened coupling during training, so the benefit ReFlow offers has already been collected; only the cost of an extra stage on self-generated data remains, and every budget except Euler at NFE 5 gets worse. That cost lands hardest on the endpoint-style sampler, in both configurations. The exp-SO(3) sampler commits the rotation to the currently predicted data endpoint at every step, so it needs the interval field’s endpoint prediction to be accurate across the whole interval; refitting on a finite set of the model’s own generations, built once and never refreshed, is precisely a loss of endpoint accuracy. Euler is more forgiving because it consumes only the local average velocity over a short step. Accordingly, at NFE 5 the endpoint sampler drops from 85 .5 to 76 .8 on GMF-SG and from 91 .1 to 76 .7 on GMF-JVP. We therefore report the pre-trained models throughout the main text, and record this experiment as a negative result: success-filtered ReFlow helps only a model whose coupling is not already transport-optimal, and it pays for the attempt by blurring the endpoint predictions the sampler we report depends on. 
+
+Caveat. The filtering threshold is the simulator’s binary outcome, which discards all information about how a grasp failed. A soft-weighted variant, or one that refreshes the generated pairs periodically rather than once, may behave differently; we did not explore either. 30
