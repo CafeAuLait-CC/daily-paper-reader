@@ -44,14 +44,14 @@
       <span class="dpr-home-dashboard-kicker">2026-08-07</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-07 00:49:30 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-07 21:14:59 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日推荐9篇论文，其中2篇精读均获9.0高分，聚焦流匹配与生成模型前沿；速读覆盖3D世界生成、文本图像超分及机器人运动生成。最值得关注的是功能流匹配的离散化与统计一致性，以及基于区间去噪器的像素均值流重思，两者为生成建模提供了新视角。普通读者可优先精读这2篇高分论文，速读部分可按兴趣从3D场景生成或机器人追踪入手。</p>
+<p>今日共读17篇论文，6篇精读、11篇速读，其中两篇高分聚焦于流匹配的离散化与去噪方法。最值得关注的是《Discretization and Statistical Consistency of Functional Flow Matching》与《Rethinking Pixel Mean Flows via Interval Denoiser》，均获9.0/10，代表了流匹配理论在函数空间与像素均值上的新突破。建议普通读者优先浏览这两篇精读摘要，以把握生成模型的最前沿进展。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
 <ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Discretization and Statistical Consistency of Functional Flow Matching">Discretization and Statistical Consistency of Functional Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rethinking Pixel Mean Flows via Interval Denoiser">Rethinking Pixel Mean Flows via Interval Denoiser</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rectify Then Diffuse: Disentangling Concepts Before Denoising Trajectory Unfolds">Rectify Then Diffuse: Disentangling Concepts Before Denoising Trajectory Unfolds</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Genie Sim PanoWorld: An Infinite Indoor 3D World Generation Pipeline via Panoramic Scene Modeling and Simulation">Genie Sim PanoWorld: An Infinite Indoor 3D World Generation Pipeline via Panoramic Scene Modeling and Simulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Coupled Continuous-Discrete Generation for Scene Text Image Super-Resolution">Coupled Continuous-Discrete Generation for Scene Text Image Super-Resolution</span></li><li><span class="dpr-home-dashboard-paper-title" title="GenTrack: Physical Alignment for Robot-Native Motion Generation and Zero-Shot Humanoid Tracking">GenTrack: Physical Alignment for Robot-Native Motion Generation and Zero-Shot Humanoid Tracking</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Energy-Guided Flow Matching">Energy-Guided Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Diff-VF: Training-free High-quality Long Video Generation via Diffusion Model">Diff-VF: Training-free High-quality Long Video Generation via Diffusion Model</span></li><li><span class="dpr-home-dashboard-paper-title" title="Genie Sim PanoWorld: An Infinite Indoor 3D World Generation Pipeline via Panoramic Scene Modeling and Simulation">Genie Sim PanoWorld: An Infinite Indoor 3D World Generation Pipeline via Panoramic Scene Modeling and Simulation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>11</strong></span></div>
 </section>
 </div>
 
