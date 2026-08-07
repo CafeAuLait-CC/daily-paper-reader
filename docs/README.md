@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-05</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-07</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 11 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-05 21:09:59 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-07 00:49:30 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共读11篇论文，精读5篇、速读6篇，核心聚焦“流匹配”在运动预测与生成领域的应用。 最值得精读的是9.0分的《Residual Flow Matching with Dynamic Cross-Interaction for 3D Multi-Person Motion Prediction》和8.0分的《Latent Flow Matching for Arbitrage-Aware Implied Volatility Surface Generation》。 建议优先研读高分3D多人运动预测论文，并搭配速读中的人形机器人流匹配研究，把握流匹配的统一建模思路。</p>
+<p>今日推荐9篇论文，其中2篇精读均获9.0高分，聚焦流匹配与生成模型前沿；速读覆盖3D世界生成、文本图像超分及机器人运动生成。最值得关注的是功能流匹配的离散化与统计一致性，以及基于区间去噪器的像素均值流重思，两者为生成建模提供了新视角。普通读者可优先精读这2篇高分论文，速读部分可按兴趣从3D场景生成或机器人追踪入手。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Residual Flow Matching with Dynamic Cross-Interaction for 3D Multi-Person Motion Prediction">Residual Flow Matching with Dynamic Cross-Interaction for 3D Multi-Person Motion Prediction</span></li><li><span class="dpr-home-dashboard-paper-title" title="Latent Flow Matching for Arbitrage-Aware Implied Volatility Surface Generation">Latent Flow Matching for Arbitrage-Aware Implied Volatility Surface Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="SPARE: Structural Parameter-Free Affinity Regularization for Flow Matching">SPARE: Structural Parameter-Free Affinity Regularization for Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Discretization and Statistical Consistency of Functional Flow Matching">Discretization and Statistical Consistency of Functional Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rethinking Pixel Mean Flows via Interval Denoiser">Rethinking Pixel Mean Flows via Interval Denoiser</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rectify Then Diffuse: Disentangling Concepts Before Denoising Trajectory Unfolds">Rectify Then Diffuse: Disentangling Concepts Before Denoising Trajectory Unfolds</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PFM-HR: Pose Flow Matching for Humanoid Robots">PFM-HR: Pose Flow Matching for Humanoid Robots</span></li><li><span class="dpr-home-dashboard-paper-title" title="Mitigating Compounding Error via Video Representation Regularization">Mitigating Compounding Error via Video Representation Regularization</span></li><li><span class="dpr-home-dashboard-paper-title" title="Safe Vision Language Action Models via Barrier Enhanced Flow Matching">Safe Vision Language Action Models via Barrier Enhanced Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Genie Sim PanoWorld: An Infinite Indoor 3D World Generation Pipeline via Panoramic Scene Modeling and Simulation">Genie Sim PanoWorld: An Infinite Indoor 3D World Generation Pipeline via Panoramic Scene Modeling and Simulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Coupled Continuous-Discrete Generation for Scene Text Image Super-Resolution">Coupled Continuous-Discrete Generation for Scene Text Image Super-Resolution</span></li><li><span class="dpr-home-dashboard-paper-title" title="GenTrack: Physical Alignment for Robot-Native Motion Generation and Zero-Shot Humanoid Tracking">GenTrack: Physical Alignment for Robot-Native Motion Generation and Zero-Shot Humanoid Tracking</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
 </section>
