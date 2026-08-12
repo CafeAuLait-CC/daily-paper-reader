@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-11</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-12</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-11 21:28:14 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-12 21:29:06 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日处理8篇论文，聚焦3D动作生成与扩散模型，精读3篇、速读5篇。</p>
-<p>最值得关注的是《UniMoFlow》（9.0）引领指令驱动3D人体运动编辑，以及《FlowErase-OPD》（8.0）实现流匹配模型多概念擦除。</p>
-<p>建议优先精读这两篇，并留意速读中3D配准与跨模态流匹配的潜在应用。</p>
+<p>今日精读2篇、速读6篇论文，聚焦生成式AI与多模态交互。</p>
+<p>最值得关注：文本生成手物交互动画（MAD-HOI，9.0分）与视频驱动IMU合成（VSMP-IMU，8.0分）。</p>
+<p>建议后续可深入探索扩散模型在具身智能与传感器仿真中的落地潜力。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -76,7 +76,7 @@
     <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="UniMoFlow: Grounding Instruction-Driven 3D Human Motion Editing in Generation">UniMoFlow: Grounding Instruction-Driven 3D Human Motion Editing in Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="FlowErase-OPD: Multi-Concept Erasure via Anchored On-Policy Distillation in Flow Matching Models">FlowErase-OPD: Multi-Concept Erasure via Anchored On-Policy Distillation in Flow Matching Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="DreOPD: Degraded-Reference Extrapolative On-Policy Distillation for Flow-matching Models">DreOPD: Degraded-Reference Extrapolative On-Policy Distillation for Flow-matching Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MAD-HOI: Masked Autoregressive Diffusion for Generating Articulated Hand Object Interactions from Text">MAD-HOI: Masked Autoregressive Diffusion for Generating Articulated Hand Object Interactions from Text</span></li><li><span class="dpr-home-dashboard-paper-title" title="VSMP-IMU: Video-Grounded Semantic Motion Programs for Sensor-Aware Synthetic IMU Generation">VSMP-IMU: Video-Grounded Semantic Motion Programs for Sensor-Aware Synthetic IMU Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Flow Straight to Reality: Perceptually Consistent Flow Matching for Efficient Image Restoration">Flow Straight to Reality: Perceptually Consistent Flow Matching for Efficient Image Restoration</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
 </section>
@@ -86,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Ordered Diffusion for 3D Human Registration">Ordered Diffusion for 3D Human Registration</span></li><li><span class="dpr-home-dashboard-paper-title" title="Compositional Cross-Modality Translation via Whole-Volume Multitask Latent Flow Matching">Compositional Cross-Modality Translation via Whole-Volume Multitask Latent Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="SDDBMs: Soft Denoising Diffusion Bridge Models">SDDBMs: Soft Denoising Diffusion Bridge Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="UniNav: A Unified World-Action Diffusion Model for Visual Navigation">UniNav: A Unified World-Action Diffusion Model for Visual Navigation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Fluid-DiT: Graph-Free Diffusion Transformers for Fluid Flow Simulations Learning">Fluid-DiT: Graph-Free Diffusion Transformers for Fluid Flow Simulations Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MirrorWorld: Taming Video Diffusion Models for Mirror Reflection Generation">MirrorWorld: Taming Video Diffusion Models for Mirror Reflection Generation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
 </section>
 </div>
 
