@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-12</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-13</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-12 21:29:06 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-13 20:40:08 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读2篇、速读6篇论文，聚焦生成式AI与多模态交互。</p>
-<p>最值得关注：文本生成手物交互动画（MAD-HOI，9.0分）与视频驱动IMU合成（VSMP-IMU，8.0分）。</p>
-<p>建议后续可深入探索扩散模型在具身智能与传感器仿真中的落地潜力。</p>
+<p>今日共读7篇，精读1篇《XYZFlow》（8.0分），速读6篇聚焦实时人体动画、相机鲁棒动作策略等方向。</p>
+<p>最值得看：多维捷径流生成建模《XYZFlow》效率突出，以及《LiveAnimate》实现实时流式人体动画（均7分以上）。</p>
+<p>建议优先精读高分生成模型，速读其余篇目可快速掌握机器人策略与图像逆问题的最新应用。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MAD-HOI: Masked Autoregressive Diffusion for Generating Articulated Hand Object Interactions from Text">MAD-HOI: Masked Autoregressive Diffusion for Generating Articulated Hand Object Interactions from Text</span></li><li><span class="dpr-home-dashboard-paper-title" title="VSMP-IMU: Video-Grounded Semantic Motion Programs for Sensor-Aware Synthetic IMU Generation">VSMP-IMU: Video-Grounded Semantic Motion Programs for Sensor-Aware Synthetic IMU Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Flow Straight to Reality: Perceptually Consistent Flow Matching for Efficient Image Restoration">Flow Straight to Reality: Perceptually Consistent Flow Matching for Efficient Image Restoration</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="XYZFlow:Scaling Multi dimensional Shortcut Flows for Efficient Generative Modeling">XYZFlow:Scaling Multi dimensional Shortcut Flows for Efficient Generative Modeling</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,7 +89,7 @@
     <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="UniNav: A Unified World-Action Diffusion Model for Visual Navigation">UniNav: A Unified World-Action Diffusion Model for Visual Navigation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Fluid-DiT: Graph-Free Diffusion Transformers for Fluid Flow Simulations Learning">Fluid-DiT: Graph-Free Diffusion Transformers for Fluid Flow Simulations Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MirrorWorld: Taming Video Diffusion Models for Mirror Reflection Generation">MirrorWorld: Taming Video Diffusion Models for Mirror Reflection Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Cross-View Action Consistency for Camera-Robust Vision-Language-Action Policies">Cross-View Action Consistency for Camera-Robust Vision-Language-Action Policies</span></li><li><span class="dpr-home-dashboard-paper-title" title="LiveAnimate: Stable Long-Form Streaming Human Animation in Real-Time">LiveAnimate: Stable Long-Form Streaming Human Animation in Real-Time</span></li><li><span class="dpr-home-dashboard-paper-title" title="Making Every Step Count: Spatio-Temporal Information Allocation for Imaging Inverse Problems">Making Every Step Count: Spatio-Temporal Information Allocation for Imaging Inverse Problems</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
 </section>
