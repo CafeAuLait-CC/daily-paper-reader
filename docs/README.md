@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-13</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-14</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-13 20:40:08 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-14 21:22:07 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共读7篇，精读1篇《XYZFlow》（8.0分），速读6篇聚焦实时人体动画、相机鲁棒动作策略等方向。</p>
-<p>最值得看：多维捷径流生成建模《XYZFlow》效率突出，以及《LiveAnimate》实现实时流式人体动画（均7分以上）。</p>
-<p>建议优先精读高分生成模型，速读其余篇目可快速掌握机器人策略与图像逆问题的最新应用。</p>
+<p>今日精读5篇、速读4篇，核心聚焦生成模型新范式（路径积分统一框架）与离散扩散简化方法。最值得关注的是精读论文《Unifying Generative Models with Path Integrals》（8.0分），以及速读中的《Simplex Relaxation for Discrete Diffusion》（7.0分），两者均指向生成模型的数学统一与高效采样。建议普通读者优先浏览精读摘要，理解路径积分如何桥接扩散与流匹配，再按需速读动画与个性化生成相关进展。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -76,7 +74,7 @@
     <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="XYZFlow:Scaling Multi dimensional Shortcut Flows for Efficient Generative Modeling">XYZFlow:Scaling Multi dimensional Shortcut Flows for Efficient Generative Modeling</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Unifying Generative Models with Path Integrals">Unifying Generative Models with Path Integrals</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
@@ -86,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Cross-View Action Consistency for Camera-Robust Vision-Language-Action Policies">Cross-View Action Consistency for Camera-Robust Vision-Language-Action Policies</span></li><li><span class="dpr-home-dashboard-paper-title" title="LiveAnimate: Stable Long-Form Streaming Human Animation in Real-Time">LiveAnimate: Stable Long-Form Streaming Human Animation in Real-Time</span></li><li><span class="dpr-home-dashboard-paper-title" title="Making Every Step Count: Spatio-Temporal Information Allocation for Imaging Inverse Problems">Making Every Step Count: Spatio-Temporal Information Allocation for Imaging Inverse Problems</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Simplex Relaxation for Discrete Diffusion">Simplex Relaxation for Discrete Diffusion</span></li><li><span class="dpr-home-dashboard-paper-title" title="Wan-Animate-2: Pushing the Application Boundaries of Character Animation">Wan-Animate-2: Pushing the Application Boundaries of Character Animation</span></li><li><span class="dpr-home-dashboard-paper-title" title="In-Loop Model Adaptation with Coupled Latent-Noise Guidance for High-Fidelity Subject-Driven Text-to-Image Generation">In-Loop Model Adaptation with Coupled Latent-Noise Guidance for High-Fidelity Subject-Driven Text-to-Image Generation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>4</strong></span></div>
 </section>
 </div>
 
