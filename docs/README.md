@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-16</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-17</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 2 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-16 19:28:54 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-17 20:48:06 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读2篇生成模型论文，覆盖可见光到红外图像翻译与对抗Fréchet距离损失，速读2篇涉扩散采样及事件流视频插帧。最值得关注的是SC-Diff的跨模态语义校准方法，以及AdvFD用对抗损失改进生成质量评估。下一步可结合二者，探索更鲁棒的视觉生成与跨域迁移方案。</p>
+<p>今日速读2篇论文，暂无精读；聚焦视频插帧与文生图潜空间控制。</p>
+<p>两篇均获6.0分：生成式视频插帧值得关注，文生图无需训练的潜在控制亦有启发。</p>
+<p>建议后续优先精读其中一篇，深入验证方法效果与适用边界。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SC-Diff: Semantically Calibrated Diffusion for Visible-to-Infrared Image Translation">SC-Diff: Semantically Calibrated Diffusion for Visible-to-Infrared Image Translation</span></li><li><span class="dpr-home-dashboard-paper-title" title="AdvFD: Boosting Visual Generation via Adversarial Fr&#x27;echet Distance Loss">AdvFD: Boosting Visual Generation via Adversarial Fr&#x27;echet Distance Loss</span></li><li><span class="dpr-home-dashboard-paper-title" title="Spatially-Grounded Text-to-Video Generation via Inference-Time Gradient-Free Optimization">Spatially-Grounded Text-to-Video Generation via Inference-Time Gradient-Free Optimization</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,7 +89,7 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Generator-Guided Inverse Sampling for Lévy-Driven Generative Models">Generator-Guided Inverse Sampling for Lévy-Driven Generative Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bridging Event Streams and DiT: Event-Guided Video Frame Interpolation">Bridging Event Streams and DiT: Event-Guided Video Frame Interpolation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SNM-VFI: Symmetric Nonlinear Motion-Guided Generative Video Frame Interpolation">SNM-VFI: Symmetric Nonlinear Motion-Guided Generative Video Frame Interpolation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Concept Guidance: Precise, Training-Free Latent Control for Text-to-Image Generation">Concept Guidance: Precise, Training-Free Latent Control for Text-to-Image Generation</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
 </section>
