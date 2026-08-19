@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-18</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-19</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 13 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-18 20:55:27 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-19 19:37:33 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共读9篇文章，精读3篇，重点聚焦生成式建模新方法。</p>
-<p>最值得关注《Spatially-Grounded Flow Matching》（9.0）与《Equilibrium Forcing》（8.0），分别从结构化源分布和无噪声条件切入图像与视频生成。</p>
-<p>可优先精读这两篇高分工作，并延伸留意流匹配相关的人-物交互和舞蹈生成应用。</p>
+<p>今日精读聚焦脑信号驱动动作生成与高效文生图，速读覆盖渲染与扩散模型优化；最值得关注EEG2MOTION的跨模态创新与Nexus的结构化效率提升；建议优先精读9分脑机接口论文，再结合扩散模型改进方向延伸。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Spatially-Grounded Flow Matching: Structured Source Distributions for Image Generation">Spatially-Grounded Flow Matching: Structured Source Distributions for Image Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Equilibrium Forcing: Adaptive Video Generation Without Noise Conditioning">Equilibrium Forcing: Adaptive Video Generation Without Noise Conditioning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Forward-Evolution Error Analysis and Adaptive Design for Matrix-Valued Diffusion Models">Forward-Evolution Error Analysis and Adaptive Design for Matrix-Valued Diffusion Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="EEG2MOTION: Towards Open-Vocabulary Human Motion Synthesis from Non-invasive Brain Signals">EEG2MOTION: Towards Open-Vocabulary Human Motion Synthesis from Non-invasive Brain Signals</span></li><li><span class="dpr-home-dashboard-paper-title" title="Nexus: Structured Synergy for Efficient Text-to-Image Generation using Rectified Flow Model">Nexus: Structured Synergy for Efficient Text-to-Image Generation using Rectified Flow Model</span></li><li><span class="dpr-home-dashboard-paper-title" title="Magnitude-Direction Decoupling for Fast Video Generation with Flow Matching Models">Magnitude-Direction Decoupling for Fast Video Generation with Flow Matching Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="HOIMask: Towards Generative Masked Modeling for Human Object Interaction Generation">HOIMask: Towards Generative Masked Modeling for Human Object Interaction Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Making two action heads agree: coordination mechanisms and a runtime collapse certificate for flow-matching policies">Making two action heads agree: coordination mechanisms and a runtime collapse certificate for flow-matching policies</span></li><li><span class="dpr-home-dashboard-paper-title" title="FlowDance: Music-Driven Dance Video Generation with Parallel Pose and RGB Streams">FlowDance: Music-Driven Dance Video Generation with Parallel Pose and RGB Streams</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RGBX-Next: Towards Realistic Generative Rendering from G-Buffers">RGBX-Next: Towards Realistic Generative Rendering from G-Buffers</span></li><li><span class="dpr-home-dashboard-paper-title" title="Adversarial Learning of Classifier-Free Guidance Schedules">Adversarial Learning of Classifier-Free Guidance Schedules</span></li><li><span class="dpr-home-dashboard-paper-title" title="Scale-Consistent Posterior Dynamics for Diffusion Inverse Problems">Scale-Consistent Posterior Dynamics for Diffusion Inverse Problems</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>8</strong></span></div>
 </section>
 </div>
 
