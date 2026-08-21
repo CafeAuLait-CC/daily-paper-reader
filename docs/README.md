@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-20</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-21</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>9</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-20 20:49:40 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-21 20:40:26 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日完成4篇论文速读，聚焦扩散模型缓存优化、多模态大模型视频语义修正与4D场景重建三大方向。其中，扩散模型缓存重用策略和MLLM引导的视频生成修正均获7.0分，值得优先关注。建议下一步可深入精读这两篇，对照实验细节验证其实际效果。</p>
+<p>今日精读聚焦Flow Matching PET图像重建（8.0分），速读覆盖动态分辨率生成与文本图像可控生成；最值得关注精读中的PET重建新范式，以及AViTS的高效动态分辨率方案；建议优先精读Flow Matching原文，再跟进token选择技术细节。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Flow Matching-Based PET Image Reconstruction">Flow Matching-Based PET Image Reconstruction</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="From Local Mismatch to Global Impact: Optimizing Cache Reuse Policy for Efficient Diffusion">From Local Mismatch to Global Impact: Optimizing Cache Reuse Policy for Efficient Diffusion</span></li><li><span class="dpr-home-dashboard-paper-title" title="MLLM-Guided Semantic Correction for Text-to-Video Generation">MLLM-Guided Semantic Correction for Text-to-Video Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Depth Anything V4: Dynamic 4D Scene Reconstruction via Riemannian Flow Matching on 4D Gaussian Splatting">Depth Anything V4: Dynamic 4D Scene Reconstruction via Riemannian Flow Matching on 4D Gaussian Splatting</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AViTS: Adaptive Spatiotemporal Token Selection for Efficient Dynamic-Resolution Generation">AViTS: Adaptive Spatiotemporal Token Selection for Efficient Dynamic-Resolution Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Continuous Adversarial MeanFlow Transfer">Continuous Adversarial MeanFlow Transfer</span></li><li><span class="dpr-home-dashboard-paper-title" title="PixelControl: Fine-Grained Condition Fidelity in Text-to-Image Diffusion">PixelControl: Fine-Grained Condition Fidelity in Text-to-Image Diffusion</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>9</strong></span></div>
 </section>
 </div>
 
