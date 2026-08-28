@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-26</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-28</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 6 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-26 22:19:10 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-28 03:36:40 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读6篇，聚焦语义优先运动编码与可扩展生成建模，其中《SeMoCo》以9.0分领跑。</p>
-<p>最值得关注：语义级运动编码器SeMoCo用于运动语言建模，以及重正化群流匹配实现局部生成模型的可扩展训练。</p>
-<p>建议普通读者优先精读SeMoCo，理解如何用语义压缩提升运动生成效率，再顺带浏览扩散模型的强化学习扩展方向。</p>
+<p>今日精读5篇、速读2篇，重点关注生成与表示学习统一及连续语音手势控制两大方向。</p>
+<p>最高分9.0的《Drift Variation Autoencoder》与《InteractGesture》值得优先精读，前者统一生成与表示学习，后者实现流式手势控制。</p>
+<p>普通读者可先读这两篇摘要，再按兴趣深入源码或实验，无需逐一浏览全部7篇。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SeMoCo: A Semantic-First Motion Codec for Motion Language Modeling">SeMoCo: A Semantic-First Motion Codec for Motion Language Modeling</span></li><li><span class="dpr-home-dashboard-paper-title" title="Renormalization Group Flow Matching for Scalable Local Generative Modeling">Renormalization Group Flow Matching for Scalable Local Generative Modeling</span></li><li><span class="dpr-home-dashboard-paper-title" title="Generalization, memorization, and overfitting for diffusion models trained in the lazy high-dimensional regime">Generalization, memorization, and overfitting for diffusion models trained in the lazy high-dimensional regime</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Drift Variation Autoencoder: Unifying Generation and Representation Learning through Conditional Posterior Flow Matching">Drift Variation Autoencoder: Unifying Generation and Representation Learning through Conditional Posterior Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="InteractGesture: Progressive Chunk Guidance for Continuous Streaming Co-Speech Gesture Control">InteractGesture: Progressive Chunk Guidance for Continuous Streaming Co-Speech Gesture Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Multi-Person Human Motion Forecasting in Complex Scenes">Multi-Person Human Motion Forecasting in Complex Scenes</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Scaling Reinforcement Learning for Diffusion Models via Velocity Matching">Scaling Reinforcement Learning for Diffusion Models via Velocity Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Representation Learning in Diffusion and Flow-based Model: An Application Aspect">Representation Learning in Diffusion and Flow-based Model: An Application Aspect</span></li><li><span class="dpr-home-dashboard-paper-title" title="NeurRAFT: Robot Motion Planning via Anchor-Level Flow Matching with Clearance-Aware Preference Tuning">NeurRAFT: Robot Motion Planning via Anchor-Level Flow Matching with Clearance-Aware Preference Tuning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Flow Networks for Offline Trajectory Planning">Bayesian Flow Networks for Offline Trajectory Planning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Self-Augmented Diffusion Guidance for Physics-Informed Generation">Self-Augmented Diffusion Guidance for Physics-Informed Generation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
 </section>
 </div>
 
