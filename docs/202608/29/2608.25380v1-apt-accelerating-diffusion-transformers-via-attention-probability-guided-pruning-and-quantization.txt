@@ -1,0 +1,594 @@
+Title: APT: Accelerating Diffusion Transformers via Attention Probability-Guided Pruning and Quantization
+
+URL Source: https://arxiv.org/pdf/2608.25380v1
+
+Published Time: Thu, 27 Aug 2026 00:31:10 GMT
+
+Number of Pages: 9
+
+Markdown Content:
+# APT: Accelerating Diffusion Transformers via Attention Probability-Guided Pruning and Quantization 
+
+## Sungyeob Yoo 
+
+KAIST Daejeon, Republic of Korea sungyeob.yoo@kaist.ac.kr 
+
+## Seeyeon Kim 
+
+KAIST Daejeon, Republic of Korea seeyakim@kaist.ac.kr 
+
+## Joonyong Park 
+
+KAIST Daejeon, Republic of Korea wndy2001@kaist.ac.kr 
+
+## Seunghee Han 
+
+KAIST Daejeon, Republic of Korea shhan1755@kaist.ac.kr 
+
+## Joo-Young Kim 
+
+KAIST Daejeon, Republic of Korea jooyoung1203@kaist.ac.kr 
+
+Abstract 
+
+Recent advances in generative AI have significantly increased the demand for high-resolution image and video generation, position-ing diffusion models as a core technology. Among them, Diffusion Transformers (DiTs) have emerged as the state-of-the-art (SOTA) models due to their scalability and output quality. However, self-attention in DiTs incurs significant computational overhead, leading to excessively long latency as the complexity grows with the fourth power of the output resolution. While prior works have attempted to mitigate this cost using sparsity and quantization techniques, they fall short of effectively reducing the computational cost in high-resolution DiTs. In this paper, we present APT, a software–hardware co-designed accelerator for high-resolution DiTs. APT leverages attention prob-abilities as a unified importance metric to jointly optimize compu-tation through fine-grained pruning and adaptive precision scaling. At the algorithm level, we propose Attention Probability-guided Adaptive Dual Thresholding (APDT), which dynamically performs element selection and precision assignment using dual thresholds. To ensure compatibility with memory-efficient FlashAttention, we introduce Timestep-Aware FlashAttention (TAFA), which predicts attention probabilities across timesteps by exploiting temporal sim-ilarity. At the architecture level, we co-design a specialized acceler-ator that efficiently supports irregular sparsity and dual-precision execution, featuring dynamic mask management, address transla-tion, dual-precision compute units, and a tile-based dataflow. Finally, we evaluate APT on SOTA DiT models, including PixArt-𝛼 , Sta-ble Diffusion 3, and FLUX. APT achieves up to 8.16 × speedup and 14.98 × higher energy efficiency over NVIDIA A100, and up to 3.01 ×
+
+speedup and 2.04 × higher energy efficiency over EXION, a SOTA diffusion model accelerator. 
+
+CCS Concepts 
+
+• Computer systems organization → Architectures ; • Com-puting methodologies → Computer vision .
+
+> This work is licensed under a Creative Commons Attribution 4.0 International License.
+> ICCAD ’26, San Jose, CA, USA
+> © 2026 Copyright held by the owner/author(s). ACM ISBN 979-8-4007-2873-0/2026/11 https://doi.org/10.1145/3831252.3834102
+
+Keywords 
+
+Diffusion Transformer, Hardware Accelerator, Attention Pruning, Dual-Precision Quantization, Software-Hardware Co-Design 
+
+ACM Reference Format: 
+
+Sungyeob Yoo, Seeyeon Kim, Joonyong Park, Seunghee Han, and Joo-Young Kim. 2026. APT: Accelerating Diffusion Transformers via Atten-tion Probability-Guided Pruning and Quantization. In IEEE/ACM Interna-tional Conference on Computer-Aided Design (ICCAD ’26), November 08– 12, 2026, San Jose, CA, USA. ACM, New York, NY, USA, 9 pages. https: //doi.org/10.1145/3831252.3834102 
+
+1 Introduction 
+
+The recent surge in generative AI has positioned diffusion mod-els as the state-of-the-art (SOTA) backbone for high-fidelity im-age and video synthesis [13, 14, 23, 25, 26]. Diffusion Transformer (DiT) models such as PixArt-𝛼 [2], Stable Diffusion 3 (SD3) [8], and FLUX [18] replace U-Nets with Transformers [30] and have become the standard for high-quality generation. Despite their flexibility, DiT models suffer from significant com-putational overhead as resolution increases. As shown in Figure 1(a), self-attention accounts for over 90% of total computation at 4K res-olution, making it the dominant bottleneck. This overhead grows rapidly with resolution. Since the token count grows as 𝑁 2 for an image of resolution 𝑁 , and self-attention scales quadratically with token count, the two core operations— 𝑞𝑢𝑒𝑟𝑦 ×𝑘𝑒𝑦 ⊤ (𝑄𝐾 ⊤) and 
+
+𝑎𝑡𝑡𝑒𝑛𝑡𝑖𝑜𝑛 _𝑝𝑟𝑜𝑏𝑎𝑏𝑖𝑙𝑖𝑡𝑦 ×𝑣𝑎𝑙𝑢𝑒 (𝑃𝑉 )—yield O( 𝑁 4) overall complex-ity. Figure 1(b) confirms that 𝑄𝐾 ⊤ and 𝑃𝑉 dominate self-attention, underscoring the necessity of reducing their cost. To address this, pruning and quantization have been explored as two widely stud-ied techniques to reduce computation [3, 4, 10, 11, 28, 36]. While pruning and quantization have usually been applied separately, both aim to reduce computation on less essential elements: pruning eliminates them entirely, while quantization reduces their preci-sion. Here, the key challenge lies in identifying which elements are essential and how to adapt these decisions across timesteps, so that both techniques can be applied jointly through a unified metric. We observe that attention probabilities provide a unified impor-tance metric for jointly guiding both techniques. After Softmax, they concentrate on a few dominant entries while suppressing the rest, revealing which elements can be pruned and which require re-duced precision. Moreover, this distribution remains highly similar across adjacent timesteps in DiT, so importance information from arXiv:2608.25380v1 [cs.AR] 26 Aug 2026 ICCAD ’26, November 08–12, 2026, San Jose, CA, USA Sungyeob Yoo, Seeyeon Kim, Joonyong Park, Seunghee Han, and Joo-Young Kim 100 80 60 40 20 0250 050 100 150 200 Latency (s) Ratio (%)  100 020 40 60 80 Ratio(%)            
+
+> (a) (b)
+> Self-Attention Cross-Attention Feed-Forward QK TComp. PV Comp. QKV Gen. 1K 2K 4K 1K 2K 4K Output Proj. MISC (Norm., Softmax, etc) MISC
+
+Figure 1: (a) Computation breakdown and latency measured on NVIDIA A100 (b) Operation breakdown in self-attention Sparsity-Aware Dual-Precision Matrix Processing Unit ( SD-MPU )Attention Probability-Guided Adaptive Dual Thresholding ( APDT )Timestep-Aware Flash Attention ( TAFA )
+
+> Specialized Hardware Architecture Software-Level Optimizations
+> QK T
+> Self-Attention
+> PV
+> timestep t  TAFA
+> Softmax
+> Self-Attention
+> QK T
+> PV
+> APDT SD-MPU
+> Attention Probability
+> timestep t-1
+> - Pruning - Dual-Precision
+> mask Softmax
+
+Figure 2: Overview of APT 
+
+one timestep can inform decisions at the next. However, while this similarity holds between adjacent steps, the overall distribution evolves as denoising progresses, shifting from nearly uniform to sharply concentrated, so decisions must adapt accordingly. Translat-ing these observations into a practical system poses two additional challenges. First, modern DiT pipelines rely on FlashAttention, which avoids materializing attention probabilities to save memory. Second, the element-wise sparsity and per-element precision assign-ment from probability-guided decisions create irregular patterns that existing hardware cannot efficiently handle. Motivated by this, we present APT, a software–hardware co-designed accelerator for high-resolution DiTs. At the algorithm level, we propose Attention Probability-guided Adaptive Dual Thresh-olding (APDT), which applies two coordinated thresholds—one for pruning and one for precision assignment—to classify each atten-tion element into skipped, low-precision, or high-precision exe-cution based on attention probability statistics. To enable APDT within FlashAttention, we introduce Timestep-Aware FlashAtten-tion (TAFA), which predicts attention probabilities by reusing nor-malization statistics from adjacent timesteps. At the architecture level, we design a specialized architecture featuring tile-based dataflow, dynamic mask management, address translation, and dual-precision compute units to efficiently handle the resulting irregular sparsity. Figure 2 provides an overview. Our contributions are as follows: 
+
+• We propose APT, a software–hardware co-designed acceler-ator for high-resolution DiTs that jointly leverages pruning and quantization guided by attention probabilities. 
+
+• We introduce APDT for adaptive element-wise pruning and dual-precision quantization, and TAFA for enabling APDT within FlashAttention’s memory-efficient framework. 
+
+• APT features a specialized hardware architecture with fine-grained sparsity support, dual-precision execution, and effi-cient mask handling via tile-based dataflow. 
+
+• APT achieves up to 8.16 × and 3.01 × speedup, and up to 14.98 × and 2.04 × higher energy efficiency over the A100 and EXION, respectively. Forward Diffusion Process Reverse Denoising Process Gaussian Noise      
+
+> T1
+> Data T0T2Tt-2 Tt-1 Tt
+> (a) (b) (c)
+> Timestep t
+> Update Latent Space
+> Timestep t-1
+> Update Latent Space
+> Timestep 0
+> Update Latent Space
+> Self-Attention
+> Cross-Attention Normalization Normalization Feed-Forward
+> DiT Block
+> Normalization Normalization
+> DiT Block #0 DiT Block #1 DiT Block #2 DiT Block #27
+
+Figure 3: (a) Overview of diffusion process (b) Execution flow of DiT (c) Architecture of DiT block 
+
+2 Background and Motivation 2.1 Overview of Diffusion Transformer 
+
+The diffusion model is a generative model that synthesizes data by gradually denoising Gaussian noise. As shown in Figure 3(a), it removes noise step by step through a trained denoising process to produce high-quality outputs. Recently, SOTA diffusion mod-els such as PixArt-𝛼 [2], SD3 [8], and FLUX [18] have adopted Transformer-based backbones, known as Diffusion Transformers (DiTs). DiT progressively refines the latent representation across timesteps using a sequence of Transformer blocks, each consisting of self-attention, cross-attention, feed-forward layers, and normal-ization, as shown in Figure 3(b) and (c). Among these components, self-attention is the dominant operation. As shown in Figure 4(a), self-attention first generates query, key, and value matrices, then computes scaled attention scores via 𝑄𝐾 ⊤, applies Softmax to pro-duce attention probabilities, aggregates context through 𝑃𝑉 , and projects the result to the output. 
+
+2.2 Temporal Similarity in DiT 
+
+DiT models exhibit temporal similarity in attention maps [17]. Un-like standard Transformers, DiT models process inputs that evolve gradually across timesteps due to the iterative nature of the diffu-sion process, resulting in high similarity in attention probability distributions between adjacent steps. As shown in Figure 4(b) and (c), the cosine similarity of attention probabilities exceeds 0.92 for consecutive steps in most blocks, and decays gradually with larger temporal gaps. This temporal similarity suggests that attention probability information from one timestep can be reused in adjacent steps to reduce redundant computation. Specifically, if the atten-tion probability distribution is known from the previous timestep (𝑡 +1), it can serve as a proxy for identifying which elements are important at the current step, enabling both pruning decisions and precision assignment without recomputing full attention scores. This property is unique to diffusion models and does not hold for APT: Accelerating Diffusion Transformers via Attention Probability-Guided Pruning and Quantization ICCAD ’26, November 08–12, 2026, San Jose, CA, USA (c)         
+
+> Block Index 025 1.00 0.95 510 15 20 0.90
+> (b) (a)
+> QKV Generation Scale(QK T)Softmax PV Output Projection
+> Query Key Scaled Attention Score
+> Attention Probability
+> Value Attention Output
+> Self-Attention
+> Timestep Timestep 0510 15 1.0 0.8 0.6 0.4 0.2 0.0 0510 15
+
+Figure 4: (a) Computational flow of self-attention (b) Cosine similarity of attention probability between timesteps (c) Co-sine similarity between consecutive timesteps across blocks 
+
+standard Transformer inference. Note that experimental results up to Section 3 are based on PixArt-𝛼 .
+
+2.3 Limitations of Prior Approaches 
+
+Softmax pruning [4, 21] exploits the fact that Softmax amplifies large attention scores while suppressing small ones, resulting in attention probabilities where only a few entries have significant magnitude. By thresholding these probabilities, low-importance elements can be removed from 𝑃𝑉 computation with minimal ac-curacy loss. However, it faces three limitations in DiTs: (1) a fixed threshold ignores distributional variance across timesteps, which can either remove important information or miss available spar-sity, (2) mask reuse degrades as temporal similarity weakens over time, and (3) storing full binary masks at high resolutions requires prohibitive memory (448 GiB at 4K), far exceeding GPU capacity. 
+
+Quantization for DiTs [19, 32] has shown that linear and convo-lutional layers can operate at low precision. However, SVDQuant [19] leaves 𝑄𝐾 ⊤ and 𝑃𝑉 in full precision, as quantizing these activation– activation operations results in substantial accuracy loss. Since these operations dominate the cost at high resolutions, quantiza-tion alone provides limited benefit for the attention bottleneck. 
+
+FlashAttention (FA) [5] is a memory-efficient self-attention algorithm that avoids materializing the full attention probability matrix by reordering computations into tiles. FA loads the query matrix into SRAM and processes key and value matrices tile by tile, performing partial Softmax per tile and accumulating scaling fac-tors to reconstruct the final output. Specifically, for each query tile 𝑖 
+
+and key-value tile 𝑗 , FA computes tile-level unnormalized exponen-tials P′( 𝑗 ) 
+
+> 𝑖
+
+and accumulates exponential sums l( 𝑗 ) 
+
+> 𝑖
+
+across tiles, but the final Softmax scaling factor R( 𝑗 ) 
+
+> 𝑖
+
+that normalizes each tile’s con-tribution is only available after all tiles are processed. This design prevents direct access to attention probabilities, making FA incom-patible with Softmax pruning and other attention-probability-based optimizations. Therefore, a new prediction mechanism is required that approximates attention probabilities without compromising FA’s memory efficiency. 
+
+3 APT’s Algorithm Optimizations 
+
+APT introduces two algorithm-level optimizations. (1) Attention Probability-guided Adaptive Dual Thresholding (APDT) jointly applies pruning and dual-precision quantization at element-wise Apply mask generated by dual threshold Compute w/ dual-precision / Skip pruning sparsity Compute w/ dual-precision                           
+
+> (a)
+> (d)
+> Ours Conventional
+> QK T
+> Softmax
+> Mask Gen.
+> Self-Attention timestep t ith DiT Block
+> Softmax
+> Mask Gen.
+> Self-Attention
+> QK T
+> timestep t-1 ith DiT Block
+> Softmax
+> Mask Gen.
+> Self-Attention
+> QK T
+> timestep t-2 ith DiT Block
+> Softmax
+> Mask Gen.
+> Self-Attention
+> QK T
+> timestep t-N ith DiT Block
+> PV PV PV PV
+> Normalized BOPs Conventional 1.0 0.8 0.4 0Ours 0.6 0.2 65% 0.35 1.00
+> (c)
+> QSNR (dB) INT12 30 20 10 0INT6 Ours 28.6 21.3 28.5
+> (b)
+> timestep Prompt A Prompt B Prompt C 0.004 0.000 0.002 Stable Diffusion 3 Average Std.  0.004 0.002 0.003 FLUX Average Std.  0.003 0.002 PixArt-α Average Std. 0510 15 20 0510 15 20 010 20 30 50 25 40
+> (e)
+> 0.008 0.006 0.004 0.002 Timestep Block Index 00510 15 20 25 510 15
+
+Figure 5: (a) Execution flow of APDT across timesteps (b) Average standard deviation of attention probabilities over timesteps (c) Comparison of accuracy across precision set-tings (d) Comparison of normalized computation under sim-ilar output quality (e) Per-block and per-timestep standard deviation of attention probabilities 
+
+granularity. (2) Timestep-Aware FlashAttention (TAFA) enables APDT within FA by combining normalization statistics from the previous timestep with the current timestep’s partial sums to predict attention probabilities without full probability materialization. 
+
+3.1 Attention Probability-Guided Adaptive Dual Thresholding 
+
+APDT reduces self-attention cost by leveraging the standard de-viation of attention probabilities as a metric to adaptively guide pruning and precision assignment. As shown in Figure 5(a), two thresholds are applied at each timestep: the pruning threshold re-moves unimportant elements, while the quantization threshold assigns precision. Elements above the quantization threshold use 12-bit precision; elements between the two thresholds use 6-bit; elements below the pruning threshold are skipped entirely. A key observation is that the standard deviation of attention probabilities increases as denoising progresses (Figure 5(b)): early in the process, the latent input is highly noisy and attention scores are distributed uniformly, but in later stages, attention becomes concentrated as semantically meaningful regions emerge. Moreover, the standard deviation differs substantially across blocks within the ICCAD ’26, November 08–12, 2026, San Jose, CA, USA Sungyeob Yoo, Seeyeon Kim, Joonyong Park, Seunghee Han, and Joo-Young Kim 
+
+same timestep (Figure 5(e)), further motivating adaptive threshold-ing. APDT adjusts thresholds per head and timestep: 
+
+𝑡ℎ𝑟𝑒𝑠ℎ𝑜𝑙𝑑 ℎ (𝑡 ) = 𝛼 · 𝜎 ℎ (𝑡 ) − 𝜎 ℎ, min 
+
+𝜎 ℎ, max − 𝜎 ℎ, min 
+
++ 𝛽 
+
+where 𝜎 ℎ (𝑡 ) is the profiled standard deviation of attention head ℎ
+
+at timestep 𝑡 , obtained through a one-time offline profiling step per model. The same formula is applied twice with separate (𝛼, 𝛽 )
+
+pairs for the pruning and quantization thresholds, respectively. The quantization threshold is kept strictly above the pruning threshold by assigning larger 𝛼 and 𝛽 values to the quantization pair. The hy-perparameters 𝛼 and 𝛽 are determined per model, and 𝜎 ℎ, min , 𝜎 ℎ, max 
+
+denote the minimum and maximum of 𝜎 ℎ (𝑡 ) observed across all timesteps during offline profiling. With these 𝜎 -adaptive thresholds, APDT preserves more information during the early timesteps when attention is distributed uniformly, while allowing greater compu-tational reduction in later stages when attention concentrates on fewer elements. APDT generates high- and low-precision execution masks that are reused from the previous timestep ( 𝑡 +1) via temporal similarity (Figure 4(c)), avoiding redundant 𝑄𝐾 ⊤ computation. Pruning and precision decisions are applied independently to individual atten-tion probability matrix elements, resulting in element-wise dynamic sparsity. Masks are generated at runtime since attention distribu-tions are input-dependent. To prevent quality degradation, APDT employs periodic refresh (every 7–10 steps), which reintroduces all pruned elements into the low-precision mask, and 𝜎 -driven re-fresh per head, triggered independently when the offline-profiled head-wise 𝜎 drops by more than 5%–10% of its observed range. Quantization uses symmetric uniform quantization at the tile level. As shown in Figure 5(c)–(d), APDT achieves a quantization signal-to-noise ratio (QSNR) [6] of 28.5 dB, comparable to INT12 (28.6 dB), and reduces BOPs by up to 65% versus fixed-threshold pruning. 
+
+3.2 Timestep-Aware FlashAttention 
+
+As described in Section 2.3, FA prevents direct access to atten-tion probabilities within its tiled execution. TAFA addresses this by reusing normalization statistics from the previous timestep to predict per-tile attention probabilities, as illustrated in Figure 6(a). Recall that for the 𝑖 -th query tile and 𝑗 -th key-value tile (where 
+
+𝑗 ranges from 1 to 𝑇 𝑐 , the total number of key-value tiles), FA computes S( 𝑗 ) 
+
+> 𝑖
+
+= 𝑄 𝑖 𝐾 ⊤ 
+
+> 𝑗
+
+and the unnormalized exponential P′( 𝑗 ) 
+
+> 𝑖
+
+=
+
+exp (S( 𝑗 ) 
+
+> 𝑖
+
+−m( 𝑗 ) 
+
+> 𝑖
+
+), where m( 𝑗 ) 
+
+> 𝑖
+
+is the row-wise maximum. The scaling factor R( 𝑗 ) 
+
+> 𝑖
+
+requires statistics from all 𝑇 𝑐 tiles, but TAFA overcomes this by reusing R( 𝑗 ) 
+
+> 𝑖
+
+from timestep 𝑡 +1: 
+
+P𝑖 (𝑡 ) ≈ l( 𝑗 ) 
+
+> 𝑖
+
+(𝑡 +1) · R( 𝑗 ) 
+
+> 𝑖
+
+(𝑡 +1) · diag (l( 𝑗 ) 
+
+> 𝑖
+
+(𝑡 )) −1
+
+| {z }
+
+> TAFA factor
+
+·P′( 𝑗 ) 
+
+> 𝑖
+
+(𝑡 )
+
+The first term, l( 𝑗 ) 
+
+> 𝑖
+
+(𝑡 +1) · R( 𝑗 ) 
+
+> 𝑖
+
+(𝑡 +1), captures the ratio of each tile to the full attention probability at 𝑡 +1; this ratio is stable across adjacent timesteps because attention distributions in DiT change gradually. As shown in Figure 6(b), the cosine similarity of l( 𝑗 ) 
+
+> 𝑖
+
+· R( 𝑗 )
+
+> 𝑖
+
+between consecutive timesteps consistently exceeds 0.95. Figure 6(c) confirms that execution masks from TAFA achieve >97% similarity to those from full Softmax across all blocks. By operating within FA’s Proposed Timestep-Aware Flash Attention for Mask Generation                                                         
+
+> Ri(j)(t)= diag( li(Tc )(t)exp( mi(Tc )(t)-mi(j)(t))) -1
+> = diag( li(Tc )exp( mi(Tc )-mi(j))) -1 P' i(j)
+> P' i(j)= exp( Si(j)-mi(j))
+> Pi= diag(rowsum(exp( Si(j)-mi(Tc )))) -1 exp( Si(j)-mi(Tc ))
+> li(Tc )= rowsum(exp( Si(j)-mi(Tc ))) = diag(rowsum(exp( Si(j)-mi(Tc ))) exp( mi(Tc )-mi(j))) -1 exp( Si(j)-mi(j))
+> Pi(t)=diag( li(Tc )(t)exp( mi(Tc )(t)-mi(j)(t))) -1 P' i(j)(t)
+> Pi(t)=Ri(j)(t)P' i(j)(t)(Conventional)
+> Pi(t) ≈ li(j)(t+1) Ri(j)(t+1) diag( li(j)(t)) -1 P' i(j)(t)(Proposed)
+> However, li(j)(t)Ri(j)(t)≈li(j)(t+1) Ri(j)(t+1) in diffusion models ( ∵(b)) (a)
+> (c)
+> =(li(j)(t)diag( li(j)(t)) -1 )Ri(j)(t)P' i(j)(t)
+> Ri(j)(t)requires full tile-wise computation up to j=Tc.
+> Pi(t)can be approximated using the li(j)Ri
+> (j)values from the previous timestep. Block Index 025 1.00 0.00
+> Average High-Prec. Mask Similarity
+> 510 15 20 0.98 Block Index 025 1.00 0.00 510 15 20 0.99
+> (b)
+> Cosine Similarity of li(j)(t)Ri(j)(t)
+> Timestep Timestep 0510 15 1.0 0.8 0.6 0.4 0.2 0.0 0510 15
+> Average Low-Prec. Mask Similarity
+
+Figure 6: (a) Process of TAFA (b) Cosine similarity of l( 𝑗 ) 
+
+> 𝑖
+
+· R( 𝑗 )
+
+> 𝑖
+
+between timesteps (c) Comparison of high- and low-precision execution masks generated from TAFA and full Softmax 
+
+tiled framework, TAFA reduces on-chip memory requirements by up to 103.4 × compared to naive APDT integration that materializes the full attention probability matrix at 4K resolution. 
+
+4 APT’s Hardware Architecture 
+
+To exploit APDT’s fine-grained dynamic sparsity and dual-precision execution, we propose APT, a specialized hardware architecture. The core design challenges are: (1) generating and applying element-wise masks at runtime, (2) executing unstructured sparsity patterns with high utilization, and (3) supporting dual-precision computation without additional dedicated high-precision multipliers. 
+
+4.1 Overall Architecture 
+
+As illustrated in Figure 7, APT comprises a sparsity-aware dual-precision matrix processing unit (SD-MPU), a vector processing unit (VPU), a quantizer, on-chip memory, a top controller, and a DMA module. The SD-MPU handles 𝑄𝐾 ⊤ and 𝑃𝑉 operations via four components: (1) a mask management unit for generat-ing, compressing, and reconstructing precision-aware masks, (2) an address translator unit for resolving irregular memory access patterns and avoiding bank conflicts, (3) 16 dual-precision MAC lines (DP-MACs) supporting 12-bit and 6-bit execution, and (4) a transpose controller for flexible operand mapping. The VPU exe-cutes Softmax, normalization, and other non-matrix operations in 16-bit fixed-point to ensure numerical stability. The quantizer per-forms symmetric uniform quantization with per-tile scaling factors stored in 16-bit integer format. On-chip memory stores 𝑄 , 𝐾 , 𝑉 
+
+tensors, intermediate activations, weights, and execution metadata APT: Accelerating Diffusion Transformers via Attention Probability-Guided Pruning and Quantization ICCAD ’26, November 08–12, 2026, San Jose, CA, USA Top Controller  
+
+> Vector Processing Unit (VPU)
+> Addition Multiplication Exponential LUT External Memory Reciprocal Square Root
+> Dual-Precision MAC Line (DP-MAC) Sparsity-aware Dual-Precision Matrix Processing Unit (SD-MPU)
+> Quantizer DP-MAC #15 DP-MAC #1 DP-MAC #0 DP-MAC #2
+> 16×6-bit 16×96-bit
+> Transpose Controller Mask Management Unit Address Translator Unit
+> Mask Encoder Mask Decoder Mask Generator Wgt./K/V Act./Q/P Output Mask ATT Vector
+> Memory
+> DMA Data Aligner
+
+Figure 7: Hardware architecture of APT Decoded Mask Out-of-Order Addresses Generated in            
+
+> prev. timestep Row Mask Col Mask  Mask Decoding Address Translation Load Mask 12
+> Decoding Mask for QK TComputation
+> Row Mask Col Mask  Mask Encoding Use in
+> next timestep Store Mask 6
+> Generating Mask for PV Computation Mask Generation w/ TAFA Softmax Tiled Query  Tiled Key T
+> Tiled Attention Probability Tiled Value Tiled Output
+> QK Tand PV Computation
+> Tiled Attention Score
+> 3Q×K TOperation P×V Operation
+> 475Multi-precision & Sparsity Control Multi-precision & Sparsity Control
+> 6Address Translation Mask Out-of-Order Addresses
+
+Figure 8: Tile-based execution flow of APT = P i(t) > Prun. Th.(t)              
+
+> prun_bit
+> =Pi(t) > Quant. Th.(t)
+> quant_bit
+> (a) (b)
+> MHP [y][x] Rescaled Prun. Th. Rescaled Quant. Th. P'[y][x] MLP [y][x] prun_bit quant_bit
+> Rescaled Prun. Th. Rescaled Quant. Th.
+> ≈P' i(j) (t) >Prun. Th.(t) * li(j) (t) li(j) (t+1) Ri(t+1) ≈P' i(j) (t) >Quant. Th.(t) * li(j) (t) li(j) (t+1) Ri(t+1)
+
+Figure 9: (a) Hardware-level threshold computation in TAFA (b) Design of the mask generator 
+
+including masks and address mappings. The DMA’s data aligner packs 6-bit operands into byte-aligned streams for efficient DRAM transactions, minimizing bandwidth waste from non-byte-aligned data. 
+
+4.2 System-Level Dataflow 
+
+Figure 8 illustrates the system-level dataflow. APT builds on FA’s tile-based execution, incorporating sparsity-aware and dual-precision processing guided by attention probabilities. By decoupling com-putation across tiles, APT eliminates global dependencies, enabling each tile to be processed independently. While the tile serves as the scheduling unit inherited from FA, APDT applies pruning and precision decisions at element-wise granularity within each tile, assigning each element to pruned, 6-bit, or 12-bit execution. The execution proceeds in seven stages: 1 High- and low-precision execution masks from the previous timestep are decoded per tile. 2 The address translator extracts valid element addresses into an address translation table (ATT) to guide sparse data access and avoid bank conflicts. 3 Tile-based 𝑄𝐾 ⊤ is performed under sparsity and dual-precision control. 4 Partial Softmax generates unnormalized attention probabilities. 5 TAFA provides rescaled thresholds, and APDT produces new execution masks. 6 Masks are compressed, and a new ATT is built for 𝑃𝑉 . 7 Tile-based 𝑃𝑉 is performed with input sparsity and dual-precision. Masks are stored in external memory for reuse in the next timestep. All mask man-agement and address translation are overlapped with computation, avoiding additional pipeline stalls. 
+
+4.3 Mask Management Unit 
+
+The mask management unit generates, compresses, and recon-structs execution masks based on TAFA-predicted attention proba-bilities. Figure 9 illustrates the mask generator and threshold rescal-ing. To avoid full attention probability reconstruction, the generator rescales dual thresholds using the TAFA factor and applies them di-rectly to P′( 𝑗 ) 
+
+> 𝑖
+
+(𝑡 ), as shown in Figure 9(a). This produces prun_bit 
+
+and quant_bit signals: an element is pruned when prun_bit = 0; otherwise, quant_bit determines low-bit (0) or high-bit (1) exe-cution. These signals construct high- and low-precision execution masks ( 𝑀 HP , 𝑀 LP ), as shown in Figure 9(b). The mask encoder compresses tile-wise masks via column-wise and row-wise paths. Each path flags rows or columns whose valid element count exceeds a threshold, producing compressed column masks (CM) and row masks (RM) applied independently to both precision masks. Since the decoder reconstructs tile masks by ap-plying a row-wise and column-wise OR over CMs and RMs, the mask memory footprint is reduced from 𝑇 2 to 2 𝑇 per tile. This reconstruction is conservative—it may retain elements that would otherwise be pruned, executing them at low precision rather than skipping them—and this effect is reflected in the accuracy results of Table 2. During reconstruction, the high-precision mask is pri-oritized, and remaining elements are assigned to low-precision. The refresh mechanism resets pruning masks by toggling a single control bit in the decoder, incurring negligible overhead. 
+
+4.4 Address Translator Unit 
+
+Element-wise sparsity produces highly irregular memory addresses, risking bank conflicts that degrade utilization. The address trans-lator scans masks row by row and pushes valid addresses into per-bank FIFOs. By popping one address per FIFO each cycle, all accesses target different banks, eliminating conflicts. Only upper address bits are stored, excluding the lower 4 bits that indicate the target bank. The translated addresses form the ATT, which guides ICCAD ’26, November 08–12, 2026, San Jose, CA, USA Sungyeob Yoo, Seeyeon Kim, Joonyong Park, Seunghee Han, and Joo-Young Kim Dual-Precision MAC Line (DP-MAC)                     
+
+> << 6 << 12 00 01 10 +/− +/− +/− Adder Tree Abs Abs Abs Abs Abs Abs
+> (a) (b)
+> Full 12-bit × 12-bit mult. is reconstructed from four 6-bit × 6-bit operations QMSB KLSB
+> QLSB KMSB
+> QMSB KMSB
+> Cycle  QLSB KLSB
+> Each 12-bit operand is split into 6-bit MSBs and 6-bit LSBs Accum.
+> Q SRAM Bank K SRAM Bank
+> K1 LSB
+> K1 MSB
+> Q1 LSB
+> Q1 MSB
+> K0 LSB
+> K0 MSB
+> Q0 LSB
+> Q0 MSB
+> QLSB ×K LSB << 0
+> QMSB ×K LSB << 6
+> QLSB ×K MSB << 6
+> QMSB ×K MSB << 12
+
+Figure 10: (a) Architecture of DP-MAC (b) Computation flow of dual-precision DP-MAC DP-MAC DP-MAC DP-MAC                  
+
+> PV w/ Input Sparsity
+> QKT
+> KTQPVQ Banks K Banks Operation QK Tw/ Output Sparsity
+> ××Read Data from SRAM P Banks V Banks Address Translation Table Data Mapping VPBroadcast Transpose Ctrl.
+> 0x00 0x01 0x00 0x01 0x00 0x01 0x00 0x01
+> Transpose
+> Address Translation Table
+> DP-MAC DP-MAC DP-MAC DP-MAC
+> Broadcast
+> 0x00 0x01 0x00 0x00
+> Transpose Ctrl. Bypass
+> 0x00 0x00 0x01 0x00
+
+Figure 11: Computation flow of sparse 𝑄𝐾 ⊤ and 𝑃𝑉 opera-tions 
+
+sparse, precision-aware memory accesses during both 𝑄𝐾 ⊤ and 𝑃𝑉 
+
+operations, maintaining high throughput in the compute pipeline. 
+
+4.5 Dual-Precision MAC and Sparse Execution 
+
+Figure 10(a) illustrates the DP-MAC architecture. Since APDT as-signs the majority of elements ( >50%) to pruning and ∼30% to 6-bit execution (Table 2), we design the DP-MAC to natively operate on 6-bit arithmetic, minimizing area for the dominant operation. For the ∼10% of elements requiring 12-bit precision, the DP-MAC recon-structs full-precision results by decomposing each 12-bit operand into 6-bit MSB and LSB segments stored in interleaved format, avoiding the cost of dedicated high-precision multipliers. For 6-bit computation, only the MSB segment is accessed. Two execution masks ( 𝑀 LP , 𝑀 HP ) schedule 6-bit and 12-bit operations sequentially to avoid datapath conflicts. As shown in Figure 10(b), 12-bit oper-ations are performed by sequentially processing partial products of MSB and LSB combinations, with appropriate sign correction and shifting to reconstruct the correct result. This design enables efficient dual-precision computation without additional datapaths. The SD-MPU employs 16 DP-MACs, each with a dedicated bank, performing 256 multiplications per cycle. Figure 11 illustrates the 
+
+Table 1: Hardware specifications APT  
+
+> 800 MHz 2 TB/s 315 TOPS 1,2
+> INT6/INT12
+> EXION NVIDIA A100
+> 800 MHz 1410 MHz 2 TB/s 2 TB/s 315 TOPS 1312 TFLOPS Frequency Throughput Memory Bandwidth INT12 FP16 Data Type
+> 1: MAC throughput normalized to 12-bit × 12-bit multiplication 2: Peak MAC throughput of 1258 TOPS under 6-bit × 6-bit multiplication
+
+sparsity-aware computation flow (shown with 4 DP-MACs for sim-plicity). In the 𝑄𝐾 ⊤ operation, the query matrix 𝑄 is column-wise interleaved across 16 Q banks, while 𝐾 ⊤ is organized into column blocks also interleaved across banks. During execution, the selected row from 𝑄 is broadcast to all DP-MACs, and ATT provides only valid column block addresses of 𝐾 , exploiting output sparsity. In the 
+
+𝑃𝑉 operation, the attention probability matrix 𝑃 is stored column-wise, and the value matrix 𝑉 is partitioned into row blocks based on the sparsity pattern. ATT provides addresses of valid 𝑃 and 𝑉 
+
+elements, enabling input sparsity. The transpose controller realigns 
+
+𝑉 before sending it to the DP-MACs to resolve misaligned access directions. Although the actual computation is sparse, ATT dynam-ically handles sparsity by providing only the addresses of valid data, which are densely stored in the SRAM banks. The SD-MPU first performs sparse 6-bit execution, then selectively applies 12-bit execution, achieving efficient sparse dual-precision computation. 
+
+5 Evaluation 5.1 Experimental Setup 
+
+We evaluate APT on PixArt-𝛼 [2], Stable Diffusion 3 [8], and FLUX.1-dev [18] at 1K, 2K, and 4K resolutions with batch size 1. Accuracy is measured on COCO 2017 [20] without fine-tuning or retraining. Per-head standard deviation statistics 𝜎 ℎ (𝑡 ) come from a per-model offline profiling step. We implement APT at the RTL level in Sys-temVerilog and synthesize using Synopsys Design Compiler with a 14 nm process technology. APT operates at 800 MHz and integrates an HBM2E memory system with 2 TB/s bandwidth, reproducing conditions similar to the NVIDIA A100 environment. The energy consumption of HBM2E is modeled based on DRAM vendor spec-ifications [22]. We develop a cycle-level simulator incorporating both computation and memory access latency and power. We compare APT with NVIDIA A100, EXION [11], and APT-Base (same hardware, no pruning/quantization). EXION is reimple-mented following the original paper’s specifications. A100 executes FP16 inference with FlashAttention [5]; latency is measured via CUDA events and power via NVIDIA-SMI. All configurations are scaled to match A100’s peak throughput (Table 1). APT uses 3,072 SD-MPUs and a 16 MiB buffer; EXION uses 48 cores and a 128 MiB buffer. APT executes all DiT block operations internally, with all weights and activations residing in HBM2E, requiring host-device transfer only at initialization and final output. 
+
+5.2 Accuracy Evaluation 
+
+Table 2 summarizes accuracy results using inception score (IS) [27], CLIP score [12], and PSNR, evaluated at 1K with prompts and seeds separate from profiling. Across all metrics, APT maintains accuracy comparable to the FP16 baseline. IS and CLIP variations remain within 2.5%, and PSNR indicates negligible perceptual loss. PixArt-𝛼 APT: Accelerating Diffusion Transformers via Attention Probability-Guided Pruning and Quantization ICCAD ’26, November 08–12, 2026, San Jose, CA, USA 
+
+Table 2: Model configurations and accuracy evaluation 28 50 7.0 3.5                               
+
+> PixArt-α Stable Diffusion 3 FLUX.1-dev
+> 20 57.34% 52.92% 58.82% 9.06% 15.63% 10.54% 33.60% 31.45% 30.64% 6.82 ± 0.81 / 6.83 ± 0.72 6.80 ± 0.77 / 6.83 ± 0.91 7.25 ± 0.60 / 7.07 ± 0.96 31.26 / 31.18 31.96 / 31.84 30.84 / 31.04 18.83 dB 17.89 dB 20.04 dB 4.5 4.28e-4 / 2.03e-3 5.8e-5 / 1.68e-3 9.20e-5 / 3.36e-3 4.00e-5 / 1.90e-4 2.00e-6 / 5.80e-5 4.00e-6 / 1.46e-4 Total Iterations Guidance Prun Ratio 12-bit Comp. Ratio 6-bit Comp. Ratio IS (Baseline/Ours) CLIP (Baseline/Ours) PSNR Quant Th. α / β Prun Th. α / β EXION APT-Base APT 1K 2K 4K 1K 2K 4K 1K 2K 4K PixArt-α Stable Diffusion 3 FLUX.1-dev NVIDIA A100 10 0
+> Normalized Latency in Self-Attention 10 1
+> 10 2
+> 2.53×
+> 4.58×
+> 2.40× 2.36× 2.65× 2.54×
+> 4.35×
+> 2.29× 2.07×
+> 7.10×
+> 2.28× 2.07×
+> 7.77×
+> 2.68× 2.48×
+> 6.30× 5.27×
+> 3.30× 3.41× 2.62×
+> 9.71×
+> 2.38× 2.18×
+> 5.74×
+> 2.55× 2.32×
+> 7.30×
+
+Figure 12: Comparison of self-attention latency 01K 2K 4K 1K 2K 4K 1K 2K 4K PixArt-α Stable Diffusion 3 FLUX.1-dev EXION APT-Base APT NVIDIA A100 57
+
+> 2.67×
+> 3.50×
+> 2.62× 2.76× 2.56×  5.38×
+> 2.71× 2.45×  8.16×
+> 3.05× 3.00×
+> 3.89×
+> 2.63× 2.46×  4.67×
+> 2.41× 2.20×  6.29×
+> 2.21× 2.03×
+> 5.32×
+> 2.36× 2.25×
+> 3.61× 2.96×
+> 2.49× 2.52×
+> 123468Normalized End-to-End Speedup
+
+Figure 13: Comparison of end-to-end latency speedup 
+
+preserves FP16-level quality with 57.34% pruning and only 9.06% high-precision computation. SD3 and FLUX show similar trends despite their different architectural designs, confirming that APDT generalizes across DiT variants. These results confirm that attention probabilities serve as an effective unified importance metric for guiding element selection and precision assignment across diverse diffusion transformer architectures. 
+
+5.3 Performance Evaluation 
+
+5.3.1 Self-Attention Latency. Figure 12 presents the normalized self-attention latency. APT achieves 4 .35 ×–5 .27 × speedup over A100 and 1 .55 ×–1 .81 × over EXION at 1K, reaching up to 9 .71 × and 3.70 × at 4K as attention increasingly dominates. APT-Base (same hardware without APDT/TAFA) already outperforms A100 due to its optimized tile-based dataflow, demonstrating that the architec-tural design provides a strong baseline even without algorithmic optimizations. The full APT further improves upon APT-Base by combining APDT and TAFA to drive aggressive pruning and preci-sion selection, with the gap between APT and APT-Base widening at higher resolutions as increased sparsity amplifies the benefit of attention probability–guided optimization. 
+
+5.3.2 End-to-End Performance. Figure 13 shows end-to-end speedup across models and resolutions. APT achieves up to 3.89 × over A100 at 1K, growing to 8.16 × at 4K, and outperforms EXION by up to 3.01 ×. Since self-attention dominates end-to-end latency at high resolutions (Figure 1), APT’s attention-level acceleration directly translates into end-to-end improvement. A100 suffers from low 0 1K 2K 4K 1K 2K 4K 1K 2K 4K PixArt-α Stable Diffusion 3 FLUX.1-dev Energy Ef fi ciency (TFLOPS/W or TOPS/W)  EXION APT-Base APT NVIDIA A100 512346
+
+> 7.29×
+> 8.83×
+> 6.90× 7.57× 6.78×  12.05×
+> 7.36× 6.37×  14.98×
+> 8.46× 7.81×
+> 9.72×
+> 7.30× 6.36×  10.39×
+> 6.72× 5.65×  12.04×
+> 6.34× 5.83×  12.33×
+> 6.39× 5.89×
+> 8.48× 7.06×
+> 6.21× 6.70×
+
+Figure 14: Comparison of energy efficiency Table 3: Breakdown of area and power usage 128.26 0.75 77.19 
+
+Area[mm 2]
+
+15.99 11.12 160.11 
+
+Power[W] 
+
+23.76 15.67 12.07 19.56 67.07 1.24 22.76 8.25 6.46 6.49 Mask Management Unit Address Translator Unit Vector Processing Unit Dual-Precision MAC Lines Quantizer Memory Controller, DMA, Etc. Total Normalized Speed-up in Self-Attention  NVIDIA A100* APT* 12340APT** Sparsity (%) 5 * w/ Structured Mask ** w/ Unstructured Mask         
+
+> NVIDIA A100 10 20 30 40 50 60 70 80 90
+> 2.40× 2.37× 2.58× 2.52× 2.79× 2.68× 3.03× 2.88× 3.33× 3.12× 1.05× 3.68× 3.42× 1.17× 4.12× 3.82× 1.30× 4.37× 4.35× 1.50× 4.37× 4.37× 0.70× 0.74× 0.79× 0.86× 0.94×
+
+Figure 15: Self-attention speedup under varying sparsity 
+
+utilization due to kernel launch and synchronization overheads, while EXION realizes only about 20% sparsity in self-attention and 3%–5% in feed-forward layers on modern DiTs, limiting its speedup. Cross-attention contributes only a minor portion of total compu-tation due to its short, resolution-independent token length, and is executed in dense full-precision mode. The gap between APT and existing platforms widens at higher resolutions, confirming the scalability of attention probability–guided optimization. 
+
+5.3.3 Energy Efficiency and Area/Power Breakdown. Figure 14 com-pares energy efficiency, measured as effective throughput per watt across the full denoising pipeline. APT delivers up to 14.98 × higher efficiency than A100 and 2.04 × higher than EXION across all mod-els and resolutions. APT achieves this by pruning low-importance elements and assigning dual-precision via attention probabilities, while maintaining high compute utilization through its tile-based architecture. Table 3 provides the area and power breakdown. The total chip area is 160.11 mm 2 and power is 128.26 W at 0.8 V/800 MHz. DP-MACs dominate at 48.21% area and 52.29% power (1.36 mW per DP-MAC). The mask management and address translator units enabling APDT and TAFA account for 10.26% of area and 7.40% of power, demonstrating that the co-design overhead for runtime dynamic sparsity and dual-precision control is modest. 
+
+5.4 Comparison with GPU-Based Optimization 
+
+GPUs face inherent limitations for exploiting sparsity in DiT self-attention. Figure 15 evaluates GPU sparsity performance using an optimized sparse attention kernel [9] on A100 at 1K. Even under structured sparsity—more GPU-friendly than APDT’s element-wise ICCAD ’26, November 08–12, 2026, San Jose, CA, USA Sungyeob Yoo, Seeyeon Kim, Joonyong Park, Seunghee Han, and Joo-Young Kim Normalized BOPs in Self-Attention         
+
+> 01.0 0.2 0.4 0.6 0.8 1.2
+> 4/8-bit 4/12-bit 6/12-bit 4/16-bit 8/16-bit
+> Visualization of Generated Image
+> 4/8-bit 4/12-bit 6/12-bit 4/16-bit 8/16-bit
+> Normalized PSNR
+
+Figure 16: Comparison of dual-precision configurations +P+D Base PixArt-α Stable Diffusion 3 FLUX.1-dev 0 +P Normalized BOPs in Self-Attention Base +P +P+D Base +P +P+D      
+
+> P: Pruning, D: Dual-Precision
+> 0.47 0.63 0.50 0.28 0.20 0.45 1.00 1.00 0.69 0.55 0.50 0.27 0.35 0.55 1.00 0.73 0.54 0.45 0.24 0.37 0.62
+> 0.4 0.6 1.0 0.8 0.2 1K 2K 4K
+
+Figure 17: Analysis of computation reduction in APT 
+
+pattern—A100 remains slower than the dense FlashAttention execu-tion up to 50% sparsity, due to kernel launch overhead, synchroniza-tion, and scattered memory accesses. Since APDT induces unstruc-tured sparsity at runtime, GPU performance is expected to degrade further under such irregular access patterns. Low-bit quantization on GPUs is also limited: as noted in Section 2.3, SVDQuant [19] leaves 𝑄𝐾 ⊤ and 𝑃𝑉 in full precision, and since these operations dominate computation at high resolutions, GPU-side quantization cannot address the attention bottleneck that APT directly targets. 
+
+5.5 Design Space Analysis 
+
+5.5.1 Dual-Precision Configuration. Figure 16 evaluates several dual-precision configurations. We extend the BOPs metric [1] to dual-precision, counting bit-operations per multiplication. The 6/12-bit configuration yields lower BOPs than 4/16-bit despite the lat-ter’s lower base precision. Configurations involving 4-bit computa-tion introduce visible artifacts and a clear PSNR drop. The 6/12-bit achieves perceptual quality nearly identical to 8/16-bit with fewer bit-operations, providing the best quality–computation trade-off. This analysis directly informed our DP-MAC design choice of 6-bit native arithmetic with 12-bit reconstruction (Section 4.5). 
+
+5.5.2 Computational Efficiency. Figure 17 shows the BOPs reduc-tion under three configurations: APT-Base (Base), APT with pruning only (+P), and APT with both pruning and dual-precision (+P+D). Pruning alone provides substantial reduction; dual-precision ampli-fies it further. At 4K, pruning reduces BOPs by 53.7% on average, and combining both reaches up to 76.4%. Both techniques become increasingly effective as resolution grows, since self-attention’s share of total computation increases with resolution (Figure 1), amplifying the benefit of sparsity and reduced precision. 
+
+6 Related Works 
+
+Recent diffusion accelerators [11, 17, 29] leverage temporal sim-ilarity but face limitations. Ditto [17] and Diff-DiT [29] leverage inter-timestep activation differences for low-bit computation, but both are limited to at most 8-bit precision, leading to noticeable qual-ity degradation on modern DiTs. Moreover, Ditto must recover full activations from off-chip memory for attention, incurring memory overhead, while Diff-DiT’s approximate attention is only applicable to a subset of timesteps and its effectiveness diminishes with fewer steps. EXION [11] combines intra-timestep top-𝑘 pruning in atten-tion with inter-timestep approximation in feed-forward layers, but achieves only limited sparsity on modern DiTs and handles only output sparsity. In contrast, APT predicts attention probabilities to guide element-wise pruning and dual-precision decisions, and its architecture supports both input and output sparsity. Attention accelerators such as Sanger [21], FACT [24], and SpAt-ten [31] require explicit attention score construction, which is in-compatible with FA’s tiled execution. Moreover, these methods target language models and do not account for evolving attention distributions across diffusion timesteps. APT avoids these limita-tions through TAFA, which predicts attention probabilities from the previous timestep’s normalization statistics within FA’s tiled execution, requiring no additional score prediction stage. Sparse quantization techniques [7, 15] allocate precision based on static weight statistics, targeting weight–activation linear opera-tions. In contrast, DiT attention involves activation–activation oper-ations whose importance evolves across timesteps, which APT cap-tures through attention probabilities as a dynamic importance sig-nal. Structured sparse attention methods [16, 33–35] reduce atten-tion cost at block or token-group granularity, missing fine-grained importance variations. APT operates at per-element granularity and is complementary to these structured approaches. Software-level techniques such as ToCa [37] and DuCa [38] cache features across timesteps to reduce redundant computation. However, ToCa’s full attention map construction is incompatible with FA, while DuCa achieves only limited speedup. APT combines algorithmic optimization with co-designed hardware, integrating APDT’s decisions with the SD-MPU’s mask management and ad-dress translation to handle runtime dynamic sparsity. 
+
+7 Conclusion 
+
+This paper presents APT, a software–hardware co-designed acceler-ator for high-resolution DiT models that addresses the self-attention bottleneck through attention probability–guided pruning and quan-tization. At the algorithm level, APDT dynamically prunes and quantizes attention elements based on their attention probabilities, substantially reducing computation while preserving output qual-ity across three SOTA DiT models. TAFA enables APDT within FlashAttention by reusing normalization statistics across timesteps, avoiding full probability materialization. At the architecture level, the SD-MPU’s mask management, address translation, and dual-precision MAC units are co-designed with APDT to efficiently handle the resulting element-wise dynamic sparsity with modest area overhead. APT achieves up to 8.16 × and 3.01 × speedup, and up to 14.98 × and 2.04 × higher energy efficiency over A100 and EXION, respectively, with the advantage growing at higher resolutions. 
+
+Acknowledgments 
+
+This work was partly supported by Institute for Information & communications Technology Promotion(IITP) grant funded by the Korea government(MSIT) (No. RS-2025-02264029, Integration and Validation of an AI Semiconductor-Based Data Center Training and Inference System) and by Samsung Electronics Co., Ltd(IO251211-14291-01). APT: Accelerating Diffusion Transformers via Attention Probability-Guided Pruning and Quantization ICCAD ’26, November 08–12, 2026, San Jose, CA, USA 
+
+References 
+
+[1] Chaim Baskin, Natan Liss, Eli Schwartz, Evgenii Zheltonozhskii, Raja Giryes, Alex M. Bronstein, and Avi Mendelson. 2021. UNIQ: Uniform Noise Injection for Non-Uniform Quantization of Neural Networks. ACM Transactions on Computer Systems (TOCS) 37, 1-4 (2021), 1–15. [2] Junsong Chen, Jincheng Yu, Chongjian Ge, Lewei Yao, Enze Xie, Yue Wu, Zhong-dao Wang, James Kwok, Ping Luo, Huchuan Lu, and Zhenguo Li. 2023. PixArt-𝛼 :Fast Training of Diffusion Transformer for Photorealistic Text-to-Image Synthesis. arXiv:2310.00426 [cs.CV] [3] Lei Chen, Yuan Meng, Chen Tang, Xinzhu Ma, Jingyan Jiang, Xin Wang, Zhi Wang, and Wenwu Zhu. 2025. Q-DiT: Accurate Post-Training Quantization for Diffusion Transformers. In Proceedings of the Computer Vision and Pattern Recognition Conference (CVPR) . 28306–28315. [4] Eunyeong Cho, Jehyeon Bang, and Minsoo Rhu. 2024. Characterization and Analysis of Text-to-Image Diffusion Models. IEEE Computer Architecture Letters 
+
+(2024). [5] Tri Dao. 2024. FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning. In International Conference on Learning Representations (ICLR) .[6] Bita Darvish Rouhani, Ritchie Zhao, Venmugil Elango, Rasoul Shafipour, Mathew Hall, Maral Mesmakhosroshahi, Ankit More, Levi Melnick, Maximilian Golub, Girish Varatkar, Lai Shao, Gaurav Kolhe, Dimitry Melts, Jasmine Klar, Renee L’Heureux, Matt Perry, Doug Burger, Eric Chung, Zhaoxia (Summer) Deng, Sam Naghshineh, Jongsoo Park, and Maxim Naumov. 2023. With shared microex-ponents, a little shifting goes a long way. In Proceedings of the 50th Annual International Symposium on Computer Architecture . 1–13. [7] Tim Dettmers, Ruslan Svirschevski, Vage Egiazarian, Denis Kuznedelev, Elias Frantar, Saleh Ashkboos, Alexander Borzunov, Torsten Hoefler, and Dan Alistarh. 2023. SpQR: A sparse-quantized representation for near-lossless LLM weight compression. arXiv preprint arXiv:2306.03078 (2023). [8] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, Dustin Podell, Tim Dockhorn, Zion English, and Robin Rombach. 2024. Scaling rectified flow transformers for high-resolution image synthesis. In Proceedings of the 41st International Conference on Machine Learning (Vienna, Austria) (ICML’24) .JMLR.org, Article 503, 28 pages. [9] Junxian Guo, Haotian Tang, Shang Yang, Zhekai Zhang, Zhijian Liu, and Song Han. 2024. Block Sparse Attention. https://github.com/mit-han-lab/Block-Sparse-Attention. [10] Yefei He, Luping Liu, Jing Liu, Weijia Wu, Hong Zhou, and Bohan Zhuang. 2023. PTQD: accurate post-training quantization for diffusion models. In Proceedings of the 37th International Conference on Neural Information Processing Systems (New Orleans, LA, USA) (NIPS ’23) . Curran Associates Inc., Red Hook, NY, USA, Article 580, 13 pages. [11] Jaehoon Heo, Adiwena Putra, Jieon Yoon, Sungwoong Yune, Hangyeol Lee, Ji-Hoon Kim, and Joo-Young Kim. 2025. EXION: Exploiting inter- and intra-iteration output sparsity for diffusion models. In 2025 IEEE International Symposium on High Performance Computer Architecture (HPCA) . IEEE, 324–337. [12] Jack Hessel, Ari Holtzman, Maxwell Forbes, Ronan Le Bras, and Yejin Choi. 2021. CLIPScore: A reference-free evaluation metric for image captioning. arXiv preprint arXiv:2104.08718 (2021). [13] Jonathan Ho, Ajay Jain, and Pieter Abbeel. 2020. Denoising diffusion probabilistic models. In Proceedings of the 34th International Conference on Neural Information Processing Systems (Vancouver, BC, Canada) (NIPS ’20) . Curran Associates Inc., Red Hook, NY, USA, Article 574, 12 pages. [14] Jonathan Ho, Chitwan Saharia, William Chan, David J. Fleet, Mohammad Norouzi, and Tim Salimans. 2022. Cascaded diffusion models for high fidelity image generation. J. Mach. Learn. Res. 23, 1, Article 47 (Jan. 2022), 33 pages. [15] Geonhwa Jeong, Po-An Tsai, Stephen W Keckler, and Tushar Krishna. 2024. SDQ: Sparse decomposed quantization for LLM inference. arXiv preprint arXiv:2406.13868 (2024). [16] Huiqiang Jiang, Yucheng Li, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Zhenhua Han, Amir H Abdi, Dongsheng Li, Chin-Yew Lin, et al. 2024. MInference 1.0: Accelerating pre-filling for long-context LLMs via dynamic sparse attention. Advances in Neural Information Processing Systems 37 (2024), 52481–52515. [17] Sungbin Kim, Hyunwuk Lee, Wonho Cho, Mincheol Park, and Won Woo Ro. 2025. Ditto: Accelerating Diffusion Model via Temporal Value Similarity. In 2025 IEEE International Symposium on High Performance Computer Architecture (HPCA) .338–352. [18] Black Forest Labs. 2024. FLUX. https://github.com/black-forest-labs/flux. [19] Muyang Li, Yujun Lin, Zhekai Zhang, Tianle Cai, Xiuyu Li, Junxian Guo, Enze Xie, Chenlin Meng, Jun-Yan Zhu, and Song Han. 2024. SVDQuant: Absorbing outliers by low-rank components for 4-bit diffusion models. arXiv preprint arXiv:2411.05007 (2024). [20] Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Dollár, and C Lawrence Zitnick. 2014. Microsoft COCO: Common objects in context. In European Conference on Computer Vision . Springer, 740–755. [21] Liqiang Lu, Yicheng Jin, Hangrui Bi, Zizhang Luo, Peng Li, Tao Wang, and Yun Liang. 2021. Sanger: A co-design framework for enabling sparse attention using reconfigurable architecture. In MICRO-54: 54th Annual IEEE/ACM International Symposium on Microarchitecture . 977–991. [22] Ki-Ill Moon, Ho-Young Son, and Kangwook Lee. 2023. Advanced Packaging Technologies in Memory Applications for Future Generative AI Era. In 2023 International Electron Devices Meeting (IEDM) . 1–4. [23] Alexander Quinn Nichol, Prafulla Dhariwal, Aditya Ramesh, Pranav Shyam, Pamela Mishkin, Bob Mcgrew, Ilya Sutskever, and Mark Chen. 2022. GLIDE: Towards Photorealistic Image Generation and Editing with Text-Guided Diffusion Models. In Proceedings of the 39th International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 162) , Kamalika Chaudhuri, Stefanie Jegelka, Le Song, Csaba Szepesvari, Gang Niu, and Sivan Sabato (Eds.). PMLR, 16784–16804. [24] Yubin Qin, Yang Wang, Dazheng Deng, Zhiren Zhao, Xiaolong Yang, Leibo Liu, Shaojun Wei, Yang Hu, and Shouyi Yin. 2023. FACT: FFN-Attention Co-optimized Transformer Architecture with Eager Correlation Prediction. In Proceedings of the 50th Annual International Symposium on Computer Architecture (Orlando, FL, USA) (ISCA ’23) . Association for Computing Machinery, New York, NY, USA, Article 22, 14 pages. doi:10.1145/3579371.3589057 [25] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer. 2021. High-Resolution Image Synthesis with Latent Diffusion Models. arXiv:2112.10752 [cs.CV] [26] Chitwan Saharia, Jonathan Ho, William Chan, Tim Salimans, David J. Fleet, and Mohammad Norouzi. 2023. Image Super-Resolution via Iterative Refinement. 
+
+IEEE Transactions on Pattern Analysis and Machine Intelligence 45, 4 (2023), 4713– 4726. [27] Tim Salimans, Ian Goodfellow, Wojciech Zaremba, Vicki Cheung, Alec Radford, and Xi Chen. 2016. Improved techniques for training GANs. Advances in Neural Information Processing Systems 29 (2016). [28] Yuzhang Shang, Zhihang Yuan, Bin Xie, Bingzhe Wu, and Yan Yan. 2023. Post-Training Quantization on Diffusion Models. In 2023 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) . 1972–1981. [29] Shidi Tang, Pengwei Zheng, Ruiqi Chen, Yuxuan Lv, Bruno Da Silva, and Ming Ling. 2025. Diff-DiT: Temporal Differential Accelerator for Low-bit Diffusion Transformers on FPGA. In 2025 IEEE/ACM International Conference On Computer Aided Design (ICCAD) . IEEE, 1–9. [30] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017. Attention is all you need. In Proceedings of the 31st International Conference on Neural Information Processing Systems (Long Beach, California, USA) (NIPS’17) . Curran Associates Inc., Red Hook, NY, USA, 6000–6010. [31] Hanrui Wang, Zhekai Zhang, and Song Han. 2021. SpAtten: Efficient sparse attention architecture with cascade token and head pruning. In 2021 IEEE Inter-national Symposium on High-Performance Computer Architecture (HPCA) . IEEE, 97–110. [32] Junyi Wu, Haoxuan Wang, Yuzhang Shang, Mubarak Shah, and Yan Yan. 2024. PTQ4DiT: Post-training quantization for diffusion transformers. Advances in Neural Information Processing Systems 37 (2024), 62732–62755. [33] Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Yuxing Wei, Lean Wang, Zhiping Xiao, et al. 2025. Native sparse attention: Hardware-aligned and natively trainable sparse attention. In 
+
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . 23078–23097. [34] Zhihang Yuan, Hanling Zhang, Lu Pu, Xuefei Ning, Linfeng Zhang, Tianchen Zhao, Shengen Yan, Guohao Dai, and Yu Wang. 2024. DiTFastAttn: Attention compression for diffusion transformer models. Advances in Neural Information Processing Systems 37 (2024), 1196–1219. [35] Jintao Zhang, Chendong Xiang, Haofeng Huang, Jia Wei, Haocheng Xi, Jun Zhu, and Jianfei Chen. 2025. SpargeAttention: Accurate and training-free sparse attention accelerating any model inference. arXiv preprint arXiv:2502.18137 
+
+(2025). [36] Tianchen Zhao, Tongcheng Fang, Haofeng Huang, Enshu Liu, Rui Wan, Widyadewi Soedarmadji, Shiyao Li, Zinan Lin, Guohao Dai, Shengen Yan, Huazhong Yang, Xuefei Ning, and Yu Wang. 2024. ViDiT-Q: Efficient and Accu-rate Quantization of Diffusion Transformers for Image and Video Generation. 
+
+arXiv preprint arXiv:2406.02540 (2024). [37] Chang Zou, Xuyang Liu, Ting Liu, Siteng Huang, and Linfeng Zhang. 2024. Accelerating Diffusion Transformers with Token-wise Feature Caching. arXiv preprint arXiv:2410.05317 (2024). [38] Chang Zou, Evelyn Zhang, Runlin Guo, Haohang Xu, Conghui He, Xuming Hu, and Linfeng Zhang. 2024. Accelerating Diffusion Transformers with Dual Feature Caching. arXiv preprint arXiv:2412.18911 (2024).
