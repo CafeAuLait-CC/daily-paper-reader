@@ -44,14 +44,14 @@
       <span class="dpr-home-dashboard-kicker">2026-08-29</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-29 03:32:59 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-29 22:21:44 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读聚焦扩散模型核心进展，共梳理4篇论文，其中2篇获8分高评。最值得关注的是扩散模型自适应采样与流匹配无教师蒸馏两个方向。下一步可优先复现高分方法，降低采样与训练成本。</p>
+<p>今日共读10篇论文，精读5篇、速读5篇，聚焦生成模型与三维视觉前沿应用。</p>
+<p>最值得关注的是《SymmAdapt》的医学图像无源域适应分割与《Learning Spherical Occupancy Profiles》的多视图3D重建，均获8.0高分。</p>
+<p>建议优先精读这两篇，并留意流匹配在无线通信、波动率预测等跨领域迁移中的扩展思路。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Provably adaptive sampling with uniform and remasking discrete diffusion models">Provably adaptive sampling with uniform and remasking discrete diffusion models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Self-OPD: On-Policy Distillation for Flow Matching Models without Teacher">Self-OPD: On-Policy Distillation for Flow Matching Models without Teacher</span></li><li><span class="dpr-home-dashboard-paper-title" title="Gromov-Monge Flow Matching for Equivariant Graph Generation">Gromov-Monge Flow Matching for Equivariant Graph Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SymmAdapt: Symmetrical Flow Matching for Source-Free Domain Adaptation in Medical Image Segmentation">SymmAdapt: Symmetrical Flow Matching for Source-Free Domain Adaptation in Medical Image Segmentation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Spherical Occupancy Profiles for Multi-View 3D Reconstruction and Generation">Learning Spherical Occupancy Profiles for Multi-View 3D Reconstruction and Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Provably adaptive sampling with uniform and remasking discrete diffusion models">Provably adaptive sampling with uniform and remasking discrete diffusion models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="APT: Accelerating Diffusion Transformers via Attention Probability-Guided Pruning and Quantization">APT: Accelerating Diffusion Transformers via Attention Probability-Guided Pruning and Quantization</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="FlowSem: Flow Matching for Adaptive Wireless Image Transmission in Semantic Communication">FlowSem: Flow Matching for Adaptive Wireless Image Transmission in Semantic Communication</span></li><li><span class="dpr-home-dashboard-paper-title" title="Arbitrage-Aware Multi-Step Forecasting of Implied Volatility Surfaces: Modelling Surface Trajectories Using Latent Diffusion">Arbitrage-Aware Multi-Step Forecasting of Implied Volatility Surfaces: Modelling Surface Trajectories Using Latent Diffusion</span></li><li><span class="dpr-home-dashboard-paper-title" title="LeFlow: Generative Latent Flow Planning for World Models">LeFlow: Generative Latent Flow Planning for World Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
 </section>
 </div>
 
