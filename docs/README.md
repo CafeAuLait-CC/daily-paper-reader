@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-31</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-01</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-01 00:33:51 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-01 23:02:11 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日聚焦7篇论文，精读2篇高分工作，速读5篇。最值得关注的是《RASA》的角色动画解耦先验与《Physics-Guided Flow Matching》的CT重建方法。建议优先精读这两篇，其余作为扩展了解。</p>
+<p>今日9篇论文聚焦扩散模型与具身智能，精读两篇高分工作分别提出动态引导对齐与去噪投影优化；速读覆盖艺术构图、VLA漂移生成与导航规划。最值得关注扩散模型在约束优化与可控生成中的新范式，以及VLA模型向原生单步生成的演进。普通读者可优先浏览PathGuide与DriftingVLA，把握生成质量与速度的平衡趋势。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,7 +74,7 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RASA: Disentangled Spatial-Motional Priors for Cross-Identity Character Animation">RASA: Disentangled Spatial-Motional Priors for Cross-Identity Character Animation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Physics-Guided Flow Matching for CT Image Reconstruction">Physics-Guided Flow Matching for CT Image Reconstruction</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PathGuide: Dynamic Classifier-Free Guidance via On-Policy Transport Alignment">PathGuide: Dynamic Classifier-Free Guidance via On-Policy Transport Alignment</span></li><li><span class="dpr-home-dashboard-paper-title" title="Denoising as Projection: Constrained Optimization with Gradient-Guided Diffusion">Denoising as Projection: Constrained Optimization with Gradient-Guided Diffusion</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
 </section>
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="LiveVVT: High-Fidelity Video Virtual Try-On in Real Time">LiveVVT: High-Fidelity Video Virtual Try-On in Real Time</span></li><li><span class="dpr-home-dashboard-paper-title" title="When Can Conditional Flow Matching Replace Pointwise Negative Log-Likelihood?">When Can Conditional Flow Matching Replace Pointwise Negative Log-Likelihood?</span></li><li><span class="dpr-home-dashboard-paper-title" title="Keep-or-Drop? Adaptive Tokenizer for Compact Video Representation">Keep-or-Drop? Adaptive Tokenizer for Compact Video Representation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Text-Driven Artistic Staging: Pose, Lighting, and Camera References from Paintings">Text-Driven Artistic Staging: Pose, Lighting, and Camera References from Paintings</span></li><li><span class="dpr-home-dashboard-paper-title" title="DriftingVLA: Native One-Step Vision-Language-Action Generation via Per-Dimension Temporal Drifting">DriftingVLA: Native One-Step Vision-Language-Action Generation via Per-Dimension Temporal Drifting</span></li><li><span class="dpr-home-dashboard-paper-title" title="Hydra: A Navigation World Action Model with Discrete Latent Planning and Continuous Flow-Matching Execution">Hydra: A Navigation World Action Model with Discrete Latent Planning and Continuous Flow-Matching Execution</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>7</strong></span></div>
 </section>
 </div>
 
