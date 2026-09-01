@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-30</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-31</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-30 22:21:59 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-01 00:33:51 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读聚焦流匹配模型的无教师蒸馏与屋顶图扩散变换器，速读覆盖等变图生成、立体匹配和水下环境生成。最值得关注Self-OPD实现无需教师模型的自蒸馏，以及扩散模型在图结构合成中的潜力。建议从无教师蒸馏的效率和屋顶图生成的实用性切入，结合速读中的等变图方法拓展应用。</p>
+<p>今日聚焦7篇论文，精读2篇高分工作，速读5篇。最值得关注的是《RASA》的角色动画解耦先验与《Physics-Guided Flow Matching》的CT重建方法。建议优先精读这两篇，其余作为扩展了解。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,7 +74,7 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Self-OPD: On-Policy Distillation for Flow Matching Models without Teacher">Self-OPD: On-Policy Distillation for Flow Matching Models without Teacher</span></li><li><span class="dpr-home-dashboard-paper-title" title="Diffusion Transformers for Roof Graph Synthesis and Reconstruction">Diffusion Transformers for Roof Graph Synthesis and Reconstruction</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RASA: Disentangled Spatial-Motional Priors for Cross-Identity Character Animation">RASA: Disentangled Spatial-Motional Priors for Cross-Identity Character Animation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Physics-Guided Flow Matching for CT Image Reconstruction">Physics-Guided Flow Matching for CT Image Reconstruction</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
 </section>
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Gromov-Monge Flow Matching for Equivariant Graph Generation">Gromov-Monge Flow Matching for Equivariant Graph Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="StereoDiffuer: Diffusion-based Progressive Geometry Modeling with Saliency Attention Perception for Stereo Matching">StereoDiffuer: Diffusion-based Progressive Geometry Modeling with Saliency Attention Perception for Stereo Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="BenthicFlow: Generating Extensible Underwater Environments via Flow Matching">BenthicFlow: Generating Extensible Underwater Environments via Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="LiveVVT: High-Fidelity Video Virtual Try-On in Real Time">LiveVVT: High-Fidelity Video Virtual Try-On in Real Time</span></li><li><span class="dpr-home-dashboard-paper-title" title="When Can Conditional Flow Matching Replace Pointwise Negative Log-Likelihood?">When Can Conditional Flow Matching Replace Pointwise Negative Log-Likelihood?</span></li><li><span class="dpr-home-dashboard-paper-title" title="Keep-or-Drop? Adaptive Tokenizer for Compact Video Representation">Keep-or-Drop? Adaptive Tokenizer for Compact Video Representation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
 </section>
 </div>
 
