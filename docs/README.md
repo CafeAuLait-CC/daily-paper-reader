@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-01</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-02</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 12 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>10</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-01 23:02:11 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-02 22:25:57 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日9篇论文聚焦扩散模型与具身智能，精读两篇高分工作分别提出动态引导对齐与去噪投影优化；速读覆盖艺术构图、VLA漂移生成与导航规划。最值得关注扩散模型在约束优化与可控生成中的新范式，以及VLA模型向原生单步生成的演进。普通读者可优先浏览PathGuide与DriftingVLA，把握生成质量与速度的平衡趋势。</p>
+<p>今日精读2篇、速读3篇，共覆盖12篇推荐论文；最高分为《A Lagrangian View of Flow Matching》（9.0），对流匹配提出拉格朗日视角。值得关注的是《Puppeteer》物体锚定姿态感知的共语手势生成（8.0），以及面向单图多视图的泛化扩散方法。建议普通读者优先从流匹配理论视角与手势生成两个方向切入，快速把握生成模型前沿。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,7 +74,7 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PathGuide: Dynamic Classifier-Free Guidance via On-Policy Transport Alignment">PathGuide: Dynamic Classifier-Free Guidance via On-Policy Transport Alignment</span></li><li><span class="dpr-home-dashboard-paper-title" title="Denoising as Projection: Constrained Optimization with Gradient-Guided Diffusion">Denoising as Projection: Constrained Optimization with Gradient-Guided Diffusion</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A Lagrangian View of Flow Matching">A Lagrangian View of Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Puppeteer: Object-Grounded Posture-Aware Co-Speech Gesture Generation">Puppeteer: Object-Grounded Posture-Aware Co-Speech Gesture Generation</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
 </section>
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">10 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Text-Driven Artistic Staging: Pose, Lighting, and Camera References from Paintings">Text-Driven Artistic Staging: Pose, Lighting, and Camera References from Paintings</span></li><li><span class="dpr-home-dashboard-paper-title" title="DriftingVLA: Native One-Step Vision-Language-Action Generation via Per-Dimension Temporal Drifting">DriftingVLA: Native One-Step Vision-Language-Action Generation via Per-Dimension Temporal Drifting</span></li><li><span class="dpr-home-dashboard-paper-title" title="Hydra: A Navigation World Action Model with Discrete Latent Planning and Continuous Flow-Matching Execution">Hydra: A Navigation World Action Model with Discrete Latent Planning and Continuous Flow-Matching Execution</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Generalization over Memorization: Generalization-Aware Diffusion Adaptation for Single-Image Multi-View Synthesis">Generalization over Memorization: Generalization-Aware Diffusion Adaptation for Single-Image Multi-View Synthesis</span></li><li><span class="dpr-home-dashboard-paper-title" title="Geometry-aware Latent Autoregressive Generative Model for PDEs in Complex Domains">Geometry-aware Latent Autoregressive Generative Model for PDEs in Complex Domains</span></li><li><span class="dpr-home-dashboard-paper-title" title="Conditional Flow Matching for ML-Based Inverse Design Problems">Conditional Flow Matching for ML-Based Inverse Design Problems</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>7</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>10</strong></span></div>
 </section>
 </div>
 
