@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-02</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-03</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 12 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>10</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-02 22:25:57 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-03 22:57:23 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读2篇、速读3篇，共覆盖12篇推荐论文；最高分为《A Lagrangian View of Flow Matching》（9.0），对流匹配提出拉格朗日视角。值得关注的是《Puppeteer》物体锚定姿态感知的共语手势生成（8.0），以及面向单图多视图的泛化扩散方法。建议普通读者优先从流匹配理论视角与手势生成两个方向切入，快速把握生成模型前沿。</p>
+<p>今日关注7篇生成模型新进展，精读2篇聚焦流匹配与人形机器人控制，速读涉及视觉-语言-动作模型加速及扩散变压器优化。</p>
+<p>最值得关注《CAT-Flow》通过曲率自适应步长提升流匹配效率，以及《ADAPT》用敏捷扩散动作先验实现文本驱动的稳健人形控制。</p>
+<p>建议普通读者优先看精读两篇摘要，速读可留意AdaVLA的免费推理加速方案，但无需深究技术细节。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,7 +76,7 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A Lagrangian View of Flow Matching">A Lagrangian View of Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Puppeteer: Object-Grounded Posture-Aware Co-Speech Gesture Generation">Puppeteer: Object-Grounded Posture-Aware Co-Speech Gesture Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="CAT-Flow: Curvature-Adaptive sTeps for Flow Matching">CAT-Flow: Curvature-Adaptive sTeps for Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="ADAPT: Agile Diffusion Action Priors for Robust and Steerable Online Text-Driven Humanoid Control">ADAPT: Agile Diffusion Action Priors for Robust and Steerable Online Text-Driven Humanoid Control</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
 </section>
@@ -84,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">10 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Generalization over Memorization: Generalization-Aware Diffusion Adaptation for Single-Image Multi-View Synthesis">Generalization over Memorization: Generalization-Aware Diffusion Adaptation for Single-Image Multi-View Synthesis</span></li><li><span class="dpr-home-dashboard-paper-title" title="Geometry-aware Latent Autoregressive Generative Model for PDEs in Complex Domains">Geometry-aware Latent Autoregressive Generative Model for PDEs in Complex Domains</span></li><li><span class="dpr-home-dashboard-paper-title" title="Conditional Flow Matching for ML-Based Inverse Design Problems">Conditional Flow Matching for ML-Based Inverse Design Problems</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AdaVLA: Adaptive Step Flow Matching for Training-free Acceleration of Vision-Language-Action Models">AdaVLA: Adaptive Step Flow Matching for Training-free Acceleration of Vision-Language-Action Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Balancing Frequencies and Pixels in Flow Matching">Balancing Frequencies and Pixels in Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Elastic Token Compression for Pixel-Space Diffusion Transformers">Elastic Token Compression for Pixel-Space Diffusion Transformers</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>10</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
 </section>
 </div>
 
