@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-04</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-05</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 2 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-04 22:47:41 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-05 22:06:41 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读1篇、速读1篇，聚焦生成模型与3D视觉前沿。</p>
-<p>最值得关注：精读论文《Beyond Straightness》提出“Quantile AlignTree Coupling”实现非交叉流匹配，评分高达9.0；速读论文探索3D基础场景表示的零样本新深度合成（6.0分），可作扩展了解。</p>
-<p>建议优先精读高分的流匹配耦合方法，理解其树形分位对齐思路，再看速读论文如何利用3D先验生成新视角深度。</p>
+<p>今日速读2篇，聚焦3D场景生成与重建，暂无精读深度分析。</p>
+<p>最值得关注的是《DReSG》（7.0分），用扩散残差实现风格化高斯泼溅，视觉风格迁移有新突破；《ReconSplat》则探索超出观测视角的通用重建。</p>
+<p>建议优先精读DReSG，若对泛化重建感兴趣，可结合两篇对比学习。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Beyond Straightness: Non-Crossing Flow Matching via Quantile AlignTree Coupling">Beyond Straightness: Non-Crossing Flow Matching via Quantile AlignTree Coupling</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Zero-Shot Novel Depth Synthesis Using 3D Foundation Models Scene Representations">Zero-Shot Novel Depth Synthesis Using 3D Foundation Models Scene Representations</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DReSG: Diffusion Residuals for Stylized Gaussian Splatting">DReSG: Diffusion Residuals for Stylized Gaussian Splatting</span></li><li><span class="dpr-home-dashboard-paper-title" title="ReconSplat: Generalizable 3D Scene Reconstruction Beyond Observed Views">ReconSplat: Generalizable 3D Scene Reconstruction Beyond Observed Views</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
 </section>
 </div>
 
