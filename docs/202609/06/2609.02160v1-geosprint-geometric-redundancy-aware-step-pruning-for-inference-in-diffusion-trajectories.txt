@@ -1,0 +1,687 @@
+Title: GeoSPRINT: Geometric Redundancy-Aware Step Pruning for Inference in Diffusion Trajectories
+
+URL Source: https://arxiv.org/pdf/2609.02160v1
+
+Published Time: Thu, 03 Sep 2026 00:38:09 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# GeoSPRINT: Geometric Redundancy-Aware Step Pruning for Inference in Diffusion Trajectories 
+
+Arpita Joshi 
+
+The Scripps Research Institute 10550 N. Torrey Pines Road, La Jolla, San Diego CA, USA 
+
+arpitamhow@gmail.com / ajoshi@scripps.edu 
+
+## Abstract 
+
+Diffusion models achieve high sample quality but remain expensive at inference time because sampling requires many sequential neural function evaluations (NFEs). Existing acceleration methods either use fixed step-skipping schedules, adapt step sizes based on local numerical error, or require additional training. We introduce GeoSPRINT (Geometric Step Pruning for Inference in Trajectories), a training-free framework for constructing non-uniform sampling schedules from the geometry of denoising trajectories. GeoSPRINT detects geometrically redundant steps using a hyperplanarity test in latent space, implemented efficiently via QR factorization, and converts the resulting redundancy profile into a sampling schedule that allocates more steps to high-curvature regions of the trajectory. In addition, we introduce the trajectory projection score αtraj , a residual-variance metric that quantifies trajectory straightness and serves as a model-free diagnostic for rectified flow quality. Across CIFAR-10 ( 32 ×32 ), LSUN Church ( 256 ×256 ), and Stable Diffusion v1.5 ( 512 ×512 latent), GeoSPRINT consistently improves over uniform DDIM (Denoising Diffusion Implicit Models) schedules at matched NFE budgets. On CIFAR-10, GeoSPRINT improves FID (Fréchet Inception Distance) by 0.7-1.1 over DDIM across 49-89 NFEs and surpasses DPM-Solver++ at NFE ≥30 
+
+despite using a first-order DDIM solver. On LSUN Church, it reduces FID from 1.48 to 1.26 at 52 steps, and on Stable Diffusion v1.5 it achieves up to 1.93 FID improvement over DDIM. These results show that trajectory geometry provides a useful global signal for allocating inference steps and that schedule quality can substantially improve diffusion sampling efficiency without retraining. 
+
+## 1 Introduction 
+
+Diffusion models [1, 2] and their continuous-time generalizations through score-based stochastic differential equations have become the dominant generative modeling paradigm across images [3], video [4], audio [5], and molecular design [6]. Despite their exceptional generation quality, the iterative nature of the reverse sampling process remains a computational bottleneck: generating a single sample typically requires tens to thousands of sequential neural network evaluations. The community has responded with a rich ecosystem of acceleration techniques. Training-free approaches include DDIM [7], which reinterprets diffusion sampling as a deterministic ODE and enables uniform step-skipping; DPM-Solver [8] and DPM-Solver++ [9], which employ exponential integrators with adaptive step sizes based on local truncation error; and UniPC [10], which unifies predictor-corrector schemes. Training-based approaches include progressive distillation [11], which iteratively halves the required steps; consistency models [12, 13], which learn to map any point on the trajectory directly to the endpoint; and rectified flow [14], which straightens transport paths to reduce integration steps. Despite this progress, a gap remains: existing training-free methods lack a global , trajectory-level criterion for step importance grounded in geometric redundancy. DDIM skips steps uniformly, blind to trajectory geometry. DPM-Solver adapts step sizes based on local error estimates at individual timesteps. Adaptive non-uniform timestep sampling [15] focuses on training rather than inference. 
+
+> Preprint. arXiv:2609.02160v1 [cs.LG] 2 Sep 2026
+
+The recent SDM framework [16] analyzes local ODE stiffness but still operates pointwise. None of these methods ask the global question: across the full trajectory, which steps actually contribute new geometric information to the path from noise to data? 
+
+We argue that this is precisely the question addressed by geometric data instance reduction [17]. That work demonstrated that ordered sequences of data points can be dramatically reduced by testing geometric redundancy—collinearity in 2D, coplanarity in 3D—while preserving the essential shape and variance of the structure, as quantified by a projection score based on eigenvalues of the covariance matrix of removed points [18]. The key insight is that many consecutive points in an ordered dataset lie approximately on the same linear or planar subspace and can be removed without information loss. A denoising trajectory {zT , z T −1, . . . , z 0} is precisely such an ordered sequence. In regions where the score function changes slowly, consecutive latent states trace a nearly linear path—these steps are geometrically redundant. In regions of rapid change (e.g., when the model resolves fine structure), the trajectory curves sharply, and every step carries new directional information. This analogy motivates GeoSPRINT. 
+
+Contributions: (1) We generalize geometric instance reduction from 2–3 PCA dimensions to arbitrary 
+
+d-dimensional latent spaces via a hyperplanarity test with O(d · k2) per-step complexity. (2) We introduce a novel schedule construction method that blends log-SNR spacing with GeoSPRINT’s trajectory curvature density, yielding non-uniform schedules that outperform both uniform-t (DDIM) and uniform-logSNR spacing. (3) We introduce the trajectory projection score αtraj , a residual-variance metric that quantifies trajectory non-straightness; we prove it equals zero for perfectly straight trajectories and demonstrate a 450 × drop from DDPM to DDIM, establishing it as a training-free diagnostic for flow-matching quality. (4) We demonstrate that a first-order DDIM solver with GeoSPRINT scheduling outperforms the second-order DPM-Solver++ at NFE ≥30 on CIFAR-10, showing that where to step matters more than how to step. (5) We provide benchmarks on CIFAR-10 (32 ×32 ), LSUN Church ( 256 ×256 ), and Stable Diffusion v1.5 ( 512 ×512 latent), with consistent improvements across resolutions, model architectures, and conditioning types. 
+
+## 2 Background and Related Work 
+
+2.1 Diffusion Models and the Sampling Problem Score-based SDE framework. Song et al. [2] unified diffusion models under a continuous-time SDE framework. The forward process is dz = f (z, t ) d t + g(t) d w, where f and g define the drift and diffusion coefficients. The reverse process is: 
+
+dz = f (z, t ) − g(t)2∇z log pt(z)dt + g(t) d ¯ w, (1) where ∇z log pt(z) is the score function approximated by a neural network sθ (z, t ) (and ¯w is the standard Weiner process). An equivalent deterministic formulation, the probability flow ODE is: 
+
+dz
+
+dt = f (z, t ) − 12 g(t)2∇z log pt(z). (2) Sampling reduces to solving this ODE from t=T to t=0 , requiring discretization into N steps, each involving one neural function evaluation (NFE). Flow matching: Lipman et al. [19] and Liu et al. [14] proposed learning a velocity field vθ (z, t ) that transports a source distribution to a target via 
+
+dz/ dt = vθ (z, t ). Rectified flow [14] straightens these paths through iterative reflow. Wang et al. [20] showed that strict straightness is not necessary—first-order ODE consistency suffices. 
+
+2.2 Existing Acceleration Methods Uniform step-skipping. DDIM [7] enables deterministic sampling that skips timesteps uniformly, reducing 1000 steps to ∼50 , but is blind to trajectory geometry. 
+
+High-order ODE solvers. DPM-Solver [8] derives exact solutions for the linear part of the diffusion ODE and applies exponential integrators for the nonlinear residual, achieving high quality in 10–20 steps. DPM-Solver++ [9] extends this to guided sampling. Both use local truncation error for adaptive step sizing with heuristic schedules (logSNR-uniform, time-uniform, time-quadratic). 
+
+Training-based methods. Progressive distillation [11] trains a student to match a teacher using 
+
+N/ 2 steps, iteratively halving until 4-step generation. Consistency models [12, 13] learn direct 2trajectory-endpoint mappings. Consistency flow matching [21] combines consistency training with flow matching. All require additional training for each target NFE budget. 
+
+Adaptive timestep methods. Kim et al. [15] propose adaptive non-uniform timestep sampling for 
+
+training acceleration. The SDM framework [16] analyzes local PF-ODE stiffness to set adaptive solver order and step size during inference . Both operate on local properties at individual timesteps. 
+
+2.3 Geometric Instance Reduction 
+
+Joshi and Haspel [17] introduced a data instance reduction algorithm that operates on ordered sequences projected into PCA space. The algorithm tests geometric redundancy via collinearity (2D) and coplanarity (3D) tests, removing points that lie approximately on the same linear subspace as their neighbors. Information loss is quantified by a projection score [18]: 
+
+α =
+
+Ppj=1 λ(S)
+
+> j
+
+Ppj=1 λ(Z)
+
+> j
+
+, (3) where λ(S) 
+
+> j
+
+and λ(Z) 
+
+> j
+
+are the j-th eigenvalues of the covariance matrices computed from the removed subset S and the full dataset Z, respectively, and p is the number of retained PCA dimensions. The algorithm achieves 40–87% point reduction across diverse datasets (molecular trajectories, images, ML benchmarks) with projection scores as low as 10 −5.
+
+Critical limitation for our purposes: the original algorithm operates in 2–3 PCA dimensions. Diffusion latent spaces are typically 32–512 dimensional. Section 3 addresses this directly. 
+
+## 3 Method: GeoSPRINT 
+
+3.1 Generalizing Geometric Redundancy to High Dimensions 
+
+Let {z0, z 1, . . . , z N } be an ordered sequence of points in Rd (latent states along a denoising trajectory, ordered from t=T to t=0 ). We seek to identify and remove points approximately contained in the affine subspace spanned by their neighbors. 
+
+Definition 1 (Hyperplanarity test) . Given a window of k retained points W = {w1, w 2, . . . , w k}
+
+(where k ≤ d) and a candidate point zi, define: 
+
+MW = w2 − w1 w3 − w1 · · · wk − w1
+
+ ∈ Rd×(k−1) . (4) 
+
+The residual distance of zi from the affine subspace spanned by W is: 
+
+ri = (I − MW M + 
+
+> W
+
+)( zi − w1) 2, (5) 
+
+where M + 
+
+> W
+
+is the Moore-Penrose pseudoinverse. If ri < τ , then zi is approximately in the affine span and is a candidate for removal. 
+
+Note that Definition 1 uses the most recently retained (not necessarily consecutive) points as the reference window, matching the causal sliding-window logic of Algorithm 2. 
+
+Efficient computation via QR factorization. Rather than computing the pseudoinverse directly, we compute the thin QR factorization MW = QW RW and obtain ri = ∥(I − QW Q⊤ 
+
+> W
+
+)( zi − w1)∥2.Computing the QR factorization of MW ∈ Rd×(k−1) costs O(d · k2) operations; since k is small (typically k=2 ), this is O(d) in practice. 
+
+Adaptive window size. We propose a progressive hierarchy mirroring the 2D →3D progression in the original algorithm: Tests are applied in a progressive hierarchy: Level 1 (k=2 , collinearity) catches long straight segments; Level 2 (k=3 , coplanarity) test if 4 points are coplanar, catches planar sweeps; Level ℓ (k=ℓ) tests against an (ℓ−1) -dimensional affine subspace. These tests are applied sequentially: Level 1 first, then Level 2 on surviving points, etc. In practice, we find k=2 
+
+(collinearity) sufficient for all models tested (see Section C.3). 
+
+Threshold determination. Following Joshi and Haspel [17], we determine τ through binary search guided by the trajectory projection score (Section 3.3), adjusting until the projection score of removed points falls below a target (e.g., 10 −3) while maximizing the number of removed steps. 
+
+3.2 Application to Denoising Trajectories Reference trajectory generation. Given a pretrained diffusion or flow model, we first generate B
+
+reference trajectories using the full N -step schedule. Each trajectory {z(b) 
+
+> T
+
+, . . . , z (b)0 } provides an 3ordered sequence in Rd.
+
+Per-trajectory pruning. For each reference trajectory, we apply the hyperplanarity test (Algorithm 2) to identify and remove geometrically redundant timesteps, producing a per-trajectory retained set 
+
+R(b) ⊆ { t0, t 1, . . . , t T }.
+
+Universal schedule aggregation. To obtain a fixed schedule usable without per-sample overhead, we aggregate across reference trajectories: 
+
+w(t) = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+1t ∈ R (b). (6) The retention frequency w(t) encodes a per-timestep curvature density : it is high where trajectories consistently curve and low where they are consistently straight. 
+
+Schedule construction via log-SNR curvature blending. A naive approach selects the top-K
+
+timesteps by retention frequency w(t). However, this clusters steps in high-curvature regions while leaving large gaps elsewhere, and the DDIM solver’s prediction error grows with the gap in log-signal-to-noise ratio (log-SNR) between consecutive steps, not with the gap in t. We therefore construct schedules by blending two density functions: 
+
+ρ(t) = (1 − β) · ρlogSNR (t) + β · ρcurv (t), (7) where ρlogSNR is uniform density in log-SNR space (ensuring uniform error contribution per step, as in DPM-Solver), ρcurv (t) ∝ ˜w(t) is the smoothed and floored curvature density derived from Eq. 6, and 
+
+β ∈ [0 , 1] is the blend weight. Smoothing applies a Gaussian kernel with bandwidth σ=5 timesteps, followed by flooring at ϵfloor = 0 .05 · max t ˜w(t) to ensure minimum coverage. We then place K
+
+steps at uniform quantiles of the cumulative distribution function F (t) = R t 
+
+> 0
+
+ρ(s) d s / R T 
+
+> 0
+
+ρ(s) d s,analogous to importance sampling. Setting β=0 recovers log-SNR-uniform spacing (a known baseline). Setting β=1 gives pure curvature-weighted spacing (which fails at low NFE due to coverage gaps). We find β=0 .6 is optimal on CIFAR-10 and effective across the tested datasets (Section 5.3), though per-dataset ablation on LSUN Church and SD v1.5 would further validate robustness. The key insight is that neither spacing alone is optimal: log-SNR spacing ignores trajectory geometry, while curvature spacing ignores solver error characteristics. The blend combines both signals. 
+
+Sample-adaptive analysis. The universal schedule applies the same timestep selection to all samples. To understand how geometric complexity varies across samples, we additionally analyze each reference trajectory individually: for a given trajectory, the number of retained timesteps after pruning indicates that sample’s geometric complexity. This per-sample analysis does not directly reduce NFEs at inference time—the model evaluation must still be performed to obtain each zt—but it serves two important purposes: (i) it reveals the distribution of sample difficulty across a dataset (Section 5.6), informing whether a single universal schedule is sufficient or whether future work on predictive per-sample budgeting is warranted; and (ii) it provides per-sample αtraj values that can be correlated with sample quality metrics. 
+
+Remark on inference cost. The primary acceleration mechanism of GeoSPRINT is the universal schedule (Algorithm 1), which extracts a fixed set of timesteps offline and then generates all new samples using only those timesteps. The per-sample analysis described above is an offline diagnostic tool, not an inference-time accelerator. 
+
+3.3 Trajectory Projection Score 
+
+We extend the projection score of Joshi and Haspel [17] to denoising trajectories. The key insight is that the residual variance —the variance orthogonal to the local affine subspace at each pruned point— is the correct measure of information loss, not the raw variance of the pruned points themselves. 
+
+Definition 2 (Trajectory projection score) . Given a trajectory Z = {zT , . . . , z 0} with N +1 points, let S ⊂ Z be the set of pruned points, and let rs denote the hyperplanarity residual (Eq. 5) of each pruned point zs ∈ S. The trajectory projection score is: 
+
+αtraj =
+
+P 
+
+> s∈S
+
+r2
+
+> s
+
+P 
+
+> z∈Z
+
+∥z − ¯z∥2 , (8) 
+
+where ¯z is the global trajectory mean. The numerator is the total squared residual of all pruned points: the variance that lies outside the affine span of their retained neighbors. The denominator is the total trajectory variance. 
+
+4αtraj measures the fraction of total trajectory variance that is lost by pruning—specifically, the variance orthogonal to what the retained points can reconstruct through local affine interpolation. A low score (e.g., 10 −3 to 10 −5) indicates that removed steps contributed negligibly to the trajectory’s geometric structure beyond what is already captured by their neighbors. 
+
+Proposition 1. For a perfectly straight trajectory (all points on a single line in Rd), GeoSPRINT with the collinearity test ( k=2 ) prunes all points beyond the initial window, retaining exactly the first 
+
+k points, with αtraj = 0 .Proof. If all points are collinear, every candidate point zi (for i ≥ k) lies exactly on the line through the retained window points, so the hyperplanarity residual ri = 0 for all such i. Because all residuals satisfy ri < τ , the window never updates (the else branch of Algorithm 2 is never executed), and the retained set consists of the first k points used to initialize the window. The numerator P r2 
+
+> i
+
+= 0 ,hence αtraj = 0 .
+
+Corollary 1. αtraj is a measure of trajectory non-straightness. For rectified flow models, which aim to straighten trajectories, αtraj decreases with each round of reflow, providing a training-free diagnostic for rectification quality. 
+
+3.4 Connections to Existing Methods Relation to DPM-Solver. DPM-Solver’s adaptive step size is based on local truncation error —the difference between a higher-order and lower-order solution at each step. GeoSPRINT’s hyperplanarity test is a geometric criterion over a window of points, making it sensitive to trajectory structure over multiple steps rather than single-step error. The two are complementary: DPM-Solver minimizes local numerical error; GeoSPRINT minimizes global geometric redundancy. 
+
+Relation to SDM. The SDM framework [16] analyzes local PF-ODE stiffness to determine solver order at each timestep. GeoSPRINT instead operates on the realized trajectory post-hoc, testing whether the path actually traced contains redundant segments. SDM is predictive (deciding before taking the step); GeoSPRINT is retrospective (analyzing after generation). This makes GeoSPRINT applicable to any model without Jacobian access. An empirical comparison of these complementary strategies is an important direction for future work. 
+
+Relation to rectified flow. Rectified flow learns transport paths that are inherently straight, making all interior steps redundant by construction. GeoSPRINT diagnoses rather than enforces straightness, and works equally well on curved trajectories by adaptively allocating steps where curvature demands them. 
+
+Relation to consistency models. Consistency models learn to jump from any trajectory point to the endpoint in one step. GeoSPRINT identifies which intermediate points are necessary to maintain trajectory integrity. The two can be combined: GeoSPRINT identifies minimal waypoints, and a consistency model could jump between them. 
+
+## 4 Theoretical Analysis 
+
+4.1 Reconstruction Error Bound Theorem 1 (Reconstruction error bound) . Let Z be a trajectory of N +1 points in Rd, and let S be the set of pruned points after GeoSPRINT with hyperplanarity threshold τ . Then: 
+
+αtraj ≤ |S| · τ 2
+
+(N +1) · tr( CZ ) , (9) 
+
+where |S| is the number of pruned steps and tr( CZ ) is the trace of the sample covariance of Z.Proof sketch. Each pruned point zs satisfies rs ≤ τ by the hyperplanarity test, so P 
+
+> s∈S
+
+r2 
+
+> s
+
+≤ | S| · τ 2.The denominator of αtraj equals (N +1) · tr( CZ ). Division yields the result. The full proof is in Appendix B. This provides a formal guarantee: GeoSPRINT’s reconstruction error—the fraction of total trajectory variance attributable to orthogonal residuals of pruned points—is controlled by τ , the pruning rate |S|/(N +1) , and the total trajectory variance. For a desired αtraj ≤ ϵ, it suffices to set τ ≤pϵ · (N +1) · tr( CZ )/|S|.5Remark. We emphasize that αtraj bounds the orthogonal reconstruction residual , not the retained set’s sample covariance tr( CR)/tr( CZ ). Pruning points changes the sample mean and can reduce the retained sample covariance even when all residuals are zero (e.g., removing interior points from a collinear trajectory reduces sample variance while αtraj = 0 ). The reconstruction interpretation— that pruned points are well-approximated by affine interpolation from their retained neighbors—is the operationally relevant guarantee for schedule quality. 
+
+4.2 Complexity Analysis 
+
+The multi-level hyperplanarity test with maximum level ℓ has complexity O(N · d · ℓ2) per trajectory in the worst case. For Level-1 only (collinearity, k=2 ), this is O(N · d)—linear in both trajectory length and dimension, and negligible compared to the cost of the NFEs themselves. In Algorithm 2, the QR factorization is cached and recomputed only when the window updates, further reducing the amortized cost. Schedule amortization over a batch of M samples reduces per-sample overhead to 
+
+O(B/M ) reference trajectories. 
+
+4.3 Relation to Trajectory Curvature 
+
+The hyperplanarity residual ri at point zi relates to discrete curvature. For a smooth trajectory z(t)
+
+with a collinearity window ( k=2 ) using causal forward-extrapolation from retained points at z(t) and 
+
+z(t+∆ t) to the candidate z(t+2∆ t):
+
+ri ≈ (∆ t)2 ∥z′′ ⊥(t)∥2 + O (∆ t)3, (10) where z′′ ⊥(t) is the component of z′′ (t) orthogonal to the velocity z′(t). Tangential acceleration (speeding up along a straight path) does not contribute, since the residual measures orthogonal distance from the extrapolated line. The coefficient (∆ t)2 (rather than (∆ t)2/2) reflects causal forward-extrapolation rather than midpoint interpolation. Removing points with ri < τ is thus equivalent to removing steps where the trajectory’s orthogonal curvature is small. Higher-level tests detect higher-order geometric structure (torsion, etc.). 
+
+## 5 Experiments 
+
+5.1 Setup Models and datasets. We evaluate on: CIFAR-10 (32 ×32 ) using the pretrained 
+
+google/ddpm-cifar10-32 UNet from HuggingFace Diffusers; LSUN Church (256 ×256 ) using 
+
+google/ddpm-ema-church-256 ; and Stable Diffusion v1.5 (512 ×512 , latent 4×64 ×64 ) using 
+
+runwayml/stable-diffusion-v1-5 with classifier-free guidance (CFG scale 7.5). All pixel-space models use the standard linear β-schedule with 1000 training timesteps. 
+
+Protocol. For each model, we record reference trajectories using DDIM at 200 steps: B=100 for CIFAR-10 and B=50 for LSUN Church and SD v1.5 (see Appendix C.1 for convergence analysis). We then extract the curvature density profile and construct LogSNR+curvature schedules (Eq. 7, 
+
+β=0 .6). For FID computation, we generate 10,000 samples for CIFAR-10 and LSUN Church, and 5,000 samples for SD v1.5, using a fixed set of prompts randomly sampled from the COCO 2017 validation set. FID is computed against the training set using clean-FID [22] for CIFAR-10 and LSUN Church. For SD v1.5, FID is computed against a 50-step DDIM reference set, measuring relative trajectory fidelity rather than absolute generation quality (see Section 5.2.1). All sampling uses the manual DDIM update formula to correctly handle non-uniform timestep spacing. All reported FID values are means ± standard deviation over 3 independent runs with different random seeds. 
+
+Baselines. DDIM [7]: uniform timestep spacing at matched NFE. DPM-Solver++ [9]: second-order solver with default logSNR-uniform schedule, solver_order=2 . DDIM-200 : proxy for zero-pruning baseline. 
+
+5.2 Main Result: FID vs. NFE Across Datasets 
+
+GeoSPRINT operates as a step-budget oracle : starting from an initial K, it searches upward, in-creasing K until the trajectory projection score αtraj falls below a target threshold. At each K, we construct a LogSNR+curvature schedule (Eq. 7, β=0 .6) and compare with DDIM uniform spacing at matched NFE. On CIFAR-10, we additionally compare with DPM-Solver++ (second-order, default schedule). 
+
+Key findings. (1) GeoSPRINT outperforms DDIM at every NFE on all three datasets (except NFE =8 on SD and NFE =10 on CIFAR-10, see Figure 1(a) and Figure 2). (2) Improvements grow 
+
+6Table 1: FID ( ↓) across datasets (mean ± std over 3 seeds). GeoSPRINT uses LogSNR+curvature (β=0 .6). Bold : best per row. CIFAR-10 baseline: DDIM-200 = 12.65. SD FID computed against 50-step DDIM reference (see Section 5.2.1).                                                                            
+
+> CIFAR-10 ( 32 ×32 )
+> NFE Geo DDIM ∆DPM++ 10 38.53 ±.31 34.99 ±.28 3.54 29.05 ±.25
+> 20 22.23 ±.19 23.17 ±.21 −0.94 21.31 ±.18
+> 30 18.50 ±.15 19.33 ±.17 −0.83 18.85 ±.16
+> 49 15.95 ±.13 16.82 ±.14 −0.87 17.41 ±.15
+> 60 15.25 ±.12 15.95 ±.13 −0.70 17.08 ±.14
+> 70 14.80 ±.11 15.69 ±.12 −0.89 16.82 ±.14
+> 80 14.38 ±.10 15.30 ±.12 −0.92 16.68 ±.13
+> 89 14.10 ±.10 15.17 ±.11 −1.07 16.65 ±.13
+> Church ( 256 ×256 )
+> NFE Geo DDIM ∆
+> 52 1.26 ±.04 1.48 ±.05 −0.22 56 1.16 ±.03 2.22 ±.07 −1.06 74 0.87 ±.03 1.72 ±.05 −0.85 79 0.79 ±.02 1.43 ±.04 −0.64
+> SD v1.5 ( 512 ×512 )
+> NFE Geo DDIM ∆
+> 15 7.91 ±.08 8.72 ±.09 −0.81 20 5.51 ±.06 5.97 ±.07 −0.46 24 4.60 ±.05 5.92 ±.06 −1.32 29 4.01 ±.05 4.92 ±.05 −0.91 34 3.66 ±.04 4.23 ±.05 −0.57 39 3.51 ±.04 4.92 ±.06 −1.41 44 3.45 ±.04 5.38 ±.06 −1.93
+
+with model complexity: −0.7 to −1.1 on CIFAR-10, −0.2 to −1.1 on Church, and up to −1.93 
+
+on SD v1.5 (Table 1). (3) DDIM’s uniform schedule becomes actively counterproductive at high NFE on both Church and SD (FID increasing), while GeoSPRINT monotonically improves (Table 1 and Figure 2). (4) On CIFAR-10, first-order DDIM+GeoSPRINT outperforms second-order DPM-Solver++ at NFE ≥30 , demonstrating that schedule quality dominates solver order at moderate step budgets on this model; extending this comparison to higher-resolution models is left to future work. 
+
+(5) GeoSPRINT at 60 steps matches DDIM at 80 steps on CIFAR-10 (both FID ≈15 .3), a 25% NFE reduction. 50 60 70 80 90          
+
+> NFE
+> 13 14 15 16 17
+> FID (lower is better)
+> DDIM-200
+> (a) CIFAR-10: FID vs NFE
+> GeoSPRINT DDIM 50 60 70 80 90
+> NFE
+> 10 6
+> 10 5
+> traj
+> (b) Trajectory projection score vs NFE 20 40 60 80
+> NFE
+> 15 20 25 30 35
+> FID (lower is better)
+> (c) Solver composability
+> DPM-Solver++ DDIM+GeoSPRINT DDIM uniform
+
+Figure 1: CIFAR-10 results. (a) FID vs. NFE. GeoSPRINT consistently outperforms DDIM. Dashed lines: DDIM-200 baseline (12.65) and DDIM-50 reference (16.80). Error bands: ±1 std over 3 seeds. (b) αtraj decreases log-linearly with NFE, providing a principled knob for the step-budget oracle. (c) First-order DDIM+GeoSPRINT outperforms second-order DPM-Solver++ at NFE ≥30 on CIFAR-10; where to step matters more than how to step. 
+
+5.2.1 Note on Stable Diffusion FID Measurement 
+
+For SD v1.5, we compute FID against a 50-step DDIM reference set rather than against a ground-truth image dataset. This measures relative trajectory fidelity —how closely a reduced schedule reproduces the full solver’s output distribution—rather than absolute generation quality. This protocol isolates the effect of the schedule from the base model’s inherent generation gap. 
+
+5.3 Blend Parameter Ablation 
+
+We ablate the blend parameter β (Eq. 7) on CIFAR-10; results are summarized in Table 2 (Left). DDIM uniform achieves 23.17/19.33/16.80 at NFE=20/30/50. Pure log-SNR ( β=0 ) is worse than Table 2: Left: Blend ablation on CIFAR-10 (FID ↓, mean of 3 seeds). β=0 : pure log-SNR; β=1 :pure curvature. Optimum at β ∈ [0 .5, 0.7] . DDIM uniform: 23.17/19.33/16.80. Right: αtraj across schedulers ( 450 × drop DDPM →DDIM). 
+
+β 0 0.3 0.5 0.6 0.7 1.0 20 25.81 22.45 22.26 22.23 22.19 22.68 30 20.89 18.71 18.56 18.50 18.52 18.86 50 16.80 16.03 15.91 15.87 15.94 16.04 Scheduler αtraj Pruned DDPM .408 ±.024 79% DDIM .0009 ±.0001 82% DPM++ .0008 ±.0002 84% 
+
+755 60 65 70 75 80     
+
+> NFE
+> 0.8 1.0 1.2 1.4 1.6 1.8 2.0 2.2
+> FID
+> LSUN Church 256×256: GeoSPRINT vs DDIM
+> GeoSPRINT DDIM 10 20 30 40 50
+> NFE
+> 5.0 7.5 10.0 12.5 15.0 17.5 20.0
+> FID
+> Stable Diffusion v1.5: GeoSPRINT vs DDIM
+> GeoSPRINT DDIM
+
+Figure 2: FID vs. NFE on LSUN Church 256 ×256 (left) and Stable Diffusion v1.5 (right). GeoSPRINT monotonically improves while DDIM’s uniform schedule plateaus or worsens at high NFE. Error bands: ±1 std over 3 seeds. DDIM uniform, confirming that log-SNR spacing alone is not superior—it is GeoSPRINT’s curvature correction that makes the difference. Neither component alone suffices; the blend addresses both solver error (via log-SNR) and trajectory geometry (via curvature) simultaneously. We note that this ablation is performed on CIFAR-10 only; while β=0 .6 is effective on the other datasets, dedicated ablations would further confirm robustness. 
+
+5.4 Schedule Analysis 
+
+The curvature density profile w(t) reveals where GeoSPRINT concentrates steps. The late denoising zone (low noise, t/T < 0.2) has mean retention 2× higher than the middle zone ( 0.2 < t/T < 0.8), confirming that fine-detail resolution drives step allocation. The early zone ( t/T > 0.8) also shows elevated retention, reflecting the initial direction-setting phase (Figure 3). 0.0 0.2 0.4 0.6 0.8 1.0 Normalized time (t/T 0)           
+
+> 0.0 0.2 0.4 0.6 0.8 1.0 Retention freq w(t)
+> (a) Step retention frequency
+> 0.0 0.2 0.4 0.6 0.8 1.0 Normalized time 10 15 20 25 30 35 40 45 50 NFE budget K
+> (b) Selected steps by budget
+> K=10 K=20 K=50
+> 0.0 0.2 0.4 0.6 0.8 1.0 Normalized time 0.0 0.2 0.4 0.6 0.8 1.0 Cumulative retention
+> (c) Cumulative distribution
+
+Figure 3: (a) Retention frequency w(t) peaks at both ends (bimodal). (b) Selected timesteps at budgets K=10 , 20 , 50 . (c) Cumulative: 50% of retained steps lie in the final 20% of denoising. 
+
+5.5 αtraj as Rectification Diagnostic 
+
+We record 50 trajectories from three scheduler types on the same pretrained CIFAR-10 model. αtraj 
+
+drops 450 × from DDPM to DDIM (Table 2, Right), confirming it as a training-free rectification diagnostic (Figure 4). 
+
+5.6 Supporting Experiments (Appendix C) Reference set convergence : Schedule stability reaches fuzzy Jaccard 0.84 and correlation 0.86 at 
+
+B=75 reference trajectories; B=100 is adequate for CIFAR-10 (Figure 5). Per-sample complexity :NFE variation is modest on CIFAR-10 (1.2–1.4 ×), but individual curvature profiles are diverse (mean correlation 0.37 with universal), validating the universal schedule as a robust compromise across samples (Figure 6). 
+
+## 6 Discussion 
+
+Why does curvature-aware scheduling help? The DDIM update error at each step depends on two factors: the gap in log-SNR space (governing the noise-prediction error) and the trajectory curvature (governing how far the local linear approximation deviates from the true path). Uniform-t
+
+spacing equalizes neither. Log-SNR spacing equalizes the first but ignores the second. GeoSPRINT’s 8DDPM DDIM DPM++ 0.0 0.1 0.2 0.3 0.4 _traj (  = straighter)   
+
+> (a) Trajectory projection score
+> DDPM DDIM DPM++ 010 20 30 40 50 60 70 80 Steps pruned (%)
+> (b) GeoSPRINT reduction rate
+
+Figure 4: (a) αtraj across schedulers: 450 × drop DDPM →DDIM. (b) Reduction rate: straighter trajectories are more compressible. curvature density captures the second, and the blend (Eq. 7) addresses both simultaneously. 
+
+Schedule quality vs. solver order. A surprising finding is that GeoSPRINT+DDIM (first-order) outperforms DPM-Solver++ (second-order) at NFE ≥30 on CIFAR-10. This suggests that at moderate step budgets, the dominant error source is schedule quality (which steps to take) rather than solver accuracy (how to take each step). At very low NFE ( ≤10 ), the solver’s accuracy per step matters more, explaining DPM-Solver++’s advantage there. Extending this comparison to LSUN Church and SD v1.5 would further substantiate this as a general principle. 
+
+Scaling to complex models. The SD v1.5 results (Table 1) reveal that GeoSPRINT’s advantage grows 
+
+with model complexity. While CIFAR-10 improvements are 0.7–1.1 FID, SD v1.5 improvements reach 1.93 FID. Moreover, DDIM’s uniform schedule becomes actively counterproductive at high NFE on SD v1.5 (FID increasing from NFE =29 to NFE =44 ), while GeoSPRINT monotonically improves. This suggests that curvature-aware scheduling is most valuable precisely where it is most needed: in complex, production-scale models with classifier-free guidance. 
+
+Limitations: The universal schedule requires B full reference trajectories offline ( B=100 at N =200 
+
+steps = 20 ,000 NFEs for CIFAR-10; B=50 for higher-resolution models). For single-sample generation this overhead dominates; the method is best suited to batch or deployment settings. The blend parameter β=0 .6 was tuned on CIFAR-10; while it is effective on LSUN Church and SD v1.5, per-dataset ablation would further validate robustness. The SD v1.5 experiments use a fixed CFG scale of 7.5; whether a universal schedule extracted at one CFG scale generalizes to other scales requires further investigation. Higher-level hyperplanarity tests ( k > 2) did not improve schedule quality on the models tested (Section C.3), suggesting that collinearity captures the dominant geometric signal for these architectures. Finally, GeoSPRINT selects which timesteps to use but does not improve the solver at each timestep; it is complementary to, not a replacement for, high-order ODE solvers. 
+
+Broader Impact: GeoSPRINT’s training-free nature makes fast diffusion sampling accessible without distillation or retraining costs. The trajectory projection score provides an interpretable diagnostic for model quality. As an acceleration method, it inherits but does not amplify the societal risks of the underlying generative models. 
+
+## 7 Conclusion 
+
+We have presented GeoSPRINT, a training-free framework that constructs non-uniform sampling schedules for diffusion models by analyzing the geometry of denoising trajectories. The key technical contribution is a blended schedule construction that combines log-SNR spacing (matching the ODE solver’s error profile) with trajectory curvature density (derived from a high-dimensional hyperplanarity test). On CIFAR-10, this yields schedules that outperform uniform DDIM by 0.7–1.1 FID across all tested NFE budgets, and outperform DPM-Solver++ at NFE ≥30 despite using a simpler first-order solver—demonstrating that schedule quality dominates solver order at moderate step counts on this model. These improvements generalize to LSUN Church at 256 ×256 resolution and, most strikingly, to Stable Diffusion v1.5 where improvements reach −1.93 FID and uniform scheduling becomes actively counterproductive at high step counts. The trajectory projection score 
+
+αtraj , which drives the curvature analysis, additionally serves as a standalone diagnostic for trajectory rectification quality, exhibiting a 450 × drop from DDPM to DDIM. Future directions include learning the blend parameter β per-model, developing predictive per-sample step budgeting for heterogeneous datasets, empirical comparison with the SDM framework [16], and extending the DPM-Solver++ comparison to higher-resolution models. 9References 
+
+[1] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. In 
+
+Advances in Neural Information Processing Systems , volume 33, pages 6840–6851, 2020. [2] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole. Score-based generative modeling through stochastic differential equations. In 
+
+International Conference on Learning Representations , 2021. [3] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer. High-resolution image synthesis with latent diffusion models. In IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 10684–10695, 2022. [4] Jonathan Ho, Tim Salimans, Alexey Gritsenko, William Chan, Mohammad Norouzi, and David J Fleet. Video diffusion models. In Advances in Neural Information Processing Systems , 2022. [5] Zhifeng Kong and Wei Ping. On fast sampling of diffusion probabilistic models. In ICML Workshop on Invertible Neural Networks, Normalizing Flows, and Explicit Likelihood Models ,2021. [6] Emiel Hoogeboom, Víctor Garcia Satorras, Clément Vignac, and Max Welling. Equivariant diffusion for molecule generation in 3D. In International Conference on Machine Learning ,pages 8867–8887, 2022. [7] Jiaming Song, Chenlin Meng, and Stefano Ermon. Denoising diffusion implicit models. In 
+
+International Conference on Learning Representations , 2021. [8] Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu. DPM-Solver: A fast ODE solver for diffusion probabilistic model sampling in around 10 steps. In Advances in Neural Information Processing Systems , volume 35, pages 5775–5787, 2022. [9] Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu. DPM-Solver++: Fast solver for guided sampling of diffusion probabilistic models. Machine Intelligence Re-search , 22(4):730–751, 2025. [10] Wenliang Zhao, Lujia Bai, Yongming Rao, Jie Zhou, and Jiwen Lu. UniPC: A unified predictor-corrector framework for fast sampling of diffusion models. In Advances in Neural Information Processing Systems , 2023. [11] Tim Salimans and Jonathan Ho. Progressive distillation for fast sampling of diffusion models. In International Conference on Learning Representations , 2022. [12] Yang Song, Prafulla Dhariwal, Mark Chen, and Ilya Sutskever. Consistency models. In 
+
+International Conference on Machine Learning , pages 32211–32252, 2023. [13] Yang Song and Cheng Lu. Simplifying, stabilizing and scaling continuous-time consistency models. In International Conference on Learning Representations , 2025. [14] Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow straight and fast: Learning to generate and transfer data with rectified flow. In International Conference on Learning Representations ,2023. [15] Myunsoo Kim, Donghyeon Ki, Seong-Woong Shim, and Byung-Jun Lee. Adaptive non-uniform timestep sampling for accelerating diffusion model training. In IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2025. [16] Sangwoo Jo and Sungjoon Choi. Formalizing the sampling design space of diffusion-based generative models via adaptive solvers and Wasserstein-bounded timesteps. arXiv preprint arXiv:2602.12624 , 2026. [17] Arpita Joshi and Nurit Haspel. A novel data instance reduction technique using linear feature reduction. Journal of Artificial Intelligence and Systems , 2:191–206, 2020. [18] Magnus Fontes and Charlotte Soneson. The projection score—an evaluation criterion for variable subset selection in PCA visualization. BMC Bioinformatics , 12:307, 2011. 10 [19] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow matching for generative modeling. In International Conference on Learning Representations ,2023. [20] Fu-Yun Wang et al. Rectified diffusion: Straightness is not your need in rectified flow. arXiv preprint arXiv:2410.07303 , 2024. [21] Ling Yang et al. Consistency flow matching: Defining straight flows with velocity consistency. 
+
+arXiv preprint arXiv:2407.02398 , 2024. [22] Gaurav Parmar, Richard Zhang, and Jun-Yan Zhu. On aliased resizing and surprising subtleties in GAN evaluation. In IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 11410–11420, 2022. 
+
+## A Pseudocode for GeoSPRINT 
+
+Algorithm 1: GeoSPRINT — Universal Schedule Extraction 
+
+Input: Pretrained model M, full schedule S = {t0, t 1, . . . , t T }, reference batch size B, window 
+
+k, target αtarget , blend β, budget K
+
+Output: Pruned universal schedule S∗ 
+
+> 1
+
+for b = 1 to B do  
+
+> 2
+
+Z(b) ← SampleFull( M, S) ; // Generate full trajectory  
+
+> 3
+
+for b = 1 to B do  
+
+> 4
+
+Binary search for threshold τ ; 
+
+> 5
+
+(Spruned , {rs}) ← HyperplanarityPrune( Z(b), k, τ ); 
+
+> 6
+
+Compute αtraj (Spruned , {rs}, Z(b)) via Eq. 8;  
+
+> 7
+
+Adjust τ until αtraj ≈ αtarget ; 
+
+> 8
+
+R(b) ← { ti : i / ∈ Spruned } ; // Map indices to timesteps  
+
+> 9
+
+w(t) ← 1
+
+> B
+
+P 
+
+> b
+
+⊮[t ∈ R (b)] ; // Curvature density  
+
+> 10
+
+ρcurv (t) ← SmoothAndFloor( w(t), σ =5 , ϵ floor =0 .05 max w); 
+
+> 11
+
+ρ(t) ← (1 − β) · ρlogSNR (t) + β · ρcurv (t) ; // Blended density  
+
+> 12
+
+F (t) ← R t 
+
+> 0
+
+ρ(s)d s / R T 
+
+> 0
+
+ρ(s)d s ; // CDF  
+
+> 13
+
+S∗ ← K timesteps at uniform quantiles of F ; 
+
+> 14
+
+return S∗
+
+Algorithm 2: HyperplanarityPrune 
+
+Input: Ordered points Z = {z0, z 1, . . . , z N }, window k, threshold τ
+
+Output: Set of pruned indices Spruned , residuals {rs}s∈Spruned  
+
+> 1
+
+Spruned ← ∅ ; residuals ← {} ; 
+
+> 2
+
+Initialize window W ← (z0, z 1, . . . , z k−1) ; // First k points  
+
+> 3
+
+MW ← [w2 − w1 | · · · | wk − w1]; 
+
+> 4
+
+QW , R W ← QR( MW ) ; // Thin QR; cached until window updates  
+
+> 5
+
+for i = k to N do  
+
+> 6
+
+ri ← ∥ (I − QW Q⊤ 
+
+> W
+
+)( zi − w1)∥2; 
+
+> 7
+
+if ri < τ then  
+
+> 8
+
+Spruned ← Spruned ∪ { i}; ;  
+
+> 9
+
+residuals[ i] ← ri ; // Redundant; store residual  
+
+> 10
+
+else  
+
+> 11
+
+Update W : slide to include zi; 
+
+> 12
+
+Recompute MW and QW , R W ← QR( MW ) ; // Update cached QR  
+
+> 13
+
+return Spruned , residuals 
+
+11 Key algorithmic details: (1) Algorithm 2 returns residuals {rs} alongside pruned indices, avoiding redundant recomputation for αtraj . (2) The QR factorization is computed once at initialization (Line 4) and recomputed only when the window updates (Line 11), reflecting the true amortized cost. (3) Algorithm 1 includes an explicit index-to-timestep mapping and specifies smoothing parameters. (4) Both algorithms use consistent 0-based indexing matching Definition 1. 
+
+## B Proof of Theorem 1 
+
+Proof. Let S = {zs1 , . . . , z sm } be the pruned set with m = |S|. By construction, each zsj satisfies the hyperplanarity test with residual rsj ≤ τ , meaning its distance from the affine subspace of its retained neighbors is at most τ .By Definition 2, the trajectory projection score is: 
+
+αtraj =
+
+Pmj=1 r2
+
+> sj
+
+P 
+
+> z∈Z
+
+∥z − ¯z∥2 . (11) Since each rsj ≤ τ , the numerator is bounded: 
+
+> m
+
+X
+
+> j=1
+
+r2 
+
+> sj
+
+≤ m · τ 2 = |S| · τ 2. (12) The denominator equals tr( CZ ) · (N +1) , where CZ = 1 
+
+> N+1
+
+P 
+
+> z∈Z
+
+(z − ¯z)( z − ¯z)⊤. Therefore: 
+
+αtraj ≤ |S| · τ 2
+
+(N +1) · tr( CZ ) . (13) 
+
+Interpretation. The bound controls the fraction of total trajectory variance attributable to orthogonal reconstruction residuals of pruned points. It does not bound tr( CR)/tr( CZ ) (the ratio of retained-set variance to full-set variance), because pruning points changes the sample mean and can reduce the retained sample covariance even when all residuals are zero. For example, removing interior points from a collinear set with ri = 0 for all i yields αtraj = 0 but tr( CR) < tr( CZ ) whenever the retained points have smaller spread than the full set. 
+
+## C Extended Experimental Details 
+
+C.1 Reference Set Convergence 
+
+See figures 5 and 6 
+
+C.2 Implementation Details 
+
+All experiments use the HuggingFace Diffusers library. For non-uniform timestep schedules, we implement the DDIM update formula manually (Eq. 2) with correct αtprev lookup, since the library’s 
+
+DDIMScheduler.step() assumes uniform spacing internally. DPM-Solver++ experiments use 
+
+solver_order=2 with lower_order_final=True and a fresh scheduler instance per batch to reset internal state. Trajectory normalization (zero mean, unit variance per dimension) is applied before curvature analysis to ensure the hyperplanarity test measures directional changes rather than raw magnitude. 
+
+C.3 Hyperparameter Sensitivity 
+
+The blend parameter β has a broad optimum at 0.5–0.7 (Table 2). Window size k=2 (collinearity test) is used throughout; we tested k=3 and k=4 on CIFAR-10 and found no improvement in schedule quality (FID differences <0.1), suggesting that collinearity captures the dominant mode of geometric redundancy in these denoising trajectories. Reference batch size B=100 is sufficient for CIFAR-10 (Section 5.6); B=50 for the higher-resolution LSUN Church and SD v1.5 models. 12 20 40 60 80 100 Reference batch size B 0.0 0.2 0.4 0.6 0.8 1.0 Similarity to full schedule 
+
+(a) Schedule similarity vs B     
+
+> 95% threshold Exact Jaccard Fuzzy Jaccard (±5)
+> 20 40 60 80 100 Reference batch size B 0.0 0.2 0.4 0.6 0.8 1.0 Correlation with full schedule
+
+(b) Retention frequency correlation vs B 
+
+> 95% threshold
+
+Figure 5: Schedule convergence vs. reference batch size B. (a) Exact and fuzzy Jaccard similarity to the B=100 schedule. Fuzzy matching (within ±5 timesteps) reaches 0.84 at B=75 . (b) Retention frequency correlation reaches 0.86 at B=75 .0.0 0.2 0.4 0.6 0.8 1.0 Normalized time (t/T 0)              
+
+> 0.0 0.2 0.4 0.6 0.8 1.0 Retention probability
+> (a) Per-sample vs universal curvature
+> Universal (mean)
+> 25 30 35 40 45 50 55 60 NFE per sample 0510 15 20 25 30 Count
+> (b) NFE distribution by threshold
+> =1e-2 (loose)
+> =1e-3 (moderate)
+> =1e-5 (strict)
+> 0.15 0.20 0.25 0.30 0.35 0.40 0.45 Correlation with universal curvature 0246810 12 14 Count
+> (c) Curvature profile agreement
+> mean=0.372
+
+Figure 6: Per-sample geometric complexity on CIFAR-10. (a) Individual curvature profiles (faint) vs. universal mean (bold). Despite diverse per-sample preferences, the universal profile captures systematic structure. (b) NFE distribution at three αtraj targets. (c) Per-sample correlation with the universal curvature profile (mean 0.37). 
+
+C.4 Computational Overhead 
+
+Reference trajectory generation costs B × N NFEs ( 100 × 200 = 20 ,000 for CIFAR-10; 50 ×
+
+200 = 10 ,000 for LSUN Church and SD v1.5). Curvature analysis (pruning + retention frequency computation) takes ∼40 s on CPU (Intel Xeon Gold 6248R) for 100 trajectories of 200 steps in 3,072 dimensions. Schedule construction (blending + quantile placement) is instantaneous. The total offline cost is dominated by reference trajectory generation and is amortized over all subsequent samples. 
+
+Hardware. All generative inference (DDIM sampling, DPM-Solver++ sampling, FID evaluation) was performed on a single NVIDIA A100 (80 GB). Wall-clock times: CIFAR-10 ∼8 min per 10k-sample generation run; LSUN Church ∼45 min per 10k-sample run; SD v1.5 ∼3 hours per 5k-sample run. Reference trajectory generation: ∼16 min (CIFAR-10, B=100 , N =200 ); ∼90 min (Church, 
+
+B=50 ); ∼5 hours (SD v1.5, B=50 ). Peak GPU memory: 4 GB (CIFAR-10), 12 GB (Church), 24 GB (SD v1.5). 13 NeurIPS Paper Checklist 
+
+1. Claims 
+
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope? Answer: [Yes] Justification: The abstract and introduction (Section 1) clearly state five contributions: generalization of geometric redundancy testing to high dimensions, a training-free adaptive sampling framework, the trajectory projection score, sample-adaptive scheduling, and comprehensive benchmarking. Each is developed in subsequent sections. 2. Limitations 
+
+Question: Does the paper discuss the limitations of the work performed by the authors? Answer: [Yes] Justification: The “Limitations” paragraph in Section 6 discusses: reference pass overhead, 
+
+β tuning on CIFAR-10, CFG scale generalization, the lack of improvement from higher-level tests ( k > 2), and complementarity with higher-order solvers. 3. Theory Assumptions and Proofs 
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof? Answer: [Yes] Justification: Theorem 1 (reconstruction error bound) is stated with full assumptions and proved in Appendix B. Proposition 1 is proved in the main text. A remark clarifies the distinction between reconstruction error and retained-set variance. 4. Experimental Result Reproducibility 
+
+Question: Does the paper fully disclose all the information needed to reproduce the main ex-perimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)? Answer: [Yes] Justification: Section 5 provides full experimental details including datasets, pretrained models, hyperparameter settings (including smoothing parameters σ=5 and ϵfloor ), reference batch sizes per model, sample counts, prompt sources for SD v1.5, evaluation metrics, and algorithmic pseudocode (Appendix A). All pretrained models are publicly available. 5. Open access to data and code 
+
+Question: Does the paper provide open access to the data and code, with sufficient instruc-tions to faithfully reproduce the main experimental results, as described in supplemental material? Answer: [Yes] Justification: Code will be released as a public repository upon publication. It is withheld during review to preserve double-blind anonymity. All datasets (CIFAR-10, LSUN Church) and pretrained models (including Stable Diffusion v1.5) are publicly available under their respective licenses. 6. Experimental Setting/Details 
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperpa-rameters, how they were chosen, type of optimizer) necessary to understand the results? Answer: [Yes] Justification: Section 5 and Appendix C provide all experimental details including threshold selection procedures, reference batch sizes per model ( B=100 for CIFAR-10, B=50 for Church and SD v1.5), smoothing parameters, and evaluation protocols. 7. Experiment Statistical Significance 
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments? 14 Answer: [Yes] Justification: Table 1 reports FID as mean ± standard deviation over 3 independent runs with different random seeds. Figures 1 and 2 include ±1 std error bands. 8. Experiments Compute Resources 
+
+Question: For each experiment, does the paper provide sufficient information on the com-puter resources (type of compute workers, memory, time of execution) needed to reproduce the experiments? Answer: [Yes] Justification: Appendix C (Computational Overhead and Hardware) provides GPU type (NVIDIA A100 80 GB), CPU type (Intel Xeon Gold 6248R), peak memory usage per model, and wall-clock times for all experiments including generation, reference trajectories, and curvature analysis. 9. Code Of Ethics 
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines ?Answer: [Yes] Justification: This work proposes a training-free acceleration method for existing generative models and does not introduce new ethical concerns beyond those inherent to the underlying models. 10. Broader Impacts 
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed? Answer: [Yes] Justification: The “Broader Impact” paragraph in Section 6 discusses positive impacts (reduced computational cost, accessibility) and notes that as an acceleration method, it inherits but does not amplify the societal risks of the underlying generative models. 11. Safeguards 
+
+Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pretrained language models, image generators, or scraped datasets)? Answer: [N/A] Justification: GeoSPRINT is a sampling schedule optimization method that does not release new generative models or datasets. 12. Licenses for existing assets 
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected? Answer: [Yes] Justification: All pretrained models and datasets are cited. CIFAR-10 and LSUN Church are used under standard research licenses. Stable Diffusion v1.5 is used under the CreativeML Open RAIL-M license. 13. New Assets 
+
+Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets? Answer: [Yes] Justification: The GeoSPRINT codebase will be released with documentation, including usage instructions and example scripts. 14. Crowdsourcing and Research with Human Subjects 
+
+15 Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)? Answer: [N/A] Justification: This work does not involve crowdsourcing or human subjects. 15. Institutional Review Board (IRB) Approvals or Equivalent for Research with Human Subjects 
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained? Answer: [N/A] Justification: This work does not involve human subjects research. 16. Declaration of LLM usage 
+
+Question: Does the paper describe the usage of LLMs if it is an important, original, or non-standard component of the core methods in this research? Answer: [N/A] Justification: LLMs are not a component of the core methodology. Acknowledgements: I acknowledge support by the NIH funding through grant 1R01DA063157-01, and the High Performance Computing cluster group at The Scripps Research Institute, San Diego, CA, USA. 16
