@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-08</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-09</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 2 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 14 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-08 22:37:05 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-09 22:08:25 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 2 篇推荐（精读 0 篇，速读 2 篇）</p>
-<p>速读：《Training-Free Inpainting Across Domains with a Frozen Text-to-Image Diffusion Model》（7.0/10）, 《Step Back to Move Forward: Reflection-Aware Preference Optimization for Visual Generation》（6.0/10）</p>
-<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
+<p>今日共处理14篇论文，精读6篇，重点关注流匹配与无分类器引导的粒子动力学视角，以及语言和风格参考的灵活运动生成。</p>
+<p>最值得精读的是两篇9.0分工作：《Particle Dynamics of Flow Matching and Classifier-Free Guidance from a Stagewise Geometry Perspective》与《Flexible Motion Generation from Language and Style References》，前者提供了理论几何新视角，后者聚焦多模态运动生成。</p>
+<p>面向普通读者，建议优先追踪扩散模型在运动生成与视线轨迹建模中的渐进式应用，速读内容可作为入门补充。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Particle Dynamics of Flow Matching and Classifier-Free Guidance from a Stagewise Geometry Perspective">Particle Dynamics of Flow Matching and Classifier-Free Guidance from a Stagewise Geometry Perspective</span></li><li><span class="dpr-home-dashboard-paper-title" title="Flexible Motion Generation from Language and Style References">Flexible Motion Generation from Language and Style References</span></li><li><span class="dpr-home-dashboard-paper-title" title="ReMoMask-2: Latent Retrieval-Augmented Masked Motion Generation">ReMoMask-2: Latent Retrieval-Augmented Masked Motion Generation</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Training-Free Inpainting Across Domains with a Frozen Text-to-Image Diffusion Model">Training-Free Inpainting Across Domains with a Frozen Text-to-Image Diffusion Model</span></li><li><span class="dpr-home-dashboard-paper-title" title="Step Back to Move Forward: Reflection-Aware Preference Optimization for Visual Generation">Step Back to Move Forward: Reflection-Aware Preference Optimization for Visual Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Diffusion models for eye-gaze trajectory generation using position and velocity representations">Diffusion models for eye-gaze trajectory generation using position and velocity representations</span></li><li><span class="dpr-home-dashboard-paper-title" title="MemCorr-DP: Counterfactual Correspondence Conditioning for a Diffusion Policy Guided by a Reference">MemCorr-DP: Counterfactual Correspondence Conditioning for a Diffusion Policy Guided by a Reference</span></li><li><span class="dpr-home-dashboard-paper-title" title="SwiftExplorer: Training-free Diffusion Model Alignment with Swift Diversity Exploration">SwiftExplorer: Training-free Diffusion Model Alignment with Swift Diversity Exploration</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>8</strong></span></div>
 </section>
 </div>
 
