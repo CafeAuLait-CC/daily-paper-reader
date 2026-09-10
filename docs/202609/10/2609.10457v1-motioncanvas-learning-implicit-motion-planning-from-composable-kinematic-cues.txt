@@ -1,0 +1,6484 @@
+MOTIONCANVAS: LEARNING IMPLICIT MOTION
+PLANNING FROM COMPOSABLE KINEMATIC CUES
+Zeyu Ling1
+Di Kang2
+Qing Shuai2
+Yuxin Wen2
+Jing Li2
+Zhanke Wang3
+Heng Li4
+Changqing Zou1,5
+Chunchao Guo2
+Linchao Bao2∗
+1Zhejiang University
+2Tencent
+3Peking University
+4Sun Yat-sen University
+5Zhejiang Lab
+Project page: https://zeyuling.github.io/MotionCanvas/
+Figure 1: MOTIONCANVAS combines temporal and spatial cues into coherent full-body motion.
+Keyframes, trajectories and waypoints, local position and rotation cues, and retained motion can be
+specified together on a shared canvas. The model infers the motion connecting these cues. Optional
+language conveys action, style, or editing intent, while input motion provides motion context.
+ABSTRACT
+Professional character animation requires both natural motion and precise, versatile
+control. For example, it is common for the creators to define the timing of a
+specified action, to control the motion range of the character’s arm swing, and the
+route the character walks through, like specifying various kinematic motion cues
+on a “motion canvas”. This motivates us to propose MOTIONCANVAS, a model
+that supports cue-conditioned implicit motion planning to faithfully and coherently
+connect all cues, dense or sparse, full or partial, into one full-body motion sequence.
+Specifically, MOTIONCANVAS represents heterogeneous kinematic cues on a
+shared motion canvas, where position and rotation values are specified across body
+joints and time. A shared flow-matching model generates motion conditioned on
+this canvas, with optional language and input motion; cue imputation keeps the
+specified canvas values fixed in both training and sampling. To learn coherent
+completion across different cue sets, we train with a compositional cue sampler
+that varies when cues are applied, which positions or rotations are specified, and
+how they are combined. Together, these designs enable a single generator to
+∗Corresponding author.
+1
+arXiv:2609.10457v1  [cs.MM]  9 Sep 2026
+
+
+synthesize globally coherent actions that jointly satisfy compatible heterogeneous
+cues. We test this planning ability with temporal, root, and body-part cues—
+alone and in combination—and language-guided editing. We naturally extend this
+evaluation to sequential generation and motion repair, since both require the same
+ability to organize coherent motion from kinematic cues. Across these evaluations,
+MOTIONCANVAS establishes state-of-the-art results in controlled-motion quality,
+mixed-cue adherence, sequential generation, instruction editing, and motion repair
+while preserving its text-to-motion capability. Code and model weights will be
+released.
+1
+INTRODUCTION
+Human motion generation is becoming a foundation technology for games, film, virtual avatars, and
+embodied simulation. In production, however, generative quality matters only when motions also
+obey precise creative and technical requirements. Text-to-motion offers semantic expressiveness
+but limited numerical control (Tevet et al., 2023; Chen et al., 2023; Guo et al., 2024; Jiang et al.,
+2023): a caption can describe an action, but does not fix its path coordinates or joint orientations at
+designated frames. General-purpose generation must therefore combine a strong motion prior with
+precise control over supplied kinematic values.
+We organize kinematic control into temporal cues, spatial cues, and their composition. Temporal
+cues anchor poses or retained motion segments at chosen frames; spatial cues prescribe global
+paths and facing or local joint positions and rotations. Each can apply at isolated instants or over
+extended intervals, including portions of an existing performance that should remain unchanged.
+These requirements often coexist within one action, as illustrated in Figure 1: a character may need to
+follow a route, reach a pose at a designated moment, and maintain a prescribed upper-body motion.
+Existing motion-control methods use learned completion, inference-time constraint enforcement, or
+both. For temporal structure, CondMDI learns diffusion from varying frame–joint observations for
+flexible in-betweening (Cohan et al., 2024). For spatial control, MaskControl couples learned motion-
+token regularization with inference-time optimization of joint-position targets (Pinyoanuntapong
+et al., 2025); ProjFlow enforces linear spatial constraints through kinematics-aware projection of
+a pretrained flow (Watanabe et al., 2026). KIMODO spans these control categories using masked-
+feature imputation in a two-stage denoiser, with training organized around predefined constraint
+patterns and their mixtures (Rempe et al., 2026). MotionLab further shares generation and editing
+through task-modulated rectified flows and source–condition–target mappings (Guo et al., 2025). A
+cue’s consequences extend across time and the articulated body, so executing their combinations
+requires learning the complete motion that connects them.
+A cue set groups the kinematic cues for one motion. These prescribe partial motion states that
+the generated action must pass through. General-purpose control must infer how to connect all of
+these states into one coherent full-body trajectory. We call this capability cue-conditioned implicit
+motion planning: the connecting trajectory is inferred as the motion is generated. The motion canvas
+records the cue values and cue layout: which frames, joints, and position or rotation channels are
+specified, including root translation. A generation mask distinguishes specified and unspecified
+entries (Figure 1). Language describes the intended action, while optional input motion supplies
+motion context through separate conditioning channels.
+Our compositional cue sampler trains the model across cue combinations that vary in their frames,
+joints, and position or rotation channels. Translation and joint-position cues can select individual
+Cartesian axes, covering height and planar projections alongside full 3D targets. We call combinations
+of different cue types mixed cues.
+We learn these full-body connections with one flow-matching model conditioned on the complete
+cue set. Cue imputation fixes cue values during training and sampling, with zero target flow velocity.
+Boundary and rollout objectives train coherent transitions into and out of cue-prescribed states,
+including isolated root waypoints. Forward-kinematic (FK) consistency links predicted positions to
+the body decoded from rotations, enabling position cues to guide articulated motion.
+We test temporal, root, body-part, and mixed control on HumanML3D, sequential generation on
+BABEL, editing on MotionFix and PerMo, and repair on BrokenAMASS. The same model leads
+2
+
+
+(a) Heterogeneous kinematic cues
+position
+rotation
+planar position
+waypoint
+heading
+height
+trajectory
+Cue layout
+i1
+i2
+i3
+i4
+(b) Conditional generation
+xtₛ
+Flow state
+csrc
+Motion context
+M
+Generation mask
+Double-stream blocks
+joint attention
+Single-stream blocks
+motion
+“walking and
+waving”
+c
+⋯
+concat
+⋯
+vθ
+Shared MMDiT
+Euler sampling
+xtₛ
++
+(ts+1−ts) vθ
+x̃tₛ₊₁
+ΠM
+xtₛ₊₁
+x1
+⋯
+xcon
+M
+Cue imputation
+M
+Euler proposal
+xcon
+ΠM
+output
+0
+xcon
+→
+1
+x̃
+→
+Inputs
+(c) Motion completion
+(d) Auxiliary losses
+Geometry
+x̂₁
+Lpos
+Lvel
+Lfk
+FK
+pos
+Lexcess
+v
+a
+j
+Lroll-join
+ei−1
+ei+1
+ei=0
+ei−1 + ei+1
+Lroll-excess
+τi
+κ̂i
+position
+rotation
+unspecified
+Figure 2: A shared flow model completes motion while preserving cue values. (a) Cue values and
+layout. (b) MMDiT predicts flow velocity from state xt, generation mask M, language c, and motion
+context csrc. After each Euler step, imputation copies xcon at M = 0 (orange), retaining the proposal
+at M = 1 (blue; inset). (c) Completed motion. (d) Geometry, boundary, and rollout supervision
+(Section 3.3).
+BABEL retrieval and transition-window FID, all MotionFix metrics, seven of eight automatic-repair
+metrics, and both PerMo tracks in target-attribute and paired-motion quality.
+Our contributions are threefold:
+• A shared canvas unifies temporal and spatial cues, including axis-level position control. Com-
+patible full-pose and partial-body cues compose across frames and body parts, with compositional
+cue sampling teaching one generator to satisfy them together.
+• A cue-preserving flow-matching model learns coherent full-body motion under combined
+cues. Cue-constrained flow paths preserve prescribed states, while boundary and rollout objectives
+train the shared model to connect them into a complete action.
+• One model delivers state-of-the-art controlled-motion quality, mixed-cue adherence, and
+text-to-motion generation. These gains span temporal, root, and body-part protocols and their
+mixtures; no-cue generation retains language–motion alignment in the same trained model.
+2
+RELATED WORK
+Motion generation and specialized control.
+Task-specific generators address temporal completion
+and keyframes (Cohan et al., 2024; Shafir et al., 2024; Kim et al., 2023), trajectories and spatial
+targets (Karunratanakul et al., 2023; Xie et al., 2024), instruction editing (Athanasiou et al., 2024; Li
+et al., 2025b; Jiang et al., 2025), transfer and style (Raab et al., 2024; Song et al., 2024; Kim et al.,
+2025), repair (Mu et al., 2025), and sequential or streaming generation (Barquero et al., 2024; Xiao
+et al., 2025; Ling et al., 2026). Their task-specific interfaces motivate a shared completion behavior
+across heterogeneous cue layouts.
+Unified motion control.
+UniMotion (Li et al., 2025a) unifies generation and understanding;
+UMO (Cong et al., 2026) uses a motion prior for in-context generation, completion, and edit-
+ing, with language-generated trajectories for spatial control. KIMODO (Rempe et al., 2026) uses
+joint-level imputation, MotionLab (Guo et al., 2025) shares source–condition–target mappings,
+and MotionMaster (Jiang et al., 2026) uses a motion-language model for generation and editing.
+MaskControl (Pinyoanuntapong et al., 2025) learns spatiotemporal masks over a fixed anchor set.
+3
+
+
+Table 1: Accurate temporal completion extends to multi-action generation. On HumanML3D (a),
+MOTIONCANVAS has zero cue error and the lowest FID across the three text-conditioned settings. On
+BABEL (b), it leads action retrieval and transition-window FID. MIB denotes motion in-betweening;
+error is in cm, and →indicates proximity to the BABEL reference.
+(a) Temporal completion on HumanML3D (error in cm)
+Prediction: first frame
+MIB: first + last 10%
+Nonuniform keyframes
+Method
+FID↓
+R@3↑
+Err.↓
+FID↓
+R@3↑
+Err.↓
+FID↓
+R@3↑
+Err.↓
+OmniControl (Xie et al., 2024)
+0.1278
+0.6715
+13.41
+0.1160
+0.6633
+12.53
+0.1439
+0.6880
+16.03
+CondMDI (Cohan et al., 2024)
+0.0579
+0.7506
+1.44
+0.1455
+0.7064
+2.50
+0.0023
+0.9034
+2.78
+KIMODO (Rempe et al., 2026)
+0.2964
+0.6786
+0.00
+0.0910
+0.7772
+0.00
+0.0694
+0.8560
+1.83
+MotionLab (Guo et al., 2025)
+0.0525
+0.7469
+1.73
+0.0738
+0.7424
+3.21
+0.0030
+0.8955
+3.54
+FlowMDM (Barquero et al., 2024)
+0.0608
+0.7295
+1.44
+0.0292
+0.8098
+4.39
+–
+–
+–
+ProjFlow (Watanabe et al., 2026)
+0.0239
+0.8227
+1.33
+0.0093
+0.8752
+7.57
+0.0075
+0.8993
+7.02
+MOTIONCANVAS
+0.0139
+0.8988
+0.00
+0.0052
+0.9030
+0.00
+0.0014
+0.9031
+0.00
+(b) Sequential generation on 1,295 BABEL episodes
+Generated subsequences
+Transition windows
+Method
+R@1↑
+R@2↑
+R@3↑
+FID↓
+MM-Dist↓
+Div.→
+FID↓
+AUJ gap↓
+Div.→
+PeakJerk→
+BABEL ref.
+0.3614
+0.5284
+0.6317
+0.0000
+47.838
+49.289
+0.0000
+0.000
+43.789
+56.338
+FlowMDM (Barquero et al., 2024)
+0.2504
+0.3925
+0.4818
+0.0467
+50.850
+50.388
+0.0555
+34.404
+44.941
+335.673
+MotionStreamer (Xiao et al., 2025)
+0.2130
+0.3303
+0.4175
+0.0610
+52.034
+46.587
+0.0702
+76.289
+40.819
+206.222
+MotionLab (Guo et al., 2025)
+0.2580
+0.3793
+0.4536
+0.2011
+51.387
+41.618
+0.2499
+25.726
+34.379
+204.669
+PRISM (Ling et al., 2026)
+0.2833
+0.4314
+0.5168
+0.0591
+51.014
+50.523
+0.0739
+157.846
+46.723
+503.399
+MOTIONCANVAS
+0.4240
+0.6049
+0.7134
+0.0587
+46.266
+49.706
+0.0481
+80.054
+42.486
+170.920
+MOTIONCANVAS combines direct root-translation, rotation, and position cues with motion context,
+learning their completion across structured, irregular, and mixed cue layouts.
+Conditional generative paths.
+Known-value imputation and masked prediction (Uria et al., 2014;
+Germain et al., 2015; Hoogeboom et al., 2022), and channel-wise editing context (Zhang et al., 2023b;
+Brooks et al., 2023), are established conditional-generation tools. Motion methods use flow-path
+rewriting for editing (Hu et al., 2023), kinematics-aware projection (Watanabe et al., 2026), or
+stochastic inference-time control (Hui et al., 2026). Impute-MACFM constrains flow to missing
+table entries (Liu et al., 2025), while SOAR addresses off-trajectory correction in diffusion post-
+training (Qin et al., 2026). Our model couples cue-preserving flow with learning geometric and
+temporal compatibility under mixed cue sets.
+3
+METHOD
+MOTIONCANVAS realizes cue-conditioned implicit motion planning through a shared canvas and cue
+sampling (Section 3.1), cue-preserving flow (Section 3.2), and geometry and transition supervision
+(Section 3.3). Together, these components train one model to infer a coherent full-body trajectory
+through all prescribed partial states (Figure 2).
+3.1
+MOTION CANVAS AND CUE COMPOSITION
+Motion representation.
+We follow the HY-Motion-1.0 representation (Wen et al., 2025), omitting
+three redundant pelvis-position channels. For T frames, the state x ∈RT ×198 has rows
+xi = [ ri, qi, pi ] ∈R198,
+(1)
+Here i indexes frames and d scalar channels; ri is root (pelvis) translation, qi contains continuous 6D
+rotations of 22 SMPL joints (Zhou et al., 2019; Loper et al., 2015), and pi contains pelvis-relative
+positions of 21 non-root joints. Position cues may select individual axes; rotation cues assign all six
+channels of a joint.
+Motion canvas.
+The motion canvas records cue values xcon and encodes the cue layout with a
+generation mask M ∈{0, 1}T ×198 (Figure 2(a)). Language and input motion are separate contextual
+inputs. Mid = 0 marks a specified entry; Mid = 1 marks an unspecified entry to generate. Thus
+1 −M selects specified entries.
+4
+
+
+Table 2: Strong motion quality across root-path and body-part cues. HumanML3D varies (a)
+dense paths versus sparse waypoints and (b) target body parts, rotation/position cues, and density.
+MOTIONCANVAS leads FID and R@3 throughout. Error denotes path ADE (m), rotation error
+(degrees), or Cartesian position error (cm).
+(a) Root paths and waypoints
+Setting
+Method
+FID↓
+R@3↑
+Task err.↓
+XZ path
+OmniControl
+0.0550
+0.7881
+0.101
+KIMODO
+0.4727
+0.5464
+0.050
+ProjFlow
+0.7856
+0.3989
+0.141
+MOTIONCANVAS
+0.0081
+0.9025
+0.000
+XYZ path
+OmniControl
+0.0302
+0.8353
+0.112
+MotionLab
+0.0265
+0.7950
+0.141
+ProjFlow
+0.0241
+0.8374
+0.116
+MOTIONCANVAS
+0.0120
+0.8986
+0.000
+XZ waypoints
+OmniControl
+0.0375
+0.8122
+0.117
+KIMODO
+0.4817
+0.5479
+0.077
+ProjFlow
+0.7467
+0.4205
+0.137
+MOTIONCANVAS
+0.0096
+0.8981
+0.030
+(b) Body-part control
+Setting
+Density
+Method
+FID↓
+R@3↑
+Task err.↓
+upper-body rot.
+dense
+KIMODO
+0.1437
+0.7953
+18.94
+MOTIONCANVAS
+0.0021
+0.9079
+0.003
+left-elbow rot.
+sparse
+KIMODO
+0.1180
+0.7907
+63.27
+MOTIONCANVAS
+0.0077
+0.9046
+0.003
+lower-body pos.
+dense
+CondMDI
+0.1391
+0.7085
+7.97
+MotionLab
+0.0418
+0.7899
+5.42
+ProjFlow
+0.0165
+0.8509
+3.73
+MOTIONCANVAS
+0.0057
+0.9005
+1.22
+both-wrist pos.
+sparse
+MotionLab
+0.0148
+0.8667
+10.51
+MaskControl
+0.0154
+0.8775
+11.23
+ProjFlow
+0.0203
+0.8608
+10.70
+MOTIONCANVAS
+0.0074
+0.9082
+13.07
+Conditioning interface.
+The model inputs are (xcon, M, c, csrc); specified canvas entries satisfy
+(1 −M) ⊙x = (1 −M) ⊙xcon.
+(2)
+Here ⊙is elementwise multiplication. Optional language c describes the action or edit; optional
+input motion xsrc provides motion context through csrc = xsrc ⊙M. Language and motion context
+guide generation without fixing output values.
+Compositional cue sampling.
+We construct training cue sets by copying position and rotation
+values from the reference motion x1; inference uses user-supplied cues or cues derived for repair
+(Appendix A.6). Sampling operates on 88 selectable quantities: three translation axes, 22 joint
+rotations, and 21 × 3 position axes. Let A ∈{0, 1}T ×88 mark selected quantities, with ar and br
+selecting frames and quantities, respectively. Using mixture probabilities π, we draw
+A =
+
+
+
+a1b⊤
+1 ,
+single selection,
+WR
+r=1 arb⊤
+r ,
+composition,
+F,
+correlated map.
+(3)
+The outer product shares selected quantities across chosen frames; logical OR (∨) combines R
+selections that one motion must satisfy together. Single selections train completion around structured
+cue layouts; composition trains completion under combined cues. Correlated maps F additionally
+expose irregular cue layouts that vary across frames and quantities. Expanding each selected rotation
+to six channels gives the model’s generation mask via 1 −M = E(A). Text-only examples use
+M = 1; editing examples use either an empty canvas or independently sampled cues for the edited
+motion. Appendix A.2 specifies these sampling distributions.
+3.2
+FLOW MATCHING FOR COMPOSITIONAL MOTION CONTROL
+We train a shared flow-matching model (Lipman et al., 2023; Liu et al., 2023) within the cue-defined
+affine set in Eq. (2), preserving cue values while learning full-body completion. Here flow time
+t ∈[0, 1] indexes refinement of an entire clip, while i indexes animation frames. For reference motion
+x1, we draw Gaussian noise z ∼N(0, I) and t ∼U[0, 1], and construct
+ΠM(x; xcon) = M ⊙x + (1 −M) ⊙xcon,
+(4)
+xt = ΠM((1 −t)z + tx1; x1).
+(5)
+Cue imputation ΠM projects the state onto this set by copying cue values to specified entries and
+leaving the remaining entries unchanged. The initial state is ΠM(z; xcon).
+Conditional velocity field.
+A multimodal diffusion transformer (MMDiT) embeds the channel-
+concatenated [xt∥csrc∥M] as motion tokens and c as language tokens. Here xt contains the cue
+values and M identifies their locations. Double-stream blocks, token concatenation, and single-stream
+refinement (Esser et al., 2024) predict the conditional velocity field vθ (Figure 2(b), Shared MMDiT).
+5
+
+
+Table 3: Satisfying multiple cues with the best full-motion quality. HumanML3D protocols P1–P4
+randomly combine full-pose, root-path, body-region, and joint-axis position cues at different densities
+and spatiotemporal distributions. (a) Aggregate and (b) per-protocol results: MOTIONCANVAS leads
+FID and all four cue errors (cm). →ranks diversity by proximity to the reference.
+(a) Aggregate over P1–P4
+Full-motion quality
+Cue adherence
+Diagnostics
+Method
+FID↓
+R@1↑
+R@2↑
+R@3↑
+MM-Dist↓
+Div.→
+Full-pose
+frame ↓
+Root
+path↓
+Body
+region↓
+Joint
+axis ↓
+Foot↓
+Jit.↓
+OmniControl
+0.0816
+0.5400
+0.6973
+0.7710
+33.54
+55.80
+12.30
+16.93
+13.42
+16.46
+0.256
+1203.4
+ProjFlow
+0.6764
+0.3460
+0.4822
+0.5664
+44.63
+44.69
+6.62
+13.79
+12.54
+23.11
+0.645
+7572.9
+MOTIONCANVAS
+0.0092
+0.6898
+0.8434
+0.9029
+27.99
+53.70
+1.64
+0.00
+2.48
+4.09
+0.168
+566.3
+(b) Per-protocol completion quality and cue adherence
+Full-motion quality
+Cue error (cm)
+Protocol
+Method
+FID↓
+R@1↑
+R@2↑
+R@3↑
+MM-Dist↓
+Full-pose
+frame ↓
+Root
+path↓
+Body
+region↓
+Joint
+axis ↓
+P1
+OmniControl (Xie et al., 2024)
+0.0645
+0.5335
+0.6982
+0.7779
+33.38
+14.06
+15.85
+14.69
+27.70
+P1
+ProjFlow (Watanabe et al., 2026)
+1.0327
+0.2013
+0.3219
+0.4114
+52.02
+12.09
+8.51
+16.81
+39.40
+P1
+MOTIONCANVAS
+0.0077
+0.6938
+0.8475
+0.9067
+27.90
+1.47
+0.00
+2.33
+4.26
+P2
+OmniControl
+0.1224
+0.5053
+0.6526
+0.7257
+35.23
+12.59
+28.31
+12.35
+16.17
+P2
+ProjFlow
+0.0456
+0.6517
+0.8163
+0.8847
+28.79
+4.31
+28.29
+3.86
+5.19
+P2
+MOTIONCANVAS
+0.0083
+0.6922
+0.8466
+0.9055
+27.83
+1.76
+0.00
+2.02
+3.02
+P3
+OmniControl
+0.0484
+0.5751
+0.7416
+0.8154
+31.87
+11.20
+11.62
+15.48
+9.86
+P3
+ProjFlow
+1.0289
+0.1937
+0.3070
+0.3943
+52.61
+3.67
+9.18
+21.22
+28.78
+P3
+MOTIONCANVAS
+0.0125
+0.6817
+0.8356
+0.8966
+28.30
+1.40
+0.00
+3.63
+3.06
+P4
+OmniControl
+0.0910
+0.5461
+0.6970
+0.7649
+33.66
+11.36
+11.96
+11.16
+12.09
+P4
+ProjFlow
+0.5982
+0.3372
+0.4834
+0.5752
+45.12
+6.40
+9.17
+8.28
+19.08
+P4
+MOTIONCANVAS
+0.0083
+0.6914
+0.8442
+0.9028
+27.91
+1.94
+0.00
+1.96
+6.03
+LMC fits x1 −z on unspecified entries and zero flow velocity on specified entries:
+LMC = CMM[ρ(vθ −(x1 −z))] + CM1−M[ρ(vθ)] ,
+(6)
+Zero refers to flow velocity, not physical motion. Here ρ is pointwise Smooth-L1. CMS averages
+selected entries within each active component, weighting translation, root rotation, body rotation, and
+joint position equally so body channels do not overwhelm root supervision.
+Euler sampling with cue imputation.
+At solver step s, Euler integration forms a proposal (tilde),
+then cue imputation restores cue values:
+˜xts+1 = xts + (ts+1 −ts)vθ(xts, ts; M, c, csrc),
+xts+1 = ΠM(˜xts+1; xcon).
+(7)
+Each step refines the clip and restores cues (Figure 2(b), with entrywise imputation in the inset).
+Panel (c) decodes the final x1; Appendix A gives sampling and loss-reduction details.
+3.3
+TRAINING OBJECTIVES
+Alongside the flow-matching objective, we supervise predicted motion for kinematic accuracy,
+consistency between position and rotation representations, and coherent transitions around supplied
+cues. During training, we observe that matching position cues does not ensure coherent connections:
+root and joint trajectories can change abruptly around supplied positions. As in motion blending,
+compatible postures alone do not ensure compatible movement across a transition (Kovar et al.,
+2002).
+Decoded geometry.
+To evaluate body geometry, we first estimate the completed motion by extrapo-
+lating the noisy flow state over the remaining flow time 1 −t (Figure 2(d)):
+ˆx1 = ΠM(xt + (1 −t)vθ; x1) ,
+(8)
+FK decodes rotations and root translation into global joints ˆJ = JFK(ˆx1) and J = JFK(x1) (Loper
+et al., 2015). Subtracting the pelvis position (joint 0) gives pelvis-relative positions, matching
+predicted channels ˆpij for j > 0. Lpos and Lvel supervise FK-decoded joint positions and frame-to-
+frame displacements against the reference, respectively. Position and rotation channels can describe
+6
+
+
+(c) Mixed-cue control
+(d) Instruction editing
+complete cue set
+cue
+Figure 3: One model performs temporal completion, body-part control, mixed-cue control, and
+instruction editing. (a) Completion between keyframes; (b) dense foot and sparse wrist positions;
+(c) mixed pose, root, rotation, and position cues; (d) editing to sit sooner. In (c), baselines receive the
+labeled root-path subset and MOTIONCANVAS the complete cue set. Colored overlays mark cues or
+input motion; red marks errors or unsupported controls.
+different poses; Lfk couples them through FK so position cues guide the articulated body (Rempe
+et al., 2026). With ⟨z⟩t = mean[t2ρ(z)] over valid entries and ∆the forward difference along motion
+frames,
+Lpos = ⟨ˆJ −J⟩t,
+Lvel = ⟨∆ˆJ −∆J⟩t,
+Lfk = ⟨ˆpij −(ˆJij −ˆJi0)⟩t.
+(9)
+The t2 weight emphasizes estimates formed from less noisy flow states. Cue values are preserved
+exactly in canvas coordinates; Cartesian cue errors measure accuracy after FK.
+Mask-derived boundaries.
+Dynamic errors can concentrate at transitions between specified and
+unspecified entries; Lexcess targets this excess relative to the surrounding generated motion. Changes
+in M locate these boundaries. After mapping them to affected joints, Tk contains order-k difference
+windows near boundaries and Gk fully generated windows on the same axes. For E(k) = t2ρ(∆kˆJ −
+∆kJ),
+Lexcess = 1
+3
+3
+X
+k=1
+meanTk
+
+[E(k) −sg(meanGk E(k))]+
+
+.
+(10)
+Here [z]+ = max(z, 0) retains only boundary error above background for joint velocity v, accelera-
+tion a, and jerk j (k = 1, 2, 3). Comparing errors against reference motion permits genuine speed
+changes; stop-gradient (sg) prevents lowering the loss by raising background error.
+Rollout supervision.
+One-step estimates can miss errors accumulated during sampling; we therefore
+supervise completed rollouts with gradients through the final updates. The mask selects isolated root-
+translation cues with unspecified neighbors, including within mixed cue sets. To match approaches and
+departures, Lroll-join supervises each neighboring position error and their sum, the second-difference
+error across the fixed center. To suppress spurious changes in speed or direction, Lroll-excess penalizes
+second-difference magnitude above both reference-motion and generated-background levels, allowing
+genuine turns and speed changes (Figure 2(d)).
+Complete objective.
+The full objective combines cue-preserving flow, geometry, and local compat-
+ibility, with weights λ and additional boundary terms Lbnd (Appendix A):
+Lone = LMC + λposLpos + λvel(Lvel + λexcessLexcess) + λfkLfk + Lbnd,
+L = Lone + λroll-joinLroll-join + λroll-excessLroll-excess.
+(11)
+4
+EXPERIMENTS
+We organize the evaluation around four questions: Q1. Can one generator follow temporal and
+spatial cues across different locations, densities, body parts, and controlled coordinates? Q2. Can
+7
+
+
+Table 4: Training paths and cue sampling improve adherence; boundary objectives improve
+local transitions. (a) Path and sampler comparisons. (b) Cumulative objectives (Appendix C.9).
+KF: nonuniform keyframes; Mixed: joint-axis cue error; WP-∆2: root-position second-difference
+magnitude at waypoints.
+(a) Conditional formulation and sampling
+Variant
+T2M
+FID↓
+KF
+FID↓
+XZ WP
+FID↓
+Path ADE
+(m)↓
+Wrist
+(cm)↓
+Mixed
+(cm)↓
+Full-state flow
+0.0129 0.0023 0.0101
+0.122
+14.18
+6.19
+Named-task sampler
+0.0111 0.0018 0.0099
+0.052
+13.57
+8.11
+Full model (MOTIONCANVAS) 0.0108 0.0014 0.0096
+0.030
+13.07
+4.09
+(b) Boundary-objective progression
+Configuration
+T2M
+FID↓
+XZ WP
+∆2 ↓
+XYZ WP
+∆2 ↓
+One-step
+0.0127
+13.34
+13.46
++ boundary/rollout 0.0125
+6.18
+6.81
++ solver endpoint
+0.0118
+2.46
+3.18
++ relative excess
+0.0108
+1.62
+1.96
+one generator jointly satisfy heterogeneous cues and connect them into a coherent full-body motion?
+Q3. Does joint control, editing, and text-only training preserve generation quality without kinematic
+cues? Q4. Which components improve cue adherence, full-motion quality, and local transitions?
+4.1
+EXPERIMENTAL SETUP
+HumanML3D (Guo et al., 2022) tests temporal, root, and body-part cues (Q1) and their composition
+(Q2), with paired captions unless marked no-text. We measure decoded cue error, route and transition
+compatibility, and full-motion FID and retrieval (Petrovich et al., 2023). BABEL (Punnakkal et al.,
+2021) tests sequential generation, MotionFix (Athanasiou et al., 2024) and PerMo (Kim et al., 2025)
+editing, and BrokenAMASS (Mu et al., 2025) repair. Unless a benchmark specifies otherwise, outputs
+are resampled to a common 30 fps SMPL-22 evaluation grid.
+4.2
+TEMPORAL CONTROL AND SEQUENTIAL GENERATION
+Temporal cues.
+To test Q1 beyond one cue layout, we use prediction from the first frame, motion
+in-betweening (MIB) between fixed first and last 10% segments, and completion around 4–12 nonuni-
+form full-body keyframes selected separately for each clip, with and without text. Table 1(a) and
+Appendix Table 7 score both supplied-frame execution and completed-clip quality. MOTIONCANVAS
+combines zero decoded cue error with the lowest FID in every displayed text-conditioned protocol;
+with nonuniform keyframes and no text, it preserves the cues exactly but ranks second to CondMDI
+in FID. These results cover contiguous, boundary, and irregular frame selections while exposing the
+remaining benefit of semantic context (Figure 3(a)).
+Sequential generation.
+Given ordered BABEL captions, each action after the first is generated with
+the preceding output’s final five frames fixed as a prefix. Segment retrieval tests action recognition;
+transition-window FID and jerk profiles assess the joins. Table 1(b) gives MOTIONCANVAS the
+highest R@1–3, lowest MM-Dist and transition-window FID, and reference-closest peak jerk. These
+gains indicate recognizable actions and compatible joins, although the area under the jerk-profile gap
+(AUJ) remains 3.1× the lowest baseline (Appendix C.1).
+4.3
+KINEMATIC CONTROL ACROSS SPATIAL SCOPES
+Root trajectories and waypoints.
+Given a dense trajectory, the model must generate steps, facing,
+and limb coordination that realize the route; given sparse waypoints, it must additionally infer a
+smooth intervening path. We therefore report Path ADE over all frames, not only anchors, together
+with full-motion metrics (Appendix Table 8). Table 2(a) gives MOTIONCANVAS the best FID and
+R@3, 0 cm dense-path ADE, and 3 cm sparse-waypoint ADE, demonstrating exact dense-route
+execution and coherent path inference between sparse waypoints.
+Body-part control.
+We test Q1 across target joints or regions, rotation or position cues, and full or
+selected Cartesian axes. Dense cues specify every valid frame; sparse cues use 30-frame intervals.
+Table 2(b) reports near-zero error on the displayed rotation controls and 1.22 cm dense lower-body
+position error; across these settings, MOTIONCANVAS also achieves the best FID and R@3. The
+complete study supports Q1 across these dimensions, although error in the sparse both-wrist XYZ
+setting remains higher than MotionLab, MaskControl, and ProjFlow (Figure 3(b); Appendix Table 9).
+8
+
+
+4.4
+MIXED-CUE CONTROL
+To test planning under mixed cues (Q2), P1–P4 randomly compose full-pose, root-path, body-region,
+and joint-axis position cues with different densities and spatiotemporal distributions. For each test
+motion, we sample the cue layout and copy compatible cue values from that motion (Appendix C.4).
+Full-motion metrics assess the coordinated action; four family-specific errors measure adherence to
+the combined cues. Table 3 shows the best aggregate and per-protocol full-motion metrics and lowest
+four cue errors, supporting coherent completion across randomized cue sets. Figure 3(c) visualizes a
+mixed cue set.
+4.5
+TEXT-TO-MOTION GENERATION WITHOUT KINEMATIC CUES
+Q3 evaluates ordinary HumanML3D text-to-motion generation with the caption as the only condition,
+against the HY-Motion-1.0-Lite initialization and published systems. Appendix Table 5 shows
+improved FID (0.0157 to 0.0108) and MM-Dist, with retrieval changing by at most 0.45 percentage
+points. Broad control training therefore preserves language–motion alignment rather than trading it
+for controllability.
+4.6
+INPUT-MOTION EDITING AND REPAIR
+Editing.
+Editing transforms the input motion according to an editing instruction while preserving
+other attributes. On 1,013 MotionFix triplets, only the input motion and editing instruction are
+supplied. MOTIONCANVAS leads every reported MotionFix metric, reaching 0.0056 FID and 99.08%
+M2M R@3 (Figure 3(d); Appendix Table 11). PerMo requests either a new style with action preserved
+or a new action with style preserved; attribute and paired-retrieval metrics test the requested change,
+retained factor, and target agreement. MOTIONCANVAS leads requested-attribute and paired-motion
+scores on both tracks while retaining high complementary-attribute accuracy (Appendix Figures 9
+and 10).
+Repair.
+Repair locates anomalies across joints and frames, then uses MOTIONCANVAS to regenerate
+them from retained motion. BrokenAMASS separates repair with known anomaly regions, which
+isolates regeneration, from automatic repair, which also localizes anomalies; the latter leads seven of
+eight metrics, with acceleration the only exception (Appendices A.6 and C.6).
+4.7
+USER STUDY
+To complement objective metrics, three professional technical artists compared 1,218 anonymously
+ordered output pairs across five tasks, rating motion quality, physical artifacts, and repair effectiveness.
+These yield 8,757 dimension-wise better/same/worse (G/S/B) judgments, favoring MOTIONCANVAS
+in every dimension (Appendix C.7).
+4.8
+ABLATION STUDY
+Training path and cue sampling.
+To evaluate the training path and sampler (Q4), variants share
+HY-Motion initialization, the 700-hour corpus, and training budget. Full-state flow interpolates all
+variables during training and imputes cues at inference; named-task sampling uses fixed cue patterns.
+As shown in Table 4(a), cue-preserving training improves trajectory execution (Path ADE: 0.122 to
+0.030 m), while compositional cue sampling improves mixed-joint adherence (8.11 to 4.09 cm).
+Boundary supervision.
+Exact cue matching does not ensure compatible adjacent motion. Adding
+objective bundles cumulatively reduces root-path second difference at supplied XZ/XYZ waypoints
+from 13.34/13.46 to 1.62/1.96 and improves text-to-motion FID from 0.0127 to 0.0108, demonstrating
+improved cue-local compatibility (Table 4(b); Appendix Table 15).
+5
+CONCLUSION
+We presented MOTIONCANVAS for cue-conditioned implicit motion planning: inferring a coherent
+full-body trajectory through the partial states prescribed by heterogeneous cues. A shared canvas
+9
+
+
+and compositional cue sampling enable one flow-matching model to learn these connections across
+different cue layouts, while cue imputation preserves the cue values. The same model achieves state-
+of-the-art results in controlled-motion quality, mixed-cue adherence, sequential generation, editing,
+and repair, while retaining strong text-to-motion performance without kinematic cues. Together, these
+results show how a shared motion prior can support diverse authoring requirements, allowing creators
+to specify selected aspects of an action while the model infers the complete movement that brings
+them together.
+AI USE STATEMENT
+Generative AI tools were used to polish the manuscript and to assist with engineering-oriented
+programming tasks, including code refactoring, debugging, and visualization tooling. All AI-assisted
+outputs were reviewed and verified by the authors, who take responsibility for the final content of this
+work.
+REPRODUCIBILITY STATEMENT
+Section 3 specifies the model and training objectives. Appendix A provides the architecture, op-
+timization, sampling, and repair details, while Appendix B documents data processing, baselines,
+metrics, and evaluation protocols. Code and data availability. We will release the training and
+inference code together with the processed test data used in our evaluations. The training corpus
+contains non-redistributable data and therefore cannot be released.
+REFERENCES
+Nikos Athanasiou, Alpár Ceske, Markos Diomataris, Michael J. Black, and Gül Varol. MotionFix:
+Text-driven 3D human motion editing. In SIGGRAPH Asia Conference Papers, 2024.
+German Barquero, Sergio Escalera, and Cristina Palmero. Seamless human motion composition with
+blended positional encodings. In CVPR, 2024.
+Tim Brooks, Aleksander Holynski, and Alexei A. Efros. InstructPix2Pix: Learning to follow image
+editing instructions. In CVPR, 2023.
+Xin Chen, Biao Jiang, Wen Liu, Zilong Huang, Bin Fu, Tao Chen, and Gang Yu. Executing your
+commands via motion diffusion in latent space. In CVPR, 2023.
+Setareh Cohan, Guy Tevet, Daniele Reda, Xue Bin Peng, and Michiel van de Panne. Flexible motion
+in-betweening with diffusion models. In ACM SIGGRAPH, 2024.
+Xiaoyan Cong, Zekun Li, Zhiyang Dou, Hongyu Li, Omid Taheri, Chuan Guo, Abhay Mittal, Sizhe
+An, Taku Komura, Wojciech Matusik, Michael J. Black, and Srinath Sridhar. UMO: Unified
+in-context learning unlocks motion foundation model priors. In ECCV, 2026.
+Wenxun Dai, Ling-Hao Chen, Jingbo Wang, Jinpeng Liu, Bo Dai, and Yansong Tang. MotionLCM:
+Real-time controllable motion generation via latent consistency model. In ECCV, 2024.
+Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam
+Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, Dustin Podell, Tim Dockhorn, Zion En-
+glish, Kyle Lacey, Alex Goodwin, Yannik Marek, and Robin Rombach. Scaling rectified flow
+transformers for high-resolution image synthesis. In ICML, 2024.
+Ke Fan, Shunlin Lu, Minyue Dai, Runyi Yu, Lixing Xiao, Zhiyang Dou, Junting Dong, Lizhuang Ma,
+and Jingbo Wang. Go to zero: Towards zero-shot motion generation with million-scale data. In
+ICCV, 2025.
+Mathieu Germain, Karol Gregor, Iain Murray, and Hugo Larochelle. MADE: Masked autoencoder
+for distribution estimation. In ICML, 2015.
+Chuan Guo, Shihao Zou, Xinxin Zuo, Sen Wang, Wei Ji, Xingyu Li, and Li Cheng. Generating
+diverse and natural 3D human motions from text. In CVPR, 2022.
+10
+
+
+Chuan Guo, Yuxuan Mu, Muhammad Gohar Javed, Sen Wang, and Li Cheng. MoMask: Generative
+masked modeling of 3D human motions. In CVPR, 2024.
+Ziyan Guo, Zeyu Hu, De Wen Soh, and Na Zhao. MotionLab: Unified human motion generation and
+editing via the motion-condition-motion paradigm. In ICCV, pp. 13869–13879, 2025.
+Emiel Hoogeboom, Alexey A. Gritsenko, Jasmijn Bastings, Ben Poole, Rianne van den Berg, and
+Tim Salimans. Autoregressive diffusion models. In ICLR, 2022.
+Vincent Tao Hu, Wenzhe Yin, Pingchuan Ma, Yunlu Chen, Basura Fernando, Yuki M. Asano,
+Efstratios Gavves, Pascal Mettes, Björn Ommer, and Cees G. M. Snoek. Motion flow matching for
+human motion synthesis and editing. arXiv preprint arXiv:2312.08895, 2023.
+Xiaofei Hui, Bo Yan, Haoxuan Qu, Hossein Rahmani, and Jun Liu. Training-free controllable human
+motion generation under heterogeneous constraints. arXiv preprint arXiv:2607.01990, 2026.
+Biao Jiang, Xin Chen, Wen Liu, Jingyi Yu, Gang Yu, and Tao Chen. MotionGPT: Human motion as
+a foreign language. In NeurIPS, 2023.
+Nan Jiang, Hongjie Li, Ziye Yuan, Zimo He, Yixin Chen, Tengyu Liu, Yixin Zhu, and Siyuan Huang.
+Dynamic motion blending for versatile motion editing. In CVPR, pp. 22735–22745, 2025.
+Nan Jiang, Yunhao Li, Lexi Pang, Zimo He, Siyuan Huang, and Yixin Zhu. MotionMaster: General-
+izable text-driven motion generation and editing. In CVPR, pp. 30629–30639, 2026.
+Korrawe Karunratanakul, Konpat Preechakul, Supasorn Suwajanakorn, and Siyu Tang. Guided
+motion diffusion for controllable human motion synthesis. In ICCV, 2023.
+Boeun Kim, Hea In Jeong, JungHoon Sung, Yihua Cheng, Jeongmin Lee, Ju Yong Chang, Sang-Il
+Choi, Younggeun Choi, Saim Shin, Jungho Kim, and Hyung Jin Chang. PersonaBooth: Personal-
+ized text-to-motion generation. In CVPR, 2025.
+Jihoon Kim, Jiseob Kim, and Sungjoon Choi. FLAME: Free-form language-based motion synthesis
+and editing. In AAAI, 2023.
+Lucas Kovar, Michael Gleicher, and Frédéric Pighin. Motion graphs. ACM Transactions on Graphics,
+21(3):473–482, 2002. doi: 10.1145/566654.566605.
+Chuqiao Li, Julian Chibane, Yannan He, Naama Pearl, Andreas Geiger, and Gerard Pons-Moll.
+UniMotion: Unifying 3D human motion synthesis and understanding. In 3DV, 2025a.
+Zhengyuan Li, Kai Cheng, Anindita Ghosh, Uttaran Bhattacharya, Liangyan Gui, and Aniket Bera.
+SimMotionEdit: Text-based human motion editing with motion similarity prediction. In CVPR,
+2025b.
+Jing Lin, Ruisi Wang, Junzhe Lu, Ziqi Huang, Guorui Song, Ailing Zeng, Xian Liu, Chen Wei, Wanqi
+Yin, Qingping Sun, Zhongang Cai, Lei Yang, and Ziwei Liu. The quest for generalizable motion
+generation: Data, model, and evaluation. In ICLR, 2026.
+Zeyu Ling, Qing Shuai, Teng Zhang, Shiyang Li, Bo Han, and Changqing Zou. PRISM: Streaming
+human motion generation with per-joint latent decomposition. arXiv preprint arXiv:2603.08590,
+2026.
+Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow
+matching for generative modeling. In ICLR, 2023.
+Dengyi Liu, Honggang Wang, and Hua Fang. Impute-MACFM: Imputation based on mask-aware
+flow matching. arXiv preprint arXiv:2509.23126, 2025.
+Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow straight and fast: Learning to generate and
+transfer data with rectified flow. In ICLR, 2023.
+Matthew Loper, Naureen Mahmood, Javier Romero, Gerard Pons-Moll, and Michael J. Black. SMPL:
+A skinned multi-person linear model. ACM Transactions on Graphics (Proceedings of SIGGRAPH
+Asia), 34(6):248:1–248:16, 2015. doi: 10.1145/2816795.2818013.
+11
+
+
+Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. In ICLR, 2019.
+Yuxuan Mu, Hung Yu Ling, Yi Shi, Ismael Baira Ojeda, Pengcheng Xi, Chang Shu, Fabio Zinno, and
+Xue Bin Peng. StableMotion: Training motion cleanup models with unpaired corrupted data. In
+SIGGRAPH Asia Conference Papers, 2025.
+Mathis Petrovich, Michael J. Black, and Gül Varol. TMR: Text-to-motion retrieval using contrastive
+3D human motion synthesis. In ICCV, 2023.
+Ekkasit Pinyoanuntapong, Muhammad Saleem, Korrawe Karunratanakul, Pu Wang, Hongfei Xue,
+Chen Chen, Chuan Guo, Junli Cao, Jian Ren, and Sergey Tulyakov. MaskControl: Spatio-temporal
+control for masked motion synthesis. In Proceedings of the IEEE/CVF International Conference
+on Computer Vision (ICCV), pp. 9955–9965, 2025.
+Abhinanda R. Punnakkal, Arjun Chandrasekaran, Nikos Athanasiou, Alejandra Quiros-Ramirez, and
+Michael J. Black. BABEL: Bodies, action and behavior with english labels. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pp. 722–731, 2021.
+You Qin, Linqing Wang, Hao Fei, Roger Zimmermann, Liefeng Bo, Qinglin Lu, and Chunyu Wang.
+SOAR: Self-correction for optimal alignment and refinement in diffusion models. arXiv preprint
+arXiv:2604.12617, 2026.
+Sigal Raab, Inbar Gat, Nathan Sala, Guy Tevet, Rotem Shalev-Arkushin, Ohad Fried, Amit H.
+Bermano, and Daniel Cohen-Or. Monkey see, monkey do: Harnessing self-attention in motion
+diffusion for zero-shot motion transfer. In SIGGRAPH Asia Conference Papers, pp. 1–13, 2024.
+Davis Rempe, Mathis Petrovich, Ye Yuan, Haotian Zhang, Xue Bin Peng, Yifeng Jiang, Tingwu
+Wang, Umar Iqbal, David Minor, Michael de Ruyter, Jiefeng Li, Chen Tessler, Edy Lim, Eugene
+Jeong, Sam Wu, Ehsan Hassani, Michael Huang, Jin-Bey Yu, Chaeyeon Chung, Lina Song, Olivier
+Dionne, Jan Kautz, Simon Yuen, and Sanja Fidler. Kimodo: Scaling controllable human motion
+generation. arXiv preprint arXiv:2603.15546, 2026.
+Yonatan Shafir, Guy Tevet, Roy Kapon, and Amit H. Bermano. Human motion diffusion as a
+generative prior. In International Conference on Learning Representations (ICLR), 2024.
+Wenfeng Song, Xingliang Jin, Shuai Li, Chenglizhao Chen, Aimin Hao, Xia Hou, Ning Li, and Hong
+Qin. Arbitrary motion style transfer with multi-condition motion latent diffusion model. In CVPR,
+pp. 821–830, 2024.
+Guy Tevet, Sigal Raab, Brian Gordon, Yoni Shafir, Daniel Cohen-Or, and Amit H. Bermano. Human
+motion diffusion model. In ICLR, 2023.
+Benigno Uria, Iain Murray, and Hugo Larochelle. A deep and tractable density estimator. In ICML,
+2014.
+Akihisa Watanabe, Qing Yu, Edgar Simo-Serra, and Kent Fujiwara. ProjFlow: Projection sampling
+with flow matching for zero-shot exact spatial motion control. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition (CVPR), 2026.
+Yuxin Wen, Qing Shuai, Di Kang, Jing Li, Cheng Wen, Yue Qian, Ningxin Jiao, Changhai Chen,
+Weijie Chen, Yiran Wang, et al. HY-Motion 1.0: Scaling flow matching models for text-to-motion
+generation. arXiv preprint arXiv:2512.23464, 2025.
+Lixing Xiao, Shunlin Lu, Huaijin Pi, Ke Fan, Liang Pan, Yueer Zhou, Ziyong Feng, Xiaowei Zhou,
+Sida Peng, and Jingbo Wang. MotionStreamer: Streaming motion generation via diffusion-based
+autoregressive model in causal latent space. In ICCV, 2025.
+Yiming Xie, Varun Jampani, Lei Zhong, Deqing Sun, and Huaizu Jiang. OmniControl: Control any
+joint at any time for human motion generation. In ICLR, 2024.
+Jianrong Zhang, Yangsong Zhang, Xiaodong Cun, Yong Zhang, Hongwei Zhao, Hongtao Lu, Xi Shen,
+and Ying Shan. Generating human motion from textual descriptions with discrete representations.
+In CVPR, pp. 14730–14740, 2023a.
+12
+
+
+Lvmin Zhang, Anyi Rao, and Maneesh Agrawala. Adding conditional control to text-to-image
+diffusion models. In ICCV, 2023b.
+Kaifeng Zhao, Gen Li, and Siyu Tang. DartControl: A diffusion-based autoregressive motion model
+for real-time text-driven motion control. In ICLR, 2025.
+Yi Zhou, Connelly Barnes, Jingwan Lu, Jimei Yang, and Hao Li. On the continuity of rotation
+representations in neural networks. In CVPR, 2019.
+Bingfan Zhu, Biao Jiang, Sunyi Wang, Shixiang Tang, Tao Chen, Linjie Luo, Youyi Zheng, and Xin
+Chen. MotionGPT3: Human motion as a second modality. In ICLR, 2026.
+13
+
+
+APPENDIX
+Table 5: Joint training retains text-to-motion quality without cues. On HumanML3D, MO-
+TIONCANVAS leads FID and MM-Dist while keeping retrieval close to initialization. →denotes
+reference-closest diversity.
+Method
+R@1↑
+R@2↑
+R@3↑
+FID↓
+MM-Dist↓
+Div.→
+Real motion reference
+GT
+0.6921
+0.8491
+0.9085
+0.0000
+27.6030
+53.5863
+SMPL-based methods
+HY-Motion-1.0-Lite (Wen et al., 2025)
+0.7126
+0.8607
+0.9143
+0.0157
+27.3560
+54.3186
+MotionStreamer (Xiao et al., 2025)
+0.4326
+0.5943
+0.6825
+0.0488
+35.6725
+55.3875
+GoToZero (Fan et al., 2025)
+0.6334
+0.7924
+0.8601
+0.0183
+29.9669
+53.9309
+ViMoGen (Lin et al., 2026)
+0.3152
+0.4397
+0.5163
+0.4911
+47.0634
+55.6124
+DART (Zhao et al., 2025)
+0.4302
+0.6048
+0.6981
+0.2029
+38.7684
+56.5013
+KIMODO (Rempe et al., 2026)
+0.3139
+0.4654
+0.5578
+0.4881
+47.8219
+55.1029
+HumanML3D-263-based methods
+FlowMDM (Barquero et al., 2024)
+0.4374
+0.6129
+0.7098
+0.1239
+37.4179
+55.9877
+MotionLab (Guo et al., 2025)
+0.5826
+0.7443
+0.8221
+0.0958
+33.1189
+56.0441
+T2M-GPT (Zhang et al., 2023a)
+0.4919
+0.6549
+0.7392
+0.1148
+36.3240
+55.9934
+MDM (Tevet et al., 2023)
+0.4564
+0.6319
+0.7250
+0.1438
+37.5609
+56.5846
+MLD (Chen et al., 2023)
+0.5133
+0.6824
+0.7699
+0.1399
+36.3499
+56.8498
+MotionLCM (Dai et al., 2024)
+0.5145
+0.6880
+0.7792
+0.1537
+36.5909
+56.7712
+MoMask (Guo et al., 2024)
+0.5747
+0.7509
+0.8328
+0.0782
+33.3185
+56.0286
+MotionGPT (Jiang et al., 2023)
+0.4347
+0.5810
+0.6593
+0.1024
+38.4538
+56.0969
+MotionGPT3 (Zhu et al., 2026)
+0.6032
+0.7703
+0.8455
+0.0936
+32.5648
+55.9280
+MOTIONCANVAS
+0.7086
+0.8562
+0.9103
+0.0108
+27.2810
+54.1697
+A
+ADDITIONAL METHOD DETAILS
+A.1
+CONDITIONING INPUTS AND MMDIT ARCHITECTURE
+The motion context is csrc = xsrc ⊙M for editing and zero otherwise; it conditions unspecified
+entries on the input motion. The MMDiT motion input concatenates [xt∥csrc∥M] ∈RT ×594. The
+language stream contains either a generation caption or an editing instruction, never both. In all
+equations, i indexes motion frames, t denotes flow time, and s indexes solver steps; θ denotes the
+model’s learned parameters.
+Frozen Qwen3 token features in R4096 and a frozen CLIP sentence feature in R768 are projected to
+width 1024. A two-layer, 16-head token refiner processes the language sequence before multimodal
+fusion. The 18-layer MMDiT contains six double-stream blocks followed by twelve single-stream
+blocks, with width 1024, 16 attention heads, an MLP expansion ratio of four, LayerNorm, RMS-
+normalized queries and keys, and zero dropout. Motion attention is restricted to a maximum temporal
+offset of 60 frames (2 seconds), so an interior motion token attends to at most 121 motion tokens.
+The final head predicts one 198-dimensional flow velocity per frame.
+Skeleton and coordinate conventions.
+The 201-dimensional HY-Motion representation includes
+the pelvis position relative to itself, which is always zero. Omitting this three-channel entry gives
+our 198-dimensional state; root translation is retained. SMPL-22 denotes the 22-joint body skeleton
+used here, excluding articulated hands. Its kinematic tree is the parent–child hierarchy connecting
+joints through bones. Forward kinematics (FK) propagates rotations and bone offsets through this
+hierarchy to compute global joint positions (Loper et al., 2015). Local joint rotations are relative
+to the parent, whereas global joint positions and orientations use the common world frame. Root
+orientation describes pelvis orientation; heading is its facing direction projected onto the horizontal
+14
+
+
+plane, not the direction of travel. The continuous 6D rotation representation stores two 3D vectors and
+orthogonalizes them to recover a rotation matrix (Zhou et al., 2019). Pelvis-relative joint positions in
+Eq. (9) subtract the pelvis position while retaining the coordinate axes.
+A.2
+COMPOSITIONAL CUE SAMPLING DISTRIBUTION
+Equation (3) defines the three cue-sampling branches. Their mixture probabilities are 0.45 for one
+selection of frames and kinematic quantities, 0.25 for a composition of selections, and 0.30 for
+a correlated binary map. The composition branch draws R ∈[3, 8] with a decaying prior and
+independently resamples frames and quantities for each selection; the selected frames are reused
+across selections with probability 0.30. The correlated-map branch combines independent identically
+distributed (IID), temporally correlated, joint/axis-correlated, and low-rank components, then restricts
+cues to an explicitly sampled set of frames. Every selected frame contains at least one specified
+kinematic quantity.
+Figure 4: One generator supports text-only and timed multi-action generation. Top: Hu-
+manML3D text-only examples. Bottom: continuous BABEL sequences, with colors identifying
+successive action captions.
+Frame selection.
+A selection specifies all valid frames with probability 0.45. Otherwise, its
+specified-frame ratio falls in (0, 5%], (5%, 20%], (20%, 50%], (50%, 80%], or (80%, 100%) with
+15
+
+
+probabilities (0.30, 0.25, 0.18, 0.14, 0.13). The first interval samples the frame count log-uniformly
+to include isolated cues; the others sample it uniformly. For this fixed count, the sampler selects a
+prefix or suffix, both a prefix and suffix, an interior segment, scattered frames, a correlated subset, or
+disconnected segments.
+Kinematic-quantity selection.
+Quantity subsets are drawn from all variables, root translation,
+joint rotation, joint position, or mixed quantities with probabilities (0.10, 0.38, 0.14, 0.20, 0.18).
+Translation favors XZ and XYZ while retaining positive probability for every nonempty axis subset.
+Selected rotation and position joints may be single joints, groups separated by cuts in the kinematic
+tree, neighboring joints, bilateral sets, or arbitrary subsets. Position axes may be shared across
+selected joints or sampled independently. This distribution varies where cues apply and which
+quantities are specified together without enumerating benchmark task templates. When combining
+cues, cues specifying the same canvas entry must prescribe the same value.
+Table 6: MOTIONCANVAS leads action retrieval and transition-window FID. Sequential genera-
+tion on 1,295 BABEL episodes (Punnakkal et al., 2021). AUJ scores jerk-profile discrepancy; →
+denotes reference-closest diversity.
+Method
+Subsequence quality
+Transition smoothness
+R@1↑R@2↑R@3↑FID↓MM-Dist↓Div.→FID↓
+AUJ↓
+Div.→PeakJerk→
+BABEL GT
+0.3614 0.5284 0.6317 0.0000
+47.838
+49.289 0.0000
+0.000
+43.789
+56.338
+FlowMDM (Barquero et al., 2024) 0.2504 0.3925 0.4818 0.0467
+50.850
+50.388 0.0555 34.404 44.941
+335.673
+MotionStreamer (Xiao et al., 2025) 0.2130 0.3303 0.4175 0.0610
+52.034
+46.587 0.0702 76.289 40.819
+206.222
+MotionLab (Guo et al., 2025)
+0.2580 0.3793 0.4536 0.2011
+51.387
+41.618 0.2499 25.726 34.379
+204.669
+PRISM (Ling et al., 2026)
+0.2833 0.4314 0.5168 0.0591
+51.014
+50.523 0.0739 157.846 46.723
+503.399
+MOTIONCANVAS
+0.4240 0.6049 0.7134 0.0587
+46.266
+49.706 0.0481 80.054 42.486
+170.920
+A.3
+COMPONENT-BALANCED LOSS REDUCTION
+The operator CMS in Eq. (6) prevents large channel groups from dominating sparse ones. Let Vbi
+indicate a valid, non-padding frame i in batch item b. Let C contain four channel groups (translation,
+root rotation, body rotation, and joint position), and let CS contain groups with valid entries selected
+by S ∈{M, 1 −M}. For a pointwise loss ℓ,
+CMS[ℓ] =
+
+
+
+
+
+1
+|CS|
+X
+g∈CS
+P
+b,i
+P
+d∈g VbiSbidℓbid
+P
+b,i
+P
+d∈g VbiSbid
+,
+|CS| > 0,
+0,
+|CS| = 0.
+(12)
+Thus the specified-entry term is exactly zero for an all-generated text-only sample, while each active
+component contributes equally for a mixed cue set. In particular, root translation has only three
+channels but can determine the route of the entire body; component balancing retains its influence
+alongside the many joint channels.
+A.4
+MASK-DERIVED BOUNDARY OBJECTIVES
+The decoded geometry losses are defined in Eq. (9); here we specify the boundary terms abbreviated
+by Lbnd in Eq. (11). Let eJ = ˆJ−J and er = ˆr−r. A change in M between adjacent frames marks
+a boundary between specified and unspecified entries. Kinematic propagation maps that boundary to
+affected world-joint axes: a rotation cue can affect the positions of joints farther along the same limb.
+For derivative order k, Tk denotes its two-frame temporal band and Gk denotes valid, fully generated
+windows outside all cue bands.
+To prevent derivative errors from concentrating at body-motion joins, LworldSob penalizes
+their size relative to the generated-region baseline.
+For world-joint residuals, let sk
+=
+max{sg(meanGk |∆keJ|), 10−4 m}, where sg denotes stop-gradient. The component-balanced
+16
+
+
+boundary loss is
+LworldSob = 1
+3
+3
+X
+k=1
+meanTk
+"
+t2 log
+ 
+1 +
+|∆keJ|
+sk
+−1
+
++
+!#
+,
+(13)
+where translation, root-rotation, body-rotation, and position-induced joint-axis selections are reduced
+separately before averaging. Only ratios above one are penalized, with logarithmic growth limiting
+the influence of extreme errors. To keep compensating joint motion from concealing root-path errors,
+LrootSob applies the same three derivative orders directly to er, using a 5 × 10−4 m scale floor and
+Smooth-L1 on the relative excess.
+A spatially accurate path can still be traversed at the wrong local rate, so LrootH1 supervises root
+positions and frame-to-frame displacements together. It applies to unspecified entries on axes
+containing at least one root cue:
+LrootH1 = 1
+2 mean
+
+t2ρ(er)
+
++ 1
+2 mean
+
+t2ρ(∆er)
+
+.
+(14)
+Errors immediately beside a fixed position can create abrupt arrivals or departures; Lendpoint therefore
+concentrates position supervision within 1, 2, and 4 motion frames of a specified root value. Small
+root-position errors late in refinement can still require large corrective updates, so Ledge measures
+error per unit remaining flow time. For an isolated root cue at frame i, it sets the specified center error
+to zero and divides the generated-neighbor position error by 1−t. A pseudo-Huber penalty on the two
+one-sided displacement differences, averaged over the largest 20% per sample, focuses supervision
+on the most inaccurate approaches and departures. These objectives use the clean trajectory as their
+reference, so genuine speed changes remain valid targets.
+The abbreviation used in the main paper is therefore
+Lbnd = λworldSobLworldSob + λrootSobLrootSob + λrootH1LrootH1
++ λendpointLendpoint + λedgeLedge.
+(15)
+Every mask-derived reduction returns a differentiable zero when it selects no valid entries. Equa-
+tion (10) separately defines the velocity/acceleration/jerk excess term weighted alongside Lvel.
+A.5
+ROLLOUT SUPERVISION
+To learn coherent connections in actual sampled motions, we supervise completed rollouts in addition
+to one-step clean-motion estimates. This exposes the field to the cumulative effect of generation
+updates and cue imputation, with gradients through the final updates. The supervision selects isolated
+root-translation cues directly from the mask, including those embedded in mixed cue sets.
+For a valid frame i and root axis a, the isolated-cue stencil is
+Ci,a = Mi−1,a(1 −Mi,a)Mi+1,a.
+(16)
+The product selects a specified center with unspecified neighbors on the same axis, where the solver
+must learn the connecting trajectory on both sides. The auxiliary activates only when at least one
+Ci,a = 1. Starting from noise, it executes the same 50-step Euler schedule used at inference, with
+cue imputation, evaluates the first 46 steps without gradients, and retains the graph through the final
+four steps for at most one active sample per device.
+To match both the approach to a fixed position and the departure from it, Lroll-join supervises
+neighboring positions and their coupled displacement change. Let Pi = diag(Ci,:) select the
+isolated root-axis cues at frame i. We normalize root-position error by the final refinement interval
+τtail = 4/50, defining ei = (ˆri −ri)/τtail. This measures error relative to the flow-time span
+receiving gradients. Cue imputation makes the selected components zero: Piei = 0 at the specified
+center. We use ϕβ(z) =
+p
+z2 + β2 −β with β = 2 × 10−3 m, a smooth penalty that grows
+approximately linearly for large errors. The reduction R.2 averages the ordinary mean and the mean
+of the largest 20% active values with equal weight, balancing typical and difficult cue neighborhoods.
+The join objective is
+Lroll-join = 1
+2R.2[ϕβ(∥Piei−1∥2), ϕβ(∥Piei+1∥2)]
++ 1
+2R.2[ϕβ(∥Pi(ei−1 + ei+1)∥2)] .
+(17)
+17
+
+
+Figure 5: Temporal completion connects supplied frames across contiguous and irregular
+layouts. Top: prediction from an initial frame or prefix. Middle: in-betweening from endpoints
+or boundary segments. Bottom: completion between motion-dependent keyframes. Orange marks
+supplied frames and blue marks generated motion.
+18
+
+
+Table 7: Zero supplied-frame error across temporal completion settings. HumanML3D protocols
+vary prefixes, endpoints, boundary segments, and nonuniform keyframes, with or without text.
+MOTIONCANVAS preserves the supplied poses in every setting and has the lowest FID in all text-
+conditioned rows. Cue error is in cm; Fail@20/50 measures supplied-frame failures at 20/50 cm, and
+→denotes reference-closest diversity.
+Task
+Cue frames
+Method
+Text R@1↑R@2↑R@3↑FID↓MM-Dist↓Cue err.↓Fail@20↓Fail@50↓Skate↓Div.→
+Real motion reference
+–
+–
+GT
+–
+0.6921 0.8491 0.9085 0.0000
+27.60
+–
+–
+–
+–
+53.59
+Prediction first frame
+OmniControl (Xie et al., 2024)
+✓0.4403 0.5907 0.6715 0.1278
+37.48
+13.41
+0.186
+0.005
+0.073
+56.87
+Prediction first frame
+CondMDI
+✓0.4918 0.6613 0.7506 0.0579
+34.12
+1.44
+0.004
+0.002
+0.160
+55.38
+Prediction first frame
+KIMODO
+✓0.4246 0.5868 0.6786 0.2964
+41.50
+0.00
+0.000
+0.000
+0.178
+56.87
+Prediction first frame
+MotionLab
+✓0.5188 0.6728 0.7469 0.0525
+33.83
+1.73
+0.004
+0.002
+0.076
+54.73
+Prediction first frame
+FlowMDM
+✓0.4666 0.6397 0.7295 0.0608
+34.76
+1.44
+0.004
+0.002
+0.133
+55.30
+Prediction first frame
+ProjFlow (Watanabe et al., 2026) ✓0.5857 0.7493 0.8227 0.0239
+30.98
+1.33
+0.004
+0.002
+0.123
+54.53
+Prediction first frame
+MOTIONCANVAS
+✓0.6914 0.8410 0.8988 0.0139
+27.94
+0.00
+0.000
+0.000
+0.138
+54.04
+Prediction first 20% frames
+OmniControl
+✓0.4037 0.5426 0.6197 0.1400
+38.86
+4.93
+0.032
+0.004
+0.132
+54.46
+Prediction first 20% frames
+CondMDI
+✓0.3744 0.5177 0.5998 0.2333
+40.85
+1.67
+0.005
+0.003
+0.073
+51.60
+Prediction first 20% frames
+KIMODO
+✓0.4510 0.6053 0.6891 0.1686
+38.54
+0.00
+0.000
+0.000
+0.087
+56.30
+Prediction first 20% frames
+MotionLab
+✓0.4928 0.6428 0.7176 0.0658
+35.28
+1.87
+0.005
+0.003
+0.079
+54.90
+Prediction first 20% frames
+FlowMDM
+✓0.5403 0.7106 0.7923 0.0349
+32.29
+1.70
+0.005
+0.003
+0.114
+55.13
+Prediction first 20% frames
+ProjFlow
+✓0.6308 0.7910 0.8600 0.0125
+29.44
+2.00
+0.008
+0.003
+0.112
+53.97
+Prediction first 20% frames
+MOTIONCANVAS
+✓0.6931 0.8406 0.8993 0.0091
+27.80
+0.00
+0.000
+0.000
+0.084
+53.68
+Prediction first 20% frames
+OmniControl
+–
+0.2134 0.3151 0.3884 0.3510
+47.58
+6.35
+0.066
+0.006
+0.075
+51.27
+Prediction first 20% frames
+CondMDI
+–
+0.3335 0.4706 0.5530 0.3015
+43.22
+1.67
+0.005
+0.003
+0.058
+50.44
+Prediction first 20% frames
+KIMODO
+–
+0.2881 0.4050 0.4772 0.3350
+46.62
+0.00
+0.000
+0.000
+0.063
+55.10
+Prediction first 20% frames
+MotionLab
+–
+0.3327 0.4669 0.5470 0.1355
+41.66
+1.87
+0.005
+0.003
+0.055
+54.20
+Prediction first 20% frames
+FlowMDM
+–
+0.2639 0.3827 0.4592 0.3000
+45.08
+1.70
+0.005
+0.003
+0.049
+49.51
+Prediction first 20% frames
+ProjFlow
+–
+0.2795 0.4078 0.4861 0.2199
+43.14
+2.00
+0.008
+0.003
+0.058
+49.92
+Prediction first 20% frames
+MOTIONCANVAS
+–
+0.3411 0.4731 0.5532 0.1043
+40.03
+0.00
+0.000
+0.000
+0.096
+52.36
+MIB
+first + last frame
+OmniControl
+✓0.4063 0.5542 0.6363 0.1539
+38.61
+15.48
+0.244
+0.023
+0.233
+55.84
+MIB
+first + last frame
+CondMDI
+✓0.5614 0.7343 0.8143 0.0301
+31.61
+2.21
+0.005
+0.002
+0.183
+54.52
+MIB
+first + last frame
+KIMODO
+✓0.4715 0.6266 0.7087 0.2137
+38.89
+0.00
+0.000
+0.000
+0.154
+56.76
+MIB
+first + last frame
+MotionLab
+✓0.5225 0.6761 0.7503 0.0646
+34.16
+3.00
+0.009
+0.002
+0.073
+54.67
+MIB
+first + last frame
+FlowMDM
+✓0.4825 0.6575 0.7477 0.0519
+34.00
+4.61
+0.063
+0.004
+0.153
+55.19
+MIB
+first + last frame
+ProjFlow
+✓0.6112 0.7725 0.8448 0.0191
+30.12
+8.04
+0.084
+0.018
+0.138
+54.13
+MIB
+first + last frame
+MOTIONCANVAS
+✓0.6883 0.8380 0.8972 0.0135
+28.10
+0.00
+0.000
+0.000
+0.184
+53.97
+MIB
+first + last 10% frames OmniControl
+✓0.4310 0.5789 0.6633 0.1160
+36.85
+12.53
+0.178
+0.030
+0.339
+54.28
+MIB
+first + last 10% frames CondMDI
+✓0.4661 0.6219 0.7064 0.1455
+36.84
+2.50
+0.007
+0.002
+0.124
+52.67
+MIB
+first + last 10% frames KIMODO
+✓0.5393 0.7014 0.7772 0.0910
+34.48
+0.00
+0.000
+0.000
+0.085
+55.34
+MIB
+first + last 10% frames MotionLab
+✓0.5113 0.6647 0.7424 0.0738
+35.03
+3.21
+0.010
+0.003
+0.083
+54.60
+MIB
+first + last 10% frames FlowMDM
+✓0.5534 0.7280 0.8098 0.0292
+31.68
+4.39
+0.040
+0.003
+0.127
+54.58
+MIB
+first + last 10% frames ProjFlow
+✓0.6518 0.8095 0.8752 0.0093
+28.84
+7.57
+0.095
+0.017
+0.123
+53.74
+MIB
+first + last 10% frames MOTIONCANVAS
+✓0.6941 0.8452 0.9030 0.0052
+27.73
+0.00
+0.000
+0.000
+0.110
+53.84
+MIB
+first + last 10% frames OmniControl
+–
+0.1993 0.2978 0.3673 0.2237
+45.73
+13.93
+0.220
+0.036
+0.383
+52.44
+MIB
+first + last 10% frames CondMDI
+–
+0.3978 0.5472 0.6325 0.2113
+39.76
+2.50
+0.007
+0.002
+0.108
+51.68
+MIB
+first + last 10% frames KIMODO
+–
+0.4059 0.5482 0.6276 0.1906
+40.10
+0.00
+0.000
+0.000
+0.074
+54.24
+MIB
+first + last 10% frames MotionLab
+–
+0.4027 0.5475 0.6291 0.1273
+39.24
+3.09
+0.009
+0.002
+0.071
+54.61
+MIB
+first + last 10% frames FlowMDM
+–
+0.2891 0.4100 0.4848 0.2689
+43.73
+3.66
+0.020
+0.002
+0.063
+50.37
+MIB
+first + last 10% frames ProjFlow
+–
+0.3595 0.4942 0.5756 0.1763
+39.86
+7.02
+0.079
+0.015
+0.080
+51.95
+MIB
+first + last 10% frames MOTIONCANVAS
+–
+0.4283 0.5758 0.6562 0.0837
+36.91
+0.00
+0.000
+0.000
+0.125
+52.33
+Keyframe nonuniform keyframes OmniControl
+✓0.4598 0.6086 0.6880 0.1439
+36.73
+16.03
+0.255
+0.033
+0.474
+55.95
+Keyframe nonuniform keyframes CondMDI
+✓0.6838 0.8432 0.9034 0.0023
+27.83
+2.78
+0.006
+0.002
+0.242
+53.73
+Keyframe nonuniform keyframes KIMODO
+✓0.6132 0.7822 0.8560 0.0694
+31.87
+1.83
+0.000
+0.000
+0.185
+55.66
+Keyframe nonuniform keyframes MotionLab
+✓0.6678 0.8323 0.8955 0.0030
+28.50
+3.54
+0.009
+0.002
+0.099
+53.69
+Keyframe nonuniform keyframes ProjFlow
+✓0.6788 0.8377 0.8993 0.0075
+28.43
+7.02
+0.068
+0.014
+0.169
+53.93
+Keyframe nonuniform keyframes MOTIONCANVAS
+✓0.6875 0.8441 0.9031 0.0014
+27.81
+0.00
+0.000
+0.000
+0.118
+53.43
+Keyframe nonuniform keyframes OmniControl
+–
+0.2376 0.3504 0.4280 0.2746
+44.90
+18.72
+0.334
+0.052
+0.548
+54.01
+Keyframe nonuniform keyframes CondMDI
+–
+0.6748 0.8359 0.8986 0.0024
+28.19
+2.78
+0.007
+0.002
+0.233
+53.65
+Keyframe nonuniform keyframes KIMODO
+–
+0.5914 0.7614 0.8381 0.0616
+32.39
+1.77
+0.000
+0.000
+0.165
+55.00
+Keyframe nonuniform keyframes MotionLab
+–
+0.6594 0.8249 0.8908 0.0038
+28.78
+3.56
+0.010
+0.002
+0.099
+53.34
+Keyframe nonuniform keyframes ProjFlow
+–
+0.5916 0.7652 0.8428 0.0280
+31.08
+7.23
+0.068
+0.015
+0.165
+52.91
+Keyframe nonuniform keyframes MOTIONCANVAS
+–
+0.6589 0.8218 0.8878 0.0031
+28.69
+0.00
+0.000
+0.000
+0.136
+53.60
+In Eq. (17), the first term supervises the generated positions on either side. Since the selected center
+error is zero, the sum in the second term equals Pi(ei−1 −2ei + ei+1), the second-difference error
+across the specified center. It therefore supervises the change in displacement from approach to
+departure; the first term also prevents large opposite neighbor errors from cancelling in this sum.
+An isolated position can be met through a sharp local change in speed or direction; Lroll-excess
+suppresses such peaks beyond the level supported by reference motion and the generated background.
+Let ˆκi and κi be predicted and clean root-position second-difference magnitudes on the selected axes.
+They measure changes in displacement between consecutive frames, responding to both speed and
+direction. With
+τi = max(κi, sg(κbg)) ,
+(18)
+where κbg averages predicted second-difference magnitudes over valid generated windows more than
+two frames from any cue, we set
+Lroll-excess = R.2
+
+ϕβ
+[ˆκi −τi]+
+τtail
+
+.
+(19)
+19
+
+
+Table 8: Exact dense-path execution and accurate route inference between sparse waypoints.
+On HumanML3D, MOTIONCANVAS has the lowest FID and path ADE across XZ/XYZ routes. (a)
+Full-motion quality; (b) translation-only route and physical diagnostics; (c) joint translation and
+orientation control. Path ADE (m) scores all frames, including those between waypoints; orientation
+error is in degrees. →denotes reference-closest diversity.
+(a) Full-motion quality
+Method
+Setting
+Axes
+FID↓
+R@3↑
+Div.→
+OmniControl (Xie et al., 2024)
+Dense path
+XZ
+0.0550
+0.7881
+54.78
+KIMODO (Rempe et al., 2026)
+Dense path
+XZ
+0.4727
+0.5464
+54.67
+ProjFlow (Watanabe et al., 2026)
+Dense path
+XZ
+0.7856
+0.3989
+50.17
+MOTIONCANVAS
+Dense path
+XZ
+0.0081
+0.9025
+53.80
+MOTIONCANVAS
+Dense path
+XZ+Orient.
+0.0074
+0.9045
+53.81
+OmniControl
+Dense path
+XYZ
+0.0302
+0.8353
+55.22
+MotionLab (Guo et al., 2025)
+Dense path
+XYZ
+0.0265
+0.7950
+53.96
+ProjFlow
+Dense path
+XYZ
+0.0241
+0.8374
+54.87
+MOTIONCANVAS
+Dense path
+XYZ
+0.0120
+0.8986
+53.84
+MOTIONCANVAS
+Dense path
+XYZ+Orient.
+0.0099
+0.9007
+53.84
+OmniControl
+Sparse waypoints
+XZ
+0.0375
+0.8122
+55.37
+KIMODO
+Sparse waypoints
+XZ
+0.4817
+0.5479
+54.71
+ProjFlow
+Sparse waypoints
+XZ
+0.7467
+0.4205
+50.58
+MOTIONCANVAS
+Sparse waypoints
+XZ
+0.0096
+0.8981
+53.98
+OmniControl
+Sparse waypoints
+XYZ
+0.0339
+0.8255
+55.36
+MotionLab
+Sparse waypoints
+XYZ
+0.0287
+0.7717
+53.82
+ProjFlow
+Sparse waypoints
+XYZ
+0.0292
+0.8250
+54.82
+MOTIONCANVAS
+Sparse waypoints
+XYZ
+0.0159
+0.8932
+54.14
+(b) Translation-only route and physical diagnostics
+Method
+Setting
+Axes
+Path ADE↓
+Fail@20↓
+Fail@50↓
+Foot↓
+Jitter↓
+OmniControl
+Dense path
+XZ
+0.101
+0.117
+0.031
+0.086
+201.7
+KIMODO
+Dense path
+XZ
+0.050
+0.006
+0.000
+0.173
+346.7
+ProjFlow
+Dense path
+XZ
+0.141
+0.174
+0.062
+0.165
+98.6
+MOTIONCANVAS
+Dense path
+XZ
+0.000
+0.000
+0.000
+0.139
+345.3
+OmniControl
+Dense path
+XYZ
+0.112
+0.127
+0.031
+0.077
+243.0
+MotionLab
+Dense path
+XYZ
+0.141
+0.168
+0.047
+0.027
+323.5
+ProjFlow
+Dense path
+XYZ
+0.118
+0.116
+0.030
+0.064
+56.2
+MOTIONCANVAS
+Dense path
+XYZ
+0.000
+0.000
+0.000
+0.202
+356.4
+OmniControl
+Sparse waypoints
+XZ
+0.117
+0.146
+0.043
+0.087
+240.9
+KIMODO
+Sparse waypoints
+XZ
+0.077
+0.057
+0.014
+0.179
+393.7
+ProjFlow
+Sparse waypoints
+XZ
+0.137
+0.168
+0.059
+0.158
+119.1
+MOTIONCANVAS
+Sparse waypoints
+XZ
+0.030
+0.000
+0.000
+0.132
+453.5
+OmniControl
+Sparse waypoints
+XYZ
+0.131
+0.161
+0.045
+0.093
+647.0
+MotionLab
+Sparse waypoints
+XYZ
+0.227
+0.287
+0.112
+0.022
+297.6
+ProjFlow
+Sparse waypoints
+XYZ
+0.120
+0.117
+0.032
+0.072
+66.0
+MOTIONCANVAS
+Sparse waypoints
+XYZ
+0.030
+0.000
+0.000
+0.208
+452.7
+(c) Joint translation and orientation (MOTIONCANVAS, dense path)
+Axes
+Path ADE↓
+Orient. Err↓
+Fail@20↓
+Fail@50↓
+Foot↓
+Jitter↓
+XZ+Orient.
+0.000
+0.000
+0.000
+0.000
+0.096
+386.0
+XYZ+Orient.
+0.000
+0.000
+0.000
+0.000
+0.142
+393.9
+The threshold retains the larger second-difference magnitude from the reference motion and generated
+background. Only the predicted portion above this level is penalized, targeting a local spike without
+requiring a straight or constant-speed path. Stop-gradient prevents the model from reducing the loss
+by raising the background threshold. If no background window exists, τi = κi; if no isolated root cue
+exists, both rollout losses are zero.
+A.6
+ANOMALY LOCALIZATION FOR AUTOMATIC REPAIR
+Automatic repair first localizes which parts of a corrupted motion require regeneration. We locate
+these entries by contrasting the corrupted clip with a preliminary clean proposal produced by the
+MotionCanvas prior. The clip is converted to the 198-dimensional canvas representation, and a
+language-free, no-cue 50-step completion produces the proposal. Both motions are denormalized
+before anomaly localization.
+20
+
+
+Figure 6: Root cues guide both locomotion and the path connecting sparse anchors. Top:
+turquoise curves prescribe the complete root trajectory. Bottom: yellow markers specify only
+waypoints, while the blue path and intervening body motion are generated. These cases distinguish
+executing a supplied route from inferring one through isolated anchors.
+Let Rc
+i,j and Rp
+i,j be the corrupted and preliminary local rotation matrices for joint j at frame i. Their
+discrepancy is
+ai,j = cos−1
+ 
+clip
+ 
+tr((Rc
+i,j)⊤Rp
+i,j) −1
+2
+, −1, 1
+!!
+,
+bi,j = 1[ai,j > 0.15 rad].
+(20)
+The angle is the smallest rotation aligning the two joint orientations. For root translation, subtracting
+the coordinatewise median offset separates time-varying path errors from a uniform shift. We
+threshold the remaining residual,
+di = (rc
+i −rp
+i ) −median1≤u≤T (rc
+u −rp
+u),
+br
+i = 1[∥di∥2 > 0.05 m].
+(21)
+These flags select frames for translation repair under the same adaptive localization–regeneration
+strategy as joint motion.
+Let N ∗(j) be the eligible one-hop parent/child neighborhood, excluding neck, collars, head, and
+wrists from sending or receiving expansion. We expand the raw flags spatially and then by two frames
+21
+
+
+in time,
+bsp
+i,j = bi,j ∨
+_
+k∈N ∗(j)
+bi,k,
+btmp
+i,j
+=
+_
+|u−i|≤2
+bsp
+u,j.
+(22)
+Expansion gives neighboring joints and frames room to adapt as the anomalous motion is regenerated.
+Runs of btmp shorter than three frames are removed, yielding b∗
+i,j. The final generation mask assigns
+all six rotation channels of joint j to b∗
+i,j and, for a non-root joint, assigns its three same-joint position
+channels to the same value. Root-translation channels use the corresponding detected translation
+anomalies. A final masked regeneration uses SDEdit strength 0.5 and the 50-step solver. After
+decoding the full candidate, we retain candidate translation and rotation only at entries selected
+by M and copy all unflagged input values exactly (3 translation and 22 × 6 rotation channels).
+This two-pass procedure uses the learned motion prior first for anomaly localization and then for
+conditional regeneration, without access to a clean reference.
+Table 9: Near-exact rotation control and strong motion quality across body parts. HumanML3D
+varies target joints or regions, sparse/dense cue layouts, and rotation or position cues. MOTIONCAN-
+VAS has the lowest FID across the listed settings; Cartesian accuracy varies with target and density.
+Cue err. is decoded rotation error (degrees) or position error (cm); →denotes reference-closest
+diversity.
+Target
+Type Density Axes Method
+FID↓R@1↑R@2↑R@3↑MM-D↓Div.→Cue err.↓Foot↓
+Jit.↓
+Region-level body parts
+upper body
+Rot sparse
+–
+KIMODO
+0.2923 0.5020 0.6638 0.7499
+37.59
+54.50
+15.91
+0.094 3642.9
+upper body
+Rot sparse
+–
+MOTIONCANVAS 0.0026 0.7051 0.8575 0.9137
+27.09
+53.45
+0.003
+0.059
+471.0
+upper body
+Rot dense
+–
+KIMODO
+0.1437 0.5510 0.7143 0.7953
+34.17
+53.83
+18.94
+0.249
+661.1
+upper body
+Rot dense
+–
+MOTIONCANVAS 0.0021 0.6952 0.8498 0.9079
+27.43
+53.36
+0.003
+0.063
+515.2
+upper body
+Pos sparse
+XZ KIMODO
+0.8059 0.2484 0.3748 0.4603
+51.10
+51.17
+6.86
+0.193 1206.2
+upper body
+Pos sparse
+XZ OmniControl
+0.0979 0.4879 0.6439 0.7252
+35.07
+55.82
+11.26
+0.262 1217.5
+upper body
+Pos sparse
+XZ MOTIONCANVAS 0.0063 0.7010 0.8540 0.9089
+27.36
+53.69
+2.10
+0.057
+569.7
+upper body
+Pos sparse
+XYZ KIMODO
+1.2267 0.1598 0.2649 0.3467
+55.06
+36.84
+25.78
+0.601 10362.3
+upper body
+Pos sparse
+XYZ OmniControl
+0.0862 0.5321 0.6910 0.7683
+33.61
+55.73
+12.12
+0.248 1264.4
+upper body
+Pos sparse
+XYZ CondMDI
+0.0475 0.5346 0.7049 0.7906
+32.47
+54.41
+9.11
+0.084 1234.8
+upper body
+Pos sparse
+XYZ MotionLab
+0.0178 0.6327 0.7988 0.8664
+29.97
+53.64
+5.28
+0.023
+302.4
+upper body
+Pos sparse
+XYZ MOTIONCANVAS 0.0055 0.6997 0.8521 0.9093
+27.36
+53.63
+2.43
+0.055
+572.9
+upper body
+Pos dense
+XZ KIMODO
+1.4411 0.1242 0.2039 0.2703
+57.94
+29.62
+5.31
+0.821 9911.2
+upper body
+Pos dense
+XZ OmniControl
+0.1125 0.4492 0.6068 0.6882
+36.36
+54.77
+11.43
+0.321
+382.8
+upper body
+Pos dense
+XZ MOTIONCANVAS 0.0045 0.6873 0.8418 0.9017
+27.72
+53.34
+0.96
+0.064
+455.6
+upper body
+Pos dense
+XYZ KIMODO
+1.5253 0.1261 0.2164 0.2879
+57.15
+26.20
+9.08
+0.965 12280.7
+upper body
+Pos dense
+XYZ OmniControl
+0.0865 0.5293 0.6897 0.7689
+33.36
+55.06
+12.69
+0.267
+385.5
+upper body
+Pos dense
+XYZ CondMDI
+0.3112 0.4003 0.5328 0.6042
+40.91
+53.14
+7.38
+0.165
+674.3
+upper body
+Pos dense
+XYZ MotionLab
+0.0308 0.6173 0.7850 0.8567
+30.71
+53.99
+6.36
+0.030
+332.7
+upper body
+Pos dense
+XYZ MOTIONCANVAS 0.0031 0.6868 0.8408 0.8999
+27.69
+53.40
+1.20
+0.061
+460.2
+lower body
+Rot sparse
+–
+KIMODO
+0.0916 0.5930 0.7579 0.8337
+32.47
+55.51
+26.55
+0.126 1611.4
+lower body
+Rot sparse
+–
+MOTIONCANVAS 0.0078 0.7032 0.8527 0.9081
+27.55
+53.96
+0.003
+0.079
+495.7
+lower body
+Rot dense
+–
+KIMODO
+0.3773 0.4165 0.5621 0.6414
+40.55
+52.83
+29.76
+0.061
+386.5
+lower body
+Rot dense
+–
+MOTIONCANVAS 0.0102 0.6878 0.8412 0.8989
+28.14
+53.81
+0.003
+0.062
+543.3
+lower body
+Pos sparse
+XZ KIMODO
+0.5344 0.3228 0.4798 0.5793
+48.19
+54.39
+9.11
+0.128
+935.3
+lower body
+Pos sparse
+XZ OmniControl
+0.0617 0.5431 0.7067 0.7840
+33.26
+55.73
+9.49
+0.238 1028.7
+lower body
+Pos sparse
+XZ MOTIONCANVAS 0.0074 0.6944 0.8433 0.9017
+27.67
+53.74
+2.34
+0.104
+549.9
+lower body
+Pos sparse
+XYZ KIMODO
+1.2610 0.1407 0.2304 0.2980
+55.05
+24.46
+18.56
+0.129 29726.1
+lower body
+Pos sparse
+XYZ OmniControl
+0.0486 0.5699 0.7325 0.8066
+32.24
+55.46
+9.83
+0.231 1071.1
+lower body
+Pos sparse
+XYZ CondMDI
+0.0553 0.4789 0.6478 0.7385
+34.10
+54.77
+9.91
+0.199 1225.1
+lower body
+Pos sparse
+XYZ MotionLab
+0.0261 0.5827 0.7400 0.8115
+31.62
+54.40
+5.93
+0.027
+326.9
+lower body
+Pos sparse
+XYZ MOTIONCANVAS 0.0076 0.6943 0.8433 0.9024
+27.70
+53.76
+2.56
+0.101
+554.9
+lower body
+Pos dense
+XZ KIMODO
+0.6761 0.2506 0.3854 0.4795
+50.05
+52.19
+5.47
+0.219 1352.0
+lower body
+Pos dense
+XZ OmniControl
+0.1362 0.4740 0.6277 0.7063
+36.52
+55.75
+10.34
+0.140
+273.0
+lower body
+Pos dense
+XZ MOTIONCANVAS 0.0065 0.6846 0.8373 0.8966
+28.03
+53.68
+1.06
+0.057
+461.9
+lower body
+Pos dense
+XYZ KIMODO
+1.5425 0.0444 0.0762 0.1038
+60.47
+26.74
+19.30
+0.265 2790.7
+lower body
+Pos dense
+XYZ OmniControl
+0.0438 0.5716 0.7327 0.8058
+31.99
+55.02
+8.29
+0.110
+274.3
+lower body
+Pos dense
+XYZ CondMDI
+0.1391 0.4654 0.6241 0.7085
+35.84
+53.65
+7.97
+0.206
+696.3
+lower body
+Pos dense
+XYZ MotionLab
+0.0418 0.5595 0.7188 0.7899
+32.84
+54.67
+5.42
+0.032
+335.4
+lower body
+Pos dense
+XYZ ProjFlow
+0.0165 0.6239 0.7826 0.8509
+30.07
+54.42
+3.73
+0.030
+287.9
+lower body
+Pos dense
+XYZ MOTIONCANVAS 0.0057 0.6874 0.8403 0.9005
+27.87
+53.57
+1.22
+0.054
+470.2
+Wrist joints
+left wrist
+Rot sparse
+–
+KIMODO
+0.3322 0.4681 0.6256 0.7137
+39.22
+54.99
+79.52
+0.093 1497.6
+left wrist
+Rot sparse
+–
+MOTIONCANVAS 0.0075 0.7026 0.8501 0.9062
+27.37
+53.77
+0.003
+0.052
+445.2
+Continued on next page
+22
+
+
+Table 9: Body-part control on HumanML3D (continued).
+Target
+Type Density Axes Method
+FID↓R@1↑R@2↑R@3↑MM-D↓Div.→Cue err.↓Foot↓
+Jit.↓
+left wrist
+Rot dense
+–
+KIMODO
+0.5145 0.3976 0.5566 0.6514
+43.19
+51.78
+68.96
+0.148
+652.3
+left wrist
+Rot dense
+–
+MOTIONCANVAS 0.0070 0.7004 0.8496 0.9059
+27.39
+53.72
+0.003
+0.053
+441.2
+left wrist
+Pos sparse
+XZ KIMODO
+0.5472 0.3199 0.4740 0.5703
+48.30
+54.39
+24.44
+0.130 1100.0
+left wrist
+Pos sparse
+XZ OmniControl
+0.0396 0.5638 0.7342 0.8144
+32.19
+55.27
+19.95
+0.085
+412.2
+left wrist
+Pos sparse
+XZ MOTIONCANVAS 0.0084 0.6992 0.8460 0.9030
+27.58
+53.86
+13.01
+0.053
+542.6
+left wrist
+Pos sparse
+XYZ KIMODO
+1.0746 0.2275 0.3612 0.4517
+52.13
+31.33
+29.54
+0.173 29648.4
+left wrist
+Pos sparse
+XYZ MaskControl
+0.0190 0.6331 0.7988 0.8664
+29.73
+54.19
+15.72
+0.085
+337.8
+left wrist
+Pos sparse
+XYZ OmniControl
+0.0278 0.6066 0.7734 0.8454
+30.77
+55.10
+20.98
+0.084
+446.8
+left wrist
+Pos sparse
+XYZ CondMDI
+0.0560 0.4683 0.6364 0.7288
+34.38
+54.97
+22.05
+0.083
+924.9
+left wrist
+Pos sparse
+XYZ MotionLab
+0.0209 0.5940 0.7539 0.8270
+31.00
+54.08
+14.34
+0.023
+307.6
+left wrist
+Pos sparse
+XYZ MOTIONCANVAS 0.0084 0.6992 0.8459 0.9027
+27.55
+53.87
+17.15
+0.052
+549.5
+left wrist
+Pos dense
+XZ KIMODO
+0.5362 0.3233 0.4738 0.5673
+48.00
+54.33
+12.48
+0.092
+373.2
+left wrist
+Pos dense
+XZ OmniControl
+0.0599 0.5345 0.7071 0.7922
+33.46
+54.91
+18.44
+0.091
+220.3
+left wrist
+Pos dense
+XZ MOTIONCANVAS 0.0069 0.6952 0.8469 0.9041
+27.60
+53.78
+2.32
+0.055
+450.9
+left wrist
+Pos dense
+XYZ KIMODO
+1.3658 0.0803 0.1397 0.1893
+57.89
+33.06
+16.02
+0.053
+111.6
+left wrist
+Pos dense
+XYZ MaskControl
+0.0208 0.6265 0.7909 0.8587
+29.90
+54.11
+14.77
+0.091
+342.4
+left wrist
+Pos dense
+XYZ OmniControl
+0.0237 0.6148 0.7820 0.8542
+30.35
+54.66
+17.36
+0.082
+231.4
+left wrist
+Pos dense
+XYZ CondMDI
+0.0916 0.4491 0.6113 0.7022
+36.31
+55.66
+18.69
+0.090
+584.7
+left wrist
+Pos dense
+XYZ MotionLab
+0.0247 0.6007 0.7604 0.8332
+30.74
+54.23
+13.56
+0.023
+318.1
+left wrist
+Pos dense
+XYZ MOTIONCANVAS 0.0071 0.6931 0.8442 0.9023
+27.69
+53.78
+5.08
+0.055
+460.3
+right wrist
+Rot sparse
+–
+KIMODO
+0.3165 0.4634 0.6233 0.7117
+39.19
+55.02
+68.11
+0.091 1496.5
+right wrist
+Rot sparse
+–
+MOTIONCANVAS 0.0079 0.7007 0.8498 0.9064
+27.40
+53.82
+0.003
+0.053
+445.0
+right wrist
+Rot dense
+–
+KIMODO
+0.4320 0.3762 0.5269 0.6192
+42.96
+54.00
+68.52
+0.126
+540.3
+right wrist
+Rot dense
+–
+MOTIONCANVAS 0.0077 0.7048 0.8522 0.9071
+27.36
+53.76
+0.003
+0.057
+443.9
+right wrist
+Pos sparse
+XZ KIMODO
+0.5476 0.3197 0.4730 0.5695
+48.31
+54.37
+24.18
+0.130 1100.3
+right wrist
+Pos sparse
+XZ OmniControl
+0.0382 0.5659 0.7363 0.8166
+32.06
+55.30
+20.02
+0.085
+415.3
+right wrist
+Pos sparse
+XZ MOTIONCANVAS 0.0083 0.6989 0.8447 0.9018
+27.56
+53.88
+13.63
+0.052
+524.9
+right wrist
+Pos sparse
+XYZ KIMODO
+1.0767 0.2274 0.3605 0.4531
+52.18
+31.37
+29.66
+0.174 29626.3
+right wrist
+Pos sparse
+XYZ MaskControl
+0.0181 0.6287 0.7926 0.8639
+29.74
+54.07
+15.84
+0.083
+336.6
+right wrist
+Pos sparse
+XYZ OmniControl
+0.0280 0.6030 0.7701 0.8432
+30.82
+55.05
+21.06
+0.082
+452.4
+right wrist
+Pos sparse
+XYZ CondMDI
+0.0547 0.4674 0.6374 0.7314
+34.33
+54.90
+22.16
+0.085
+933.1
+right wrist
+Pos sparse
+XYZ MotionLab
+0.0226 0.5970 0.7539 0.8251
+30.89
+54.15
+14.59
+0.026
+314.6
+right wrist
+Pos sparse
+XYZ MOTIONCANVAS 0.0081 0.7003 0.8462 0.9028
+27.53
+53.86
+17.40
+0.052
+535.4
+right wrist
+Pos dense
+XZ KIMODO
+0.5459 0.3226 0.4768 0.5724
+48.08
+54.33
+13.81
+0.089
+369.8
+right wrist
+Pos dense
+XZ OmniControl
+0.0582 0.5392 0.7130 0.7975
+33.31
+54.75
+18.25
+0.091
+221.5
+right wrist
+Pos dense
+XZ MOTIONCANVAS 0.0068 0.6931 0.8422 0.8979
+27.66
+53.77
+2.53
+0.052
+450.7
+right wrist
+Pos dense
+XYZ KIMODO
+1.3238 0.0798 0.1378 0.1874
+58.33
+35.31
+17.60
+0.055
+131.6
+right wrist
+Pos dense
+XYZ MaskControl
+0.0211 0.6243 0.7843 0.8556
+29.96
+54.09
+15.30
+0.092
+343.6
+right wrist
+Pos dense
+XYZ OmniControl
+0.0246 0.6149 0.7806 0.8526
+30.38
+54.67
+17.34
+0.083
+232.8
+right wrist
+Pos dense
+XYZ CondMDI
+0.0670 0.4755 0.6422 0.7317
+34.83
+55.18
+18.15
+0.096
+610.5
+right wrist
+Pos dense
+XYZ MotionLab
+0.0247 0.5999 0.7621 0.8321
+30.71
+54.17
+13.96
+0.025
+317.3
+right wrist
+Pos dense
+XYZ MOTIONCANVAS 0.0067 0.6915 0.8424 0.8991
+27.71
+53.71
+4.91
+0.053
+456.4
+both wrists
+Rot sparse
+–
+KIMODO
+0.4473 0.4396 0.5981 0.6899
+41.00
+52.49
+77.26
+0.094 1573.6
+both wrists
+Rot sparse
+–
+MOTIONCANVAS 0.0078 0.7041 0.8537 0.9096
+27.31
+53.82
+0.003
+0.052
+444.5
+both wrists
+Rot dense
+–
+KIMODO
+0.3482 0.4770 0.6450 0.7387
+38.91
+53.65
+65.18
+0.152 1291.0
+both wrists
+Rot dense
+–
+MOTIONCANVAS 0.0072 0.6996 0.8490 0.9054
+27.41
+53.69
+0.003
+0.056
+455.1
+both wrists
+Pos sparse
+XZ KIMODO
+0.5487 0.3191 0.4719 0.5687
+48.30
+54.33
+23.85
+0.129 1085.9
+both wrists
+Pos sparse
+XZ OmniControl
+0.0464 0.5619 0.7289 0.8051
+32.37
+55.35
+18.82
+0.106
+602.5
+both wrists
+Pos sparse
+XZ MOTIONCANVAS 0.0076 0.7018 0.8476 0.9040
+27.39
+53.80
+10.25
+0.053
+589.1
+both wrists
+Pos sparse
+XYZ KIMODO
+1.0145 0.2201 0.3433 0.4294
+51.77
+33.83
+31.47
+0.168 28178.4
+both wrists
+Pos sparse
+XYZ MaskControl
+0.0154 0.6517 0.8124 0.8775
+29.00
+54.00
+11.23
+0.088
+349.6
+both wrists
+Pos sparse
+XYZ OmniControl
+0.0339 0.6082 0.7709 0.8402
+30.72
+54.97
+20.62
+0.105
+662.0
+both wrists
+Pos sparse
+XYZ CondMDI
+0.0513 0.4922 0.6617 0.7484
+33.69
+55.00
+21.68
+0.086 1098.6
+both wrists
+Pos sparse
+XYZ MotionLab
+0.0148 0.6402 0.7994 0.8667
+29.51
+53.95
+10.51
+0.026
+311.6
+both wrists
+Pos sparse
+XYZ ProjFlow
+0.0203 0.6320 0.7922 0.8608
+30.22
+54.61
+10.70
+0.042
+329.9
+both wrists
+Pos sparse
+XYZ MOTIONCANVAS 0.0074 0.7041 0.8514 0.9082
+27.28
+53.74
+13.07
+0.054
+592.8
+both wrists
+Pos dense
+XZ KIMODO
+0.5556 0.3328 0.4894 0.5870
+47.78
+53.95
+14.03
+0.090
+356.2
+both wrists
+Pos dense
+XZ OmniControl
+0.0882 0.5057 0.6703 0.7531
+34.71
+55.10
+19.05
+0.113
+270.2
+both wrists
+Pos dense
+XZ MOTIONCANVAS 0.0077 0.6855 0.8402 0.8977
+27.92
+53.75
+1.63
+0.054
+454.5
+both wrists
+Pos dense
+XYZ KIMODO
+1.3934 0.1183 0.2066 0.2762
+55.82
+28.17
+15.71
+0.042
+85.9
+both wrists
+Pos dense
+XYZ MaskControl
+0.0130 0.6496 0.8095 0.8746
+29.15
+53.98
+9.88
+0.082
+331.5
+both wrists
+Pos dense
+XYZ OmniControl
+0.0427 0.5935 0.7592 0.8305
+31.15
+54.76
+19.52
+0.102
+286.6
+both wrists
+Pos dense
+XYZ CondMDI
+0.0908 0.4578 0.6247 0.7137
+36.11
+55.59
+17.77
+0.099
+594.9
+both wrists
+Pos dense
+XYZ MotionLab
+0.0166 0.6414 0.8026 0.8708
+29.39
+53.90
+9.77
+0.027
+326.9
+both wrists
+Pos dense
+XYZ MOTIONCANVAS 0.0062 0.6871 0.8400 0.8983
+27.85
+53.72
+3.78
+0.054
+461.1
+Elbow joints
+left elbow
+Rot sparse
+–
+KIMODO
+0.1180 0.5393 0.7072 0.7907
+34.65
+56.54
+63.27
+0.096 2073.2
+left elbow
+Rot sparse
+–
+MOTIONCANVAS 0.0077 0.6985 0.8481 0.9046
+27.43
+53.85
+0.003
+0.051
+487.3
+Continued on next page
+23
+
+
+Table 9: Body-part control on HumanML3D (continued).
+Target
+Type Density Axes Method
+FID↓R@1↑R@2↑R@3↑MM-D↓Div.→Cue err.↓Foot↓
+Jit.↓
+left elbow
+Rot dense
+–
+KIMODO
+0.1051 0.5589 0.7231 0.8023
+33.94
+56.33
+52.82
+0.097
+416.3
+left elbow
+Rot dense
+–
+MOTIONCANVAS 0.0081 0.6964 0.8466 0.9043
+27.57
+53.91
+0.003
+0.056
+448.1
+left elbow
+Pos sparse
+XZ KIMODO
+0.5471 0.3206 0.4745 0.5703
+48.30
+54.41
+18.90
+0.130 1109.0
+left elbow
+Pos sparse
+XZ OmniControl
+0.0785 0.4953 0.6598 0.7419
+35.14
+55.84
+18.10
+0.095
+516.7
+left elbow
+Pos sparse
+XZ MOTIONCANVAS 0.0085 0.6960 0.8431 0.9007
+27.63
+53.86
+12.94
+0.053
+455.8
+left elbow
+Pos sparse
+XYZ KIMODO
+1.0631 0.2287 0.3651 0.4587
+52.15
+32.39
+21.92
+0.175 29348.9
+left elbow
+Pos sparse
+XYZ OmniControl
+0.0773 0.4990 0.6631 0.7454
+34.94
+55.94
+21.02
+0.097
+594.0
+left elbow
+Pos sparse
+XYZ CondMDI
+0.0578 0.4538 0.6234 0.7182
+34.73
+54.94
+17.00
+0.083 1042.2
+left elbow
+Pos sparse
+XYZ MotionLab
+0.0983 0.4654 0.6083 0.6808
+36.87
+55.81
+17.25
+0.023
+289.8
+left elbow
+Pos sparse
+XYZ MOTIONCANVAS 0.0085 0.6964 0.8430 0.9005
+27.62
+53.88
+14.85
+0.052
+460.9
+left elbow
+Pos dense
+XZ KIMODO
+0.5490 0.3156 0.4671 0.5629
+48.25
+54.54
+10.65
+0.089
+388.9
+left elbow
+Pos dense
+XZ OmniControl
+0.1691 0.4132 0.5691 0.6525
+39.57
+55.70
+18.98
+0.111
+142.7
+left elbow
+Pos dense
+XZ MOTIONCANVAS 0.0077 0.6981 0.8470 0.9031
+27.55
+53.76
+5.50
+0.054
+469.6
+left elbow
+Pos dense
+XYZ KIMODO
+1.3100 0.0693 0.1243 0.1734
+56.83
+35.67
+22.03
+0.043
+138.9
+left elbow
+Pos dense
+XYZ OmniControl
+0.1486 0.4336 0.5884 0.6736
+38.63
+55.91
+22.50
+0.112
+156.7
+left elbow
+Pos dense
+XYZ CondMDI
+0.0784 0.4648 0.6334 0.7244
+35.30
+55.08
+13.97
+0.083
+601.5
+left elbow
+Pos dense
+XYZ MotionLab
+0.2002 0.4188 0.5589 0.6362
+39.68
+54.85
+19.46
+0.021
+262.9
+left elbow
+Pos dense
+XYZ MOTIONCANVAS 0.0077 0.6985 0.8484 0.9040
+27.58
+53.76
+6.52
+0.055
+479.2
+right elbow
+Rot sparse
+–
+KIMODO
+0.1191 0.5401 0.7088 0.7913
+34.69
+56.47
+61.60
+0.096 2071.9
+right elbow
+Rot sparse
+–
+MOTIONCANVAS 0.0080 0.7038 0.8510 0.9060
+27.41
+53.90
+0.003
+0.053
+503.7
+right elbow
+Rot dense
+–
+KIMODO
+0.1111 0.5577 0.7255 0.8057
+34.04
+56.34
+49.30
+0.097
+414.1
+right elbow
+Rot dense
+–
+MOTIONCANVAS 0.0072 0.7023 0.8518 0.9066
+27.43
+53.63
+0.003
+0.054
+445.5
+right elbow
+Pos sparse
+XZ KIMODO
+0.5465 0.3197 0.4732 0.5705
+48.30
+54.44
+19.54
+0.131 1108.6
+right elbow
+Pos sparse
+XZ OmniControl
+0.0840 0.4892 0.6512 0.7357
+35.48
+55.90
+18.85
+0.099
+508.0
+right elbow
+Pos sparse
+XZ MOTIONCANVAS 0.0085 0.6960 0.8420 0.8999
+27.65
+53.88
+12.75
+0.052
+460.9
+right elbow
+Pos sparse
+XYZ KIMODO
+1.0636 0.2281 0.3639 0.4592
+52.17
+32.44
+22.23
+0.175 29331.0
+right elbow
+Pos sparse
+XYZ OmniControl
+0.0808 0.5004 0.6597 0.7430
+35.08
+55.95
+21.26
+0.097
+576.4
+right elbow
+Pos sparse
+XYZ CondMDI
+0.0583 0.4523 0.6220 0.7169
+34.73
+54.89
+16.88
+0.082 1029.3
+right elbow
+Pos sparse
+XYZ MotionLab
+0.0811 0.4861 0.6311 0.7048
+35.73
+55.48
+16.61
+0.023
+296.7
+right elbow
+Pos sparse
+XYZ MOTIONCANVAS 0.0085 0.6956 0.8425 0.9004
+27.64
+53.86
+14.64
+0.052
+467.9
+right elbow
+Pos dense
+XZ KIMODO
+0.5440 0.3178 0.4721 0.5695
+48.17
+54.64
+12.32
+0.086
+388.4
+right elbow
+Pos dense
+XZ OmniControl
+0.1831 0.4031 0.5576 0.6462
+40.14
+55.78
+19.74
+0.110
+139.4
+right elbow
+Pos dense
+XZ MOTIONCANVAS 0.0077 0.6972 0.8442 0.9010
+27.58
+53.69
+5.50
+0.053
+476.7
+right elbow
+Pos dense
+XYZ KIMODO
+1.3194 0.0610 0.1069 0.1471
+57.87
+39.28
+21.56
+0.042
+134.8
+right elbow
+Pos dense
+XYZ OmniControl
+0.1629 0.4222 0.5805 0.6684
+39.09
+55.95
+22.63
+0.110
+149.1
+right elbow
+Pos dense
+XYZ CondMDI
+0.0828 0.4686 0.6332 0.7226
+35.58
+55.89
+13.51
+0.085
+601.8
+right elbow
+Pos dense
+XYZ MotionLab
+0.1433 0.4523 0.6008 0.6782
+37.71
+55.02
+17.85
+0.017
+267.4
+right elbow
+Pos dense
+XYZ MOTIONCANVAS 0.0075 0.6949 0.8451 0.9028
+27.61
+53.70
+6.54
+0.054
+483.3
+both elbows Rot sparse
+–
+KIMODO
+0.1137 0.5614 0.7272 0.8074
+34.04
+56.46
+61.82
+0.098 2445.2
+both elbows Rot sparse
+–
+MOTIONCANVAS 0.0086 0.6991 0.8488 0.9059
+27.48
+53.86
+0.003
+0.053
+490.7
+both elbows Rot dense
+–
+KIMODO
+0.0908 0.5880 0.7603 0.8368
+32.68
+56.10
+50.84
+0.097
+437.4
+both elbows Rot dense
+–
+MOTIONCANVAS 0.0082 0.6994 0.8482 0.9054
+27.53
+53.78
+0.003
+0.056
+458.0
+both elbows Pos sparse
+XZ KIMODO
+0.5477 0.3192 0.4740 0.5701
+48.30
+54.40
+19.17
+0.130 1109.8
+both elbows Pos sparse
+XZ OmniControl
+0.0652 0.5161 0.6837 0.7666
+34.27
+55.54
+15.65
+0.125
+674.9
+both elbows Pos sparse
+XZ MOTIONCANVAS 0.0081 0.6991 0.8462 0.9040
+27.52
+53.82
+11.79
+0.053
+483.6
+both elbows Pos sparse
+XYZ KIMODO
+1.0236 0.2264 0.3586 0.4509
+51.96
+34.19
+22.23
+0.171 28147.4
+both elbows Pos sparse
+XYZ OmniControl
+0.0649 0.5194 0.6839 0.7666
+34.05
+55.73
+18.33
+0.124
+774.8
+both elbows Pos sparse
+XYZ CondMDI
+0.0566 0.4558 0.6247 0.7169
+34.60
+54.96
+16.74
+0.083 1256.4
+both elbows Pos sparse
+XYZ MotionLab
+0.0315 0.5756 0.7331 0.8046
+31.90
+54.81
+11.82
+0.026
+331.2
+both elbows Pos sparse
+XYZ MOTIONCANVAS 0.0079 0.7006 0.8492 0.9053
+27.47
+53.81
+13.35
+0.053
+495.9
+both elbows Pos dense
+XZ KIMODO
+0.5531 0.3206 0.4731 0.5694
+47.99
+54.67
+11.88
+0.088
+425.9
+both elbows Pos dense
+XZ OmniControl
+0.1325 0.4449 0.6054 0.6923
+37.92
+55.44
+16.39
+0.158
+153.1
+both elbows Pos dense
+XZ MOTIONCANVAS 0.0069 0.6936 0.8438 0.9004
+27.64
+53.65
+4.17
+0.055
+471.9
+both elbows Pos dense
+XYZ KIMODO
+1.3477 0.0579 0.0999 0.1433
+56.58
+33.65
+20.88
+0.038
+147.5
+both elbows Pos dense
+XYZ OmniControl
+0.1181 0.4660 0.6264 0.7103
+37.04
+55.78
+19.70
+0.157
+161.1
+both elbows Pos dense
+XYZ CondMDI
+0.1187 0.4449 0.6062 0.6939
+36.98
+55.57
+13.67
+0.083
+607.0
+both elbows Pos dense
+XYZ MotionLab
+0.0356 0.5895 0.7512 0.8228
+31.48
+54.45
+10.69
+0.026
+323.4
+both elbows Pos dense
+XYZ MOTIONCANVAS 0.0067 0.6966 0.8472 0.9040
+27.65
+53.66
+4.94
+0.056
+479.9
+Foot joints
+left foot
+Rot sparse
+–
+KIMODO
+0.1261 0.5437 0.7120 0.7935
+34.77
+56.60
+68.75
+0.089 1503.0
+left foot
+Rot sparse
+–
+MOTIONCANVAS 0.0085 0.6979 0.8439 0.9014
+27.62
+53.89
+0.0005
+0.051
+433.3
+left foot
+Rot dense
+–
+KIMODO
+0.1390 0.5295 0.6986 0.7835
+35.41
+56.72
+72.53
+0.102
+467.6
+left foot
+Rot dense
+–
+MOTIONCANVAS 0.0080 0.7011 0.8492 0.9058
+27.40
+53.75
+0.0005
+0.050
+435.6
+left foot
+Pos sparse
+XZ KIMODO
+0.5477 0.3186 0.4736 0.5691
+48.34
+54.39
+22.31
+0.131 1102.0
+left foot
+Pos sparse
+XZ OmniControl
+0.0381 0.5572 0.7269 0.8067
+32.26
+55.23
+16.98
+0.108
+365.8
+left foot
+Pos sparse
+XZ MOTIONCANVAS 0.0088 0.6956 0.8423 0.8992
+27.67
+53.90
+13.74
+0.078
+503.0
+Continued on next page
+24
+
+
+Table 9: Body-part control on HumanML3D (continued).
+Target
+Type Density Axes Method
+FID↓R@1↑R@2↑R@3↑MM-D↓Div.→Cue err.↓Foot↓
+Jit.↓
+left foot
+Pos sparse
+XYZ KIMODO
+1.1092 0.2338 0.3705 0.4627
+52.52
+30.80
+27.90
+0.162 28996.7
+left foot
+Pos sparse
+XYZ MaskControl
+0.0227 0.6105 0.7756 0.8474
+30.63
+54.41
+15.01
+0.106
+330.9
+left foot
+Pos sparse
+XYZ OmniControl
+0.0343 0.5758 0.7439 0.8205
+31.69
+55.14
+16.76
+0.105
+369.9
+left foot
+Pos sparse
+XYZ CondMDI
+0.0563 0.4501 0.6208 0.7147
+34.81
+54.82
+17.57
+0.135
+811.9
+left foot
+Pos sparse
+XYZ MotionLab
+0.0350 0.5541 0.7113 0.7835
+32.67
+54.67
+15.04
+0.027
+319.2
+left foot
+Pos sparse
+XYZ MOTIONCANVAS 0.0089 0.6954 0.8421 0.8996
+27.67
+53.90
+14.80
+0.082
+509.0
+left foot
+Pos dense
+XZ KIMODO
+0.6206 0.3147 0.4657 0.5617
+49.30
+53.96
+15.00
+0.139
+345.1
+left foot
+Pos dense
+XZ OmniControl
+0.0567 0.5259 0.6985 0.7830
+33.68
+55.00
+16.80
+0.090
+211.3
+left foot
+Pos dense
+XZ MOTIONCANVAS 0.0082 0.6967 0.8439 0.9015
+27.68
+53.92
+4.36
+0.084
+454.8
+left foot
+Pos dense
+XYZ KIMODO
+1.7310 0.0652 0.1154 0.1583
+60.88
+22.05
+15.81
+0.836
+319.5
+left foot
+Pos dense
+XYZ MaskControl
+0.0231 0.6080 0.7709 0.8425
+30.61
+54.43
+13.66
+0.085
+339.0
+left foot
+Pos dense
+XYZ OmniControl
+0.0293 0.5867 0.7554 0.8307
+31.30
+54.90
+13.42
+0.082
+238.7
+left foot
+Pos dense
+XYZ CondMDI
+0.0812 0.4705 0.6428 0.7387
+34.87
+55.15
+14.02
+0.131
+580.6
+left foot
+Pos dense
+XYZ MotionLab
+0.0366 0.5590 0.7151 0.7888
+32.59
+54.73
+13.01
+0.026
+327.4
+left foot
+Pos dense
+XYZ MOTIONCANVAS 0.0082 0.6953 0.8437 0.9014
+27.70
+53.92
+5.37
+0.085
+461.9
+right foot
+Rot sparse
+–
+KIMODO
+0.1260 0.5406 0.7110 0.7954
+34.88
+56.58
+107.76
+0.090 1484.6
+right foot
+Rot sparse
+–
+MOTIONCANVAS 0.0086 0.6971 0.8430 0.9007
+27.64
+53.88
+0.0005
+0.051
+434.0
+right foot
+Rot dense
+–
+KIMODO
+0.1413 0.5412 0.7123 0.7940
+35.16
+56.70
+100.25
+0.101
+460.1
+right foot
+Rot dense
+–
+MOTIONCANVAS 0.0089 0.6994 0.8473 0.9038
+27.50
+53.81
+0.0005
+0.050
+439.2
+right foot
+Pos sparse
+XZ KIMODO
+0.5469 0.3196 0.4727 0.5695
+48.33
+54.43
+22.70
+0.132 1103.2
+right foot
+Pos sparse
+XZ OmniControl
+0.0382 0.5565 0.7253 0.8052
+32.23
+55.18
+16.93
+0.109
+361.4
+right foot
+Pos sparse
+XZ MOTIONCANVAS 0.0089 0.6953 0.8416 0.8992
+27.67
+53.90
+13.95
+0.077
+499.8
+right foot
+Pos sparse
+XYZ KIMODO
+1.0912 0.2345 0.3713 0.4657
+52.29
+31.23
+27.97
+0.164 28930.9
+right foot
+Pos sparse
+XYZ MaskControl
+0.0266 0.6062 0.7690 0.8407
+30.82
+54.56
+15.71
+0.112
+333.5
+right foot
+Pos sparse
+XYZ OmniControl
+0.0341 0.5765 0.7454 0.8225
+31.58
+55.22
+17.38
+0.107
+370.8
+right foot
+Pos sparse
+XYZ CondMDI
+0.0554 0.4521 0.6204 0.7150
+34.73
+54.69
+17.85
+0.136
+800.1
+right foot
+Pos sparse
+XYZ MotionLab
+0.0401 0.5363 0.6905 0.7643
+33.45
+54.93
+16.57
+0.031
+324.3
+right foot
+Pos sparse
+XYZ MOTIONCANVAS 0.0090 0.6954 0.8414 0.8988
+27.68
+53.94
+14.95
+0.082
+504.6
+right foot
+Pos dense
+XZ KIMODO
+0.5896 0.3161 0.4675 0.5645
+49.01
+54.51
+16.11
+0.135
+346.0
+right foot
+Pos dense
+XZ OmniControl
+0.0576 0.5300 0.6987 0.7829
+33.60
+54.93
+17.64
+0.091
+208.7
+right foot
+Pos dense
+XZ MOTIONCANVAS 0.0087 0.6964 0.8435 0.8995
+27.74
+54.02
+4.57
+0.087
+451.3
+right foot
+Pos dense
+XYZ KIMODO
+1.7658 0.0577 0.1040 0.1452
+61.59
+19.95
+25.11
+0.099
+126.4
+right foot
+Pos dense
+XYZ MaskControl
+0.0276 0.6045 0.7683 0.8398
+30.89
+54.54
+13.96
+0.087
+336.9
+right foot
+Pos dense
+XYZ OmniControl
+0.0270 0.5992 0.7666 0.8406
+30.92
+54.82
+13.97
+0.081
+242.7
+right foot
+Pos dense
+XYZ CondMDI
+0.0695 0.4801 0.6539 0.7439
+34.13
+54.54
+14.54
+0.180
+594.7
+right foot
+Pos dense
+XYZ MotionLab
+0.0522 0.5323 0.6870 0.7627
+33.81
+55.08
+14.98
+0.027
+324.8
+right foot
+Pos dense
+XYZ MOTIONCANVAS 0.0090 0.6950 0.8433 0.8998
+27.78
+54.06
+5.56
+0.087
+458.9
+both feet
+Rot sparse
+–
+KIMODO
+0.1275 0.5479 0.7198 0.8033
+34.59
+56.66
+87.67
+0.084 1484.6
+both feet
+Rot sparse
+–
+MOTIONCANVAS 0.0085 0.6983 0.8447 0.9016
+27.60
+53.87
+0.0005
+0.050
+435.6
+both feet
+Rot dense
+–
+KIMODO
+0.1558 0.5442 0.7158 0.7970
+35.44
+56.80
+84.98
+0.100
+483.3
+both feet
+Rot dense
+–
+MOTIONCANVAS 0.0087 0.7037 0.8514 0.9077
+27.32
+53.71
+0.0005
+0.050
+443.0
+both feet
+Pos sparse
+XZ KIMODO
+0.5479 0.3185 0.4731 0.5687
+48.33
+54.36
+22.35
+0.132 1091.6
+both feet
+Pos sparse
+XZ OmniControl
+0.0523 0.5499 0.7117 0.7875
+32.75
+55.49
+15.60
+0.167
+543.4
+both feet
+Pos sparse
+XZ MOTIONCANVAS 0.0087 0.6960 0.8410 0.8989
+27.68
+53.87
+12.50
+0.090
+535.5
+both feet
+Pos sparse
+XYZ KIMODO
+1.1028 0.2259 0.3573 0.4480
+52.52
+30.69
+26.99
+0.173 29854.8
+both feet
+Pos sparse
+XYZ MaskControl
+0.0249 0.6176 0.7798 0.8495
+30.54
+54.57
+10.62
+0.126
+348.3
+both feet
+Pos sparse
+XYZ OmniControl
+0.0483 0.5742 0.7340 0.8034
+32.18
+55.32
+16.23
+0.164
+545.1
+both feet
+Pos sparse
+XYZ CondMDI
+0.0583 0.4574 0.6262 0.7195
+34.64
+54.73
+17.20
+0.185
+944.6
+both feet
+Pos sparse
+XYZ MotionLab
+0.0304 0.5681 0.7257 0.7968
+32.15
+54.70
+12.62
+0.032
+330.8
+both feet
+Pos sparse
+XYZ MOTIONCANVAS 0.0088 0.6966 0.8428 0.8997
+27.68
+53.88
+13.28
+0.090
+540.2
+both feet
+Pos dense
+XZ KIMODO
+0.6045 0.3178 0.4676 0.5639
+49.14
+54.04
+15.30
+0.142
+317.1
+both feet
+Pos dense
+XZ OmniControl
+0.1369 0.4758 0.6275 0.7038
+36.53
+55.71
+17.39
+0.108
+257.2
+both feet
+Pos dense
+XZ ProjFlow
+0.1945 0.4034 0.5548 0.6388
+40.44
+55.59
+11.46
+0.193
+284.9
+both feet
+Pos dense
+XZ MOTIONCANVAS 0.0076 0.6918 0.8417 0.9000
+27.78
+53.89
+3.11
+0.074
+453.4
+both feet
+Pos dense
+XYZ KIMODO
+1.6323 0.0558 0.0984 0.1357
+61.98
+33.33
+23.55
+0.106
+747.7
+both feet
+Pos dense
+XYZ MaskControl
+0.0221 0.6112 0.7737 0.8453
+30.41
+54.29
+9.57
+0.068
+339.5
+both feet
+Pos dense
+XYZ OmniControl
+0.0615 0.5606 0.7177 0.7873
+32.75
+55.35
+14.04
+0.091
+272.6
+both feet
+Pos dense
+XYZ CondMDI
+0.0745 0.4933 0.6664 0.7556
+33.98
+54.36
+13.71
+0.188
+613.5
+both feet
+Pos dense
+XYZ MotionLab
+0.0440 0.5586 0.7151 0.7872
+32.85
+54.97
+10.89
+0.028
+338.8
+both feet
+Pos dense
+XYZ MOTIONCANVAS 0.0080 0.6906 0.8419 0.8993
+27.80
+53.93
+4.03
+0.074
+465.5
+Knee joints
+left knee
+Rot sparse
+–
+KIMODO
+0.1216 0.5406 0.7124 0.7969
+34.77
+56.44
+43.13
+0.271 1973.7
+left knee
+Rot sparse
+–
+MOTIONCANVAS 0.0084 0.6978 0.8459 0.9032
+27.62
+53.86
+0.003
+0.082
+530.0
+left knee
+Rot dense
+–
+KIMODO
+0.1450 0.5374 0.7085 0.7899
+35.25
+56.52
+39.32
+0.191
+459.8
+left knee
+Rot dense
+–
+MOTIONCANVAS 0.0074 0.6956 0.8477 0.9041
+27.66
+53.84
+0.003
+0.061
+464.9
+left knee
+Pos sparse
+XZ KIMODO
+0.5482 0.3193 0.4736 0.5693
+48.33
+54.40
+13.56
+0.131 1109.1
+left knee
+Pos sparse
+XZ OmniControl
+0.0959 0.4818 0.6413 0.7229
+36.08
+56.20
+13.74
+0.120
+451.6
+left knee
+Pos sparse
+XZ MOTIONCANVAS 0.0087 0.6950 0.8424 0.8995
+27.66
+53.88
+9.61
+0.061
+455.1
+Continued on next page
+25
+
+
+Table 9: Body-part control on HumanML3D (continued).
+Target
+Type Density Axes Method
+FID↓R@1↑R@2↑R@3↑MM-D↓Div.→Cue err.↓Foot↓
+Jit.↓
+left knee
+Pos sparse
+XYZ KIMODO
+1.0650 0.2179 0.3475 0.4392
+52.73
+33.86
+17.20
+0.170 27660.5
+left knee
+Pos sparse
+XYZ OmniControl
+0.0970 0.4763 0.6361 0.7186
+36.20
+56.26
+15.04
+0.125
+480.1
+left knee
+Pos sparse
+XYZ CondMDI
+0.0582 0.4493 0.6200 0.7139
+34.93
+54.79
+12.10
+0.099
+924.9
+left knee
+Pos sparse
+XYZ MotionLab
+0.0374 0.5501 0.7070 0.7802
+32.83
+54.59
+10.74
+0.024
+315.7
+left knee
+Pos sparse
+XYZ MOTIONCANVAS 0.0090 0.6952 0.8426 0.8998
+27.67
+53.88
+10.07
+0.068
+460.5
+left knee
+Pos dense
+XZ KIMODO
+0.5944 0.3138 0.4681 0.5654
+49.09
+54.59
+9.08
+0.101
+387.9
+left knee
+Pos dense
+XZ OmniControl
+0.1965 0.3943 0.5488 0.6363
+40.87
+55.89
+14.64
+0.123
+139.0
+left knee
+Pos dense
+XZ MOTIONCANVAS 0.0086 0.6927 0.8397 0.8982
+27.75
+53.88
+4.45
+0.076
+481.4
+left knee
+Pos dense
+XYZ KIMODO
+1.7877 0.0491 0.0899 0.1282
+61.30
+19.14
+17.55
+0.007
+37.7
+left knee
+Pos dense
+XYZ OmniControl
+0.1782 0.4117 0.5658 0.6535
+39.97
+56.26
+16.35
+0.125
+159.6
+left knee
+Pos dense
+XYZ CondMDI
+0.0579 0.4611 0.6301 0.7229
+34.49
+54.57
+9.18
+0.123
+551.9
+left knee
+Pos dense
+XYZ MotionLab
+0.0396 0.5588 0.7123 0.7856
+32.63
+54.74
+9.46
+0.025
+314.6
+left knee
+Pos dense
+XYZ MOTIONCANVAS 0.0088 0.6936 0.8403 0.8989
+27.76
+53.84
+4.37
+0.077
+473.9
+right knee
+Rot sparse
+–
+KIMODO
+0.1193 0.5383 0.7075 0.7919
+34.82
+56.47
+49.97
+0.271 1993.0
+right knee
+Rot sparse
+–
+MOTIONCANVAS 0.0085 0.7000 0.8473 0.9036
+27.56
+53.90
+0.003
+0.074
+515.3
+right knee
+Rot dense
+–
+KIMODO
+0.1474 0.5343 0.7092 0.7954
+35.33
+56.45
+48.24
+0.177
+456.9
+right knee
+Rot dense
+–
+MOTIONCANVAS 0.0084 0.6975 0.8462 0.9023
+27.74
+53.91
+0.003
+0.062
+458.3
+right knee
+Pos sparse
+XZ KIMODO
+0.5463 0.3194 0.4736 0.5695
+48.31
+54.44
+13.39
+0.131 1108.5
+right knee
+Pos sparse
+XZ OmniControl
+0.0884 0.4851 0.6473 0.7308
+35.70
+56.02
+13.58
+0.108
+449.0
+right knee
+Pos sparse
+XZ MOTIONCANVAS 0.0088 0.6954 0.8423 0.8992
+27.68
+53.90
+9.60
+0.065
+462.4
+right knee
+Pos sparse
+XYZ KIMODO
+1.0598 0.2213 0.3535 0.4442
+52.57
+33.88
+16.43
+0.169 27770.4
+right knee
+Pos sparse
+XYZ OmniControl
+0.0885 0.4855 0.6462 0.7288
+35.71
+56.11
+15.01
+0.115
+481.1
+right knee
+Pos sparse
+XYZ CondMDI
+0.0579 0.4482 0.6174 0.7136
+34.98
+54.85
+12.26
+0.102
+937.0
+right knee
+Pos sparse
+XYZ MotionLab
+0.0345 0.5601 0.7138 0.7865
+32.43
+54.68
+10.78
+0.027
+314.2
+right knee
+Pos sparse
+XYZ MOTIONCANVAS 0.0092 0.6949 0.8419 0.8990
+27.71
+53.92
+10.07
+0.071
+469.1
+right knee
+Pos dense
+XZ KIMODO
+0.5769 0.3137 0.4689 0.5650
+48.87
+54.44
+8.47
+0.101
+387.6
+right knee
+Pos dense
+XZ OmniControl
+0.1792 0.4028 0.5556 0.6416
+40.11
+55.80
+14.23
+0.117
+142.9
+right knee
+Pos dense
+XZ MOTIONCANVAS 0.0082 0.6954 0.8419 0.8975
+27.71
+53.85
+4.06
+0.076
+467.8
+right knee
+Pos dense
+XYZ KIMODO
+1.7089 0.0455 0.0858 0.1236
+60.64
+21.36
+12.85
+0.007
+61.4
+right knee
+Pos dense
+XYZ OmniControl
+0.1703 0.4070 0.5630 0.6497
+39.82
+55.79
+15.83
+0.116
+151.7
+right knee
+Pos dense
+XYZ CondMDI
+0.0632 0.4633 0.6363 0.7280
+34.60
+54.83
+9.51
+0.153
+565.3
+right knee
+Pos dense
+XYZ MotionLab
+0.0408 0.5567 0.7131 0.7854
+32.74
+54.70
+9.47
+0.029
+315.7
+right knee
+Pos dense
+XYZ MOTIONCANVAS 0.0084 0.6949 0.8417 0.8989
+27.76
+53.85
+3.94
+0.077
+465.0
+both knees
+Rot sparse
+–
+KIMODO
+0.1219 0.5406 0.7119 0.7983
+34.67
+56.29
+46.36
+0.327 2332.3
+both knees
+Rot sparse
+–
+MOTIONCANVAS 0.0085 0.7002 0.8486 0.9052
+27.55
+53.90
+0.003
+0.077
+514.5
+both knees
+Rot dense
+–
+KIMODO
+0.1604 0.5377 0.7048 0.7858
+35.68
+56.35
+43.97
+0.189
+510.5
+both knees
+Rot dense
+–
+MOTIONCANVAS 0.0070 0.6944 0.8477 0.9044
+27.71
+53.74
+0.003
+0.062
+486.1
+both knees
+Pos sparse
+XZ KIMODO
+0.5478 0.3190 0.4731 0.5694
+48.32
+54.43
+13.40
+0.131 1109.2
+both knees
+Pos sparse
+XZ OmniControl
+0.0845 0.4939 0.6541 0.7348
+35.42
+56.11
+12.33
+0.160
+582.3
+both knees
+Pos sparse
+XZ MOTIONCANVAS 0.0087 0.6968 0.8440 0.9019
+27.60
+53.83
+8.83
+0.071
+482.1
+both knees
+Pos sparse
+XYZ KIMODO
+1.0358 0.1982 0.3134 0.3952
+53.45
+38.43
+18.34
+0.169 23782.6
+both knees
+Pos sparse
+XYZ OmniControl
+0.0811 0.4950 0.6554 0.7379
+35.32
+56.19
+13.78
+0.174
+626.1
+both knees
+Pos sparse
+XYZ CondMDI
+0.0553 0.4488 0.6185 0.7121
+34.89
+54.77
+11.99
+0.117 1104.7
+both knees
+Pos sparse
+XYZ MotionLab
+0.0277 0.5829 0.7373 0.8070
+31.62
+54.47
+8.50
+0.030
+326.0
+both knees
+Pos sparse
+XYZ MOTIONCANVAS 0.0088 0.6973 0.8444 0.9028
+27.62
+53.86
+9.02
+0.079
+490.3
+both knees
+Pos dense
+XZ KIMODO
+0.6088 0.3166 0.4690 0.5651
+49.27
+54.86
+9.92
+0.113
+430.6
+both knees
+Pos dense
+XZ OmniControl
+0.1664 0.4150 0.5678 0.6543
+39.58
+55.74
+13.08
+0.193
+149.9
+both knees
+Pos dense
+XZ MOTIONCANVAS 0.0063 0.6946 0.8451 0.9020
+27.69
+53.68
+2.80
+0.073
+465.7
+both knees
+Pos dense
+XYZ KIMODO
+1.8954 0.0452 0.0899 0.1308
+61.24
+11.97
+12.23
+0.003
+34.8
+both knees
+Pos dense
+XYZ OmniControl
+0.1446 0.4367 0.5907 0.6756
+38.38
+56.04
+14.92
+0.194
+174.1
+both knees
+Pos dense
+XYZ CondMDI
+0.0622 0.4702 0.6409 0.7333
+34.29
+54.46
+8.69
+0.164
+544.1
+both knees
+Pos dense
+XYZ MotionLab
+0.0354 0.5802 0.7358 0.8067
+31.91
+54.51
+6.54
+0.033
+329.9
+both knees
+Pos dense
+XYZ ProjFlow
+0.0275 0.6036 0.7639 0.8343
+31.06
+54.90
+6.11
+0.085
+316.4
+both knees
+Pos dense
+XYZ MOTIONCANVAS 0.0063 0.6946 0.8451 0.9022
+27.71
+53.60
+2.74
+0.076
+460.7
+A.7
+OPTIMIZATION AND SAMPLING CONFIGURATION
+We initialize from the released HY-Motion-1.0-Lite checkpoint (Wen et al., 2025) and further train
+on an approximately 700-hour motion corpus covering diverse motion categories and variations.
+All benchmark test and evaluation sequences used in this work are excluded from further training.
+Training batches contain 30% text-only generation, 60% cue-conditioned generation, 5% MotionFix
+editing, and 5% PerMo editing. Half of each editing stream additionally samples kinematic cues
+from the reference edited motion. Text is dropped with probability 0.1 for classifier-free guidance;
+kinematic-cue dropout is disabled.
+26
+
+
+We use AdamW (Loshchilov & Hutter, 2019) with learning rate 10−4, β = (0.9, 0.99), zero weight
+decay, dataloader batch size 20, and gradient clipping at norm 2. A final continuation uses learning
+rate 10−5 and global batch size 768 in FP32. Training runs for 2,000 epochs on 64 GPUs over
+approximately 14 days. Relative to LMC, the weights are λpos = 50, λvel = 500, λexcess = 0.5,
+λfk = 1500, λworldSob = 0.03, λrootSob = 0.01, λrootH1 = 50, λendpoint = 1, and λedge = 0.5.
+Rollout weights are λroll-join = 0.05 and λroll-excess = 0.1. Unless stated otherwise, MOTIONCAN-
+VAS generations use random seed 42. All reported MOTIONCANVAS inference uses classifier-free
+guidance scale 2.5 and 50 Euler steps with cue imputation; repair additionally follows Appendix A.6.
+Figure 7: Local body cues guide full-body completion across regions, joints, and position axes.
+Top: purple marks specified rotations under dense regional or sparse joint control. Bottom: pink
+marks position cues, including full 3D wrist/knee targets and horizontal foot projections. Blue denotes
+generated motion.
+B
+EVALUATION PROTOCOLS AND METRICS
+This section defines the common evaluation space and every metric used in the main paper and
+supplementary tables. Training and inference details are confined to Appendix A; supplementary
+experiments begin in Appendix C.
+27
+
+
+B.1
+DATASETS AND COMMON REPRESENTATION
+HumanML3D (Guo et al., 2022) supplies the common test split for text-to-motion, temporal com-
+pletion, root control, body-part control, and mixed cues. BABEL (Punnakkal et al., 2021) evaluates
+sequential generation, MotionFix (Athanasiou et al., 2024) instruction editing, PerMo (Kim et al.,
+2025) style and content editing, and BrokenAMASS (Mu et al., 2025) motion repair. Unless a
+benchmark prescribes another rate, decoded outputs are converted to neutral 22-joint SMPL motion at
+30 fps before evaluation. PerMo additionally canonicalizes each motion by aligning its root position,
+facing direction, and floor height under the same convention before TMR encoding.
+Table 10: Mixed-cue gains hold across randomized densities and placements. HumanML3D
+protocols P1–P4 randomly combine full-pose, root-path, body-region, and joint-axis position cues.
+MOTIONCANVAS leads FID and all four cue errors in every protocol. (a) Full-motion metrics; (b)
+errors for the four cue types (cm), alongside skating and jitter. →denotes reference-closest diversity.
+(a) Full-motion quality
+Protocol
+Method
+FID↓
+R@1↑
+R@2↑
+R@3↑
+MM-D↓
+Div.→
+P1
+OmniControl (Xie et al., 2024)
+0.0645
+0.5335
+0.6982
+0.7779
+33.38
+55.63
+P1
+ProjFlow (Watanabe et al., 2026)
+1.0327
+0.2013
+0.3219
+0.4114
+52.02
+38.43
+P1
+MOTIONCANVAS
+0.0077
+0.6938
+0.8475
+0.9067
+27.90
+53.66
+P2
+OmniControl
+0.1224
+0.5053
+0.6526
+0.7257
+35.23
+56.26
+P2
+ProjFlow
+0.0456
+0.6517
+0.8163
+0.8847
+28.79
+51.84
+P2
+MOTIONCANVAS
+0.0083
+0.6922
+0.8466
+0.9055
+27.83
+53.79
+P3
+OmniControl
+0.0484
+0.5751
+0.7416
+0.8154
+31.87
+55.27
+P3
+ProjFlow
+1.0289
+0.1937
+0.3070
+0.3943
+52.61
+40.35
+P3
+MOTIONCANVAS
+0.0125
+0.6817
+0.8356
+0.8966
+28.30
+53.66
+P4
+OmniControl
+0.0910
+0.5461
+0.6970
+0.7649
+33.66
+56.04
+P4
+ProjFlow
+0.5982
+0.3372
+0.4834
+0.5752
+45.12
+48.15
+P4
+MOTIONCANVAS
+0.0083
+0.6914
+0.8442
+0.9028
+27.91
+53.70
+(b) Cue adherence and motion diagnostics
+Protocol
+Method
+Full-pose
+↓
+Root-path
+↓
+Body-region
+↓
+Joint-axis
+↓
+Foot↓
+Jit.↓
+P1
+OmniControl
+14.06
+15.85
+14.69
+27.70
+0.158
+673.5
+P1
+ProjFlow
+12.09
+8.51
+16.81
+39.40
+0.784
+12741.2
+P1
+MOTIONCANVAS
+1.47
+0.00
+2.33
+4.26
+0.184
+461.4
+P2
+OmniControl
+12.59
+28.31
+12.35
+16.17
+0.405
+1871.2
+P2
+ProjFlow
+4.31
+28.29
+3.86
+5.19
+0.183
+1520.0
+P2
+MOTIONCANVAS
+1.76
+0.00
+2.02
+3.02
+0.159
+566.2
+P3
+OmniControl
+11.20
+11.62
+15.48
+9.86
+0.118
+564.7
+P3
+ProjFlow
+3.67
+9.18
+21.22
+28.78
+0.769
+8362.1
+P3
+MOTIONCANVAS
+1.40
+0.00
+3.63
+3.06
+0.177
+630.6
+P4
+OmniControl
+11.36
+11.96
+11.16
+12.09
+0.344
+1704.0
+P4
+ProjFlow
+6.40
+9.17
+8.28
+19.08
+0.843
+7668.4
+P4
+MOTIONCANVAS
+1.94
+0.00
+1.96
+6.03
+0.151
+606.9
+Each comparison includes released systems whose public interface supports the evaluated cues or
+editing instruction, and every included method receives the same cue values and cue layout after
+representation conversion. Outputs whose native frame rate differs from the evaluation rate are
+resampled to the common temporal grid, following Section 4.1. Cartesian errors are always computed
+after decoding, so they compare realized body motion rather than method-specific latent coordinates.
+28
+
+
+B.2
+EMBEDDING-BASED MOTION METRICS
+Let n index evaluation examples and N be their count. Evaluator embeddings zg
+n and zr
+n represent
+generated and reference motions, respectively. FID uses empirical Gaussian statistics (µg, Σg) and
+(µr, Σr) of normalized embeddings ¯z = z/∥z∥2:
+FID = ∥µg −µr∥2
+2 + tr
+
+Σg + Σr −2
+ Σ1/2
+g
+ΣrΣ1/2
+g
+1/2
+.
+(23)
+The two terms compare the centers and spreads of the generated and reference embedding distributions,
+rather than matching individual motion pairs.
+Figure 8: Different cue types jointly shape one generated action. The four HumanML3D examples
+combine root paths with local position cues or full-pose frames with joint cues. Orange poses,
+turquoise paths, and pink targets show kinematic cues; blue shows the generated motion connecting
+them.
+Retrieval, MM-Dist, and Diversity use the evaluator’s unnormalized embeddings. For a query zq
+n with
+a matched motion, R@k is the fraction of queries whose match ranks among the nearest k candidates:
+R@k = 1
+N
+N
+X
+n=1
+1[rank(zg
+n | zq
+n) ≤k] ,
+MM-Dist = 1
+N
+N
+X
+n=1
+∥zg
+n −zq
+n∥2.
+(24)
+BABEL action groups are treated as multi-positive matches. Diversity samples P distinct output
+pairs (ap, bp) and computes
+Div = 1
+P
+P
+X
+p=1
+∥zg
+ap −zg
+bp∥2;
+(25)
+the arrow in table headers indicates proximity to reference diversity rather than monotonic preference.
+HumanML3D generation and control use the joint-based TMR evaluator (Petrovich et al., 2023).
+MotionFix uses the same construction with target-motion queries, yielding M2M retrieval and paired
+M2M-Dist. PerMo’s T2M MM-Dist and R@3 use the paired target caption, whereas its M2M metrics
+use the paired target motion. For repair, TMR R@3 retrieves the paired clean motion in the canonical
+SMPL-22 joint-position embedding space.
+B.3
+CUE ADHERENCE
+Embedding metrics score complete generated motions but do not directly measure cue execution. We
+therefore measure Euclidean position error or geodesic rotation error (the smallest angle aligning two
+orientations) on the supplied frames, joints, and axes. Failure rates report the fraction exceeding the
+29
+
+
+stated error threshold. Root-path metrics additionally score all frames, including intervals between
+sparse waypoints; the task sections below define these metrics explicitly.
+Table 11: Language-guided editing achieves strong target agreement across instruction, style,
+and content changes. (a) MOTIONCANVAS leads all reported metrics on 1,013 MotionFix input–
+target pairs. (b) PerMo changes style while retaining action, or changes action while retaining style;
+MOTIONCANVAS leads requested-attribute accuracy and paired-motion retrieval on both tracks.
+S-/A-Acc score style/action; M2M retrieval matches edited outputs to target motions.
+(a) Instruction editing on MotionFix
+Method
+FID↓
+Batch-32 M2M retrieval M2M-Dist↓Div.→
+R@1↑R@2↑
+R@3↑
+GT target
+0.0000 100.00 100.00 100.00
+0.0000
+57.39
+TMED (Athanasiou et al., 2024) 0.1004
+45.31
+60.40
+68.50
+0.8952
+57.57
+SimMotionEdit (Li et al., 2025b) 0.0752
+55.43
+71.08
+79.06
+0.7931
+57.21
+MotionLab (Guo et al., 2025)
+0.7024
+36.56
+52.91
+63.43
+1.1293
+47.79
+MOTIONCANVAS
+0.0056
+94.13
+98.30
+99.08
+0.2939
+57.43
+(b) Style and content editing on PerMo
+Track
+Method
+S-Acc↑A-Acc↑
+FID↓
+MM-D↓T2M R@3↑M2M R@3↑M2M-D↓
+Div.
+Foot↓
+Jit.↓
+Style
+TMED (Athanasiou et al., 2024)
+23.17
+46.03
+1.0784
+54.74
+22.97
+14.29
+1.2755
+56.58
+9.93
+42.97
+SimMotionEdit (Li et al., 2025b)
+16.59
+71.11
+0.9794
+49.46
+37.34
+19.05
+1.1696
+55.68 11.19 11.11
+MotionLab (Guo et al., 2025)
+26.67
+94.52
+0.2096
+24.75
+58.44
+38.10
+0.6141
+47.97
+2.79
+7.54
+MotionReFit (Jiang et al., 2025)
+26.75
+95.32
+0.1233
+18.78
+64.69
+36.51
+0.4818
+41.70
+3.87
+20.05
+MOTIONCANVAS
+40.79
+92.54
+0.0657
+18.82
+65.00
+68.25
+0.3781
+39.90
+3.22
+14.52
+Content
+TMED
+25.90
+29.48
+1.1329
+56.31
+14.14
+4.48
+1.3319
+55.23 12.03 79.53
+SimMotionEdit
+39.03
+18.36
+1.2423
+58.57
+8.05
+2.99
+1.3688
+54.54
+8.15
+10.41
+MotionLab
+49.10
+18.51
+0.6337
+46.93
+11.02
+4.48
+1.1208
+42.81
+2.99
+7.56
+MotionReFit
+36.12
+32.61
+0.4978
+41.23
+15.55
+10.45
+0.9986
+40.83
+3.72
+30.76
+MOTIONCANVAS
+48.21
+96.42
+0.0523
+18.75
+64.77
+68.66
+0.3796
+40.83
+2.65
+11.28
+C
+SUPPLEMENTARY EXPERIMENTAL RESULTS
+This section provides complete tables, full task protocols, metric definitions, qualitative examples,
+and analyses that complement Section 4.
+C.1
+TEXT-TO-MOTION AND SEQUENTIAL GENERATION
+Text-to-motion.
+The no-cue setting tests whether joint training for control and editing alters the
+inherited language-conditioned generator. Table 5 reports the complete HumanML3D comparison
+with the HY-Motion-1.0-Lite initialization and published text-to-motion systems.
+Relative to the initialization, every retrieval rank changes by at most 0.0045 and MM-Dist improves
+from 27.3560 to 27.2810. Among the displayed systems, MOTIONCANVAS attains the lowest FID
+and MM-Dist while maintaining nearly unchanged retrieval and reference-like diversity. Joint training
+therefore improves distributional fit without erasing language alignment or motion variety.
+Sequential generation.
+Temporal completion naturally yields sequential generation when adjacent
+action segments share specified boundary frames. We construct the benchmark from the official
+BABEL validation annotations. Sequence-level captions and explicit transition labels are not used as
+action prompts; neighboring actions separated by an annotated transition meet at its midpoint, while
+the next action onset defines boundaries without a transition interval. Adjacent intervals shorter than
+30 frames are greedily merged forward, except for a short final interval, which is merged backward.
+A fixed caption-rewrite cache turns each merged source-label sequence into one action caption.
+30
+
+
+Retaining episodes with at least two resulting actions yields 1,295 episodes, 7,285 action intervals,
+and 5,990 transition boundaries.
+For every action after the first, we prepend the preceding output’s final five frames as fixed temporal
+cues; after sampling, this five-frame prefix is discarded and only the new continuation is appended.
+Each generation uses the 360-frame sequence length used in training, with attention restricted to
+its valid frames. All methods are converted to canonical neutral SMPL-22 motion at 30 fps before
+evaluation. Subsequence retrieval uses official BABEL action groups, while subsequence and 30-
+frame transition-window FID use per-sample ℓ2-normalized joint-position embeddings.
+Figure 9: Language guides instruction-based motion changes and action-preserving style edits.
+Top: MotionFix instructions modify timing, posture, or movement direction. Bottom: PerMo
+instructions change style while retaining action content. Purple denotes the input motion and blue the
+edited output.
+Let i index motion frames, j index joints, J = 22 be the joint count, and f be the frame rate.
+Throughout the metrics, J denotes global decoded joints, ∆is a forward frame difference, and hats
+mark generated quantities. Jerk is the time derivative of acceleration, approximated here by f 3∆3J.
+At relative frame i of a transition window, the mean jerk profile over Nh generated or reference
+31
+
+
+windows (h ∈{g, r}) is
+µh(i) =
+1
+NhJ
+Nh
+X
+n=1
+J
+X
+j=1
+∥f 3∆3Jh
+nij∥2.
+(26)
+We report PeakJerk(h) = maxi µh(i) and, over K valid profile samples, the trapezoidal area
+between generated and reference profiles:
+AUJ = 1
+f
+K−1
+X
+i=1
+|µg(i) −µr(i)| + |µg(i + 1) −µr(i + 1)|
+2
+.
+(27)
+The upper rows show that the shared model retains varied language-conditioned actions without
+kinematic cues, including overhead gestures, stair climbing, self-contact followed by a low kick, and
+jumping. The lower rows visualize the harder sequential setting: four to six timed action intervals
+must each remain identifiable while sharing one continuous motion timeline.
+Figure 10: Content editing changes the action while retaining the input style. PerMo examples
+pair each input motion (purple) with an editing instruction; the edited motion (blue) performs the
+requested action with the original stylistic character.
+The colored segments expose where one action hands control to the next. Continuity is evaluated at
+those boundaries rather than inferred only from distant key poses, matching the transition-window
+metrics in Table 6.
+This protocol tests two levels of the same sequence: subsequence metrics ask whether each timed
+action remains recognizable, and transition-window metrics ask whether neighboring actions are
+connected without a local distribution shift. Jerk statistics then isolate boundary dynamics that may
+be hidden by aggregate embedding quality.
+Table 6 shows the strongest subsequence retrieval, the lowest MM-Dist and transition-window FID,
+and the peak jerk closest to BABEL motion. AUJ remains above the lowest baseline, indicating that
+matching aggregate transition quality does not yet reproduce the full reference jerk profile.
+The retrieval gains show that each requested action remains recognizable inside a longer generated
+sequence, rather than being diluted by transition smoothing. At the same time, the transition-window
+FID and peak-jerk results test a distinct requirement: adjacent action segments must be joined without
+introducing a distribution shift or an abrupt boundary artifact. Figure 4 illustrates both properties
+over sequences of four to six requested actions.
+Read together, the two blocks evaluate whether temporal cue composition organizes a sequence
+rather than merely concatenating independently generated clips. The subsequence block measures
+realization of the requested action schedule; the boundary block measures the locally generated
+32
+
+
+motion needed to connect that schedule. Leading both retrieval and transition-window FID indicates
+that recognizable actions and compatible joins are achieved in the same output.
+C.2
+TEMPORAL CONTROL
+The temporal protocols vary how much of a motion is specified and where the cue frames occur.
+Prediction supplies the first frame or first 20% of frames; motion in-betweening supplies the first and
+last frame or the first and last 10%; nonuniform-keyframe in-betweening supplies a precomputed
+set of 4–12 nonuniform full-body keyframes selected separately for each clip, always including its
+endpoints. Text-on rows measure how well the model combines semantic intent with partial motion,
+whereas no-text rows isolate completion from kinematic cues alone. Every method receives identical
+supplied frames and values. Temporal cue error is the mean Euclidean position error on supplied
+frames; failure rates threshold each supplied frame at 20 or 50 cm.
+Figure 11: Language-guided edits can incorporate additional kinematic cues. Left: editing
+alone. Right: the same input motion, instruction, seed, and checkpoint with added root paths, pose
+keyframes, or wrist rotations. Purple denotes input motion and blue edited motion; overlays identify
+the added kinematic cues.
+The complete table separates exact execution of supplied frames from the quality of the completed
+action. For prediction and in-betweening, MOTIONCANVAS combines zero cue error with the best
+FID and retrieval in every displayed setting. With nonuniform keyframes and text, it has the best FID,
+MM-Dist, R@1, and R@2, while CondMDI is higher by 0.0003 at R@3. Without text, CondMDI
+leads the nonuniform-keyframe embedding metrics, whereas MOTIONCANVAS exactly preserves the
+supplied frames and remains second in FID and MM-Dist. The no-text rows thus isolate what can be
+inferred from motion evidence alone without obscuring this protocol-specific tradeoff.
+C.3
+ROOT TRAJECTORIES AND WAYPOINTS
+A dense trajectory specifies pelvis translation at every frame, so the model must produce body motion
+whose locomotion realizes the prescribed route. Sparse waypoints additionally leave the route itself
+33
+
+
+unspecified: the model must infer a smooth path through the anchors and coordinate the body with
+that path. We evaluate XZ and XYZ translation and score the entire generated route using Eq. (28).
+The two dense orientation rows additionally supply global root orientation at every frame and report
+its geodesic error in degrees; the sparse rows supply translation waypoints only.
+Let ˆrni and rni be generated and reference root translations, Tn the length of clip n, and PA the
+diagonal selector for controlled axes A. Path average displacement error (ADE) covers all frames:
+eA
+ni = ∥PA(ˆrni −rni)∥2,
+Path ADE =
+P
+n
+PTn
+i=1 eA
+ni
+P
+n Tn
+,
+Fail@δ =
+P
+n,i 1[eA
+ni > δ]
+P
+n Tn
+.
+(28)
+We use δ ∈{0.2, 0.5} m. Sparse-waypoint scores include every frame, not only supplied anchors,
+and therefore evaluate the route inferred between waypoints.
+For dense paths, MOTIONCANVAS reproduces every requested translation sample, with zero path
+ADE and zero failures at both thresholds while retaining the strongest FID and R@3. For sparse
+waypoints, errors are computed over the entire inferred path rather than only at the anchors; the
+0.030 m ADE and zero failure rates therefore show that isolated positions are connected by a globally
+consistent route. The orientation-conditioned rows further verify that root translation and root
+orientation can be specified together without changing this conclusion.
+The metrics are complementary: ADE and failure rates test the complete route, while Foot and Jitter
+test whether that route is realized through stable locomotion. Reporting both prevents success at
+isolated anchors from being mistaken for coherent path execution.
+Table 12: The same model repairs known and automatically localized anomalies. On 299 Broke-
+nAMASS pairs, MOTIONCANVAS leads seven of eight automatic-repair metrics, with acceleration
+the exception. Skate, penetration, frozen ratio, and R@3 are percentages; MPJPE is in cm, RTE in
+m, acceleration in m/s2, and jitter in 10 m/s3. Corrupted input is a no-repair diagnostic and is not
+ranked.
+Repair setting
+Method
+Skate↓Penetr.↓Jitter↓Frozen↓MPJPE↓RTE↓Accel.↓TMR R@3↑
+Known anomaly regions Corrupted input
+12.19
+12.61
+21.78
+0.00
+1.17
+0.008
+4.32
+98.66
+StableMotion (Mu et al., 2025)
+18.43
+13.48
+9.78
+0.08
+13.23
+0.007
+4.21
+93.65
+MaskControl (Pinyoanuntapong et al., 2025)
+10.43
+11.97
+10.13
+0.81
+1.97
+0.007
+1.21
+99.33
+MOTIONCANVAS
+9.56
+9.56
+10.26
+0.00
+0.73
+0.014
+1.73
+100.00
+Automatic
+Corrupted input
+12.19
+12.61
+21.78
+0.00
+1.17
+0.008
+4.32
+98.66
+StableMotion (detector) (Mu et al., 2025)
+22.06
+7.22
+8.28
+0.61
+4.49
+0.061
+3.04
+94.33
+MOTIONCANVAS
+16.50
+2.90
+4.44
+0.00
+1.37
+0.014
+3.16
+99.67
+Dense cases follow fully specified paths; sparse cases connect only the highlighted anchors, exposing
+the route inference measured by full-trajectory ADE.
+C.4
+BODY-PART AND HETEROGENEOUS CONTROL
+Body-part control crosses body region, rotation versus Cartesian position, sparse versus dense
+frame selection, and XZ versus XYZ axes. Sparse settings supply the selected rotation or position
+coordinates every 30 frames, including the final valid frame; dense settings supply them at every
+valid frame. We score decoded rotation or global-position error only on supplied coordinates.
+For sets ΩP and ΩR of supplied position and rotation cues, decoded cue errors are
+Epos =
+1
+|ΩP |
+X
+(n,i,j,A)∈ΩP
+∥PA(ˆJnij −Jnij)∥2,
+(29)
+Erot =
+180
+π|ΩR|
+X
+(n,i,j)∈ΩR
+arccos
+ 
+clip
+"
+tr( ˆRT
+nijRnij) −1
+2
+, −1, 1
+#!
+.
+(30)
+Here R denotes local 3 × 3 joint rotation matrices; projected position cues select one or two axes
+through PA. The mixed-cue tables report errors separately for full-pose, root-path, body-region, and
+joint-axis cues.
+34
+
+
+Across this variation, MOTIONCANVAS retains low FID and high retrieval while executing both
+rotation and position cues. The result is consistent across region-level and individual-joint targets,
+showing that the generator does not rely on one favored set of joints or temporal density. Projected
+XZ controls further test whether specified horizontal coordinates can be followed while the remaining
+position component and surrounding body motion are completed coherently.
+Foot skating is horizontal foot sliding near the ground. For this diagnostic, F contains the foot
+endpoints and hnij is their floor-relative height in meters. With 1[·] the binary indicator and Pxz
+selecting horizontal axes, HumanML3D skating is
+cnij = 1[hnij ≤0.05],
+Skate =
+P
+n,i
+P
+j∈F cnij 1[f∥Pxz∆Jnij∥2 > 0.3]
+P
+n,i
+P
+j∈F cnij
+.
+(31)
+The complete table exposes the axes of body-part control: upper- and lower-body cues, sparse and
+dense frame selections, and rotation or projected Cartesian position. Dense body-region cues persist
+over the full interval, whereas sparse wrist and elbow cues leave the intervening poses to be inferred.
+The Cartesian rows further distinguish all-axis wrist and knee anchors from XZ foot projections,
+making selected coordinates explicit rather than treating every position cue as a full 3D target.
+Let Ωk contain valid order-k frame-difference windows. Jitter uses k = 3:
+Jitter =
+1
+|Ω3|
+X
+(n,i,j)∈Ω3
+∥f 3∆3Jnij∥2.
+(32)
+Figure 12: Localized regeneration repairs anomalous motion while retaining unaffected regions.
+With known anomaly locations, the model regenerates motion at the marked joints and frames using
+the remaining motion as kinematic cues. Purple shows corrupted inputs, red identifies anomalies, and
+green shows repaired outputs.
+Only the colored joints and frames are specified; the uncolored joints and intervening frames remain
+generated. The resulting responses therefore visualize the central completion requirement: local cues
+must be realized without freezing the rest of the body or breaking the surrounding action.
+The rotation examples contrast sustained regional control with isolated wrist and elbow cues. In
+the dense cases, the uncontrolled half of the body must continue to support the requested upper- or
+lower-body motion; in the sparse cases, the model must connect the specified joint rotations through
+the intervening frames rather than simply copy a held pose.
+The position-cue examples expose a complementary form of partial control. XYZ anchors fix
+complete joint positions, whereas XZ projections leave height to be inferred. Satisfying these cues
+35
+
+
+therefore requires the unspecified axes, neighboring joints, and frames to remain compatible with the
+controlled coordinates, matching the coordinate-level evaluation in Table 9.
+P1–P4 cross two cue-density levels with two spatiotemporal distributions. P1 and P2 use lower- and
+higher-density dispersed cue layouts, respectively; P3 and P4 use the corresponding densities with
+clustered cue layouts. Dispersed cue layouts spread cues across frames and body parts, while clustered
+cue layouts concentrate them in temporal spans and body regions. Each protocol resamples frames,
+body parts, and position axes for every test motion, combining full-pose, root-path, body-region, and
+joint-axis position cues. Their values come from the same reference motion to ensure compatibility.
+For each protocol, all methods receive the same sampled cue sets and generate one output per motion
+in the 4,012-motion HumanML3D test split.
+Across these protocols, MOTIONCANVAS keeps FID between 0.0077 and 0.0125 and R@3 between
+0.8966 and 0.9067 while achieving the lowest errors for all four cue families. These results support
+joint cue execution with coherent full-motion completion across variations in cue density and
+placement. Foot and Jitter separately quantify sliding and high-frequency artifacts.
+The qualitative examples illustrate cue sets from the protocols in Table 10: each completion must
+coordinate pose, route, regional, and joint cues within one generated action.
+C.5
+MOTION EDITING
+MotionFix evaluates instruction-guided transformation from 1,013 input–instruction–target triplets.
+At inference, each method receives the input motion and instruction and produces a complete edited
+motion; the paired target is reserved for evaluation and is never supplied to the model. FID compares
+the output and target distributions, while M2M retrieval and M2M-Dist compare each edit with its
+paired target under the benchmark’s repeated batch-32 protocol. These metrics assess the complete
+target edit rather than separately factorizing its requested and retained attributes.
+PerMo uses 63 held-out style-edit cases and 67 held-out content-edit cases. Style-editing instructions
+take the form “Perform {action} in the {style} style,” whereas content-editing instructions read
+“Change the action to {action} while keeping the same style.” Every method receives the same input
+motion and editing instruction; paired target captions and motions are evaluation-only. Style editing
+thus requests a new style while preserving action, whereas content editing requests a new action
+while preserving style. Style and Action Accuracy exchange the roles of requested and retained
+attributes across tracks; target-caption metrics test the requested semantics, and paired M2M metrics
+test agreement with the target motion.
+Panel (a) shows that MOTIONCANVAS combines near-target MotionFix retrieval with the lowest FID
+and M2M-Dist.
+Style and Action Accuracy use additive prototypes fitted from normalized PerMo-train motion
+embeddings. For example n with action an, style sn, and embedding ¯zn, we fit a common mean µ,
+action offsets αa, and style offsets βs:
+(µ, {αa}, {βs}) = arg min
+X
+n
+∥¯zn −(µ+αan +βsn)∥2
+2,
+zproto
+a,s
+=
+µ + αa + βs
+∥µ + αa + βs∥2
+. (33)
+These prototypes vary action and style separately: Style Accuracy compares candidate styles at a
+fixed action, whereas Action Accuracy compares candidate actions at a fixed style. Each score uses
+five-way cosine retrieval against zproto
+a,s
+, with one positive and four uniformly sampled distractors,
+averaged over 20 draws (20% chance). This tests each attribute under a controlled alternative set;
+paired M2M retrieval separately measures agreement with the complete target motion.
+Panel (b) separates the requested attribute from the complementary one: the same model leads
+requested-style accuracy and paired-motion agreement on style editing, while content editing com-
+bines the highest action accuracy with the strongest paired retrieval.
+PerMo physical metrics follow MBench on SMPL foot joints F = {10, 11}. For each clip, h0 =
+mini,q∈F Jy
+iq and
+ciq = 1
+
+∥∆Jiq∥2 < 0.01 ∨Jy
+iq −h0 < 0.02
+
+,
+Foot = 1000
+2
+X
+q∈F
+P
+i ciq∥Pxz∆Jiq∥2
+P
+i ciq + ε
+.
+(34)
+36
+
+
+The indicator selects candidate foot-contact frames where a foot moves little or lies near the clip’s
+lowest foot height; Foot measures its average horizontal displacement on those frames. It reports
+sliding distance rather than the percentage of skating frames. Here ε prevents division by zero. With
+root translation ri, the clip-level jitter score is
+Jit. = 1000
+
+mean
+i,j
+∥∆2Jij∥2 + mean
+i,j
+∥∆2(Jij −ri)∥2
+
+.
+(35)
+The two terms measure changes in joint displacement in the world frame and relative to the moving
+root, capturing both overall motion variation and relative articulation. This PerMo diagnostic uses
+second differences, whereas the HumanML3D diagnostic in Eq. (32) uses third differences. Both
+PerMo metrics are averaged over clips without frame-rate normalization.
+The MotionFix examples change the instructed aspect of the action while retaining recognizable
+content from the input. They span pose depth, limb orientation, action timing, and starting-side
+changes, so successful edits cannot be explained by one fixed spatial correction.
+The PerMo rows isolate the complementary requirement: style changes without replacing the underly-
+ing action. The edited punches, jumps, waves, and throws retain their action identity while acquiring
+visibly different affect and dynamics. Together with Table 11, these examples show that the retrieval
+gains correspond to targeted transformations rather than wholesale motion replacement.
+Figure 10 retains the input style while changing the requested action. It therefore tests the comple-
+mentary side of PerMo editing rather than repeating the style-editing cases above.
+Figure 10 spans kicking, running, and two throwing instructions. In each case, the edited motion
+changes the requested action while retaining recognizable characteristics of the input motion. Together
+with the content track in Table 11, the examples connect the highest Action Accuracy and paired
+retrieval to targeted content transformation rather than wholesale motion replacement.
+Figure 11 is a qualitative three-case compositional demonstration, separate from the aggregate
+evaluation in Table 11. It augments language-guided editing with kinematic cues, testing whether
+semantic transformation and precise motion control can coexist. The input motion, instruction, and
+random seed remain fixed; only the displayed root, keyframe, or local-rotation cue changes. Paired
+rows consequently isolate the effect of the additional kinematic cue.
+Within each edit-only/edit-plus-cue pair, the added cue is the sole change to the model inputs. The
+composed outputs follow a root path, full-pose keyframes, or local wrist rotations while completing
+the unspecified motion around them. These pairs therefore test whether motion context, editing
+instruction, and kinematic cues for the edited motion remain jointly active in the same generator.
+C.6
+MOTION REPAIR
+Motion repair couples anomaly localization with regeneration: anomalous motion is localized
+across joints and frames, then regenerated using the remaining valid motion as kinematic cues.
+BrokenAMASS provides 299 valid 100-frame clean–corrupted pairs at 20 fps and evaluates the two
+stages separately and together.
+In repair with known anomaly regions, the known anomaly regions mark local rotations whose clean–
+corrupted geodesic discrepancy exceeds 10−4 rad and root translations whose Euclidean discrepancy
+exceeds 10−4 m. The clean reference determines only which entries are anomalous; regeneration
+uses the corrupted clip and the resulting generation mask, thereby isolating regeneration quality.
+In automatic repair, anomalies in joint motion and root translation are localized from the corrupted
+clip itself before regeneration, evaluating the complete localization–repair pipeline. Appendix A.6
+defines localization, mask expansion, and exact restoration.
+For MOTIONCANVAS, rotations are resampled from 20 to 30 fps by spherical interpolation and root
+translations by linear interpolation on endpoint-inclusive grids.
+A 30 fps mask entry is the Boolean union of the two 20 fps endpoints contributing to it. Outputs are
+resampled to the original 100-frame grid, and reliable values are restored before evaluation.
+StableMotion (Mu et al., 2025) receives an anomaly mask at its native frame granularity.
+37
+
+
+MaskControl (Pinyoanuntapong et al., 2025) is included in paired-reference evaluation with the same
+valid local rotations and root translation fixed.
+All motions are reconstructed from SMPL pose and translation before comparison. Let C(·) denote
+the evaluator’s common body and coordinate canonicalization, Jcan = C(J) its joint coordinates, and
+r root translation. With hats for repaired outputs and unmarked quantities for the paired clean target,
+MPJPE = 100
+NTJ
+X
+n,i,j
+∥ˆJcan
+nij −Jcan
+nij∥2,
+(36)
+RTE =
+1
+NT
+X
+n,i
+∥ˆrni −rni∥2,
+(37)
+Accel. =
+1
+|Ω2|
+X
+(n,i,j)∈Ω2
+∥f 2∆2ˆJnij −f 2∆2Jnij∥2,
+(38)
+Jitter =
+1
+10|Ω3|
+X
+(n,i,j)∈Ω3
+∥f 3∆3ˆJnij∥2.
+(39)
+Mean per-joint position error (MPJPE) is reported in centimeters, root-translation error (RTE) in
+meters, acceleration in m/s2, and repair jitter in units of 10 m/s3. Skating measures foot sliding near
+the ground; ground penetration measures body geometry falling below the floor. Both are percentages
+of frames satisfying the benchmark’s respective artifact predicates.
+Frozen-motion ratio measures collapse relative to the paired clean target. With pelvis-relative joints
+pnij = Jnij −rni (including the zero-valued root), define mean transition speed
+uh
+ni = f
+J
+X
+j
+∥∆p h
+nij∥2,
+Frozenn =
+P
+i 1[ur
+ni ≥0.05] 1[ˆuni < 0.01 ∧ˆuni < 0.1ur
+ni]
+P
+i 1[ur
+ni ≥0.05]
+.
+(40)
+Here h ∈{g, r} distinguishes repaired and clean motions, with ˆu = ug. Only transitions with an
+active clean target enter the ratio; a repaired transition is frozen when it is both nearly stationary and
+below one tenth of the target speed. This excludes intended pauses from the freezing test. The table
+reports the macro-average of Frozenn over clips containing at least one active target transition.
+Table 13: Technical artists favor MOTIONCANVAS across all five tasks and scoring dimensions.
+Three professional technical artists assessed 1,218 output pairs, yielding 8,757 dimension-wise
+judgments. Each cell gives better/same/worse counts (G/S/B) for MOTIONCANVAS against the listed
+baseline: (a) perceptual motion quality; (b) support, penetration, and repair effectiveness.
+(a) Perceptual motion quality
+Task / setting
+Baseline
+Fluency
+Naturalness
+Pose
+Joint
+Sparse keyframes
+KIMODO (Rempe et al., 2026)
+264/131/4
+254/137/8
+256/133/10
+233/160/6
+Constrained start pose
+KIMODO
+75/111/8
+100/87/7
+96/91/7
+84/103/7
+Multi-action transition
+KIMODO
+121/63/10
+120/63/11
+95/87/12
+71/115/8
+Loop animation
+KIMODO
+182/18/0
+133/60/7
+159/39/2
+152/46/2
+Motion repair
+StableMotion (Mu et al., 2025)
+192/38/1
+169/61/1
+183/45/3
+189/40/2
+(b) Constraint and artifact quality
+Task / setting
+Baseline
+Horizontal support
+Vertical support
+Penetration
+Repair effectiveness
+Sparse keyframes
+KIMODO
+254/122/23
+215/182/2
+109/276/14
+–
+Constrained start pose
+KIMODO
+33/135/26
+32/150/12
+22/163/9
+–
+Multi-action transition
+KIMODO
+64/83/47
+73/100/21
+39/144/11
+–
+Loop animation
+KIMODO
+78/89/33
+73/100/27
+76/123/1
+–
+Motion repair
+StableMotion
+153/76/2
+137/90/4
+153/76/2
+194/34/3
+Under automatic repair, MOTIONCANVAS leads seven of the eight reported repair metrics: it reduces
+skating, penetration, jitter, freezing, MPJPE, and root error while raising TMR R@3 relative to
+the detector-driven baseline; acceleration is slightly higher (3.16 versus 3.04). Repair with known
+anomaly regions isolates regeneration from localization; there, the lowest MPJPE, skating, penetration,
+38
+
+
+and frozen ratio show that the same generator can replace anomalous variables without sacrificing the
+non-anomalous motion around them.
+Table 12 jointly reports paired geometric errors, artifact rates, semantic retrieval, and the over-
+smoothing diagnostic in Eq. (40).
+The four cases span broad upper-body corruption, a single-arm wave, a localized hand–torso defect,
+and an arm-extension defect. In each case motion at the marked joints and frames is regenerated
+while the unmarked motion on both sides is preserved.
+This is the qualitative counterpart of the table’s paired-reference metrics: the target region changes,
+but the surrounding pose and action identity remain stable across both broad and localized anomaly
+regions.
+In automatic repair, the same generator is driven by anomaly regions detected from the corrupted clip
+rather than supplied from a clean reference; Appendix A.6 specifies the localization procedure and
+exact restoration step.
+C.7
+USER STUDY
+Three professional technical artists with character-animation experience compared synchronized,
+anonymously ordered outputs; each case was assigned to one evaluator. The five tracks ask models to
+complete around sparse keyframes, continue from a constrained start pose, join successive requested
+actions, close a motion loop, or repair a corrupted clip. KIMODO is the comparator for the first four
+tracks, while StableMotion is the comparator for repair.
+Applicable dimensions are fluency, naturalness, pose quality, horizontal and vertical support, joint
+quality, body–body penetration, and repair effectiveness. A five-point scale ranges from severe
+artifact (1) to no visible issue (5); invalid data or rendering is excluded.
+For each valid output pair and applicable dimension, G means that MOTIONCANVAS received the
+higher score, S the same score, and B the lower score.
+Across the five tracks, 1,218 valid output pairs yield 8,757 dimension-wise G/S/B judgments: 399
+pairs for sparse keyframes, 194 for constrained starts, 194 for multi-action transitions, 200 for loop
+animation, and 231 for repair (Table 13).
+The preference pattern is consistent across tasks rather than being driven by one control setting.
+Sparse-keyframe completion receives 264 better versus 4 worse fluency judgments, while loop
+animation receives 152 versus 2 on joint quality. Repair yields 194 better versus 3 worse judgments
+on task effectiveness and remains strongly preferred on every general-quality dimension. The large
+tie counts for support and penetration indicate frequent equal ratings on those dimensions, but they
+do not reverse the overall preference.
+Table 14: MOTIONCANVAS generates 360 frames in 2.47 seconds. Measurements use batch size 1
+on a single GPU, averaged over five motions after one warm-up. The table reports each system’s task,
+output length, memory, and sampling budget.
+Method
+Scope
+Frames Time (s)↓Mem (GB)↓Params (M) Steps Sampler
+CondMDI (Cohan et al., 2024)
+completion/keyframe
+196
+43.40
+1.84
+386.4
+1000 DDPM
+OmniControl (Xie et al., 2024)
+trajectory guidance
+196
+107.25
+0.58
+189.8
+1000 DDPM + gradient
+KIMODO (Rempe et al., 2026) kinematic constraints
+196
+3.72
+1.22
+282.8
+100
+DDIM + opt.
+MotionLab (Guo et al., 2025)
+MCM unified
+196
+2.06
+2.79
+670.7
+51
+Euler ODE
+StableMotion (Mu et al., 2025)
+repair
+196
+1.34
+0.16
+35.9
+50
+localize+regenerate
+MOTIONCANVAS
+kinematic cues
+360
+2.47
+2.06
+461.3
+50
+Euler ODE
+C.8
+EFFICIENCY
+We measure each released method along its native inference path on the same single GPU at batch
+size 1. Runtime averages five motions after one warm-up, memory is peak allocated GPU memory,
+parameter count includes online modules, and Frames denotes the output sequence length.
+39
+
+
+At 2.47 s for 360 frames, MOTIONCANVAS is faster than the 100-step KIMODO path and the
+1,000-step diffusion or gradient-guided baselines.
+Runtime remains close to MotionLab’s 2.06 s. Its 2.06 GB peak memory is below MotionLab and
+above the smaller task-specific systems, quantifying the online cost of the shared 461.3M-parameter
+generator.
+C.9
+ABLATIONS
+Table 15: Boundary supervision reduces abrupt root-motion changes near waypoints. (a)
+Cumulative objective additions; (b) an isolated comparison of background-relative excess on fixed
+evaluation sets. WP-∆2 measures root-position second-difference magnitude at waypoints; C/B
+divides it by the generated-background level. Diag./Ver. distinguish diagnostic and verification sets.
+(a) Full objective progression
+Full-motion quality and retrieval
+Objective
+T2M FID↓
+Diag. FID↓
+R@3↑
+one-step transition objective
+0.0127
+0.0725
+0.9211
++ root-boundary loss
+0.0127
+0.0730
+0.9086
++ cue-neighborhood losses
+0.0118
+0.0747
+0.9109
++ rollout supervision
+0.0125
+0.0739
+0.9125
++ solver endpoint
+0.0118
+0.0737
+0.9180
++ background-relative excess
+0.0108
+0.0797
+0.9000
+Cue-local dynamics
+Sparse XZ waypoint diagnostic set
+Sparse XYZ
+Objective
+WP-∆2 ↓
+C/B↓
+Jitter↓
+WP-∆2 ↓
+one-step transition objective
+13.34
+3.875
+1032.7
+13.46
++ root-boundary loss
+10.16
+3.094
+950.0
+11.27
++ cue-neighborhood losses
+9.96
+3.256
+904.1
+10.18
++ rollout supervision
+6.18
+2.184
+796.3
+6.81
++ solver endpoint
+2.46
+1.195
+586.7
+3.18
++ background-relative excess
+1.62
+1.042
+480.6
+1.96
+(b) Background-relative excess
+Sparse XZ verification set
+Sparse XYZ verification set
+Objective
+Ver. FID↓
+R@3↑
+WP-∆2 ↓
+C/B↓
+Jitter↓
+Ver. FID↓
+WP-∆2 ↓
+C/B↓
+solver endpoint
+0.0400
+0.8842
+2.381
+1.152
+576.5
+0.0518
+2.903
+1.135
++ background-relative excess (full)
+0.0405
+0.8855
+2.166
+1.028
+585.0
+0.0530
+2.683
+1.026
+The ablations ask two separate questions: whether the cue-preserving path and varied cue layouts are
+needed for general control, and whether the boundary objectives improve compatibility specifically
+near supplied cues. Panel (a) therefore follows a cumulative objective progression on one fixed
+sparse-XZ diagnostic inventory (with sparse-XYZ waypoint second differences also reported). Panel
+(b) uses separate fixed XZ and XYZ verification inventories and changes only background-relative
+excess.
+Conditional path and compositional cue sampling.
+The three variants in Table 4(a) share the
+HY-Motion-1.0-Lite initialization, approximately 700-hour training corpus, and training budget
+described in Appendix A. The full-state-flow baseline keeps the cue sets, generation masks, model
+inputs, optimizer, and inference budget fixed but uses standard interpolation on every motion variable,
+xstd
+t
+= (1−t)z+tx1, with the Gaussian noise z defined in Section 3.2. Cue imputation is retained at
+inference: specified entries are overwritten with cue values after every update. This comparison tests
+cue-preserving training against full-state flow with inference-time cue imputation. The named-task
+variant instead replaces compositional cue sampling with a finite catalogue of temporal, trajectory,
+waypoint, and body-part cue patterns under the same architecture, data mixture, optimization budget,
+and solver.
+40
+
+
+Boundary objectives.
+For a supplied root waypoint at frame i, the root-position second-difference
+magnitude on controlled axes is
+κi = ∥PA(ri−1 −2ri + ri+1)∥2,
+WP-∆2 = 103 mean
+i∈W κi,
+C/B =
+meani∈W κi
+meani: d(i,W)>2 κi
+. (41)
+Here W is the set of waypoint frames and d(i, W) is the nearest waypoint distance in frames. The
+second difference measures a change in root displacement, responding to both speed and direction.
+C/B compares this change at waypoints with its background level; values above one indicate stronger
+local variation around the cues.
+Table 15(a) adds root-boundary loss, cue-neighborhood losses, rollout supervision, solver-endpoint
+supervision, and background-relative excess in sequence. Cue-neighborhood losses supervise posi-
+tions and one-sided displacement errors beside specified root cues. Rollout supervision uses sampled
+states; solver-endpoint supervision evaluates the final sampled motion at flow time t = 1 instead of a
+one-step estimate. Root-boundary loss first reduces waypoint second differences; rollout and solver-
+endpoint supervision produce the largest further reductions in WP-∆2 and C/B. Background-relative
+excess reaches the lowest waypoint second differences and jitter, with lower diagnostic retrieval.
+These results isolate cue-local compatibility from full-motion quality rather than treating every metric
+as monotonic.
+Panel (b) holds the verification set fixed and changes only background-relative excess. It reduces
+XZ/XYZ WP-∆2 from 2.381/2.903 to 2.166/2.683 and brings C/B from 1.152/1.135 to 1.028/1.026,
+while retrieval changes marginally and diagnostic FID and XZ jitter rise slightly. It specifically
+reduces excess changes in root displacement near waypoints relative to the generated background.
+D
+LIMITATIONS
+MOTIONCANVAS is currently trained for 22-joint body motion and does not model articulated hands
+or facial expression, limiting expressive detail and applications that require fine-grained character
+performance. Rotation cues are preserved exactly because they directly constrain the rotation channels
+defining the decoded body. Position cues instead constrain redundant Cartesian channels and can
+retain residual error after forward-kinematic decoding, where their consistency with rotation and
+root translation is learned rather than hard-enforced. Post-hoc inverse kinematics, which adjusts
+joint rotations to satisfy position targets, could enforce feasible targets but would add an engineered
+correction stage outside the model; achieving exact decoded position control within the generative
+process is a more principled direction. Finally, current spatial control is expressed through root
+trajectories and body-part position cues. This provides a first step toward precise human–object
+interaction (HOI) and human–scene interaction; both require explicit object and scene geometry,
+contact constraints, and physical-feasibility reasoning.
+41
