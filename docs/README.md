@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-10</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-11</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-10 21:54:43 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-11 21:13:33 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日日报成功完成4篇速读、0篇精读，最高分由《MotionCanvas》拿下7.0。</p>
-<p>最值得看的是MotionCanvas用可组合运动线索学习隐式运动规划；若关心数字人或3D内容，可顺带看EyeMakeYou的高频视线合成和PLSR的3D对象局部超分。</p>
-<p>普通读者建议先读MotionCanvas摘要，后两篇按需速览，今天没有需要优先精读的论文。</p>
+<p>今日精读1篇、速读6篇，重点聚焦多模态可控连贯动作生成。最值得看的是9.0分的《Multi-Modal Controlled Coherent Motion Generation》，以及7.0分的固定维隐流生成变尺寸3D分子、纤维最优传输改进生成调度。普通读者可优先了解动作生成的可控性，再按兴趣跟进分子生成与扩散模型调度方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Multi-Modal Controlled Coherent Motion Generation">Multi-Modal Controlled Coherent Motion Generation</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MotionCanvas: Learning Implicit Motion Planning from Composable Kinematic Cues">MotionCanvas: Learning Implicit Motion Planning from Composable Kinematic Cues</span></li><li><span class="dpr-home-dashboard-paper-title" title="EyeMakeYou: Identity-, Task-, and Subjective-State-Conditioned Diffusion for High-Frequency Gaze Synthesis">EyeMakeYou: Identity-, Task-, and Subjective-State-Conditioned Diffusion for High-Frequency Gaze Synthesis</span></li><li><span class="dpr-home-dashboard-paper-title" title="PLSR: Progressive and Localized Super-Resolution of 3D Objects via Localized Latent Voxel Diffusion">PLSR: Progressive and Localized Super-Resolution of 3D Objects via Localized Latent Voxel Diffusion</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Fixed-Dimensional Latent Flow for Generating Variable-Size 3D Molecules">Fixed-Dimensional Latent Flow for Generating Variable-Size 3D Molecules</span></li><li><span class="dpr-home-dashboard-paper-title" title="Model-Aware Schedules Improve Generation via Fiberwise Optimal Transport">Model-Aware Schedules Improve Generation via Fiberwise Optimal Transport</span></li><li><span class="dpr-home-dashboard-paper-title" title="Conditioning Degenerate Diffusion Models">Conditioning Degenerate Diffusion Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
 </section>
 </div>
 

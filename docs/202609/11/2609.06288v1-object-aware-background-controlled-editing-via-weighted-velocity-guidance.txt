@@ -1,0 +1,3222 @@
+Object-Aware Background-Controlled Editing via Weighted
+Velocity Guidance
+WUJI WANG, Carnegie Mellon University, USA
+YUE WU, Institute of Computing Technology, Chinese Academy of Sciences, China
+CHENHAO YI, University of Chinese Academy of Sciences, China
+SHUHUI WANG∗, Institute of Computing Technology, Chinese Academy of Sciences, China
+Training-free image editing steers diffusion or flow-matching generative models at inference time by modifying
+prompt-conditioned denoising velocities. Existing velocity-based editors often apply prompt-induced residuals
+globally over the latent space and rely on the model to localize semantic changes implicitly. For object-centric
+edits, these residuals are rarely zero outside the target object, so small non-target components can accumulate
+during multi-step integration, causing background drift and unstable object boundaries. We propose Object-
+Aware Velocity Control (OAVC), a training-free framework that introduces object-level control into the
+velocity-integration process. OAVC decouples where semantic residuals are allowed to act from how they are
+injected into the dynamics. It constructs a background-anchored reference interface under the source prompt
+and then performs object-localized safe semantic injection under the target prompt. A constrained injection
+operator suppresses drift-inducing velocity components, while time-adaptive spatial weighting stabilizes the
+transition near object boundaries. OAVC requires no training or modification of pretrained model parameters.
+Experiments on object-centric image and video benchmarks with image and video rectified-flow backbones
+show improved background preservation, structural fidelity, boundary stability, and temporal consistency
+while retaining effective localized editability.
+CCS Concepts: • Computing methodologies →Computer vision.
+Additional Key Words and Phrases: training-free image editing, rectified flow, velocity control, object-aware
+editing, video editing
+1
+Introduction
+Diffusion and flow-matching generative models enable high-fidelity synthesis with strong prompt
+control [8, 17, 25]. An increasingly important capability is training-free image editing: given an
+input image and a textual instruction, the model should follow the instruction while preserving
+unrelated content at inference time, without finetuning or per-image optimization [6, 14, 23, 27].
+This avoids the cost and instability of training-based editing pipelines [19].
+A common strategy is to intervene in the sampling trajectory by comparing source- and target-
+conditioned denoising directions and injecting their difference as an editing signal [4, 7, 14, 18, 26–
+28]. Existing training-free methods improve editing fidelity through different mechanisms, including
+trajectory or inversion correction, source-information regulation, delayed or region-aware injection,
+and attention/cache modulation [10, 14, 20, 28, 33]. However, existing methods often derive spatial
+cues from the model response itself, such as prompt-induced velocity differences, attention maps,
+or internal feature changes. Because these cues remain coupled with the target-prompt residual,
+spatially imprecise responses may cause updates to leak into the background, miss parts of the
+object, or become unstable near boundaries.
+∗Corresponding author.
+Authors’ Contact Information: Wuji Wang, Language Technologies Institute, School of Computer Science, Carnegie Mellon
+University, Pittsburgh, Pennsylvania, USA, wujiw@andrew.cmu.edu; Yue Wu, State Key Laboratory of AI Safety, Institute
+of Computing Technology, Chinese Academy of Sciences, Beijing, China, wyue0620@gmail.com; Chenhao Yi, Department
+of Computer Science and Technology, University of Chinese Academy of Sciences, Beijing, China, 1939177124@qq.com;
+Shuhui Wang, State Key Laboratory of AI Safety, Institute of Computing Technology, Chinese Academy of Sciences, Beijing,
+China, wangshuhui@ict.ac.cn.
+arXiv:2609.06288v1  [cs.CV]  5 Sep 2026
+
+
+2
+Wang et al.
+Source & MASK
+Example 1: Object Removal
+Target:A mountain with snow
+Example 2: Rabbit to Cat
+Example 3: Door color change
+Target:A cat sits in eggs
+Target:A purple door
+DNAEdit | Result 
+Background Texture Drift
+Reflection Distortion
+Inconsistent Inpainting
+OAVC(Ours) | Result
+√
+Perfect Background 
+Preservation
+Accurate Reflections
+Seamless Inpainting
+√
+√
+Visual Comparison
+×
+No Texture Drift
+Preserved Shape
+Stable & Consistent 
+Background
+×
+×
+√
+√
+√
+Input
+DNAEdit
+OAVC(Ours)
+t=0
+t=1/3T
+t=2/3T
+t=T
+A yellow taxi is driving slowly around a city roundabout
+A dark gray car is driving slowly around a city roundabout
+Task 1: Image Editing
+Task 2: Video Editing
+Fig. 1. Object-centric image and video editing. Our approach enables localized edits while keeping
+non-target regions stable during multi-step integration. Prior training-free velocity-steering methods often
+accumulate small background residuals, leading to background drift, boundary artifacts, and temporal
+inconsistency. By enforcing object-localized semantic updates with explicit non-target preservation, we
+produce cleaner object removal/inpainting, faithful attribute or color changes, and temporally consistent
+video edits.
+As shown in Fig. 1, this limitation becomes important for object-centric edits, such as object
+replacement, material change, deletion, or localized attribute modification. Users expect the semantic
+change to occur on the target object while the surrounding regions remain stable. However,
+prompt-induced velocity differences are rarely zero outside the intended object region. When such
+residuals are integrated globally in a spatially coupled latent space, small non-target components
+can accumulate over solver steps, producing background drift, layout changes, and unstable object
+boundaries, as illustrated in Fig. 3(a). This suggests that object-centric editing should not rely only
+on implicit localization from prompt responses; it needs an object-level support that is specified
+independently of the prompt residual and applied during velocity integration.
+In this work, we propose Object-Aware Velocity Control (OAVC), a training-free framework
+for object-centric editing with rectified-flow backbones. Our key idea is to make the editable region
+a solver-level control variable and decouple it from the residual transformation itself. Specifically,
+OAVC controls where prompt-induced residuals may accumulate using an object support, and
+controls how they are injected by suppressing source-flow-aligned components before integration.
+It first constructs a background-anchored reference interface under the source prompt for stable
+source–target velocity comparison, and then injects target semantics through object-localized
+constrained velocity updates. The object support is used only as a velocity-level prior during solver
+integration.
+To instantiate the object support, we use SAM3 [2] as the default zero-shot support provider.
+OAVC only requires an object-centric support prior, not a specific segmentation model, and can also
+use user-provided or brush-refined supports. Localization itself is not our contribution; controlled
+same-support and support-robustness studies isolate the contribution of the proposed trajectory
+controller and characterize its dependence on support quality.
+We evaluate OAVC on object-centric image and video benchmarks under rectified-flow editing
+settings [4, 23, 29]. Unlike masked blending or inpainting, which enforce locality by replacing latent
+or image regions, OAVC constrains the prompt-induced residual field before solver integration.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+3
+Ours
+DNAEdit
+���
+��
+Vase → Plant
+Original
++Mask
+Fig. 2. Illustration of Stage-2: Projected and Constrained Semantic Injection. We explicitly constrain the edit
+to the object region and a safe injection direction.
+Experiments on PIE-Bench and DAVIS show improved background preservation, structural fidelity,
+boundary stability, and temporal consistency while retaining effective localized editability. We
+further show that the same where/how velocity-control principle can transfer to another RF-based
+editor [14], indicating that OAVC is not tied to a single base pipeline.
+2
+Related Work
+Training-free editing via trajectory and model control. Training-free image editing performs
+prompt-driven modifications at inference time with large pretrained generative models, without
+finetuning or per-image optimization. A classical branch trains instruction-following diffusion
+models for edits [1, 11, 16], which enables efficient text-guided editing but relies on task-specific
+training.
+Recent works instead achieve training-free control by intervening in a fixed pretrained model
+during sampling. Attention- and token-level approaches steer semantics by modifying cross-
+attention or internal activations [3, 7, 21]. While flexible, they often depend on implicit localization
+and can be sensitive to prompts and schedules, which makes stable object-level control challenging.
+A complementary direction views editing as direct manipulation of generative dynamics in
+diffusion or flow-matching models, leveraging prompt-conditioned velocity fields [4, 17, 18, 27].
+Velocity- and trajectory-based editors inject prompt-induced velocity differences along multi-step
+integration [14, 28, 31] and have been demonstrated on modern backbones such as SD3 [5] and
+FLUX [15].
+Despite their algorithmic differences, existing velocity-based methods often apply semantic
+velocity perturbations globally in a spatially coupled latent space, so small non-target residuals
+can accumulate across steps, causing background drift and boundary instability in object-centric
+edits. Other training-free stabilization mechanisms, such as improved inversion consistency or
+attention/cache modulation [10, 20, 33], improve robustness in some cases but do not explicitly
+constrain where and how semantic velocity updates are spatially integrated. Our work follows
+the velocity-control paradigm and addresses this limitation with object-aware spatial support and
+constrained injection.
+Spatial control and object-aware editing. Localized editing with pretrained generative models
+has long been studied. Inference-time methods without explicit masks often rely on attention-
+or feature-level cues such as plug-and-play guidance or key–value cache manipulation [20, 26].
+Other diffusion editors use soft attention masks or adaptive mask localization to preserve source
+details and improve consistency in non-target regions [24, 32]. Despite these mechanisms, existing
+methods do not directly constrain the velocity field being integrated in rectified-flow editing.
+
+
+4
+Wang et al.
+(a) Global steering causes non-target drift
+(b) Stage-1: Build a background-anchored reference
+Input image
+Drifted result
+...
+t
+t - 1
+0
+Source
+trajectory
+Non-target residuals
+Multi-step latent trajectory
+Background-anchored
+reference construction
+Reference
+information
+𝑅𝑡
+Object prior 
+(mask)
+(c) Stage-2: Explicit Where/How control
+Target 
+trajectory
+Source
+trajectory
+Where
+How
+𝑢𝑡= 𝑊𝑡⊙𝛤𝑡𝛥𝑣𝑡; 𝑅𝑡
+𝑣𝑡
+𝑠𝑟𝑐
+𝑣𝑡
+𝑡𝑔𝑡,
+Δ𝑣𝑡= 𝑣𝑡
+𝑡𝑔𝑡−𝑣𝑡
+𝑠𝑟𝑐
+,
+Projection
+Confidence 
+gate
+Boundary-
+aware 
+refinement
+𝑊𝑡
+𝑟𝑖𝑛𝑔
+Localized
+update 𝑢𝑡
+𝑊𝑡
+𝑟𝑒𝑓
+Object interior
+support 𝑊𝑡
+𝑒𝑑𝑖𝑡
+Constrained semantic injection
+Localized edit 
+with stable 
+background
+Description:
+a [young woman] 
+is holding a dog
+Description:
+an [old woman] 
+is holding a dog
+Relax foreground 
+alignment
+Suppress 
+background residuals
+Fig. 3. Overview of Object-Aware Velocity Control. Global steering applies prompt-induced residuals
+over the full latent trajectory, causing non-target accumulation and background drift. OAVC first constructs
+a background-anchored reference interface, then applies explicit where/how control: object supports specify
+where semantic residuals are integrated, while a safe injection operator specifies how they are transformed
+before solver integration.
+Segmentation foundation models, including Segment Anything [13] and concept-aware variants
+[2], enable high-quality zero-shot object masks [2, 13], offering explicit object-level spatial priors.
+However, training-free editing methods rarely incorporate such priors into velocity manipula-
+tion or trajectory integration. In contrast, we inject an object-level prior into the velocity-control
+mechanism itself, enabling spatially selective and dynamically constrained integration while remain-
+ing fully training-free and compatible with velocity-based editing frameworks. Unlike KV-Edit’s
+attention-level background KV reuse [33], OAVC constrains residuals at the editor/solver interface;
+same-support controls separate this contribution from access to a mask.
+3
+Method
+We propose Object-Aware Velocity Control, a training-free framework for object-centric editing with
+rectified-flow backbones. As illustrated in Fig. 3, OAVC addresses non-target residual accumulation
+by introducing object-aware where/how control directly into the velocity-integration process. It
+first constructs a background-anchored reference interface under the source prompt, and then
+injects target semantics through object-localized safe velocity updates.
+3.1
+Preliminaries
+Noise-space interpolation in rectified-flow editing. We consider a rectified-flow velocity field
+𝑣𝜃(𝑍,𝜓) parameterized by a pretrained model, where 𝑍is a latent state and𝜓is a text condition. Let
+{𝜎𝑡}𝑇
+𝑡=0 be the solver noise levels and 𝑍𝑡+1 be the current latent at level 𝜎𝑡+1. Following DNAEdit [28],
+we construct a source-consistent trajectory under the source prompt 𝜓src by evaluating the velocity
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+5
+on an interpolated proxy state. Given an auxiliary noise state 𝑆𝑡+1, the proxy state at level 𝜎𝑡is:
+𝑍∗
+𝑡= 𝜎𝑡
+𝜎𝑡+1
+𝑍𝑡+1 +
+
+1 −𝜎𝑡
+𝜎𝑡+1
+
+𝑆𝑡+1.
+(1)
+The source velocity is 𝑣src
+𝑡
+= 𝑣𝜃(𝑍∗
+𝑡,𝜓src). The analytic linear velocity is 𝑣lin
+𝑡
+= (𝑆𝑡+1 −𝑍𝑡+1)/𝜎𝑡+1,
+yielding the DNA-style residual Δ𝑣DNA
+𝑡
+= 𝑣lin
+𝑡
+−𝑣src
+𝑡. OAVC modifies this residual in Stage-1 to
+obtain a safe source trajectory and cached offset for aligned target evaluation. We also inherit the
+reference-guided editing formulation of the base editor. Given an edited latent 𝑍edit
+𝑡
+and a moving
+reference anchor 𝑍ref
+𝑡+1, the reference velocity is 𝑣ref
+𝑡
+= (𝑍edit
+𝑡
+−𝑍ref
+𝑡+1)/(1 −𝜎𝑡). The foreground
+editing velocity is 𝑣fg
+𝑡= 𝜂𝑣tgt
+𝑡
++ (1 −𝜂)𝑣ref
+𝑡, where 𝑣tgt
+𝑡
+= 𝑣𝜃(𝑍∗edit
+𝑡
+,𝜓tgt) and 𝜂∈[0, 1] controls the
+editability–fidelity trade-off. The aligned edited proxy 𝑍∗edit
+𝑡
+is defined in Stage-2.
+Why global velocity steering drifts. Training-free velocity-steering methods add a control signal
+𝑢𝑡to the model velocity. For a discrete solver step, 𝑍𝑡+1 = 𝑍𝑡+ Δ𝑡ˆ𝑣𝑡, where ˆ𝑣𝑡= 𝑣𝜃(𝑍𝑡,𝜓) + 𝑢𝑡and
+Δ𝑡is the scheduler step size. Unrolling the trajectory shows that this control accumulates over
+time. On a background region Ωbg, the accumulated change is:
+Δ𝑍bg ≜
+𝑇−1
+∑︁
+𝑡=0
+Δ𝑡𝑢𝑡
+
+Ωbg.
+(2)
+Thus, even weak non-target components can become visible if they are repeatedly integrated
+across many steps. This is the key distinction from post-hoc masked blending or inpainting: those
+methods constrain the final latent or image, while OAVC constrains the residual field before solver
+integration. A more detailed derivation is provided in Appendix E.
+Where/how factorization. We formulate object-centric editing as a controlled velocity update:
+𝑢𝑡=𝑊𝑡⊙Γ𝑡(Δ𝑣𝑡; R𝑡).
+(3)
+Here 𝑊𝑡specifies where prompt-induced residuals can accumulate, and Γ𝑡(·) specifies how they
+are transformed before integration. R𝑡is the Stage-1 reference interface, including the aligned
+source trajectory, cached offsets, and source velocities. We use SAM3 by default, but OAVC is
+support-source agnostic and can use attention-derived, user-provided, or brush-refined supports.
+Details are in Appendices C and D.
+3.2
+Stage-1: Background-Anchored Reference Interface
+Stage-1 constructs the reference interface R𝑡used by the controlled injection stage. It does not
+perform semantic editing. Its purpose is to provide a source-consistent trajectory on which source
+and target velocities can be compared. For object-centric editing, this reference should satisfy two
+asymmetric requirements: the background should stay tightly anchored to the source dynamics,
+while the object region should keep enough freedom for later semantic change. This asymmetry is
+important because overly strong source alignment inside the object can suppress the desired edit,
+whereas unconstrained residuals on the background can accumulate into visible drift.
+Starting from the DNA alignment residual Δ𝑣DNA
+𝑡
+, we first relax the source-alignment force
+inside the editable object:
+Δ𝑣(1)
+𝑡
+= (1 −𝜆fg𝑀fg) ⊙Δ𝑣DNA
+𝑡
+.
+(4)
+Here 𝑀fg denotes the object support and 𝑀bg = 1 −𝑀fg denotes its complement. The coefficient
+𝜆fg ∈[0, 1] has a direct interpretation: it controls foreground editability. A larger value leaves
+more degrees of freedom for later semantic injection, while a smaller value makes the reference
+
+
+6
+Wang et al.
+more source-anchored. Thus, 𝜆fg is not introduced as an independent engineering knob, but as the
+foreground side of the editability–preservation trade-off.
+For the background, the residual should refine the source trajectory without introducing coherent
+structural motion. We use the same flow-orthogonal projection throughout OAVC, denoted by
+Π⊥(𝑎;𝑏) = 𝑎−
+⟨𝑎,𝑏⟩
+⟨𝑏,𝑏⟩+𝜖𝑏, which removes from 𝑎the component parallel to 𝑏. Let 𝑟𝑡= 𝑀bg ⊙Δ𝑣(1)
+𝑡
+be the background residual and 𝑏𝑡= 𝑀bg ⊙𝑣src
+𝑡
+be the background source flow. We then apply
+a soft projection: ˜𝑟𝑡= (1 −𝜌bg)𝑟𝑡+ 𝜌bgΠ⊥(𝑟𝑡;𝑏𝑡), where 𝜌bg ∈[0, 1] controls the strength of
+background residual suppression. Thus, 𝜌bg = 0 keeps the original DNA-style background residual,
+while 𝜌bg = 1 fully removes its source-flow-parallel component.
+The final Stage-1 residual is:
+Δ𝑣safe
+𝑡
+= 𝑀fg ⊙Δ𝑣(1)
+𝑡
++ ˜𝑟𝑡.
+(5)
+This residual relaxes the editable object while preserving a background-anchored source trajectory.
+Using this residual, we follow the same proxy-state refinement rule as DNAEdit:
+𝑆𝑡= 𝑆𝑡+1 + 𝜎𝑡+1Δ𝑣safe
+𝑡
+,
+𝑍𝑡= 𝑍∗
+𝑡+ (𝜎𝑡+1 −𝜎𝑡)Δ𝑣safe
+𝑡
+.
+(6)
+We then cache the offset:
+Δ𝑥safe
+𝑡
+= 𝑍𝑡−𝑍∗
+𝑡,
+(7)
+which maps the proxy state to the refined reference state. Stage-1 therefore outputs
+R𝑡= {𝑍𝑡, Δ𝑥safe
+𝑡
+, 𝑣src
+𝑡} for Stage-2.
+The role of Stage-1 is important for distinguishing OAVC from simple masked baselines. A final
+masked blend can restore the source background after generation, but it cannot prevent non-target
+velocity residuals from being integrated during sampling. In contrast, Stage-1 anchors the source
+trajectory before target semantic injection begins, so preservation is imposed at the trajectory level
+rather than repaired only at the final latent or image.
+3.3
+Stage-2: Object-Localized Safe Semantic Injection
+Stage-2 applies the controlled update in Eq. (3). It computes target semantic residuals on offset-
+aligned states, transforms them with the same safe injection principle introduced above, and
+integrates them only on the object support. We initialize the edited trajectory from Stage-1 at a
+chosen starting step 𝑡𝑠by setting 𝑍edit
+𝑡𝑠
+←𝑍𝑡𝑠.
+To compare source and target velocities on consistent states, we reuse the cached Stage-1 offset
+and form the aligned edited proxy state 𝑍∗edit
+𝑡
+= 𝑍edit
+𝑡
++ Δ𝑥safe
+𝑡
+. The target semantic residual is
+then computed as Δ𝑣𝑡= 𝑣𝜃(𝑍∗edit
+𝑡
+,𝜓tgt) −𝑣src
+𝑡. This residual captures the target semantic direction,
+but it may still contain components that follow the source flow and induce structural motion.
+Therefore, the safe injection operators Γref
+𝑡
+and Γinj
+𝑡
+use the projection operator Π⊥(·; ·) as their
+main drift-suppression mechanism.
+In addition to flow-orthogonal suppression, OAVC uses fixed boundary smoothing and confidence
+normalization inside the safe injection operators. These terms are not treated as separate conceptual
+modules or per-image tuned components. They only stabilize the transition near uncertain object
+boundaries and avoid unstable over-injection when the semantic residual is poorly localized. Their
+definitions and fixed settings are provided in Appendices B and H.3.
+We use Γref
+𝑡
+(Δ𝑣𝑡; R𝑡) to denote the safe semantic residual for updating the moving reference
+anchor, and Γinj
+𝑡
+(·; R𝑡) to denote the final safe residual injected into the edited velocity. Both
+operators instantiate the same where/how principle in Eq. (3); implementation details are provided
+in Appendix B. OAVC also maintains a moving reference anchor 𝑍ref
+𝑡. This anchor accumulates
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+7
+Source
+DNAEdit-
+SD3
+Ours-SD3
+DNAEdit-
+FLUX
+Ours-FLUX FlowEdit
+UniEdit
+FireFlow
+InfEdit
+RF-Solver
+Rocks:
+Goat→Horse
+Statue:
+Front→Side
+Countryside:
+-Church
+Table:+Books
+Angel:
+Field→River
+Makeup:
+Gold→Blue
+Woman’s hair:
+Curly→Straight
+Fig. 4. Qualitative comparison on PIE-Bench. We compare OAVC against representative training-free
+editors across SD3.5 and FLUX. OAVC better preserves non-target background and object boundaries while
+achieving the intended edits (red boxes).
+only the safe semantic displacement within the object-centered reference support:
+𝑍ref
+𝑡+1 = 𝑍ref
+𝑡
++ (𝜎𝑡+1 −𝜎𝑡)
+
+𝑊ref
+𝑡
+⊙Γref
+𝑡
+(Δ𝑣𝑡; R𝑡)
+
+.
+(8)
+The anchor provides a stable image-space reference for the reference-guided velocity formula-
+tion introduced in Sec. 3.1, while preventing target semantics from accumulating freely on the
+background.
+Because the reference-guided foreground velocity 𝑣fg
+𝑡is the velocity signal used for editing, we
+apply the same safety principle after reference-guided blending. The final edited velocity is:
+𝑣edit
+𝑡
+= 𝑣src
+𝑡
++𝑊edit
+𝑡
+⊙Γinj
+𝑡
+
+𝑣fg
+𝑡−𝑣src
+𝑡; R𝑡
+
+.
+(9)
+Thus, on the background where 𝑊edit
+𝑡
+= 0, the integrated velocity reduces to the source velocity,
+while the object region receives a constrained semantic update. The edited trajectory is updated by:
+𝑍edit
+𝑡+1 = 𝑍edit
+𝑡
++ (𝜎𝑡+1 −𝜎𝑡)𝑣edit
+𝑡
+.
+(10)
+This design differs from latent-space masked blending. Masked blending enforces locality by
+replacing latent or image regions after they have already been generated or partially denoised.
+OAVC instead constrains the velocity field being integrated, so non-target semantic residuals are
+prevented from accumulating on the background throughout the trajectory.
+
+
+8
+Wang et al.
+Table 1. Quantitative comparison on PIE-Bench. OAVC improves structural fidelity and background preserva-
+tion while retaining effective localized editability. The best and second-best results are indicated by bold and
+underlined text, respectively.
+Method
+Model
+Structure
+Background Preservation
+CLIP Similarity
+Distance↓
+PSNR↑
+LPIPS↓
+MSE↓
+SSIM↑
+Whole↑
+Edited↑
+PnP [26]
+SD1.5
+27.35
+22.31
+112.76
+82.95
+79.25
+25.41
+22.52
+DI+PnP [12]
+SD1.5
+23.35
+22.46
+105.51
+79.94
+79.88
+25.49
+22.64
+InfEdit [30]
+LCM
+19.31
+27.31
+56.32
+47.80
+85.30
+24.90
+22.14
+RF-Inv [23]
+FLUX
+42.29
+20.20
+179.54
+139.20
+69.91
+24.57
+22.20
+RFEdit [27]
+FLUX
+21.79
+24.83
+113.15
+52.46
+83.38
+25.57
+22.26
+FireFlow [4]
+FLUX
+29.03
+23.33
+133.40
+70.83
+81.22
+26.19
+22.99
+FlowEdit [14]
+FLUX
+27.82
+21.96
+112.19
+94.99
+83.08
+25.25
+22.58
+FlowEdit [14]
+SD3
+27.12
+22.22
+104.12
+85.96
+93.22
+26.53
+23.57
+FTEdit [29]
+SD3.5
+18.17
+26.62
+80.55
+40.24
+91.50
+25.74
+22.27
+FlowAlign [18]
+SD3
+28.00
+25.50
+53.00
+40.00
+87.90
+25.28
+22.00
+SplitFlow [31]
+SD3.5
+11.68
+27.12
+52.93
+30.61
+89.76
+26.29
+22.89
+UniEdit [10]
+FLUX
+10.14
+29.54
+63.55
+24.72
+90.42
+25.80
+22.33
+DNAEdit [28]
+FLUX
+18.87
+24.99
+95.06
+50.45
+85.71
+25.79
+22.87
+DNAEdit [28]
+SD3.5
+14.19
+26.66
+74.57
+32.76
+88.63
+25.63
+22.71
+OAVC (Ours)
+FLUX
+4.07
+33.30
+23.70
+8.75
+94.38
+23.70
+21.08
+OAVC (Ours)
+SD3.5
+4.11
+32.64
+24.40
+9.61
+93.00
+24.21
+21.51
+4
+Experiments
+4.1
+Setup
+Datasets: PIE-Bench [12] is our primary benchmark and consists of object-centric edit tuples
+(𝐼,𝜓src,𝜓tgt) that cover replacement, attribute edits, and material changes. We additionally evaluate
+on the DAVIS dataset [22] to assess temporal consistency under object-aware control. Since DAVIS
+does not provide text-based edit instructions, we perform mask-conditioned video editing, where
+the same object-level manipulation (e.g., deletion or localized replacement) is applied consistently
+across frames. For DAVIS sequences, we use the provided ground-truth instance masks and cache
+the object support for each frame, reusing it across solver steps to decouple temporal dynamics
+from segmentation noise and focus on the stability of the sampling trajectory.
+Backbones and compared methods. We primarily evaluate on two rectified-flow backbones,
+SD3.5 and FLUX. Our primary baseline is DNAEdit [28], and we follow its default sampling
+configuration on both backbones for a fair comparison. We compare against representative training-
+free text-driven editors from both diffusion and rectified-flow families. For diffusion-based methods,
+we include PnP [26], DI+PnP [12], and InfEdit [30]. For rectified-flow based methods, we include
+RF-Inv [23], RFEdit [27], FireFlow [4], FlowEdit [14], and UniEdit-Flow [10]. We report all
+results in Tab. 1.
+Implementation details: We use the same MVG coefficient 𝜂as DNAEdit for each backbone to
+ensure a fair comparison. In Stage-1 we set the foreground relaxation coefficient to 𝜆fg = 0.6 and
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+9
+Table 2. PIE-Bench ablation (all metrics scaled to match Tab. 1). We report the SD3.5 setting. The best results
+are indicated by bold text.
+Setting
+Structure
+Background Preservation
+CLIP Similarity
+Distance↓
+PSNR↑
+LPIPS↓
+MSE↓
+SSIM↑
+CLIPwhole ↑
+CLIPedit ↑
+DNAEdit (baseline; global)
+14.19
+26.66
+74.57
+32.76
+88.63
+25.63
+22.71
+Stage-1 only (Anchor-DNA)
+14.68
+26.28
+77.75
+35.44
+88.42
+25.76
+22.87
+Stage-2 (Mask+Ring+Proj; w/o Gate)
+6.60
+31.74
+27.65
+11.95
+92.61
+24.60
+21.97
+Stage-2 (+Mask only; 𝑊edit)
+5.27
+32.27
+25.78
+10.48
+92.99
+24.55
+21.87
+DNAEdit + final latent hard blend
+6.28
+–
+24.29
+9.56
+–
+24.46
+21.98
+Stage-2 (+Mask+Ring; 𝑊edit+𝑊ref)
+5.21
+32.28
+25.73
+10.44
+92.99
+24.54
+21.87
+Stage-2 (Mask+Ring+Gate; w/o Proj)
+6.06
+32.15
+26.82
+10.70
+92.70
+24.38
+21.72
+Full OAVC (Stage-1 + Stage-2)
+4.11
+32.64
+24.40
+9.61
+93.00
+24.21
+21.51
+the background projection mixing coefficient to 𝜌bg = 0.1. Additional implementation details and
+hyperparameter studies are provided in Appendices B, C, and J.
+Metrics: On PIE-Bench we report Struct. Dist.↓and background preservation metrics PSNR↑
+SSIM↑LPIPS↓and MSE↓computed on non-target regions defined by the object mask. Generation and
+evaluation masks are distinct: SAM3 supplies only OAVC’s generation support, while every method
+is scored with the same PIE-Bench annotation (556 valid backgrounds; Structure Distance/CLIP
+use all 700 examples). Following the PIE-Bench and DNAEdit protocol, we apply scaling factors
+for readability: Struct. Dist. ×103, LPIPS ×103, MSE ×104, and SSIM ×102. PSNR is reported in
+dB (unscaled). We additionally report CLIPwhole and CLIPedit for semantic alignment on the full
+image and within the edited region. For DAVIS, BG-PSNR/BG-L1 measure per-frame background
+fidelity between each edited frame and its source frame on non-target regions; PSNR is reported
+higher-is-better, while L1 is the mean absolute pixel error and lower-is-better. TW-BG-PSNR/TW-
+BG-L1 measure temporal background stability by warping the previous edited frame to the current
+frame using source-video optical flow and computing the same errors on the valid background
+intersection.
+4.2
+Main Results
+Quantitative results. Tab. 1 evaluates editing performance from structure preservation, back-
+ground preservation, and CLIP similarity. OAVC achieves the strongest preservation-oriented
+performance on PIE-Bench across both FLUX and SD3.5. On FLUX, OAVC reduces the structure
+distance of DNAEdit from 18.87 to 4.07 and improves background PSNR from 24.99 dB to 33.30 dB.
+It also outperforms UniEdit, which is already a strong flow-based baseline, indicating that explicit
+object-level velocity control better suppresses non-target drift than implicit trajectory localization.
+On SD3.5, OAVC shows the same trend, reducing the structure distance from 14.19 to 4.11 and
+increasing PSNR from 26.66 dB to 32.64 dB over DNAEdit. Although FlowEdit-SD3 obtains higher
+CLIP scores, its weaker structure and background metrics suggest that global velocity steering can
+spread target semantics beyond the intended object region. In contrast, OAVC favors object-centric
+preservation and localized editability, leading to stronger structural and background fidelity. We
+further analyze this CLIP preservation–editability trade-off in Sec. 5.4.
+We also evaluate video stability on DAVIS in Tab. 3 using four sequences, identical source clips
+and prompts, the first 41 frames, and the same resolution and evaluation protocol. Relative to
+the temporal editor UniEdit-Flow, OAVC improves BG-PSNR by 4.66 dB, reduces BG-L1 by 39.2%,
+
+
+10
+Wang et al.
+DNAEdit
+Ours
+Source
+Delete paraglider
+Fig. 5. DAVIS video editing example for target-object removal across consecutive frames.
+Table 4. Transfer to FlowEdit backbones on PIE-Bench (all metrics scaled to match Tab. 1).
+Method
+Backbone
+Structure
+Background Preservation
+CLIP Similarity↑
+Distance↓
+PSNR↑
+LPIPS↓
+MSE↓
+SSIM↑
+CLIPwhole ↑
+CLIPedit ↑
+FlowEdit
+FLUX
+27.82
+21.96
+112.19
+94.99
+83.08
+25.25
+22.58
+FlowEdit
+SD3
+27.12
+22.22
+104.12
+85.96
+93.22
+26.53
+23.57
+Ours (OAVC on FlowEdit)
+SD3
+35.72
+27.65
+81.05
+21.57
+86.98
+24.46
+22.20
+Ours (OAVC on FlowEdit)
+FLUX
+9.32
+30.77
+30.09
+16.80
+93.57
+24.18
+23.66
+improves TW-BG-PSNR by 1.68 dB, and reduces TW-BG-L1 by 6.7%. These results show that OAVC
+suppresses both static background drift and frame-to-frame jitter.
+Table 3. DAVIS quantitative video results. BG metrics
+measure per-frame background fidelity, while TW-
+BG metrics measure temporal background stability
+using source-video optical flow.
+Method
+BG-PSNR↑
+BG-L1↓
+TW-BG-PSNR↑
+TW-BG-L1↓
+DNAEdit
+19.85
+0.0692
+26.56
+0.0281
+UniEdit-Flow
+22.87
+0.0467
+27.97
+0.0227
+OAVC
+27.53
+0.0284
+29.65
+0.0212
+Qualitative results. Fig. 4 confirms the quanti-
+tative trends on diverse image edits, including ob-
+ject replacement, viewpoint change, object dele-
+tion/addition, background-region change, and
+fine-grained attribute editing. Global-steering
+baselines such as DNAEdit, FlowEdit, UniEdit,
+and FireFlow often exhibit background drift,
+boundary artifacts, or off-target semantic leakage.
+OAVC better localizes the edit to the target object while preserving non-target regions and cleaner
+boundaries.
+For video editing, Fig. 1 and Fig. 5 show consecutive-frame results on DAVIS. Since each frame
+is edited independently, global steering can amplify small frame-wise residual differences and
+produce temporal inconsistency. OAVC constrains prompt-induced residuals within the object
+support during integration, leading to more stable object removal and better preservation of the
+surrounding scene, consistent with the DAVIS metrics in Tab. 3.
+4.3
+Ablation Study
+We report additional ablations in Appendix J and summarize the main findings here. Table 2
+validates the effectiveness of the proposed where/how velocity control.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+11
+Component ablation. Stage-1 alone mainly improves prompt faithfulness, as reflected by
+higher CLIP scores, but provides limited gains in structure and background preservation. The major
+improvement comes from Stage-2, which sharply reduces Struct. Dist. and improves background
+metrics, confirming that drift is primarily caused by step-wise accumulation during integration.
+Within Stage-2, object-support masking accounts for most of the preservation gain, while the bound-
+ary ring provides a smaller but consistent improvement by softening the foreground/background
+transition. Removing either the flow-orthogonal projection or the confidence gate degrades structure
+and preservation, showing that the how constraint suppresses drift-aligned or unstable residuals.
+With identical support, full OAVC reduces Structure Distance by 22.0% versus mask-only gating
+and 34.6% versus final latent blending while matching the latter’s LPIPS/MSE within 0.6%; Sec. 5.1
+gives the full attribution and human study.
+Hyperparameter robustness. We sweep the main Stage-1 hyperparameters, foreground relax-
+ation 𝜆fg and background suppression 𝜌bg, in Fig. 12. Across SD3.5 and FLUX, moderate foreground
+relaxation with small background suppression gives stable LPIPS/MSE performance. We therefore
+use 𝜆fg=0.6 and 𝜌bg=0.1 by default. Additional support-related hyperparameter studies are provided
+in Appendix J.
+Transfer robustness to another velocity editor. We further apply OAVC-style Stage-2 con-
+trolled injection to FlowEdit [14] to test whether the proposed control principle is tied to our base
+pipeline. As shown in Tab. 4, the transfer strongly improves FlowEdit-FLUX, reducing Struct. Dist.
+from 27.82 to 9.32 and increasing PSNR from 21.96 dB to 30.77 dB. On SD3, it improves background
+preservation, e.g., PSNR increases from 22.22 dB to 27.65 dB and MSE decreases from 85.96 to 21.57,
+but Struct. Dist. worsens from 27.12 to 35.72. This suggests that the where/how control is broadly
+useful, while stable structure preservation also benefits from the Stage-1 reference interface.
+5
+Extended Evaluation and Analysis
+5.1
+Controlled Same-Support Baselines and Human Evaluation
+Disentangling object localization from trajectory control. The comparison between global DNAEdit
+and OAVC conflates two sources of improvement: the introduction of an explicit object support
+and the way in which the prompt-induced residual is integrated along the generation trajectory.
+To disentangle these effects, Table 5 compares three localized variants using the identical cached
+SAM3 support. Consequently, differences among these variants arise from how the shared support
+is applied, rather than from differences in localization quality.
+As a post-hoc spatial-control baseline, we first run unconstrained DNAEdit and then apply a
+single hard blend in the final latent space:
+𝑍blend
+0
+= 𝑀⊙𝑍DNA
+0
++ (1 −𝑀) ⊙𝐸(𝐼src),
+(11)
+where 𝑀denotes the thresholded support at the latent resolution and 𝐸(𝐼src) is the VAE encoding
+of the source image. This baseline directly restores the source latent outside the support, but, unlike
+OAVC, does not constrain intermediate velocities or numerical solver steps.
+The transition from global DNAEdit to mask-only velocity gating reduces Structure Distance
+from 14.19 to 5.27, confirming that explicit object support accounts for a substantial part of the
+preservation improvement. However, localization alone does not explain the full gain. Under the
+identical support, full OAVC further reduces Structure Distance from 5.27 to 4.11, corresponding to
+a 22.0% relative improvement over mask-only velocity gating.
+Final latent blending has a construction-level advantage in background pixel metrics because
+it explicitly overwrites the final background with the encoded source latent. Despite operating
+entirely within the generation trajectory and performing no final overwrite, OAVC matches its BG
+LPIPS and BG MSE within 0.6%, while reducing Structure Distance from 6.28 to 4.11, a 34.6% relative
+
+
+12
+Wang et al.
+Table 5. Controlled comparison on PIE-Bench using SD3.5. All localized variants use the identical cached
+SAM3 support, thereby isolating the effect of trajectory-level control from that of object localization. Metrics
+follow the scaling convention of Table 1.
+Method
+Struct.↓
+BG LPIPS↓
+BG MSE↓
+CLIPwhole ↑
+CLIPedit ↑
+DNAEdit (global)
+14.19
+74.57
+32.76
+25.63
+22.71
+Final latent hard blend
+6.28
+24.29
+9.56
+24.46
+21.98
+Mask-only velocity gating
+5.27
+25.78
+10.48
+24.55
+21.87
+Full OAVC
+4.11
+24.40
+9.61
+24.21
+21.51
+Table 6. Human evaluation. Top: majority-vote preference counts over 100 examples. Bottom: absolute task-
+success rates over 200 judgments per method.
+Criterion
+OAVC
+DNAEdit
+Final blend
+None/Tie
+No consensus
+Edit realization
+15
+22
+28
+17
+18
+Background preservation
+74
+0
+20
+0
+6
+Absolute task success
+Yes
+Partially
+Yes+Partially
+No
+–
+OAVC
+59.0%
+20.5%
+79.5%
+20.5%
+–
+DNAEdit
+65.5%
+14.5%
+80.0%
+20.0%
+–
+Final blend
+55.5%
+21.5%
+77.0%
+23.0%
+–
+improvement. This structural improvement is accompanied by a modest decrease in CLIP-based
+editability, reflecting the preservation–editability trade-off analyzed in Section 5.4.
+Overall, these controlled comparisons separate the two contributions: explicit support provides
+the primary localization benefit, whereas OAVC’s constrained, spatially weighted in-trajectory
+integration yields an additional improvement in structural preservation under the same support.
+Human evaluation. We conduct a blinded study on 100 PIE-Bench examples. Three independent
+annotators first choose which method best realizes the edit and which best preserves the background;
+we report per-example majority votes, with ties and cases lacking two agreeing votes separated.
+Two annotators additionally label every output as Yes, Partially, or No for absolute task success,
+yielding 200 judgments per method.
+OAVC wins 74 of 94 decisive background-preservation comparisons (78.7%; exact binomial
+𝑝< 10−7). For edit realization, the 65 decisive outcomes favor OAVC/DNAEdit/final blend 15/22/28;
+an exact multinomial test against equal preference gives 𝑝= 0.147, and exploratory exact binomial
+comparisons give 𝑝= 0.324 for OAVC versus DNAEdit and 𝑝= 0.066 for OAVC versus final
+blending. Thus, OAVC tends to be more conservative, but the relative edit-realization differences
+are not significant at 0.05 in this study; non-significance is not evidence of equivalence. The absolute
+Yes-or-Partially rate is 79.5% for OAVC versus 80.0% for DNAEdit (paired exact McNemar 𝑝= 1.00),
+indicating that lower CLIP does not correspond to widespread task failure.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+13
+Table 7. Robustness to input-prior corruption on 100 PIE-Bench examples. The cached SAM3 prior 𝑀0 is
+eroded or dilated before the unchanged OAVC support-construction step. All conditions retain 𝑟fg = 2
+and 𝑟bd = 4. IoU and area ratio characterize 𝑀𝑟relative to 𝑀0; region-conditioned metrics use the same
+independent PIE-Bench annotation, while Structure Distance is global. Metrics are scaled as in Table 1.
+Input-prior perturbation
+IoU w.r.t. 𝑀0
+Area ratio Empty
+Struct.↓BG LPIPS↓BG MSE↓CLIPedit ↑
+Erode 4
+0.397
+0.397×
+13%
+2.07
+19.53
+6.35
+20.65
+Erode 2
+0.593
+0.593×
+6%
+2.84
+20.10
+6.55
+21.29
+Original
+1.000
+1.000×
+0%
+4.21
+23.15
+8.08
+21.47
+Dilate 2
+0.712
+1.581×
+0%
+4.67
+26.04
+9.34
+21.36
+Dilate 4
+0.594
+2.236×
+0%
+4.93
+28.88
+10.38
+21.42
+5.2
+Robustness to Input-Support Corruption
+We evaluate robustness to errors in the input object prior on a fixed subset of 100 PIE-Bench
+examples. Starting from the cached SAM3 prior 𝑀0, we construct a perturbed prior
+𝑀𝑟=
+
+
+Erode(𝑀0; |𝑟|),
+𝑟< 0,
+𝑀0,
+𝑟= 0,
+Dilate(𝑀0;𝑟),
+𝑟> 0,
+𝑟∈{−4, −2, 0, +2, +4},
+(12)
+where each morphology step is applied on the VAE latent grid. The perturbation is introduced
+before OAVC constructs its editable and boundary supports. Every condition subsequently uses the
+same support-construction parameters, including 𝑟fg = 2 and 𝑟bd = 4, as well as identical generation
+hyperparameters and sample-wise random seeds. Thus, 𝑟measures corruption of the input prior
+and should not be confused with the fixed foreground-support margin 𝑟fg.
+Only the generation-time prior is perturbed:
+𝑀gen = 𝑀𝑟,
+𝑀eval = 𝑀PIE,
+(13)
+where 𝑀PIE is the fixed PIE-Bench annotation shared by all conditions. IoU and area ratio char-
+acterize 𝑀𝑟relative to 𝑀0; all region-conditioned output metrics use the independent PIE-Bench
+annotation, while Structure Distance remains a global, mask-independent metric. Table 7 and Fig. 6
+jointly show direction-dependent degradation: erosion restricts edit coverage, whereas dilation
+exposes more non-target area to semantic residuals.
+The results show a clear direction-dependent degradation pattern. Erosion restricts the spatial
+coverage of semantic injection and makes editing increasingly conservative. Relative to the un-
+perturbed condition, Erode-2 changes the aggregate CLIPedit score by only 0.86% (21.47 to 21.29),
+but 6/100 input supports become empty. Under Erode-4, the mean support area falls to 39.7% of
+the original prior, 13/100 supports become empty, and CLIPedit decreases to 20.65. These results
+indicate that aggregate CLIP scores can understate sample-specific incomplete-edit failures caused
+by under-segmentation.
+Dilation produces the complementary failure mode. At Dilate-4, the input support expands to
+2.236 times its original area. Compared with the unperturbed condition, BG LPIPS increases by
+24.7% (23.15 to 28.88) and BG MSE increases by 28.4% (8.08 to 10.38), while CLIPedit changes by only
+0.23%. Thus, excessive support expansion provides little aggregate semantic benefit while exposing
+substantially more non-target content to semantic residuals. Notably, Erode-2 and Dilate-4 have
+nearly identical mean IoUs (0.593 versus 0.594) but substantially different background errors. This
+demonstrates that IoU alone does not characterize support corruption: under-segmentation mainly
+limits edit coverage, whereas over-segmentation weakens spatial locality and increases non-target
+
+
+14
+Wang et al.
+2
+3
+4
+5
+6
+Structure Distance (×103) 
+(a)
+17.5
+20.0
+22.5
+25.0
+27.5
+30.0
+32.5
+BG LPIPS (×103) 
+(b)
+Erode 4
+r =
+4
+IoU=0.397
+Erode 2
+r =
+2
+IoU=0.593
+Original
+r = 0
+IoU=1.000
+Dilate 2
+r = +2
+IoU=0.712
+Dilate 4
+r = +4
+IoU=0.594
+Generation-time support perturbation
+6
+8
+10
+12
+BG MSE (×104) 
+(c)
+Erode 4
+r =
+4
+IoU=0.397
+Erode 2
+r =
+2
+IoU=0.593
+Original
+r = 0
+IoU=1.000
+Dilate 2
+r = +2
+IoU=0.712
+Dilate 4
+r = +4
+IoU=0.594
+Generation-time support perturbation
+20.0
+20.5
+21.0
+21.5
+22.0
+22.5
+CLIPedit (×102) 
+(d)
+Fig. 6. Robustness to generation-time input-prior corruption on a fixed 100-example PIE-Bench subset.
+Points denote means and error bars denote bootstrap 95% confidence intervals. The dashed line marks the
+unperturbed input prior (𝑟= 0). All conditions retain the same OAVC support-construction parameters,
+including 𝑟fg = 2 and 𝑟bd = 4. Region-conditioned metrics use the same independent PIE-Bench annotation;
+Structure Distance is global. Erosion restricts edit coverage, whereas dilation increasingly exposes non-target
+regions to semantic residuals.
+drift. Overall, the aggregate metrics are relatively insensitive to moderate input-prior perturbations,
+but OAVC remains dependent on support quality. Severe erosion can remove the editable region
+and cause incomplete edits, whereas excessive dilation increases non-target drift.
+5.3
+Qualitative Generalization Check on GEdit-Bench
+We additionally test two representative real-world instructions from GEdit-Bench [9], covering
+localized object replacement and removal. Figure 7 compares the source, global DNAEdit, and OAVC
+for changing a microphone into an ice-cream cone and removing a white railing. In both examples,
+OAVC confines the requested change more closely to the intended region while preserving non-
+target content. These examples extend the qualitative scope beyond PIE-Bench, but they are not a
+substitute for benchmark-wide quantitative evaluation.
+5.4
+Editability–Preservation Trade-off and CLIP Similarity
+This section further analyzes the CLIP similarity trade-off observed in the main results. Although
+OAVC substantially improves background preservation and structural stability, its CLIPwhole and
+sometimes CLIPedit scores can be lower than global-steering baselines. This should not be interpreted
+as OAVC simply weakening the edit. Instead, the difference reflects a stricter object-centric objective:
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+15
+Remove the 
+white railing
+Microphone → 
+Ice Cream Cone
+Original
+DNAEdit
+OAVC
+Original
+DNAEdit
+OAVC
+Fig. 7. Qualitative examples on GEdit-Bench. Columns show Original, DNAEdit, and OAVC. Top: microphone
+→ice-cream cone. Bottom: remove the white railing. OAVC better localizes the requested edit and preserves
+surrounding content. These two cases provide a qualitative generalization check, not full-benchmark evalua-
+tion.
+target semantics should be injected into the editable object, but should not leak into non-target
+regions.
+Why global CLIP can favor background leakage. CLIP similarity measures image-text alignment
+between a generated image and the target prompt. Let 𝑓𝐼(·) and 𝑓𝑇(·) denote the CLIP image and
+text encoders, respectively. For an image 𝑋and target prompt 𝜓tgt, we compute
+Sim(𝑋,𝜓tgt) =
+
+𝑓𝐼(𝑋)
+∥𝑓𝐼(𝑋)∥2
+,
+𝑓𝑇(𝜓tgt)
+∥𝑓𝑇(𝜓tgt)∥2
+
+.
+(14)
+For object-centric editing, however, the target prompt usually describes the edited object while
+the desired output should preserve the non-target background. A global editor may increase CLIP
+similarity by spreading target-related visual changes beyond the object support. Such changes
+can improve whole-image target-prompt alignment while simultaneously damaging background
+preservation. Therefore, a higher CLIPwhole score does not necessarily indicate a better localized
+edit.
+OAVC does not suppress the full edited field. OAVC does not project or suppress the entire edited
+velocity field. The final edited velocity has the form
+𝑣edit
+𝑡
+= 𝑣src
+𝑡
++𝑊edit
+𝑡
+⊙
+
+𝑔𝑡Δ𝑣inj
+𝑡
+
+,
+(15)
+
+
+16
+Wang et al.
+Table 8. Foreground/background target-semantic decomposition. FG-Gain and BG-Gain measure target-
+prompt gain in foreground and background regions, respectively, while FG-BG Gap measures localization
+strength.
+Method
+FG-Gain
+BG-Gain
+FG-BG Gap
+Mean↑
+Std
+Mean↓
+Std
+Mean↑
+Std
+DNAEdit (global)
+0.0189
+0.0299
+0.0108
+0.0245
+0.0080
+0.0336
+OAVC
+0.0130
+0.0261
+0.0008
+0.0123
+0.0122
+0.0260
+where 𝑣src
+𝑡
+is preserved as the base transport field and only the additional prompt-induced residual
+is spatially localized and constrained. Thus, OAVC is not a low-guidance variant that uniformly
+weakens the edit. It keeps the source transport and controls where the additional target semantic
+residual is allowed to accumulate.
+This also clarifies the role of the flow-orthogonal projection. The projection is applied to the
+residual direction, not to the whole edited field. Therefore, structural information from the source
+trajectory is still retained through 𝑣src
+𝑡, while target-specific changes are introduced through offset-
+aligned target evaluation, reference-guided blending, and object-localized residual injection. In our
+ablation, removing projection only slightly recovers CLIP similarity but clearly worsens structure
+and background preservation, suggesting that projection mainly acts as a stabilizer rather than the
+primary source of the CLIP trade-off.
+Foreground/background semantic gain decomposition. To test whether OAVC merely weakens
+editing, we decompose target-prompt similarity gain using the method-independent PIE-Bench
+foreground/background annotation, not OAVC’s generation support. Let 𝑀fg be the edited object
+support and 𝑀bg = 1 −𝑀fg be the non-target background support. We define a region extrac-
+tion operator C𝑀(𝑋) that crops or masks image 𝑋to the region indicated by 𝑀using the same
+preprocessing for all methods. The region-level target similarity is
+Sim𝑀(𝑋,𝜓tgt) = Sim C𝑀(𝑋),𝜓tgt
+.
+(16)
+Given the source image 𝑋src and the edited image 𝑋edit, we define foreground and background
+target-semantic gains as
+FG-Gain = Sim𝑀fg(𝑋edit,𝜓tgt) −Sim𝑀fg(𝑋src,𝜓tgt),
+(17)
+BG-Gain = Sim𝑀bg(𝑋edit,𝜓tgt) −Sim𝑀bg(𝑋src,𝜓tgt).
+(18)
+FG-Gain measures how much target semantics are added to the intended object region. BG-Gain
+measures how much target semantics leak into the non-target background. We further define the
+localization gap and leakage ratio as
+FG-BG Gap = FG-Gain −BG-Gain,
+Leakage Ratio =
+BG-Gain
+FG-Gain + 𝜖.
+(19)
+A larger FG-BG Gap and a smaller Leakage Ratio indicate stronger object-localized semantic editing.
+Analysis. Tab. 8 shows that OAVC does not uniformly remove target semantics. Compared with
+DNAEdit, the foreground target gain decreases moderately from 0.0189 to 0.0130. In contrast, the
+background target gain is reduced much more strongly, from 0.0108 to 0.0008. Using Eq. (19), the
+background leakage ratio decreases from approximately 57.5% for DNAEdit to 6.3% for OAVC.
+This indicates that the main effect of OAVC is not global edit suppression. Instead, OAVC mainly
+removes target semantics that global steering tends to leak into non-target regions.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+17
+The larger FG-BG Gap further supports this interpretation. Although DNAEdit can obtain higher
+whole-image target similarity, part of this gain comes from changing the background. OAVC
+produces a more localized semantic update: target semantics are concentrated in the foreground
+while non-target regions remain source-consistent. Therefore, the observed CLIP trade-off reflects
+the difference between global target-prompt alignment and object-centric editing quality.
+Relation to CLIPwhole and CLIPedit. CLIPwhole evaluates target-prompt alignment on the entire im-
+age and is therefore sensitive to both desired foreground changes and undesired background leakage.
+CLIPedit focuses more on the edited region, but it can still be affected by mask quality, boundary con-
+tent, and the fact that object-centric editing intentionally preserves some source structure. For this
+reason, CLIP similarity should be interpreted together with structure and background-preservation
+metrics. A method that maximizes CLIP by changing the whole image may be undesirable when
+the instruction asks for a localized edit.
+Relation to projection and localization. The CLIP decrease is not solely caused by the flow-
+orthogonal projection. Projection is an auxiliary stabilizer that suppresses drift-inducing residual
+components. The larger CLIP change appears when Stage-2 object-localized control is enabled,
+because target semantics outside the object support are explicitly blocked. This is consistent with
+the purpose of OAVC: the method prioritizes localized semantic editing and background stability
+over globally maximizing target-prompt similarity.
+Substantial object-centric replacements. Fig. 8 examines two substantial object-centric replace-
+ments involving pronounced semantic and geometric changes. Starting from the same source
+image, we perform car-to-train and car-to-plane edits and compare OAVC with the global DNAEdit
+baseline. For car-to-train, DNAEdit produces the target object but also noticeably modifies the
+road layout and surrounding scene structures. For car-to-plane, DNAEdit retains much of the
+source car while introducing additional aircraft-related content. In comparison, OAVC concentrates
+the transformation around the source object and more closely preserves the surrounding road,
+mountains, sky, and lamp posts. These examples demonstrate that the proposed velocity projection
+can accommodate substantial semantic and geometric transformations when the target object is
+adequately covered by the editable support. Nevertheless, the achievable edit coverage remains
+dependent on support quality: an overly tight support may restrict target geometry that needs to
+extend substantially beyond the source object.
+Practical implication. OAVC operates on the editability–preservation frontier. When stronger
+foreground transformation is desired, the object support can be slightly enlarged or foreground
+anchoring can be relaxed. When background leakage occurs, the support can be tightened or
+background suppression can be strengthened. This provides a structured way to navigate the
+trade-off, rather than treating the CLIP decrease as an uncontrolled failure mode. For aggressive
+shape changes, the fixed foreground-relaxation coefficient may be conservative when the desired
+geometry must extend outside a tight support. A time-dependent schedule 𝜆fg(𝑡) that permits
+greater foreground freedom during early high-noise steps and strengthens anchoring later is
+directly compatible with OAVC, but was not evaluated here. Likewise, because the orthogonal
+projection constrains only the added residual and retains 𝑣src
+𝑡
+as the base transport, it primarily
+stabilizes structure; it may nevertheless suppress a useful target component aligned with the source
+flow, motivating a future confidence-adaptive soft projection.
+5.5
+Multi-Object and Compositional Editing
+This section discusses how OAVC can be naturally extended from single-object editing to multi-
+object and simple compositional edits. The main formulation of OAVC does not assume that
+
+
+18
+Wang et al.
+Original
+Original
+DNAEdit
+DNAEdit
+OAVC
+OAVC
+Car→Train
+Car→Plane
+Fig. 8. Large-deformation object replacements from the same source image. Rows show car-to-train and
+car-to-plane edits, while columns compare the original image, DNAEdit, and OAVC. DNAEdit introduces more
+extensive changes to the road and surrounding scene and, in the car-to-plane case, incompletely removes the
+source car. OAVC concentrates the transformation around the source object while more closely preserving
+non-target scene content.
+the editable support contains only one object. Since the method operates on velocity-level spatial
+supports, multiple object supports can be incorporated without changing the underlying where/how
+control principle.
+Multi-object editing. Fig. 9 presents a representative two-object edit from “photo of a [goat] and a
+[cat]” to “photo of a [horse] and a [dog]”. The second column visualizes the object supports identified
+for the source goat and cat in orange and blue, respectively; their union defines the editable region
+used during generation. Both DNAEdit and OAVC respond to the two target concepts, demonstrating
+that the underlying flow-based editor can perform compositional object replacement. However, the
+global semantic injection of DNAEdit produces more pronounced changes in object appearance,
+layout, and nearby scene content. OAVC confines the prompt-induced velocity correction to the
+combined object support, changing both foreground objects while more closely retaining the
+original spatial arrangement and non-target background, including the rocks, ocean, and sky. This
+example provides a proof of concept that the same velocity-level control mechanism can operate
+on multiple object supports, although broader evaluation of multi-object correspondence and
+interactions remains future work.
+Object-wise semantic injection. In Stage-2, each object support is converted into its own edit and
+reference supports,𝑊edit
+𝑡,𝑖
+and𝑊ref
+𝑡,𝑖, following the same construction as Appendix C. For each object,
+we compute an object-specific semantic residual and apply the same safe injection operator:
+𝑢multi
+𝑡
+=
+𝐾
+∑︁
+𝑖=1
+𝑊edit
+𝑡,𝑖
+⊙Γ𝑡
+
+Δ𝑣(𝑖)
+𝑡; R𝑡
+
+,
+(20)
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+19
+Photo of a [goat] and a [cat]  
+Photo of a [horse] and a [dog]  
+Original
+Object Supports
+DNAEdit
+OAVC
+Fig. 9. Representative two-object edit from a goat and a cat to a horse and a dog. The orange and blue
+overlays indicate the source goat and cat supports, respectively; their union is used as the editable support.
+Both methods modify the two target objects, while OAVC more closely retains the original scene layout and
+non-target background.
+where Δ𝑣(𝑖)
+𝑡
+denotes the prompt-induced residual for the 𝑖-th local edit. The final edited velocity
+follows the same form as the single-object case, except that the controlled residual is summed over
+object supports:
+𝑣edit
+𝑡
+= 𝑣src
+𝑡
++ 𝑢multi
+𝑡
+.
+(21)
+If object supports overlap, the weights can be normalized by ¯𝑊edit
+𝑡,𝑖
+=𝑊edit
+𝑡,𝑖/(Í
+𝑗𝑊edit
+𝑡,𝑗
++ 𝜖) to avoid
+over-injection in overlapping regions. In the simple case where a single joint target prompt is used,
+the formulation reduces to applying OAVC on the union support.
+Reference update. The moving reference anchor can be updated analogously by accumulating
+only object-supported semantic displacement:
+𝑍ref
+𝑡+1 = 𝑍ref
+𝑡
++ (𝜎𝑡+1 −𝜎𝑡)
+𝐾
+∑︁
+𝑖=1
+
+𝑊ref
+𝑡,𝑖⊙Γ𝑡
+
+Δ𝑣(𝑖)
+𝑡; R𝑡
+
+.
+(22)
+Thus, the background remains anchored by the union complement, while each editable object
+receives its own localized semantic update.
+Qualitative example. Fig. 9 shows a representative two-object edit, where the source prompt
+“photo of a [goat] and a [cat]” is edited into “photo of a [horse] and a [dog]”. The result changes
+both foreground objects while preserving the non-target background, such as the rocks and ocean.
+This example illustrates that OAVC is not inherently limited to single-object editing: the same
+velocity-level control principle can be applied to multiple object supports.
+Scope. While this example demonstrates the feasibility of multi-object OAVC, more complex
+compositional scenarios remain an important direction for future work. Challenging cases include
+strongly overlapping objects, interactions between edited objects, and edits requiring global scene-
+level reasoning. These cases may require more structured semantic layouts or object-relation priors
+beyond independent object supports.
+5.6
+Efficiency and Overhead
+Tab. 9 reports end-to-end runtime and peak GPU memory per image for DNAEdit and OAVC
+on SD3.5 and FLUX. OAVC introduces additional inference-time operations (reference-anchor
+maintenance, spatial weighting, ring high-pass filtering, and confidence gating), which lead to a
+
+
+20
+Wang et al.
+Table 9. Runtime and peak GPU memory (per image) for DNAEdit vs. OAVC on two rectified-flow backbones.
+Backbone/Method
+Time (s/img)↓
+Peak Mem (MiB)↓
+SD3.5 / DNAEdit
+3.08
+19,459
+SD3.5 / Ours
+3.12
+23,139
+FLUX / DNAEdit
+9.01
+35,839
+FLUX / Ours
+9.85
+39,571
+modest runtime and memory overhead over DNAEdit under the same backbone and sampling
+configuration. In our implementation, the SAM3 mask is computed once per image (or per video)
+and cached across solver steps; thus the reported overhead primarily reflects OAVC’s control logic
+during sampling rather than repeated segmentation calls.
+5.7
+Limitations and Scope
+OAVC relies on a meaningful object support that localizes where semantic velocity updates may
+act. When the support becomes nearly global, the spatial selectivity of Stage 2 vanishes and the
+method approaches global velocity steering; it is therefore not designed for full-image transfor-
+mations such as global style transfer, overall color grading, or domain-level appearance changes.
+Performance also depends on support quality: severe under-segmentation can produce incomplete
+edits, while excessive over-segmentation exposes non-target regions to semantic residuals, as
+quantified in Sec. 5.2. The current post-hoc control uses a single final latent hard blend; stronger
+pixel-space or multi-step compositing controls remain to be evaluated. Finally, Structure Distance
+is a global correspondence metric, and the present human study was not powered for reliable
+per-edit-category analysis. Representative weak-benefit cases and broader qualitative results are
+provided in Appendices L and K.
+6
+Conclusion
+We presented OAVC, a training-free framework for object-centric image and video editing with
+rectified-flow backbones. Rather than relying on post-hoc output masking, OAVC controls both
+where prompt-induced residuals accumulate and how they are injected during velocity integra-
+tion. By combining a background-anchored reference interface with object-localized safe semantic
+injection, OAVC reduces non-target drift and improves structural fidelity and boundary stability.
+Experiments on PIE-Bench and GEdit-Bench, together with video evaluations on DAVIS, demon-
+strate improved background preservation and temporal consistency while maintaining effective
+localized editability. Controlled ablations, baseline comparisons, and human evaluation further
+characterize the preservation–editability trade-off and the dependence of OAVC on object-support
+quality. Future work will explore adaptive support discovery and refinement together with multi-
+step compositing, reducing sensitivity to segmentation errors and better accommodating target
+objects with substantial geometric changes. Integrating vision-language models for instruction
+grounding and multi-object correspondence may further extend OAVC toward more general and
+compositional editing scenarios.
+References
+[1] Tim Brooks, Aleksander Holynski, and Alexei A Efros. 2022. InstructPix2Pix: Learning to Follow Image Editing
+Instructions. arXiv preprint arXiv:2211.09800 (2022).
+[2] Nicolas Carion, Laura Gustafson, Yuan-Ting Hu, Shoubhik Debnath, Ronghang Hu, Didac Suris, Chaitanya Ryali,
+Kalyan Vasudev Alwala, Haitham Khedr, Andrew Huang, Jie Lei, Tengyu Ma, Baishan Guo, Arpit Kalla, Markus
+Marks, Joseph Greer, Meng Wang, Peize Sun, Roman Rädle, Triantafyllos Afouras, Effrosyni Mavroudi, Katherine Xu,
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+21
+Tsung-Han Wu, Yu Zhou, Liliane Momeni, Rishi Hazra, Shuangrui Ding, Sagar Vaze, Francois Porcher, Feng Li, Siyuan
+Li, Aishwarya Kamath, Ho Kei Cheng, Piotr Dollár, Nikhila Ravi, Kate Saenko, Pengchuan Zhang, and Christoph
+Feichtenhofer. 2025. SAM 3: Segment Anything with Concepts. arXiv:2511.16719 [cs.CV] https://arxiv.org/abs/2511.
+16719
+[3] Hila Chefer, Yuval Alaluf, and Daniel Cohen-Or. 2023. Attend-and-Excite: Attention-Based Semantic Guidance for
+Text-to-Image Diffusion Models. arXiv:2301.13826 [cs.CV]
+[4] Yingying Deng, Xiangyu He, Changwang Mei, Peisong Wang, and Fan Tang. 2024. FireFlow: Fast Inversion of Rectified
+Flow for Image Semantic Editing. arXiv:2412.07517 [cs.CV] https://arxiv.org/abs/2412.07517
+[5] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz,
+Axel Sauer, Frederic Boesel, et al. 2024. Scaling rectified flow transformers for high-resolution image synthesis. In
+Forty-first international conference on machine learning.
+[6] Yiming Gong, Zhen Zhu, and Minjia Zhang. 2025. InstantEdit: Text-Guided Few-Step Image Editing with Piecewise
+Rectified Flow. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV).
+[7] Amir Hertz, Ron Mokady, Jay Tenenbaum, Kfir Aberman, Stanislav Pidhorskyi, and Daniel Cohen-Or. 2022. Prompt-
+to-Prompt Image Editing with Cross-Attention Control. arXiv:2208.01626 [cs.CV]
+[8] Jonathan Ho, Ajay Jain, and Pieter Abbeel. 2020. Denoising Diffusion Probabilistic Models. In Advances in Neural
+Information Processing Systems.
+[9] Zhangqi Jiang, Zheng Sun, Xianfang Zeng, Yufeng Yang, Xuanyang Zhang, Yongliang Wu, Wei Cheng, Gang Yu, Xu
+Yang, and Bihan Wen. 2026. GEditBench v2: A Human-Aligned Benchmark for General Image Editing. arXiv preprint
+arXiv:2603.28547 (2026).
+[10] Guanlong Jiao, Biqing Huang, Kuan-Chieh Wang, and Renjie Liao. 2025. UniEdit-Flow: Unleashing Inversion and
+Editing in the Era of Flow Models. arXiv:2504.13109 [cs.CV] https://arxiv.org/abs/2504.13109
+[11] Xuan Ju, Xian Liu, Xintao Wang, Yuxuan Bian, Ying Shan, and Qiang Xu. 2024. BrushNet: A Plug-and-Play Image
+Inpainting Model with Decomposed Dual-Branch Diffusion. arXiv:2403.06976 [cs.CV]
+[12] Xuan Ju, Ailing Zeng, Yuxuan Bian, Shaoteng Liu, and Qiang Xu. 2023. Direct Inversion: Boosting Diffusion-Based
+Editing with 3 Lines of Code. arXiv:2310.01506 [cs.CV]
+[13] Alexander Kirillov, Eric Mintun, Nikhila Ravi, Hanzi Mao, Chloe Rolland, Laura Gustafson, Tete Xiao, Spencer
+Whitehead, Alexander C. Berg, Wan-Yen Lo, Piotr Dollár, and Ross Girshick. 2023. Segment Anything. arXiv:2304.02643
+(2023).
+[14] Vladimir Kulikov, Matan Kleiner, Inbar Huberman-Spiegelglas, and Tomer Michaeli. 2025. Flowedit: Inversion-free
+text-based editing using pre-trained flow models. In Proceedings of the IEEE/CVF International Conference on Computer
+Vision. 19721–19730.
+[15] Black Forest Labs. 2024. FLUX. https://github.com/black-forest-labs/flux.
+[16] Hongyu Li, Manyuan Zhang, Dian Zheng, Ziyu Guo, Yimeng Jia, Kaituo Feng, Hao Yu, Yexin Liu, Yan Feng, Peng Pei,
+Xunliang Cai, Linjiang Huang, Hongsheng Li, and Si Liu. 2025. EditThinker: Unlocking Iterative Reasoning for Any
+Image Editor. arXiv:2512.05965 [cs.CV] https://arxiv.org/abs/2512.05965
+[17] Yaron Lipman et al. 2023. Flow Matching for Generative Modeling. In International Conference on Learning Representa-
+tions.
+[18] Xiaoming Liu et al. 2024. FlowAlign: Aligning Flow-Based Generative Models. In International Conference on Learning
+Representations.
+[19] Chenlin Meng, Yutong He, Yang Song, Jiaming Song, Jiajun Wu, Jun-Yan Zhu, and Stefano Ermon. 2022. SDEdit:
+Guided Image Synthesis and Editing with Stochastic Differential Equations. In International Conference on Learning
+Representations.
+[20] Zhi Ouyang, Dian Zheng, Xiao-Ming Wu, Jian-Jian Jiang, Kun-Yu Lin, Jingke Meng, and Wei-Shi Zheng. 2025. ProEdit:
+Inversion-based Editing From Prompts Done Right. arXiv:2512.22118 [cs.CV] https://arxiv.org/abs/2512.22118
+[21] Gaurav Parmar, Achintya Kumar, Andrew Owens, and Jun-Yan Li. 2023. Zero-shot Image-to-Image Translation.
+arXiv:2302.03027 [cs.CV]
+[22] Jordi Pont-Tuset, Federico Perazzi, Sergi Caelles, Pablo Arbeláez, Alex Sorkine-Hornung, and Luc Van Gool. 2018. The
+2017 DAVIS Challenge on Video Object Segmentation. arXiv:1704.00675 [cs.CV] https://arxiv.org/abs/1704.00675
+[23] Litu Rout, Yujia Chen, Nataniel Ruiz, Constantine Caramanis, Sanjay Shakkottai, and Wen-Sheng Chu. 2025. Semantic
+Image Inversion and Editing using Rectified Stochastic Differential Equations. In The Thirteenth International Conference
+on Learning Representations. https://openreview.net/forum?id=Hu0FSOSEyS
+[24] Yefei Sheng, Jie Wang, Ming Tao, and Bing-Kun Bao. 2026. AdaEdit: Adaptive Diffusion Model for Invisible Target
+Oriented Text-Conditioned Image Editing. ACM Trans. Multimedia Comput. Commun. Appl. 22, 2, Article 44 (Feb.
+2026), 19 pages. doi:10.1145/3778175
+[25] Yang Song, Jascha Sohl-Dickstein, Diederik P. Kingma, Abhishek Kumar, and Stefano Ermon. 2021. Score-Based
+Generative Modeling through Stochastic Differential Equations. In International Conference on Learning Representations.
+
+
+22
+Wang et al.
+[26] Narek Tumanyan, Michal Geyer, Shai Bagon, and Tali Dekel. 2023. Plug-and-Play Diffusion Features for Text-Driven
+Image-to-Image Translation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+(CVPR). 1921–1930.
+[27] Jiangshan Wang, Junfu Pu, Zhongang Qi, Jiayi Guo, Yue Ma, Nisha Huang, Yuxin Chen, Xiu Li, and Ying Shan. 2024.
+Taming Rectified Flow for Inversion and Editing. In arXiv preprint arXiv:2411.04746.
+[28] Chenxi Xie, Minghan Li, Shuai Li, Yuhui Wu, Qiaosi Yi, and Lei Zhang. 2025. DNAEdit: Direct Noise Alignment for
+Text-Guided Rectified Flow Editing. arXiv preprint arXiv:2506.01430 (2025).
+[29] Pengcheng Xu, Boyuan Jiang, Xiaobin Hu, Donghao Luo, Qingdong He, Jiangning Zhang, Chengjie Wang, Yunsheng
+Wu, Charles Ling, and Boyu Wang. 2025. Unveil inversion and invariance in flow transformer for versatile image
+editing. In Proceedings of the Computer Vision and Pattern Recognition Conference. 28479–28489.
+[30] Sihan Xu, Yidong Huang, Jiayi Pan, Ziqiao Ma, and Joyce Chai. 2024. Inversion-Free Image Editing with Natural
+Language. (2024).
+[31] Sung-Hoon Yoon, Minghan Li, Gaspard Beaudouin, Congcong Wen, Muhammad Rafay Azhar, and Mengyu Wang.
+2025. SplitFlow: Flow Decomposition for Inversion-Free Text-to-Image Editing. arXiv preprint arXiv:2510.25970 (2025).
+[32] Yue Zhang, Chao Wang, Fei Fang, Yunzhi Zhuge, Hehe Fan, Xiaojun Chang, Cheng Deng, and Yi Yang. 2025. SAM-
+Control: Controlling Pose and Object for Image Editing with Soft Attention Mask. ACM Trans. Multimedia Comput.
+Commun. Appl. 21, 11, Article 320 (Nov. 2025), 28 pages. doi:10.1145/3702999
+[33] Tianrui Zhu, Shiyi Zhang, Jiawei Shao, and Yansong Tang. 2025. KV-Edit: Training-Free Image Editing for Precise
+Background Preservation. arXiv preprint arXiv:2502.17363 (2025).
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+23
+Appendix
+A
+Details of Algorithm
+Algorithm 1 Stage-1: Background-Anchored Reference Interface
+1: Input: source latent 𝑍𝑇; source prompt 𝜓src; initial noise state 𝑆𝑇∼N (0, 𝐼); object support 𝑀fg
+and 𝑀bg = 1 −𝑀fg; timesteps {𝜎𝑡}𝑇
+𝑡=0.
+2: Output: reference interface R𝑡= {𝑍𝑡, Δ𝑥safe
+𝑡
+, 𝑣src
+𝑡}.
+3: for 𝑡= 𝑇−1, . . . , 0 do
+4:
+𝑍∗
+𝑡←𝜎𝑡
+𝜎𝑡+1
+𝑍𝑡+1 +
+
+1 −𝜎𝑡
+𝜎𝑡+1
+
+𝑆𝑡+1
+{proxy state}
+5:
+𝑣src
+𝑡
+←𝑣𝜃(𝑍∗
+𝑡,𝜓src),
+Δ𝑣DNA
+𝑡
+←𝑆𝑡+1 −𝑍𝑡+1
+𝜎𝑡+1
+−𝑣src
+𝑡
+{source residual}
+6:
+Δ𝑣(1)
+𝑡
+←(1 −𝜆fg𝑀fg) ⊙Δ𝑣DNA
+𝑡
+{foreground relaxation}
+7:
+𝑟𝑡←𝑀bg ⊙Δ𝑣(1)
+𝑡
+,
+𝑏𝑡←𝑀bg ⊙𝑣src
+𝑡.
+8:
+˜𝑟𝑡←(1 −𝜌bg)𝑟𝑡+ 𝜌bgΠ⊥(𝑟𝑡;𝑏𝑡)
+{background anchoring}
+9:
+Δ𝑣safe
+𝑡
+←𝑀fg ⊙Δ𝑣(1)
+𝑡
++ ˜𝑟𝑡.
+10:
+𝑆𝑡←𝑆𝑡+1 + 𝜎𝑡+1Δ𝑣safe
+𝑡
+,
+𝑍𝑡←𝑍∗
+𝑡+ (𝜎𝑡+1 −𝜎𝑡)Δ𝑣safe
+𝑡
+{reference update}
+11:
+Δ𝑥safe
+𝑡
+←𝑍𝑡−𝑍∗
+𝑡
+{cache offset}
+12: end for
+13: return R𝑡= {𝑍𝑡, Δ𝑥safe
+𝑡
+, 𝑣src
+𝑡}
+Algorithm 2 Stage-2: Object-Localized Safe Semantic Injection
+1: Input: prompts (𝜓src,𝜓tgt); reference interface R𝑡= {𝑍𝑡, Δ𝑥safe
+𝑡
+, 𝑣src
+𝑡}; supports𝑊edit
+𝑡
+,𝑊ref
+𝑡
+; start
+step 𝑡𝑠.
+2: Output: edited latent 𝑍edit
+𝑇
+.
+3: 𝑍edit
+𝑡𝑠
+←𝑍𝑡𝑠,
+𝑍ref
+𝑡𝑠←𝑍𝑇
+{initialize}
+4: for 𝑡= 𝑡𝑠, . . . ,𝑇−1 do
+5:
+𝑍∗edit
+𝑡
+←𝑍edit
+𝑡
++ Δ𝑥safe
+𝑡
+,
+𝑣tgt
+𝑡
+←𝑣𝜃(𝑍∗edit
+𝑡
+,𝜓tgt)
+{aligned target evaluation}
+6:
+Δ𝑣𝑡←𝑣tgt
+𝑡
+−𝑣src
+𝑡,
+¯Δ𝑣𝑡←Γref
+𝑡
+(Δ𝑣𝑡; R𝑡)
+{safe semantic residual}
+7:
+𝑍ref
+𝑡+1 ←𝑍ref
+𝑡
++ (𝜎𝑡+1 −𝜎𝑡)  𝑊ref
+𝑡
+⊙¯Δ𝑣𝑡
+
+{reference anchor}
+8:
+𝑣ref
+𝑡
+←𝑍edit
+𝑡
+−𝑍ref
+𝑡+1
+1 −𝜎𝑡
+,
+𝑣fg
+𝑡←𝜂𝑣tgt
+𝑡
++ (1 −𝜂)𝑣ref
+𝑡.
+9:
+𝑢𝑡←𝑊edit
+𝑡
+⊙Γinj
+𝑡
+
+𝑣fg
+𝑡−𝑣src
+𝑡; R𝑡
+
+{where/how injection}
+10:
+𝑣edit
+𝑡
+←𝑣src
+𝑡
++ 𝑢𝑡,
+𝑍edit
+𝑡+1 ←𝑍edit
+𝑡
++ (𝜎𝑡+1 −𝜎𝑡)𝑣edit
+𝑡
+{integrate}
+11: end for
+12: return 𝑍edit
+𝑇
+B
+Implementation of the Safe Injection Operator
+This section specifies the implementation of the safe injection operator Γ𝑡(·; R𝑡) used in Algorithms 1
+and 2. The main text keeps Γ𝑡abstract to emphasize the unified where/how control principle. Here
+we provide the implementation-aligned form used in all experiments.
+
+
+24
+Wang et al.
+Recall that the Stage-1 reference interface is R𝑡= {𝑍𝑡, Δ𝑥safe
+𝑡
+, 𝑣src
+𝑡}. We use the same flow-
+orthogonal projection operator throughout OAVC:
+Π⊥(𝑎;𝑏) = 𝑎−
+⟨𝑎,𝑏⟩
+⟨𝑏,𝑏⟩+ 𝜖𝑏.
+(23)
+This operator removes from 𝑎the component parallel to 𝑏.
+Reference-anchor semantic operator. Given the target semantic residual Δ𝑣𝑡= 𝑣tgt
+𝑡
+−𝑣src
+𝑡, we first
+remove the component aligned with the source flow:
+Δ𝑣⊥
+𝑡= Π⊥(Δ𝑣𝑡;𝑣src
+𝑡).
+(24)
+The boundary transition support is defined from the two spatial supports:
+𝑊ring
+𝑡
+= clip
+
+𝑊ref
+𝑡
+−𝑊edit
+𝑡
+, 0, 1
+
+.
+(25)
+We then apply boundary smoothing only on this ring:
+Δ¯𝑣𝑡= (1 −𝑊ring
+𝑡
+) ⊙Δ𝑣⊥
+𝑡+𝑊ring
+𝑡
+⊙HP(Δ𝑣⊥
+𝑡).
+(26)
+Finally, a scalar confidence gate 𝑔𝑡∈[0, 1] is applied:
+Γref
+𝑡
+(Δ𝑣𝑡; R𝑡) = 𝑔𝑡Δ¯𝑣𝑡.
+(27)
+This is the operator used to update the moving reference anchor:
+𝑍ref
+𝑡+1 = 𝑍ref
+𝑡
++ (𝜎𝑡+1 −𝜎𝑡)
+
+𝑊ref
+𝑡
+⊙Γref
+𝑡
+(Δ𝑣𝑡; R𝑡)
+
+.
+(28)
+Final field-level injection operator. The reference-guided foreground velocity 𝑣fg
+𝑡is an intermediate
+velocity signal. Since the final integrated field is built from this velocity, we apply the same flow-
+orthogonal safety constraint at the field level:
+Δ𝑣inj
+𝑡
+= Π⊥
+
+𝑣fg
+𝑡−𝑣src
+𝑡;𝑣src
+𝑡
+
+.
+(29)
+The final safe injection operator is
+Γinj
+𝑡
+
+𝑣fg
+𝑡−𝑣src
+𝑡; R𝑡
+
+= 𝑔𝑡Δ𝑣inj
+𝑡.
+(30)
+Thus the final edited velocity becomes
+𝑣edit
+𝑡
+= 𝑣src
+𝑡
++𝑊edit
+𝑡
+⊙Γinj
+𝑡
+
+𝑣fg
+𝑡−𝑣src
+𝑡; R𝑡
+
+.
+(31)
+Therefore, outside the editable support where 𝑊edit
+𝑡
+= 0, the integrated velocity is exactly the
+source velocity. Inside the object support, only a gated and flow-orthogonal semantic residual is
+injected.
+Unified operator view. Stage-2 uses the same safe-injection principle at two control points. For
+the reference anchor, Γref
+𝑡
+transforms the prompt residual Δ𝑣𝑡= 𝑣tgt
+𝑡
+−𝑣src
+𝑡
+with flow-orthogonal
+projection and boundary-aware smoothing before it is accumulated through 𝑊ref
+𝑡
+. For the final
+edited velocity, Γinj
+𝑡
+transforms the reference-guided residual 𝑣fg
+𝑡−𝑣src
+𝑡
+with the field-level projection
+before it is injected through 𝑊edit
+𝑡
+. Thus, Γref
+𝑡
+and Γinj
+𝑡
+are not separate conceptual modules, but
+two applications of the same where/how control principle to the reference anchor and the final
+integrated velocity, respectively.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+25
+C
+Object Prior and Mask-Induced Velocity Constraints
+This appendix provides implementation-aligned details of the object support prior used by OAVC
+and the induced velocity-level spatial constraints. The purpose of this appendix is to clarify two
+points. First, OAVC is not tied to a specific mask provider such as SAM3; it only requires an object-
+centric support prior. Second, the support is used to gate velocity updates during integration, not
+to overwrite latents or composite the final image.
+Support prior, not hard editing mask. Given an input image 𝐼and an edit request (𝜓src,𝜓tgt), OAVC
+constructs an object support 𝑀corresponding to the region where the semantic change is expected
+to occur. In our default implementation, this support is estimated by SAM3 using the edited object
+concept extracted from the source/target prompts. For prompt formats with explicit brackets, e.g.,
+“a photo of a [goat]” →“a photo of a [horse]”, the bracketed source object is used as the query
+concept. Otherwise, we extract the edited noun or phrase from the prompt difference.
+Importantly, SAM3 is only the default zero-shot support provider. The OAVC formulation itself
+is support-source agnostic: the same velocity-control mechanism can use SAM3 masks, attention-
+derived masks, user-provided masks, soft masks, or interactive brush-refined masks. In all cases,
+the resulting support is used only to construct 𝑊𝑡in Eq. (3). It does not directly replace image
+pixels, overwrite latent regions, or perform final background compositing.
+Latent-space support construction. The pixel-space support is resized to the latent resolution,
+producing 𝑀∈[0, 1]1×𝐻×𝑊. When a binary support is needed, we threshold 𝑀with a fixed
+threshold; otherwise, the soft mask can be used directly. Let D𝑟(·) denote morphological dilation
+with radius 𝑟on the latent grid, implemented by max pooling in practice, and let clip(·, 0, 1) denote
+element-wise clipping. We define the foreground, boundary, ring, and background supports as
+𝑀fg = D𝑟fg (𝑀),
+𝑀bd = D𝑟bd(𝑀fg),
+𝑀ring = clip(𝑀bd −𝑀fg, 0, 1),
+𝑀bg = 1 −𝑀fg.
+(32)
+Here 𝑀fg is the editable object interior, 𝑀ring is a thin transition band around the object, and 𝑀bg
+denotes the non-target region. This construction intentionally avoids treating the object boundary
+as a brittle binary cut: moderate uncertainty near the mask boundary is absorbed into the ring
+support.
+Velocity-level weight maps. The support maps are used only to gate velocity updates. We define
+two weight maps, broadcast over channels:
+𝑊edit
+𝑡
+= 𝑀fg,
+𝑊ref
+𝑡
+= 𝑀fg + 𝛽(𝜎𝑡) 𝑀ring.
+(33)
+𝑊edit
+𝑡
+specifies where semantic injection is allowed in the final edited velocity. 𝑊ref
+𝑡
+is used for
+the moving reference anchor and additionally includes the boundary ring. This lets the reference
+anchor transition smoothly near object boundaries while still keeping the non-target background
+protected from target-semantic accumulation.
+Boundary coupling schedule. We use a fixed monotone decay schedule for the boundary coupling:
+𝛽(𝜎𝑡) = 𝛽max
+ 𝜎𝑡
+𝜎𝑡𝑠
+𝛾
+,
+for 𝜎𝑡≤𝜎𝑡𝑠.
+(34)
+Here 𝑡𝑠is the editing start step, 𝛽max controls the maximum ring coupling, and 𝛾controls the decay
+rate. The intuition is simple: at earlier, noisier steps, the object boundary is less stable and benefits
+from soft coupling; at later steps, the boundary becomes more detailed, so the ring weight decays
+to avoid unnecessary leakage. In all main experiments, these boundary parameters are fixed and
+not tuned per image.
+
+
+26
+Wang et al.
+OAVC Gradio Brush Demo
+OAVC Gradio Brush Demo
+Fig. 10. Interactive brush refinement for challenging support extraction cases. When the automatic SAM3
+support is imperfect, users can manually refine the editable region with a brush, and OAVC applies the same
+velocity-control mechanism using the corrected support.
+Robustness to imperfect supports. OAVC does not assume that the support prior is perfect. Since the
+mask is not used for hard latent overwrite, moderate support errors do not directly force incorrect
+pixels into the final image. Instead, the support only controls where velocity residuals are allowed
+to accumulate during integration. Small under-segmentation errors are partially mitigated by
+foreground dilation, while boundary uncertainty is buffered by the ring support in 𝑊ref
+𝑡
+. Moreover,
+the framework is not restricted to a single binary mask: in practice, the support can be corrected
+or replaced using soft thresholds, attention-derived support, full-mask fallback, or interactive
+refinement.
+This also clarifies the role of SAM3. If SAM3 produces a high-quality object support, OAVC uses
+it as the default zero-shot prior. If the automatic support is imperfect, the same OAVC update can
+still be applied with a corrected or alternative support source. Thus, the method is not a “SAM3
+editing pipeline”; it is a velocity-control framework that accepts a replaceable object support prior.
+Interactive refinement for hard cases. For challenging cases in which SAM3 fails to extract a
+reliable object support (e.g., thin structures, ambiguous boundaries, or visually complex regions),
+we additionally support interactive brush-based refinement. Concretely, the user can manually
+mark the intended editing region and use the brush mask directly, or combine it with the automatic
+support through modes such as brush-only, SAM-only, or SAM+brush refinement. This provides a
+simple and practical correction mechanism for failure cases without changing the OAVC formulation
+itself. We include representative examples in Fig. 10, where automatic support is insufficient but
+brush refinement recovers a usable object prior for object-centric velocity control.
+D
+Support Source Robustness
+This section further clarifies that OAVC is not tied to a specific support provider such as SAM3.
+The method requires an explicit object support for velocity-level control, but the support can come
+from different sources. In our default implementation, we use SAM3 as a strong zero-shot support
+provider for object-centric edits. However, the same OAVC update can also use attention-derived
+supports, soft masks, user-provided masks, or interactively refined brush masks. This supports our
+main claim that the contribution is object-aware velocity control rather than SAM-based editing.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+27
+Table 10. Support-source comparison on PIE-Bench. All metrics are scaled to match the main tables. Attention-
+derived support can replace SAM3 and still provides strong preservation gains over global DNAEdit, showing
+that OAVC is support-source agnostic.
+Support source
+Struct.
+Background Preservation
+CLIP Similarity
+Distance↓
+PSNR↑
+LPIPS↓
+MSE↓
+SSIM↑
+CLIPwhole ↑
+CLIPedit ↑
+DNAEdit (global)
+18.87
+24.99
+95.06
+50.45
+85.71
+25.79
+22.87
+Attention-derived support
+4.58
+30.55
+35.74
+16.41
+92.53
+23.60
+20.76
+SAM3 support (default)
+4.07
+33.30
+23.70
+8.75
+94.38
+23.69
+21.08
+Attention-derived support. To test whether an external segmenter is necessary, we replace the
+SAM3 support with an attention-derived support extracted from the editing backbone itself. For
+FLUX, we follow the common strategy used in attention-based editing methods: we collect the
+attention response associated with the edited concept from a late double-attention block, average it
+across heads, normalize it to [0, 1], and threshold it to obtain a coarse editing region. The resulting
+attention map is then expanded using the same dilation and boundary-ring construction described in
+Appendix C. After this support is constructed, the rest of OAVC is unchanged. Thus, this comparison
+isolates the support source while keeping the same velocity-control mechanism.
+Quantitative comparison. Tab. 10 compares OAVC using attention-derived support with the
+default SAM3 support. The attention-based variant remains substantially better than global DNAEdit
+on structure and background preservation metrics. Compared with SAM3, it shows a moderate
+degradation, which is expected because attention maps are usually coarser and less boundary-
+accurate than segmentation masks. Nevertheless, the result confirms that OAVC is not fundamentally
+dependent on SAM3: what the method needs is a usable support prior for per-step velocity control.
+Continuation of Support Source Robustness
+Visualization. Fig. 11 visualizes representative examples using attention-derived support. Al-
+though the attention maps are coarser than SAM3 masks, they still provide meaningful object-
+centered regions for OAVC. The resulting edits preserve the main advantage of velocity-level spatial
+control: target semantics are injected into the intended object region while non-target regions
+remain more stable than with global steering.
+Discussion. The attention-derived support provides a fully internal alternative to segmentation-
+based support. Its performance is weaker than SAM3 because attention maps are lower-resolution,
+more diffuse, and less reliable around fine boundaries. However, the large gap between global
+DNAEdit and OAVC with attention-derived support shows that the benefit does not come from
+SAM3 itself. Instead, the benefit comes from applying the same object-aware where/how control to
+a usable spatial support.
+This observation also complements the interactive-refinement setting in Appendix C. When
+automatic segmentation is accurate, SAM3 provides a strong zero-shot default. When segmentation
+is ambiguous, users can refine the support with a brush. When one wants to avoid an external
+segmenter, attention-derived support provides an internal alternative. All three cases use the same
+OAVC update rule, confirming that OAVC is a support-source-agnostic velocity-control framework
+rather than a SAM3-specific editing pipeline.
+
+
+28
+Wang et al.
+Original
+Fruit → Pizza
+Attention Mask
+Attention Result
+SAM3 result
+Stream →Road
+Fig. 11. Qualitative examples using attention-derived support instead of SAM3. Attention maps provide an
+internal support prior for OAVC, enabling object-localized velocity control without an external segmenter.
+Although attention-derived supports are coarser than SAM3 masks, they remain sufficient to reduce back-
+ground drift and preserve non-target regions compared with global steering.
+E
+Full Derivations for the Two-Stage Recursions
+This appendix provides a complete derivation of the two-stage recursions used in our method.
+Unlike the main text, which focuses on modeling intuition and algorithmic structure, this appendix
+is dedicated to establishing the mathematical origin and correctness of the update rules in Stage-1
+and Stage-2.
+Our goals are threefold: (i) to show that the Stage-1 correction arises as the optimizer of a
+regularized reference-trajectory alignment problem, (ii) to explain why the resulting residual offsets
+form a natural and well-conditioned interface to Stage-2, and (iii) to demonstrate that the projection
+and constrained updates in Stage-2 correspond to optimal solutions of constrained control problems.
+Throughout, we follow the rectified-flow sampling formulation used in DNAEdit. The reverse
+process is discretized into 𝑇solver steps indexed by 𝑡∈{0, . . . ,𝑇−1}. The scheduler provides a
+monotonically ordered sequence of integration levels {𝜎0, . . . , 𝜎𝑇} ⊂[0, 1], which we use only to
+construct evaluable proxy/interpolation states (e.g., 𝑍∗
+𝑡in the main text). Independently, the numer-
+ical integrator uses a per-step update magnitude (effective step size), which we denote abstractly
+by Δ𝑡> 0 for each step 𝑡. We do not assume a specific analytic relationship between Δ𝑡and {𝜎𝑡},
+since Δ𝑡depends on the chosen solver implementation and backbone-specific parameterization; in
+our derivations, Δ𝑡is simply the scalar that multiplies the applied velocity in the timestep update.
+E.1
+Setup: Noise-Parameterized Discrete Dynamics
+Let 𝑍𝑡∈R𝐶×𝐻×𝑊denote the latent variable at noise level 𝜎𝑡. A reverse-time Euler update takes
+the form
+𝑍𝑡= 𝑍𝑡+1 + Δ𝜎𝑡b𝑣𝑡,
+Δ𝜎𝑡= 𝜎𝑡+1 −𝜎𝑡> 0,
+(35)
+where b𝑣𝑡is the velocity applied at step 𝑡.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+29
+Given a text prompt𝜓, the pretrained model predicts a velocity field 𝑣𝜓(𝑍) = 𝑣𝜃(𝑍,𝜓). We denote
+by 𝑣src
+𝑡
+and 𝑣tgt
+𝑡
+the velocities induced by the source and target prompts, respectively.
+Recall: spatial priors. As defined in the main text, an object prior induces spatial masks 𝑀fg, 𝑀ring,
+and 𝑀bg, as well as two associated spatial weights 𝑊edit
+𝑡
+and 𝑊ref
+𝑡
+. In this appendix, these masks
+are treated as fixed and we focus solely on how they modulate the velocity updates.
+E.2
+DNA Discrepancy from Linear Transport
+DNAEdit constructs a source-consistent reference trajectory by comparing the model-predicted
+source velocity against an analytic linear-transport velocity induced by the sampler’s interpolation
+rule.
+At each step 𝑡, the sampler defines an interpolation point 𝑍∗
+𝑡on a linear path in noise space.
+The corresponding linear velocity 𝑣linear
+𝑡
+is the unique velocity that maps 𝑍𝑡+1 to 𝑍∗
+𝑡under this
+parameterization. Evaluating the model under the source prompt yields 𝑣src
+𝑡
+= 𝑣𝜃(𝑍∗
+𝑡,𝜓src). The
+DNA discrepancy is then defined as
+Δ𝑣DNA
+𝑡
+≜𝑣linear
+𝑡
+−𝑣src
+𝑡.
+(36)
+This discrepancy measures the deviation between the learned velocity field and the idealized linear
+transport implied by rectified flow.
+E.3
+Additional Preliminaries: Control View and Spatial Support
+This subsection complements the concise preliminaries in the main text by (i) making explicit
+the trajectory-integration interpretation of velocity control, and (ii) formalizing why where a
+perturbation acts (spatial support) is as important as how strongly it acts (temporal strength),
+especially for object-centric edits.
+Discrete accumulation and drift. Training-free editors intervene by adding a step-wise control
+signal 𝑢𝑡to the sampler update. For a discrete trajectory indexed by timesteps 𝑡∈{0, . . . ,𝑇−1},
+the reverse update can be written as
+𝑍𝑡+1 = 𝑍𝑡+ Δ𝑡b𝑣𝑡,
+b𝑣𝑡= 𝑣𝜃(𝑍𝑡,𝜓) + 𝑢𝑡,
+(37)
+where Δ𝑡denotes the step size implied by the scheduler (e.g., a function of adjacent integration
+levels). Unrolling the recursion shows that the final sample aggregates the injected control over all
+steps:
+𝑍𝑇= 𝑍0 +
+𝑇−1
+∑︁
+𝑡=0
+Δ𝑡𝑣𝜃(𝑍𝑡,𝜓) +
+𝑇−1
+∑︁
+𝑡=0
+Δ𝑡𝑢𝑡.
+(38)
+The second term makes explicit why even small, persistent perturbations can accumulate into
+visible artifacts.
+Let Ω denote the spatial domain and let Ωbg ⊂Ω be background locations that should remain
+unchanged. If the control is applied globally, i.e., 𝑢𝑡(𝑥) ≠0 on 𝑥∈Ωbg for many steps, then the
+accumulated background change satisfies
+Δ𝑍bg ≜
+𝑇−1
+∑︁
+𝑡=0
+Δ𝑡𝑢𝑡
+
+Ωbg,
+(39)
+which can become non-negligible even when each per-step background component is small. This
+motivates explicitly controlling the spatial support of velocity injection to prevent repeated back-
+ground contamination across timesteps.
+
+
+30
+Wang et al.
+Decoupling where and how. Many velocity-steering methods implicitly control only the strength
+of a global semantic difference, e.g., 𝑢𝑡= 𝛼𝑡Δ𝑣𝑡with a scalar schedule 𝛼𝑡. In contrast, we make the
+control structure explicit by separating where the update is allowed to act from how the semantic
+difference is transformed into a safe injection direction:
+𝑢𝑡=𝑊𝑡⊙Γ𝑡(Δ𝑣𝑡; R𝑡).
+(40)
+Here 𝑊𝑡∈[0, 1]1×𝐻×𝑊is a spatial support (broadcast across channels) that gates updates to the
+intended object region (Appendix C). Γ𝑡(·) is a constrained operator that removes drift-inducing
+components (e.g., by projection, boundary handling, and gating), and R𝑡denotes the Stage-1
+reference information ensuring that Δ𝑣𝑡is evaluated on consistent states. Eq. (40) directly prevents
+step-by-step perturbations from repeatedly affecting background locations while preserving strong
+semantic steering within the object support.
+E.4
+Notation and Operators
+Latents and timesteps. We discretize the reverse trajectory into 𝑇timesteps 𝑡∈{0, . . . ,𝑇−1}.
+Let 𝑍𝑡∈R𝐶×𝐻×𝑊denote the latent at timestep 𝑡. The scheduler induces a per-step integration
+increment, denoted by Δ𝑡> 0, so a generic Euler-type update takes the form
+𝑍𝑡+1 = 𝑍𝑡+ Δ𝑡b𝑣𝑡.
+(41)
+We use 𝑆𝑡to denote the auxiliary Gaussian noise state aligned with timestep 𝑡(its recursion is
+defined in Appendix G).
+Pointwise and spatial inner products. For two latent-shaped tensors 𝑎,𝑏∈R𝐶×𝐻×𝑊and a spatial
+location 𝑥∈Ω,
+𝑎(𝑥) · 𝑏(𝑥) ≜
+𝐶
+∑︁
+𝑐=1
+𝑎𝑐(𝑥) 𝑏𝑐(𝑥).
+(42)
+We define the spatial-sum inner product
+⟨𝑎,𝑏⟩≜
+∑︁
+𝑥∈Ω
+𝑎(𝑥) · 𝑏(𝑥),
+(43)
+and the background-weighted inner product (used in Stage-1)
+⟨𝑎,𝑏⟩bg ≜⟨𝑀bg ⊙𝑎, 𝑀bg ⊙𝑏⟩.
+(44)
+Here ⊙denotes element-wise multiplication; spatial masks are broadcast across channels.
+Projection operators. Given a nonzero reference field 𝑣and a tensor 𝑟, the projection of 𝑟onto 𝑣
+under ⟨·, ·⟩is
+Proj𝑣(𝑟) =
+⟨𝑟, 𝑣⟩
+⟨𝑣, 𝑣⟩+ 𝜖𝑣,
+(45)
+and the orthogonal component is
+Proj⊥
+𝑣(𝑟) = 𝑟−Proj𝑣(𝑟).
+(46)
+For Stage-1 background anchoring, we use the same form but with ⟨·, ·⟩bg (Eq. (44)) and with 𝑣
+masked by 𝑀bg.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+31
+F
+Stage-1 Derivation: Regularized reference-trajectory Alignment
+Stage-1 follows the DNAEdit recursion backbone but replaces the raw discrepancy Δ𝑣DNA
+𝑡
+with a
+modified correction Δ𝑣safe
+𝑡
+used in the Stage-1 state updates. This appendix provides a principled
+interpretation of the two Stage-1 modifications in the main text: (i) foreground weakening, which
+reduces the alignment force inside the editable object region to preserve degrees of freedom
+for Stage-2 semantic injection; and (ii) background anchoring, which suppresses drift-inducing
+background components aligned with the source flow. For (i), we first derive the exact closed-form
+shrinkage implied by a diagonal Tikhonov (ridge) regularizer, and then explain how the lightweight
+linear shrinkage used in the main text (Eq. (49)) approximates this exact shrinkage while preserving
+the same masking structure.
+F.1
+Foreground Weakening via Diagonal Tikhonov Regularization
+What is being optimized. At timestep 𝑡, DNAEdit defines the alignment discrepancy Δ𝑣DNA
+𝑡
+≜
+𝑣linear
+𝑡
+−𝑣src
+𝑡
+(see Eq. (36)), which serves as a step-wise alignment correction velocity. Stage-1 seeks a
+modified correction 𝛿𝑣that remains close to Δ𝑣DNA
+𝑡
+(so that source alignment is retained), but is
+attenuated on the editable foreground so that Stage-2 can inject semantics without fighting an overly
+rigid foreground anchor. This motivates a regularized objective over the correction variable 𝛿𝑣.
+Why naive weighting is insufficient. A naive weighted least-squares term min ∥𝑤⊙(𝛿𝑣−Δ𝑣)∥2
+2
+does not change the minimizer when 𝑤> 0 elementwise, because it only rescales the same residual.
+To actually shrink the correction magnitude on selected regions, we use a diagonal Tikhonov
+penalty on 𝛿𝑣.
+Exact Tikhonov shrinkage (closed form). Consider the diagonal Tikhonov-regularized objective
+Δ𝑣(1)★
+𝑡
+= arg min
+𝛿𝑣
+∥𝛿𝑣−Δ𝑣DNA
+𝑡
+∥2
+2 + ∥Γ1/2 ⊙𝛿𝑣∥2
+2,
+(47)
+where Γ ⪰0 is diagonal and ⊙denotes element-wise multiplication (masks are broadcast over
+channels). Choosing Γ = 𝜆fg𝑀fg penalizes correction energy only on the foreground region 𝑀fg ∈
+{0, 1}𝐻×𝑊. Since the objective is separable over spatial locations (and channels), the optimizer is a
+pointwise shrinkage:
+Δ𝑣(1)★
+𝑡
+=
+1
+1 + Γ ⊙Δ𝑣DNA
+𝑡
+=
+1
+1 + 𝜆fg𝑀fg
+⊙Δ𝑣DNA
+𝑡
+.
+(48)
+Eq. (48) makes the effect explicit: on background pixels (𝑀fg = 0), Δ𝑣(1)★
+𝑡
+= Δ𝑣DNA
+𝑡
+; on foreground
+pixels (𝑀fg = 1), the correction is shrunk by a factor
+1
+1+𝜆fg .
+Connection to the main-text implementation. In the main text, we implement foreground weaken-
+ing using the linear shrinkage
+Δ𝑣(1)
+𝑡
+= (1 −𝜆fg𝑀fg) ⊙Δ𝑣DNA
+𝑡
+,
+(49)
+which is the quantity used to form the background residual 𝑟𝑡= 𝑀bg ⊙Δ𝑣(1)
+𝑡
+and ultimately the
+Stage-1 safe correction Δ𝑣safe
+𝑡
+(Eq. (54)). Eq. (49) preserves the same masking structure as the exact
+shrinkage and can be interpreted as a first-order approximation of Eq. (48):
+1
+1 + 𝜆fg𝑀fg
+= 1 −𝜆fg𝑀fg + O(𝜆2
+fg),
+(50)
+so when 𝜆fg is small, (1 −𝜆fg𝑀fg) closely matches the exact Tikhonov shrink factor. Moreover,
+restricting 𝜆fg ∈[0, 1] (as in the main text) guarantees a nonnegative shrink factor and yields a
+simple monotone knob controlling the foreground freedom in practice.
+
+
+32
+Wang et al.
+F.2
+Background Anchoring as Soft Parallel-Component Removal
+Even after foreground weakening, the background portion of Δ𝑣(1)
+𝑡
+may still contain components
+that are parallel to the source flow 𝑣src
+𝑡. Such parallel components typically correspond to low-
+frequency, transport-like structural motion; when integrated over many steps, they accumulate
+into visible background drift. Stage-1 therefore softly suppresses only the background component
+aligned with the source velocity, using the same parameter 𝜌bg ∈[0, 1] as in the main text.
+Background residual and source direction (aligned with the main text). We isolate the background
+part of the weakened discrepancy and the background source-flow direction:
+𝑟𝑡= 𝑀bg ⊙Δ𝑣(1)
+𝑡
+,
+𝑏𝑡= 𝑀bg ⊙𝑣src
+𝑡.
+(51)
+Here 𝑟𝑡is the background alignment residual we would otherwise integrate, and 𝑏𝑡specifies the
+background source-flow direction along which drift tends to accumulate.
+Soft removal of the parallel component. We measure the parallel component of 𝑟𝑡along 𝑏𝑡via the
+standard projection coefficient
+𝛼𝑡=
+⟨𝑟𝑡,𝑏𝑡⟩
+⟨𝑏𝑡,𝑏𝑡⟩+ 𝜖,
+(52)
+so that 𝛼𝑡𝑏𝑡is exactly the projection of 𝑟𝑡onto 𝑏𝑡, and the hard orthogonal projection would be
+𝑟⊥
+𝑡= 𝑟𝑡−𝛼𝑡𝑏𝑡. Instead of enforcing full orthogonality, Stage-1 removes only a fraction 𝜌bg ∈[0, 1]
+of this parallel component:
+˜𝑟𝑡= 𝑟𝑡−𝜌bg 𝛼𝑡𝑏𝑡= (1 −𝜌bg) 𝑟𝑡+ 𝜌bg 𝑟⊥
+𝑡.
+(53)
+It has a clear interpretation: 𝜌bg = 0 keeps the original background residual (˜𝑟𝑡= 𝑟𝑡), while 𝜌bg = 1
+recovers the hard orthogonal projection (˜𝑟𝑡= 𝑟⊥
+𝑡).
+Assembling the Stage-1 safe correction. Finally, Stage-1 combines the (weakened) foreground
+correction with the softly anchored background correction:
+Δ𝑣safe
+𝑡
+= (1 −𝑀bg) ⊙Δ𝑣(1)
+𝑡
++ ˜𝑟𝑡,
+˜𝑟𝑡= 𝑟𝑡−𝜌bg 𝛼𝑡𝑏𝑡.
+(54)
+Eq. (54) is identical to the Stage-1 construction in the main text (Eq. (5)) and makes explicit that
+Stage-1 anchors the background by partially removing only the drift-inducing component parallel
+to the source flow, while leaving the remaining (approximately orthogonal) background correction
+intact.
+G
+Stage-1 Recursion and Stored Offsets
+This section instantiates the Stage-1 recursions in the timestep-based notation of Appendix E.4. At
+each timestep 𝑡, the scheduler provides (i) an evaluable interpolation/proxy point 𝑍∗
+𝑡(as defined in
+the main text / preliminaries) and (ii) a per-step integration increment Δ𝑡> 0 so that a generic
+Euler-type update reads 𝑍𝑡+1 = 𝑍𝑡+ Δ𝑡b𝑣𝑡(Eq. (41)). Stage-1 applies the derived safe alignment
+correction Δ𝑣safe
+𝑡
+as an additive correction at timestep 𝑡.
+Latent recursion in Stage-1. Using Δ𝑣safe
+𝑡
+, Stage-1 forms a corrected latent by adding the step-size–
+scaled correction to the proxy point:
+𝑍𝑡= 𝑍∗
+𝑡+ Δ𝑡Δ𝑣safe
+𝑡
+.
+(55)
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+33
+Auxiliary noise-state recursion. Following DNAEdit’s noise-space bookkeeping, we maintain an
+auxiliary noise state 𝑆𝑡aligned with timestep 𝑡. Intuitively, 𝑆𝑡tracks the noise endpoint of the linear
+interpolation used to construct 𝑍∗
+𝑡and is updated using the same safe correction. Consistent with
+the Stage-1 update used in the main text, we update
+𝑆𝑡= 𝑆𝑡+1 + 𝜎𝑡+1 Δ𝑣safe
+𝑡
+,
+(56)
+where 𝜎𝑡+1 is the scheduler-provided noise level associated with timestep 𝑡+ 1 (the same quantity
+used to construct 𝑍∗
+𝑡in the main text). Eq. (56) is the exact recursion implemented in Stage-1; it
+ensures that the proxy-point construction and the stored offsets remain consistent across steps.
+Stored offset (interface to Stage-2). We cache the per-timestep offset between the corrected latent
+and the proxy point:
+Δ𝑥safe
+𝑡
+≜𝑍𝑡−𝑍∗
+𝑡= Δ𝑡Δ𝑣safe
+𝑡
+.
+(57)
+Because Euler-type discretizations are additive in the applied velocity (Eq. (41)), Δ𝑥safe
+𝑡
+fully captures
+the step-wise contribution of the Stage-1 alignment correction. Stage-2 therefore reuses Δ𝑥safe
+𝑡
+to
+evaluate prompt-conditioned velocities on offset-aligned proxy states without re-running Stage-1,
+making it the sufficient interface from Stage-1 to Stage-2.
+H
+Stage-2 Derivation: Offset-Aligned and Constrained Semantic Injection
+Stage-2 injects target semantics by (i) evaluating prompt-conditioned velocities on an offset-aligned
+proxy state, and (ii) applying constrained, spatially supported updates that suppress target-induced
+background residuals at each step. All symbols and indices in this section follow the main text and
+the timestep-based update in Eq. (41).
+H.1
+Offset-Aligned Evaluation and Stability
+Offset-aligned proxy state (aligned with the main text). At timestep 𝑡, the edited trajectory provides
+the current latent 𝑍edit
+𝑡
+. To evaluate prompt-conditioned velocities consistently with Stage-1, we
+reuse the cached Stage-1 offset Δ𝑥safe
+𝑡
+and form the offset-aligned proxy state
+𝑍∗edit
+𝑡
+= 𝑍edit
+𝑡
++ Δ𝑥safe
+𝑡
+,
+𝑣tgt
+𝑡
+= 𝑣𝜃(𝑍∗edit
+𝑡
+,𝜓tgt).
+(58)
+We also reuse the cached source velocity 𝑣src
+𝑡
+= 𝑣𝜃(𝑍∗
+𝑡,𝜓src) from Stage-1 to define the prompt-
+induced semantic displacement Δ𝑣𝑡= 𝑣tgt
+𝑡
+−𝑣src
+𝑡
+(as in the main text).
+Why controlling Δ𝑥safe
+𝑡
+stabilizes semantic differences. Assume 𝑣𝜃(·,𝜓) is locally Lipschitz around
+𝑍edit
+𝑡
+for both 𝜓src and 𝜓tgt. Then the semantic difference evaluated at the offset-aligned state is
+stable w.r.t. the offset magnitude:
+∥Δ𝑣𝑡(𝑍edit
+𝑡
++ Δ𝑥safe
+𝑡
+) −Δ𝑣𝑡(𝑍edit
+𝑡
+)∥≤(𝐿tgt,𝑡+ 𝐿src,𝑡)∥Δ𝑥safe
+𝑡
+∥.
+(59)
+Thus, Stage-1’s suppression of spurious (especially background) components in Δ𝑥safe
+𝑡
+directly
+improves the stability of Δ𝑣𝑡used in Stage-2.
+H.2
+First Projection: Transport-Orthogonal Semantic Direction
+semantic direction by projecting the prompt difference Δ𝑣𝑡onto the subspace orthogonal to 𝑣src
+𝑡:
+Δ𝑣⊥
+𝑡= Δ𝑣𝑡−
+⟨Δ𝑣𝑡, 𝑣src
+𝑡⟩
+⟨𝑣src
+𝑡, 𝑣src
+𝑡⟩+ 𝜖𝑣src
+𝑡.
+(60)
+Eq. (60) is the unique minimizer of the constrained least-squares problem min𝑢∥𝑢−
+Δ𝑣𝑡∥2
+2 s.t. ⟨𝑢, 𝑣src
+𝑡⟩= 0, and provides the semantic direction used for controlled accumula-
+tion (e.g., the reference update).
+
+
+34
+Wang et al.
+H.3
+Boundary High-Pass Operator and Confidence Gate
+High-pass operator on the boundary ring. Even when semantic injection is restricted to the object
+support, slow and low-frequency motion near the boundary may accumulate across steps, leading
+to halos or contour wobble. We optionally apply a lightweight high-pass operator only on the
+boundary ring to suppress such low-frequency drift while preserving local details.
+For spatial latents (SD3.5, 𝑥∈R𝐵×𝐶×𝐻×𝑊), we use a residual high-pass filter
+HPsp(𝑥) ≜𝑥−AvgPool𝑘(𝑥),
+(61)
+where AvgPool𝑘(·) is the local averaging operator with window size 𝑘× 𝑘.
+For packed token latents (FLUX, 𝑥∈R𝐵×𝐿×𝐷), we use a token-wise analogue:
+HPtok(𝑥) ≜𝑥−Meantokens(𝑥),
+(62)
+where Meantokens(·) averages over the token dimension 𝐿.
+Scalar confidence gate. Projected residuals can be unreliable at large noise levels, and repeatedly
+integrating such outliers may amplify artifacts. We optionally apply a scalar confidence gate
+𝑔𝑡∈[0, 1] to downweight residual updates whose magnitude is abnormally large.
+Let 𝑥𝑡denote the residual to be integrated at step 𝑡(after projection and, if enabled, boundary
+high-pass filtering). We compute its RMS magnitude
+𝑚𝑡≜
+√︃
+Mean 𝑥2
+𝑡
+,
+(63)
+maintain an EMA ¯𝑚𝑡←𝜌¯𝑚𝑡−1 + (1 −𝜌) 𝑚𝑡, form the ratio 𝑟𝑡= 𝑚𝑡/( ¯𝑚𝑡+ 𝜖), and map it to a
+smooth gate
+𝑔𝑡≜𝜎
+𝜅−𝑟𝑡
+𝜏
+
+.
+(64)
+I
+Stage-2 Recursion: Reference Constraint and Field-Level Projection
+Stage-2 maintains an editing trajectory 𝑍edit
+𝑡
+and a reference trajectory 𝑍ref
+𝑡
+(as defined in the main
+text). The reference trajectory accumulates controlled semantic displacement within 𝑊ref
+𝑡
+, while
+the edited trajectory integrates a field that equals 𝑣src
+𝑡
+on the background.
+Why a second projection is applied (aligned with the main text). Eq. (60) projects the prompt
+difference Δ𝑣𝑡to obtain a transport-orthogonal semantic direction used for controlled accumulation
+(e.g., the reference update). However, the final integrated field is built from the reference-guided
+velocity 𝑣fg
+𝑡, which is an intermediate guidance signal and is not guaranteed to be transport-
+orthogonal. To suppress target-induced background residuals at each step, we therefore apply
+projection again at the field level and inject only the source-orthogonal component of (𝑣fg
+𝑡−𝑣src
+𝑡)
+inside the object region.
+Final edited field and timestep update. The final edited velocity field matches the main text:
+𝑣edit
+𝑡
+= 𝑣src
+𝑡
++𝑊edit
+𝑡
+⊙
+
+𝑔𝑡Proj⊥
+𝑣src
+𝑡
+ 𝑣fg
+𝑡−𝑣src
+𝑡
+
+.
+(65)
+The edited latent is then updated by the timestep-based Euler step (Eq. (41)):
+𝑍edit
+𝑡+1 = 𝑍edit
+𝑡
++ Δ𝑡𝑣edit
+𝑡
+.
+(66)
+J
+Additional Studies
+This appendix reports additional studies. All results follow the same setup and evaluation protocol
+as Sec. 4.1 and Tab. 1.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+35
+Fig. 12. Stage-1 hyperparameter sweep on PIE-Bench for SD3.5 and FLUX. We vary foreground relaxation 𝜆𝑓𝑔
+and background suppression 𝜌𝑏𝑔and report background preservation (LPIPS↓, MSE↓on non-target regions;
+scaled as shown) together with semantic alignment (CLIPwhole/CLIPedit). The dashed boxes highlight the
+stable region around our default setting (𝜆𝑓𝑔=0.6, 𝜌𝑏𝑔=0.1).
+Table 11. Ablation on the interior-support dilation radius 𝑟fg on PIE-Bench (scaled to match Tab. 1). The
+radius controls a preservation–editability trade-off; 𝑟fg = 2 is the default operating point used in all main
+experiments.
+Setting
+Structure
+Background Preservation
+CLIP Similarity↑
+Distance↓
+PSNR↑
+LPIPS↓
+MSE↓
+SSIM↑
+CLIPwhole ↑
+CLIPedit ↑
+𝑟fg=3
+4.42
+32.22
+25.60
+10.26
+92.86
+24.29
+21.50
+𝑟fg=1
+3.15
+34.10
+21.68
+7.86
+93.35
+23.83
+21.25
+𝑟fg=0
+3.80
+33.26
+23.05
+8.78
+93.17
+24.10
+21.45
+𝑟fg=2 (default)
+4.11
+32.64
+24.40
+9.61
+93.00
+24.21
+21.51
+J.1
+Spatial Supports from the Object Prior
+We briefly restate how the object prior (SAM3 mask) is converted into the spatial supports used
+in Sec. 3.3. Let 𝑀∈{0, 1}𝐻×𝑊denote the binary object mask (foreground indicator). We define
+two dilation radii: 𝑟fg controls the interior object support, and 𝑟bd controls the thickness of the
+boundary band. We first form a dilated interior mask
+e
+𝑀fg = Dilate(𝑀; 𝑟fg),
+𝑊edit
+𝑡
+≜e
+𝑀fg,
+(67)
+which specifies the spatial region where semantic injection is permitted in Eq. (9). Next, we form
+an outer dilated mask and the boundary ring:
+e
+𝑀bd = Dilate( e
+𝑀fg; 𝑟bd),
+𝑊ring
+𝑡
+= clip  e
+𝑀bd −e
+𝑀fg, 0, 1.
+(68)
+
+
+36
+Wang et al.
+Table 12. Ablation on maximum ring coupling 𝛽max in 𝛽(𝜎𝑡) (Eq. (34)) on PIE-Bench (scaled to match Tab. 1).
+Setting
+Structure
+Background Preservation
+CLIP Similarity↑
+Distance↓
+PSNR↑
+LPIPS↓
+MSE↓
+SSIM↑
+CLIPwhole ↑
+CLIPedit ↑
+𝛽max=0.60
+4.10
+32.64
+24.39
+9.60
+93.00
+24.20
+21.51
+𝛽max=0.15
+6.10
+32.14
+26.84
+10.73
+92.70
+24.39
+21.73
+𝛽max=0.00 (no ring coupling)
+6.12
+32.13
+26.87
+10.74
+92.69
+24.40
+21.73
+𝛽max=0.45 (default)
+4.11
+32.64
+24.40
+9.61
+93.00
+24.21
+21.51
+Table 13. Ablation on boundary-band dilation radius 𝑟bd used to form 𝑊ring
+𝑡
+(Eq. 68) on PIE-Bench (scaled to
+match Tab. 1).
+Setting
+Structure
+Background Preservation
+CLIP Similarity↑
+Distance↓
+PSNR↑
+LPIPS↓
+MSE↓
+SSIM↑
+CLIPwhole ↑
+CLIPedit ↑
+𝑟bd=2
+4.12
+32.63
+24.42
+9.62
+93.00
+24.19
+21.51
+𝑟bd=6
+4.09
+32.65
+24.39
+9.59
+93.00
+24.19
+21.51
+𝑟bd=0 (no ring band)
+4.13
+32.62
+24.46
+9.63
+92.99
+24.19
+21.52
+𝑟bd=4 (default)
+4.11
+32.64
+24.40
+9.61
+93.00
+24.21
+21.51
+Finally, we define the reference support that couples a thin boundary band with a time-adaptive
+strength:
+𝑊ref
+𝑡
+= clip
+
+𝑊edit
+𝑡
++ 𝛽(𝑡)𝑊ring
+𝑡
+, 0, 1
+
+,
+𝛽max
+ 𝜎𝑡
+𝜎𝑡𝑠
+𝛾
+.
+(69)
+This construction instantiates the spatial support𝑊𝑡in Eq. (3). Specifically, 𝑀fg defines the editable
+interior support 𝑊edit
+𝑡
+, while 𝑀ring is used only in the reference support 𝑊ref
+𝑡
+through the fixed
+boundary-coupling schedule in Eq. (34). These supports are then used for velocity-level control in
+Stage-2, including the reference-anchor update in Eq. (8) and the final object-localized velocity in
+Eq. (9).
+J.2
+Qualitative Transfer to FlowEdit
+In Sec. 4.2 we quantitatively evaluate whether the proposed where/how control can be transferred
+to another velocity-based editor, FlowEdit. Here we provide additional qualitative results in Fig. 13.
+We apply only the Stage-2 controlled injection to FlowEdit by using the same object support 𝑊edit
+𝑡
+and the same safe injection operator when forming the prompt-induced update. This transfer does
+not include Stage-1, since FlowEdit does not construct the same noise-aligned reference interface
+as OAVC.
+The visualization shows that applying OAVC-style control to FlowEdit can better localize the
+intended edit and reduce unnecessary changes in non-target regions. For example, in object
+replacement and object removal cases, FlowEdit often changes surrounding structures or introduces
+global appearance shifts, while the controlled variant better preserves the original layout. These
+qualitative results are consistent with the transfer robustness results in Tab. 4: the where/how
+mechanism is broadly useful beyond our base pipeline, while full stability still depends on the
+alignment quality of the underlying editor.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+37
+Original
+FlowEdit
+OAVC on
+FlowEdit
+Original
+FlowEdit
+OAVC on
+FlowEdit
+cake→ice cream
+tiger→cat
+plaid→floral
+add a car
+delete flower
+trees→a city
+Fig. 13. Qualitative transfer of our Stage-2 where/how control to FlowEdit. Left: SD3. Right: FLUX. Each
+column shows (Original, FlowEdit, and OAVC applied to FlowEdit) on three examples.
+J.3
+Ablation on Interior Support Radius 𝑟fg
+Tab. 11 studies the sensitivity to the interior-support dilation radius 𝑟fg in Eq. (67). Increasing 𝑟fg
+expands the region where semantic injection is allowed, which can improve edit coverage but may
+also bring the injection closer to background structures near the boundary. The sweep therefore
+reflects a preservation–editability trade-off rather than a universally optimal dilation value: 𝑟fg = 1
+gives the strongest aggregate structure/background preservation, whereas 𝑟fg = 2 gives slightly
+higher CLIPedit and additional spatial freedom for shape-changing edits. We use 𝑟fg = 2 as the
+default operating point in all main experiments; excessive expansion at 𝑟fg = 3 provides no further
+semantic gain and weakens preservation.
+J.4
+Ablation on Maximum Ring Coupling
+Tab. 12 ablates 𝛽max in Eq. (69). When 𝛽max = 0, the ring coupling is removed and the method reduces
+to a hard spatial split between edited and preserved regions. This increases Struct. Dist. and worsens
+LPIPS/MSE, consistent with boundary artifacts (e.g., halos and contour wobble) accumulating under
+multi-step integration. Moderate coupling improves stability, and the default 𝛽max = 0.45 provides
+the best overall balance while being robust to nearby values.
+J.5
+Ablation on Boundary Band Thickness 𝑟bd
+Tab. 13 studies the boundary-band dilation radius 𝑟bd in Eq. (68). We find the method is not sensitive
+to a wide range of ring thicknesses: varying 𝑟bd yields nearly identical metrics. Removing the explicit
+ring band (effectively collapsing 𝑊ring
+𝑡
+) slightly degrades stability-related measures. This indicates
+that explicitly treating the boundary region differently from the object interior is beneficial, while
+the precise band thickness is not critical.
+K
+More Qualitative Results
+This appendix provides additional visual comparisons for both image and video editing. Figs. 16,
+17, and 19 report more qualitative results on PIE-Bench, complementing the main-paper examples.
+
+
+38
+Wang et al.
+OAVC
+DNAEdit
+Original
+Fig. 14. Representative weak-benefit case 1 for OAVC.
+OAVC
+DNAEdit
+Original
+Fig. 15. Representative weak-benefit case 2 for OAVC.
+Fig. 18 shows qualitative results on DAVIS for video editing. All experiments in this work were run
+on a single NVIDIA GPU with 48 GB of memory.
+K.1
+More Qualitative Results for Image Editing
+Figs. 16, 17, and 19 present additional image-editing results on PIE-Bench across diverse edit
+types (e.g., object replacement, attribute/material changes, deletion/addition, and local semantic
+edits). We observe that several baselines may exhibit background drift, boundary artifacts (e.g.,
+halos/color bleeding), or occasional mis-edits under challenging prompts. In contrast, OAVC better
+confines semantic changes to the intended region and preserves non-target content, yielding
+cleaner boundaries and stronger structure/background consistency. Notably, for human-centric
+cases, OAVC more reliably preserves identity-related characteristics while applying the requested
+edits.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+39
+K.2
+More Qualitative Results for Video Editing on DAVIS
+Fig. 18 provides additional video-editing results on DAVIS. Following prior work, we use the
+Rectified-Flow text-to-video backbone Wan2.1 for DAVIS experiments. Across challenging se-
+quences, OAVC reduces temporal drift and improves frame-to-frame consistency, while maintaining
+the original motion patterns and scene layout compared to global-steering baselines.
+L
+Additional Limitation Visualizations
+Our improvements rely on a non-trivial object support that localizes where semantic velocity updates
+are allowed to act. When the mask degenerates to a near-global support (e.g., 𝑀fg ≈1), the spatial
+selectivity of Stage-2 vanishes:𝑊edit
+𝑡
+≈𝑊ref
+𝑡
+≈1 makes the controlled injection equivalent to global
+velocity steering. In this regime, OAVC effectively reduces to the reference/offset stabilization in
+Stage-1 and behaves similarly to prior global editors (e.g., DNAEdit), offering limited advantage for
+edits that are inherently global.
+Figs. 14 and 15 show representative weak-benefit cases. For near-global transformations such
+as watercolor painting style transfer, the intended change affects most of the image rather than a
+localized object. As a result, the object/background separation becomes ill-defined, background
+anchoring becomes less informative, and boundary-aware object control has limited effect. These
+examples visually complement the scope discussion in Sec. 5.7.
+Consequently, OAVC is not designed to be optimal for full-image transformations such as global
+style transfer, overall color grading, or domain-level appearance changes, where the desired modifi-
+cation intentionally spans the entire image. Extending our framework to these cases likely requires
+alternative priors beyond object masks (e.g., multi-region semantic layouts or frequency/texture-
+specific supports) and revised constraints that balance global appearance changes with structure
+preservation. Our current post-hoc control uses a single final latent hard blend; stronger pixel-space
+or multi-step compositing controls remain to be evaluated. The reported Structure Distance is a
+global correspondence metric, so the present experiments do not isolate whether every improve-
+ment is foreground- or boundary-localized. Finally, the human study was not powered for reliable
+per-edit-category analysis of the elevated “Partially” rate; the aggregate results should not be
+interpreted as equivalence in edit strength.
+
+
+40
+Wang et al.
+Source
+DNAEdit-
+SD3
+Ours-SD3
+DNAEdit-
+FLUX
+Ours-FLUX FlowEdit
+UniEdit
+FireFlow
+Inf
+RF-Solver
+Cake:
+Round →Square
+Plate:
+Fruits →Pizza
+Eyes:
+Opened→Closed
+Eyes:
+Green →Blue
+Glowing
+jar→Crystal ball
+Standing on:
+Rocks→Boat
+Table:
+Vase→Plant
+Woods:
+House→Monster
++Exaggerated
+hair band
+Woman:
+-Backpack
+Fig. 16. Qualitative comparison of image editing methods on 10 samples.
+
+
+Object-Aware Background-Controlled Editing via Weighted Velocity Guidance
+41
+Source
+DNAEdit-
+SD3
+Ours-SD3
+DNAEdit-
+FLUX
+Ours-FLUX FlowEdit
+UniEdit
+FireFlow
+Inf
+RF-Solver
+Mountain:
+-Paraglider
+Umbrella:
+Pink→Yellow
+Lipstick:
+Red→Purple
+Chairs:
++Plastic
+Background:
+Trees→Elves
+Fig. 17. Qualitative comparison of 5 image editing methods.
+Source 
+video
+Target 
+video
+Source 
+video
+Target 
+video
+Man → Woman
+Bear → Panda
+Fig. 18. Qualitative video editing results on DAVIS using Wan2.1. OAVC reduces background drift and improves
+temporal consistency by constraining semantic updates to the target object region (and a safe injection
+direction), compared to global velocity steering baselines.
+
+
+42
+Wang et al.
+Source
+FlowEdit
+DNAEdit
+Ours
+Source
+UniEdit
+DNAEdit
+Ours
+Hold:
+Torch →Flower
+Chair:
+Cat →Dog
+Woman:
+Jacket →Blouse
+Street:
+Car →Motorcycle
+Table:
+Pizza →Noodles
+Seat:
+Bench →Sofa
+Hold:
+Flower →Bear
+Tree branch:
+- Bee
+Easter eggs:
+Teacup →Glass
+Girl:
+- Dog
+Table:
+- Laptop
+Cake:
+Round →Star
+Road:
+- Bus
+Road:
++ Flowers
+Tree:
+Dead →Blooming
+Colorful eggs:
+Rabbit →Cat
+Background:
+Dirt →Snow
+Head:
+Garland →Hat
+Fig. 19. Qualitative comparison on Stable Diffusion (left) and FLUX (right).

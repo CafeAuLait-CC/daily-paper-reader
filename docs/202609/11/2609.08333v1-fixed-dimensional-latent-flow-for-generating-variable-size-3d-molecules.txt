@@ -1,0 +1,2090 @@
+Title: Fixed-Dimensional Latent Flow for Generating Variable-Size 3D Molecules
+
+URL Source: https://arxiv.org/pdf/2609.08333v1
+
+Published Time: Wed, 09 Sep 2026 03:30:25 GMT
+
+Number of Pages: 57
+
+Markdown Content:
+# Fixed-Dimensional Latent Flow for Generating Variable-Size 3D Molecules 
+
+Weichi Yao 1 Cameron Gruich 2 Bryan R. Goldsmith 2 Yixin Wang 31Michigan Institute for Data & AI in Society 
+
+> 2
+
+Department of Chemical Engineering 3Department of Statistics University of Michigan, Ann Arbor, USA 
+
+{weichiy,cgruich,bgoldsmith,yixinw}@umich.edu 
+
+Abstract 
+
+In molecular discovery, molecule size is coupled to composition, structure, stability, binding affinity, and other target properties. Yet most 3D generators require molecule size to be specified before generation. Here, we introduce Equivariant-Free Transformer-Autoencoded Latent Flow Matching (EF-TALFM), a two-stage generative framework that relies entirely on a single fixed-dimensional molecule-level latent representation to generate variable-size molecules. The second-stage flow matching model samples this latent vector, and an autoregressive Transformer decoder then determines molecule size while generating atom types, coordinates, and chemically informative states. Canonical atom ordering and rigid-pose alignment enable standard Transformers without equivariant layers, while joint decoding of molecular geometry and an enriched chemical state enables reliable, deterministic, chemistry-guided graph recovery without requiring a learned dense pairwise bond decoder. The same fixed-dimensional latent supports unconditional and property-conditioned flow matching, while optional property supervision adds an internal ranking readout, with no separate predictor or reference calculations. On PCQM4Mv2, EF-TALFM achieves the highest fraction of molecules that are unique, absent from the training set, pass sanitization and PoseBusters sanity checks, 89.4%, compared with 75.6% for UAE-3D and 69.8% for FlowMol. Under the reported budgets on the same hardware, EF-TALFM also achieves higher measured computational throughput, with sampling-throughput speedups of 1.26 × and 3.62 × and approximate end-to-end training-throughput speedups of 3.20 ×
+
+and 314 × over UAE-3D and FlowMol, respectively. Across ten target HOMO–LUMO gaps, internal ranking increases the density functional theory (DFT)-verified hit rate within 0.1 eV 
+
+from 25.0% to 52.4%, while preserving 97% novelty among unique verified hits relative to their property-matched training subsets. These results demonstrate that fixed-dimensional molecule-level generation followed by symmetry-resolved autoregressive realization provides a practical architecture for open-ended and property-directed 3D molecular design. 
+
+1arXiv:2609.08333v1 [physics.chem-ph] 8 Sep 2026 1 Introduction 
+
+Molecular discovery requires generative models capable of proposing new molecules with three-dimensional structures and desired properties. This is inherently a variable-size design problem: molecular size, composition, and structure must be determined jointly, and the number of atoms needed to realize a desired property is generally not known in advance. A general molecular generator should therefore treat molecular size as an outcome of generation, supporting both open-ended generation of valid and novel molecules without a prescribed size and property-directed design that concentrates candidates near a target while preserving structural diversity. For most 3D molecular generators, however, molecular size determines the shape of the state on which generation operates. Molecule-space diffusion and flow models instantiate N atom states before beginning the generative process, and bond-explicit variants may additionally instantiate 
+
+O(N2) pairwise states [Hoogeboom et al., 2022, Vignac et al., 2023, Hua et al., 2024, Le et al., 2024, Dunn and Koes, 2024, Irwin et al., 2025]. Most two-stage latent generators replace observable atom features with N learned latent elements [Xu et al., 2023, Joshi et al., 2025, Luo et al., 2025], but their second-stage generative state remains an N × d array. In both cases, N must be speci-fied, sampled, or predicted before the atom-wise state can be instantiated. Nor does the presence of a single global embedding by itself resolve this dependence: when a 1 × d code merely con-ditions diffusion over presized atom and pairwise-edge states [Li et al., 2026], the code is fixed-dimensional, but the state actually sampled by the molecular generator is still size-dependent. Fixed-size 3D representations have also been realized with continuous neural-field decoders or fixed sets of equivariant latent nodes [Kirchmeyer et al., 2024, Chen et al., 2025]. These meth-ods show that a molecular representation can remain fixed-dimensional across molecule sizes. Such a representation still requires a mechanism that converts it into a discrete molecule while determining molecular size, atom types, Cartesian coordinates, and other chemical attributes. These considerations motivate our central architectural choice: the second-stage generative state is a single molecule-level latent vector z ∈ Rd , independent of molecular size, and atom-wise structure is created only during decoding. The second-stage latent generator therefore operates entirely in Rd , without taking N as input or instantiating a presized N × d atom-wise state. This separation places molecule-level variation in a common fixed-dimensional space while the de-coder handles variable-size molecular construction; it also provides a direct locus for optional property conditioning. We instantiate this size-independent latent generator with flow match-ing [Lipman et al., 2023], which learns a vector field that transports a simple base distribution to the molecule-level latent distribution. Turning a single fixed-dimensional latent into a molecule of unknown size requires a decoder that can determine when construction is complete. Direct autoregressive 3D generators address vari-able size by growing molecules atom by atom, but use the same autoregressive process to model both molecule-level variation and sequential construction [Cheng et al., 2025, Li et al., 2025, Rose et al., 2025, Lu et al., 2025]. A latent alternative grows an atom-wise latent sequence, invoking conditional diffusion for each new latent and a separate classifier for termination [Ottomano et al., 2026]. To keep the latent generator independent of molecular size, we instead use an autoregres-sive decoder that generates atoms sequentially and terminates with an explicit end-of-molecule 2(EOM) token. At each step, it conditions on z and the previously generated prefix to predict either EOM or the next atom’s type, Cartesian coordinates, and chemical attributes. Molecular size is therefore determined by the decoder, without a separate diffusion or flow process at each atom. Autoregressive decoding introduces two symmetry ambiguities: molecules have neither an in-trinsic atom sequence nor a unique Cartesian pose, so equivalent structures can induce different causal and coordinate targets. Common models handle geometric symmetry through equivariant layers or SE (3) augmentation [Hoogeboom et al., 2022, Xu et al., 2023, Joshi et al., 2025, Cheng et al., 2025]. Canonical approaches instead select a consistent representation before learning, for example, through inertial-frame tokenization or geometric spectral canonicalization [Li et al., 2025, Zhou et al., 2026]. We adopt the representation-level strategy in a lightweight form: canon-ical graph ordering provides a reproducible atom sequence, while coordinate alignment using translations and proper rotations provides a reproducible pose and keeps mirror images distinct. Applied once during preprocessing, these conventions enable standard Transformer and feed-forward backbones without rotational augmentation, learned frames, spectral canonicalization, or equivariant layers. This construction does not confer the formal transformation guarantees of an explicitly equivariant architecture; rather, it relocates permutation and rigid-motion handling from the network to deterministic preprocessing. A second challenge is to turn the decoded atoms and coordinates into a chemically complete molecular graph. Explicitly predicting bond types produces a dense O(N2) categorical output and requires the model to enforce globally consistent bond and valence assignments [Luo et al., 2025, Li et al., 2026]. Coordinate-only generators avoid this pairwise output by generating atom types and coordinates and recovering connectivity in post-processing [Hoogeboom et al., 2022, Xu et al., 2023, Joshi et al., 2025, Cheng et al., 2025]. Those outputs alone, however, may not uniquely de-termine bonding, charge assignment, or electronic structure through generic geometry-based perception, especially when only the heavy-atom scaffold is generated. We take an intermedi-ate route: the decoder remains bond-free but augments atom types and coordinates with formal charge, attached-hydrogen count, hybridization, chirality, radical, aromaticity, conjugation, and ring membership, together with molecule-level descriptors including total charge, spin multi-plicity, ring count, and fused-ring occurrence. These chemically informative states constrain a deterministic reconstruction pipeline, avoiding a learned dense bond-prediction head while sup-plying information that geometry alone leaves ambiguous. Together, these design choices define Equivariant-Free Transformer-Autoencoded Latent Flow Matching (EF-TALFM), a two-stage framework that generates variable-size 3D molecules from a single fixed-dimensional molecule-level latent. In the first stage, an Equivariant-Free Transformer Autoencoder (EF-TAVAE) maps each canonically ordered and rigid-pose-aligned molecule to z and reconstructs it with an EOM-terminated causal decoder. In the second stage, a flow-matching model learns the distribution of these latents and samples one z per molecule for decoding. The same factorization supports both unconditional and property-directed generation. For un-conditional sampling, the flow learns pθθθ (z); for conditional sampling, an external target y con-ditions the flow through pθθθ (z | y). The property is not included in z and is not supplied as an input to the molecular encoder or autoregressive decoder. When optional property supervision 3is enabled during autoencoder training, complementary latent-only and molecule-conditioned readouts encourage property-relevant organization of the latent space and provide an internal score for decoded candidates. A generated molecule can then be re-encoded and ranked by its internal-readout error relative to the requested target, without training a separate property pre-dictor or evaluating a reference property during selection. We evaluate EF-TALFM in unconditional and property-directed regimes on PCQM4Mv2 [Hu et al., 2021]. The unconditional study tests whether one fixed-dimensional latent retains sufficient in-formation for faithful reconstruction and valid, variable-size generation. EF-TALFM generates the highest fraction of molecules that are unique, absent from the training set, pass sanitization and PoseBusters sanity checks, 89.4%, compared with 75.6% for UAE-3D and 69.8% for FlowMol, corresponding to relative improvements of 18.3% and 28.1%, respectively. Under the reported budgets on identical hardware, EF-TALFM achieves training-time speedups of 1.86 × and 2.72 ×
+
+and end-to-end sampling-time speedups of 1.06 × and 2.83 × over UAE-3D and FlowMol, re-spectively. Its PoseBusters-verified novel sampling throughput is 1.26 × and 3.62 × that of the respective baselines, and it also achieves the highest approximate training-example throughput compared with the baselines. The property-directed study tests whether the same latent architec-ture can support targeted molecular discovery. Across ten target HOMO–LUMO gaps, retaining the top 30% of candidates ranked by the internal readout increases the density functional theory (DFT)-verified hit rate within ±0.1 eV from 25.0% to 52.4% while retaining 62.9% of all verified hits. Among the retained candidates, 80.5% fall within ±0.2 eV ; among the target-wise unique verified hits, 97.4% are unseen in their corresponding property-matched training subsets. 
+
+Contributions. Our contributions follow the architectural hierarchy above: 1. Fixed-dimensional molecule-level generation. We introduce a two-stage 3D molecular generator whose second-stage flow samples one vector z ∈ Rd , independent of molecular size, rather than an N × d latent array or a fixed code that merely conditions a presized atom-wise generative state. 2. Variable-size autoregressive realization. We decode the sampled latent with an EOM-terminated causal Transformer that determines molecular size while generating composition, 3D geometry, and chemical state. Atom-wise structure is instantiated only during this decod-ing stage. 3. Representation-level symmetry handling. We combine deterministic canonical graph or-dering with coordinate alignment using translations and proper rotations to obtain a repro-ducible causal atom sequence and molecular pose, enabling standard Transformer and feed-forward backbones without equivariant layers. 4. Bond-free chemical realization. We predict enriched atom- and molecule-level chemical states and use them in deterministic graph reconstruction, avoiding learned O(N2) bond out-puts and addressing ambiguities that are especially consequential in heavy-atom-only gener-ation. 45. Conditional generation and internal candidate ranking. We condition the same fixed-dimensional latent flow on external property targets and optionally organize the latent through property supervision. An internal molecule-conditioned readout substantially enriches DFT-verified target hits while retaining candidates that are novel under exact training-set matching and structurally diverse. A detailed discussion of related work is provided in Section 4. 
+
+# 2 EF-TALFM: a fixed-dimensional molecule-level latent with autoregressive molecular decoding 
+
+EF-TALFM uses flow matching to generate one molecule-level latent, rather than using that latent only to condition an atom-wise generative process. Its first stage learns an encoder qφφφ (z | M ) and a variable-size decoder pψψψ (M | z). A high-level schematic of this first stage is shown in Figure 1. Its second stage uses flow matching to learn pθθθ (z | y), where the external property condition is omitted ( y = ∅) for unconditional sampling or set to a target property value for conditional sampling. The property is not part of z and is not supplied to the molecular encoder or decoder. Only after the fixed-dimensional latent has been sampled does the autoregressive decoder instan-tiate atom-wise molecular structure. When optional property supervision is enabled, an internal readout additionally scores decoded candidates for consistency with the requested property. We first describe the canonical molecular representation used to reduce permutation and roto-translational ambiguity in Section 2.1. We then introduce the Transformer-backed variational autoencoder (EF-TAVAE) [Vaswani et al., 2017, Kingma and Welling, 2014] in Section 2.2, fol-lowed by unconditional and conditional latent flow matching [Lipman et al., 2023] in Section 2.3 and the shared molecular reconstruction pipeline in Section 2.4. The EF-TALFM pipeline se-quentially trains the first-stage EF-TAVAE, and then the second-stage flow matching model with EF-TAVAE frozen. The full training and sampling algorithms are given in Algorithms 1 and 2; see Appendix A. 5Figure 1: Overview of EF-TAVAE. A canonically ordered and aligned molecule with n atoms is repre-sented as M =  u, (x1, h1), . . . , (xn, hn), where u denotes molecule-level categorical features, and (xi, hi)
+
+denotes the canonicalized 3D coordinate and atom-level categorical features of atom i ∈ { 1, . . . , n}. We append the final nonphysical end-of-molecule (EOM) token (xn+1, hn+1) with xn+1 = 0 and the special label [EOS] in its atom-level categorical fields. Atom- and molecule-level feature encoders form in-put embeddings (e(0) 
+
+> 1
+
+, . . . , e(0)
+
+> n+1
+
+), to which a learnable sequence token z(0) is prepended. A bidirectional Transformer encoder fφφφ produces contextualized embeddings; its sequence-token output z(L) parameter-izes the diagonal Gaussian posterior through (zμ , zσ ). The latent code is sampled by reparameterization as z = zμ + zσ ⊙ εεε, with εεε ∼ N (0, I). From z, EF-TAVAE first predicts the molecule-level features ˆu and constructs latent-conditioned decoder inputs ννν(0) 
+
+> 0
+
+. The causal Transformer decoder fψψψ then uses masked self-attention to generate ννν(L′) 
+
+> i
+
+autoregressively: it maps ννν(L′) 
+
+> i
+
+to next atom-level outputs (ˆxi+1, ˆhi+1), which are then encoded into ννν(0)
+
+> i+1
+
+, recursively, terminating when it emits [EOS] in ˆhi+1. When optional prop-erty supervision is enabled, a learned property token ννν(0) 
+
+> [PROP]
+
+is inserted after the latent decoder token. Its final representation ννν(L′) 
+
+> [PROP]
+
+is passed through a property readout head to predict y. The blue dashed path denotes this property-supervised readout. Autoregressive atom states never attend to the property token, so the property pathway does not alter the atom-generation process. Here, y is used as a supervision tar-get rather than as an encoder input. During training, teacher forcing supplies the preceding ground-truth atom tokens, and the reconstruction loss is applied to the molecule- and atom-level predictions. When property supervision is enabled, the property-reconstruction loss is additionally included in the training objective. 
+
+2.1 Canonical molecular representation 
+
+Molecular data inherently exhibit two key symmetries. First, permutation symmetry ensures that relabeling atoms does not alter a molecule’s identity. Second, rotation–translation symmetry dic-tates that rigid motions in space (rotations or translations) do not change the underlying struc-ture. Formally, a molecular conformation is represented by atom coordinates X ∈ RN×3 (together with associated per-atom features), but is defined only up to the action of two groups. A global rigid-body transformation g = ( R,t) ∈ SE (3), with rotation R ∈ SO (3) and translation t ∈ R3,acts on the coordinates as g · X = XR ⊤ + 1Nt⊤, where 1N ∈ RN is the all-ones vector. Indepen-6dently, a permutation σ ∈ SN relabels the atoms through its permutation matrix Pσ ∈ { 0, 1}N×N
+
+as σ · X = Pσ X, simultaneously reordering any per-atom features. Since the spatial transforma-tion acts on the right (on the coordinate axes) while the relabeling acts on the left (on the atom index), the two actions commute and together generate the direct product group SE (3)×SN , with joint action (g, σ ) · X = Pσ XR ⊤ + 1Nt⊤. Two coordinate arrays related by any (g, σ ) thus rep-resent the same molecule. A generative model over molecular structures must therefore respect both symmetries–either by being invariant to this joint action or by modeling the quotient space 
+
+RN×3/(SE (3) × SN ).Conventionally, invariance to this joint action is achieved by building equivariance into every layer [Hoogeboom et al., 2022, Xu et al., 2023, Huang et al., 2024, Hua et al., 2024, Le et al., 2024, Irwin et al., 2025, Dunn and Koes, 2026, Xie et al., 2022, Jiao et al., 2023, Miller et al., 2024, Zeni et al., 2025], by augmenting the data with sampled group elements [Luo et al., 2025, Joshi et al., 2025, Morehead* et al., 2026], or by modeling the distribution directly on the quotient space [Ko and Lee, 2026, Xu et al., 2026]. We instead propose a simpler canonical-alignment procedure that selects a deterministic representative in preprocessing: an atom ordering fixes a permutation con-vention, and a rigid alignment to a standardized frame fixes the translation and proper-rotation degrees of freedom, leaving reflections and hence chirality intact. 
+
+Canonical atom ordering. We first establish an atom order for each molecule using canonical 
+
+SMILES. We generate an RDKit canonical SMILES representation, construct the corresponding canonicalized molecular graph, and match it back to the input molecule to obtain the ordering 
+
+σ . For graphs without unresolved automorphism ties, canonical SMILES does not depend on the input atom indexing, so this procedure yields a graph-based ordering convention that we apply uniformly across training and evaluation. This gives a deterministic permutation convention for the molecular graphs considered here. Graph automorphisms and associated tie-breaking are discussed in Appendix B. 
+
+Atom Position Alignment. Once the atoms are canonically ordered, we remove translational and proper-rotational symmetries by rigidly aligning each molecule to a standardized coordinate frame. We define a canonicalization map c that selects a deterministic representative of each molecule’s SE (3) orbit, conditioned on the fixed canonical atom ordering. Given that ordering, 
+
+c translates the first atom to the origin, uses the first atom with nonzero displacement to fix the positive x-axis, and uses the first sufficiently non-collinear atom to fix the remaining proper rotation (placing it in the x − z half-plane with z ≥ 0); the same rigid transformation is applied to all atoms. Thus any two inputs differing only by a translation and proper rotation, with the same canonical ordering, map to identical coordinates up to numerical precision: c(g · X) = c(X) for all g ∈ SE (3). An illustration of the atom position alignment is given in Figure 2(a). A detailed description of the alignment procedure, including collinear edge cases and numerical verification, is provided in Appendix B. By imposing a fixed ordering and orientation in preprocessing, we shift symmetry handling from the model architecture to the data representation, which offers a simple and scalable approach for the use of standard Transformer backbones. They do not provide equivariance guarantees and require explicit conventions for symmetric or near-degenerate molecules; Sections 4 and 5 discuss these limits and related methods. 7Step 0: Start with the raw 3D molecule.                           
+
+> Step 0: Start with generated features and coordinates.
+> Step 1: Canonically reorder atoms; select canonical indices (0, 1, 2) as anchors.
+> Step 1: Reconstruct bonds.
+> xyz
+> Step 2: Translate 0to the origin.
+> Step 2: Downgrade overlong multiple bond.
+> xyz
+> Step 3: Place 1on +x-axis,
+> 2in xz half-plane ( z¸0); apply the resulting proper rotation Rto all atoms.
+> Step 3: Add H; perform restrained refinement.
+> Canonical frame
+> Deterministic and invariant to translations and proper rotations; chirality preserved.
+> Step 4: Remove H; retain refined geometry.
+> (a) Pre-encoding canonical atom ordering and position alignment (b) Post-decoding graph reconstruction and geometry refinement
+> CNOFH
+
+Figure 2: (a) Example preprocessing of molecular data prior to encoding. A C2H6FNO conformer from PCQM4Mv2 is shown. Hydrogen atoms are implicit and omitted from the visualization; numbers denote atom-row indices at each stage. (b) Deterministic reconstruction and restrained refinement of a generated heavy-atom configuration. The decoder supplies atom identities and 3D coordinates, together with per-atom and molecule-level attributes, but no molecular graph. Connectivity and valence-compatible bond orders are inferred without changing the generated coordinates. The initial graph con-tains two connected components: the hatched four-heavy-atom propylene oxide fragment is discarded, whereas the 12-heavy-atom component is retained. Brown marks an initially assigned C=C bond whose length is inconsistent with a carbon–carbon double bond. Demotion to C–C (green) dearomatizes the ring. Aromatic bonds before correction are depicted by a solid bond with a thin dashed inner line. Explicit hydrogens are subsequently added for fixed-topology, restrained refinement; dashed element-colored out-lines indicate the pre-refinement heavy-atom positions. Finally, the temporary hydrogens are removed while retaining the refined heavy-atom coordinates. 
+
+2.2 Molecule autoencoding 
+
+Given the canonical molecular representation from Section 2.1, we next learn a compact latent space for 3D molecules. We use a variational autoencoder (VAE) [Kingma and Welling, 2014], referred to as EF-TAVAE, that maps each molecule to a fixed-dimensional latent vector and recon-structs it as a variable-length molecular sequence. The canonical ordering provides a reproducible sequence for the causal factorization, while the pose alignment expresses the Cartesian predic-tion targets in a common coordinate frame. Together, these conventions support variable-size autoregressive decoding using a standard causal Transformer. Rather than directly predicting pairwise bond labels, the decoder predicts atom types, 3D coordi-nates, and a set of chemically informative atom- and molecule-level attributes. These attributes provide local electronic and topological context, including charge, hydrogen count, hybridization, 8aromaticity, conjugation, and ring membership, that helps recover chemically meaningful struc-tures from coordinates without requiring a dense bond-prediction head. The complete feature list is provided in Appendix C. When optional property supervision is enabled, EF-TAVAE augments molecular reconstruction with a property-prediction objective using complementary latent-only and molecule-conditioned routes. This objective encourages the latent space and decoded molecular states to become property-organized without altering autoregressive generation. The molecule-conditioned route provides an internal property readout for ranking and filtering generated molecules according to their consistency with the requested property. 
+
+Molecular sequence representation. For a molecule with n atoms, let xi ∈ R3 denote the canonicalized 3D coordinate of atom i, and let hi denote its categorical atom-level feature vector. Atoms are ordered by a deterministic canonical ordering, and coordinates are expressed in the canonical rigid pose described in Section 2.1. We use k = 9 atom-level categorical fields, consist-ing of atom type plus eight additional atom-level chemical attributes, and m = 4 molecule-level categorical features u. Thus each molecule is represented as 
+
+M =  u, (x1, h1), · · · , (xn, hn).
+
+To support variable-size decoding, we append a nonphysical end-of-molecule (EOM) atom after the final atom. The resulting sequence has length n + 1; the EOM atom has zero coordinates and a special end-of-sequence atom-type label, [EOS] , for all atom-level categorical fields. 
+
+Bidirectional transformer-based encoding. Each atom token is embedded by combining learned embeddings of the canonicalized coordinates, atom-level categorical features, and molecule-level features. Let e(0) 
+
+> i
+
+∈ Rd denote the resulting input embedding for token i.Following sequence-representation models such as BERT [Devlin et al., 2019, Liu et al., 2019], we prepend a learnable sequence token z(0) ∈ Rd to the atom sequence (z(0), e(0) 
+
+> 1
+
+, . . . , e(0)
+
+> n+1
+
+).A bidirectional Transformer encoder fφφφ maps this sequence to contextualized embeddings. The output corresponding to the sequence token is projected to the parameters of a diagonal Gaussian posterior, qφφφ (z | M ) = N (zμ , diag (z2 
+
+> σ
+
+)) , zμ , zσ ∈ Rd . We sample latent codes using the reparameterization trick [Kingma and Welling, 2014], z = zμ + zσ ⊙ εεε, εεε ∼ N (0, I).
+
+Masked attention transformer-based autoregressive decoding. The decoder factorizes molecule reconstruction into global and sequential components. First, a set of MLP heads pre-dicts the molecule-level features ˆu from z. Second, a causal Transformer decoder fψψψ generates atom tokens autoregressively. At step i, the decoder conditions on the latent code z and the previously generated tokens x<i, h<i to predict the next coordinate and atom-level attributes: 
+
+pψψψ (M | z) = pψψψ (u | z)
+
+> n+1
+
+# ∏
+
+> i=1
+
+pψψψ (xi, hi | z, x<i, h<i). (1) In particular, at rollout step i, the latent code and the previously generated atoms are embedded as (ννν(0) 
+
+> 0
+
+, . . . , ννν(0)
+
+> i−1
+
+). The Transformer decoder fψψψ contextualizes this prefix, and its last output row, ννν(L)
+
+> i−1
+
+, is passed to the coordinate and atom-feature readout heads to parameterize the dis-tribution of (xi, hi). For i = n + 1, only the categorical EOM labels are modeled; xn+1 = 0 is a 9placeholder omitted from the coordinate likelihood. Generation terminates when the decoder emits the [EOS] atom-type label. This design allows the decoder to determine molecular size during generation, rather than requiring the number of atoms to be specified in advance. 
+
+Property-supervised latent organization and internal property readout. When property supervision is enabled for a target y ∈ Rc, a learned property token is inserted after the latent token, giving (ννν(0) 
+
+> 0
+
+, ννν(0)
+
+> [PROP]
+
+, ννν(0) 
+
+> 1
+
+, . . . , ννν(0)
+
+> n+1
+
+). Its final hidden representation ννν(L) 
+
+> [PROP]
+
+is passed through a readout head. For each training example, the property token is evaluated through two complementary information routes. In the molecule-conditioned route, it attends to the atom-token representations while its direct attention to z is masked; we denote the resulting molecule-conditioned prediction by ˆymol . In the latent-only route, the property token is prevented from attending to the atom tokens and instead predicts the property from z alone; we denote this 
+
+latent-only prediction by ˆylat . In both routes, the autoregressive atom-token representation is prevented from attending to the property token. Consequently, the property readout does not alter the autoregressive factorization in Equation (1). Under the two complementary masked-attention routes, the property is predicted either directly through the contextualized atom representations or from the latent representation. The molecule-conditioned route discourages the property readout from relying exclusively on a direct latent shortcut and encourages the decoder’s molecular representations to retain property-relevant in-formation. The latent-only route encourages the target property to be recoverable from z, thereby organizing the latent space according to property-relevant information. The molecule-conditioned prediction ˆymol is the internal property readout used for post-generation filtering. Each generated candidate is re-encoded and the internal property-prediction head outputs the corresponding ˆymol . Given a target property value ytarget and a generated candidate M ′, we define its internal-readout property error as esur = ∥ˆymol (M ′) − ytarget ∥.Generated candidates can then be ranked in ascending order of esur , after which a chosen top fraction is retained. This procedure acts as a post-generation property-consistency filter and does not require access to the true property of a generated molecule. The externally evaluated property is used only afterward to assess the quality of the retained candidates. We evaluate the effectiveness of this readout-based ranking procedure in Section 3.2. 
+
+Training objective. The base reconstruction loss combines cross-entropy losses for categorical features with a Smooth-L1 loss for coordinates. We minimize 
+
+Lrec = λmol CE (u, ˆu) + 
+
+> n+1
+
+# ∑
+
+> i=1
+
+λatom CE (hi, ˆhi) + 
+
+> n
+
+# ∑
+
+> i=1
+
+λcoord SmoothL1 (xi, ˆxi), (2) where the coordinate term excludes the [EOS] token and the loss weights are chosen to balance the coordinate and categorical terms. When property reconstruction is enabled, we add an additional property-reconstruction loss term with weight λprop to the base reconstruction objective in Equation (2), 
+
+Lprop = τmol MSE (y, ˆymol ) + ( 1 − τmol ) MSE (y, ˆylat ) . (3) 10 The full VAE objective is 
+
+LVAE = Lrec + λprop Lprop + βKL DKL 
+
+ qφφφ (z | M ) ∥ N (0, I) + λvar Lvar + λcov Lcov , (4) where the property loss is the weighted average of the two routes, each categorical cross-entropy is summed over its feature heads, Lvar softly enforces a minimum empirical variance floor for each dimension of the posterior mean zμ , and Lcov penalizes off-diagonal covariance between dimensions of zμ ; see Appendix E for more details. We set λprop = 0 when property supervision is disabled. During training, we use teacher forcing for the autoregressive decoder: when predicting token i,the decoder receives the ground-truth prefix (x<i, h<i) rather than its own previous predictions. At inference time, the model decodes autoregressively, feeding each predicted token back into the decoder until [EOS] is produced. 
+
+2.3 Latent flow matching 
+
+After training the molecule autoencoder, we freeze its parameters and train a continuous flow model in the learned latent space. For each molecule M , we use the deterministic posterior mean zμ ∈ Rd as its latent representation (see further discussion in Appendix F). This gives an empirical target distribution over latent molecular representations, denoted pdata (zμ ). The same latent-flow formulation supports both sampling modes. Without an external condition, it learns 
+
+pdata (zμ ); when a target property y is supplied externally, it learns the conditional distribution 
+
+pdata (zμ | y). In neither case is y appended to the latent state. Flow matching learns a time-dependent vector field that transports a standard Gaussian base distribution pε = p0 = N (0, I) to the target latent distribution. For a data latent zμ ∼ pdata (·)
+
+and a noise sample zε ∼ pε , we use the linear interpolation path zt = ( 1−t)zε +tzμ , t ∼ Unif (0, 1),with corresponding target velocity ut = ddt zt = zμ − zε .We parametrize the velocity field by a neural network fθ (zt ,t, y) and minimize the flow-matching objective 
+
+LFM (θ ) = E (zμ ,y)∼pdata (·,·)   
+
+> zε∼pε,t∼Unif (0,1)
+
+h
+
+fθ (zt ,t, y) − (zμ − zε ) 22
+
+i
+
+.
+
+For unconditional generation, we omit y and train fθ (zt ,t). At inference time, we sample zε ∼ pε
+
+and solve the ordinary differential equation ddt zt = fθ (zt ,t, y) (omit y for unconditional genera-tion) with zt=0 = zε from t = 0 to t = 1. The terminal state zt=1 is then decoded by the autore-gressive molecule decoder. 
+
+2.4 Practical molecular reconstruction and geometry refinement 
+
+During sampling, EF-TALFM generates atom types, 3D coordinates, atom-level chemical features, and molecule-level attributes, but no bond labels. Depending on the molecular representation used for training, the decoded sequence contains either only heavy atoms or all atoms, includ-11 ing explicit hydrogens. We convert either decoded state into a chemically interpretable molec-ular structure using a fixed, rule-based reconstruction and refinement pipeline that is separate from the learned generator. The two representations share the same fixed-topology, heavy-atom-restrained refinement principle, but require different graph-construction and hydrogen-handling procedures. In the all-atom setting, the explicit hydrogen positions provide additional geometric evidence for hydrogen parentage and atomic valence, making standard bond perception a strong starting point. The more demanding reconstruction problem is therefore the heavy-atom setting, in which the hydrogen coordinates are absent, and the graph must be recovered using the decoded heavy-atom geometry and chemical features. Accordingly, the following discussion focuses on the heavy-atom branch. All-atom reconstruction details can be found in Appendix D. 
+
+Molecule graph reconstruction. For a heavy-atom decoded sequence, both connectivity and bond orders must be inferred; see Step 1 in Figure 2(b). Rule-based perception of molecular con-nectivity and bond orders from three-dimensional coordinates and element identities has been studied previously [Zhang et al., 2012]. Our procedure operates in the same broad setting but ad-ditionally uses a distinct set of rules that incorporates the generated chemical attributes. Specifi-cally, it first infers heavy-atom connectivity from interatomic distances and covalent radii under element-, hybridization-, and ring-aware constraints; then assigns valence-aware bond orders us-ing the generated chemical attributes; and finally applies deterministic valence, aromaticity, and conjugation corrections (Step 2). If the resulting graph contains multiple components, we retain one component with the largest number of heavy atoms and discard the others without chang-ing the bonds within the retained component (Step 3). We then identify double and triple bonds whose interatomic distances exceed element- and bond-order-specific cutoffs based on covalent radii. Their bond orders are lowered one level at a time only when the resulting graph passes RD-Kit sanitization; no edge is deleted. We refer to this operation as overlong multiple-bond correction 
+
+(Step 4). Full details are provided in Appendix D. 
+
+Restrained geometry refinement. Short force-field minimization has been used to refine the internal geometries of generated molecules [Ragoza et al., 2022], and recent benchmarking shows that local relaxation can substantially improve the conformational validity of generated 3D molecules [Baillif et al., 2024]. For heavy-atom generation, RDKit first adds temporary explicit hydrogens; all heavy atoms are then restrained near their decoded positions during minimization (Step 5), and the refined heavy-atom coordinates are transferred back while the temporary hy-drogens are discarded (Step 6). The restraint parameters and optimization settings are provided in Appendix D. 
+
+# 3 Empirical studies 
+
+We organize the empirical study around two questions. First, can a fixed-dimensional molecule-level latent retain sufficient chemical and geometric information for faithful reconstruction while supporting valid, novel, and distributionally faithful generation when molecular size is deter-mined by the decoder? Section 3.1 addresses this question by comparing EF-TALFM with base-line methods in terms of reconstruction fidelity, chemical and geometric validity, novelty, dis-tributional fidelity, and computational cost. Second, can the same latent design support reliable 12 property-conditioned generation? Section 3.2 conditions the latent flow on target HOMO–LUMO gaps and uses the model’s internal property readout to rank generated candidates, measuring DFT-verified hit enrichment, candidate retention, and the novelty and diversity of the resulting hits. 
+
+3.1 Unconditional molecule generation 
+
+After describing the experimental setup in Section 3.1.1, we compare EF-TALFM with baseline methods in Section 3.1.2 and evaluate distributional fidelity and the effects of postprocessing in Section 3.1.3. Our results show that (i) EF-TAVAE compresses variable-size molecules into a chem-ically informed, fixed-dimensional latent representation while achieving the highest fraction of generated molecules that are unique, absent from the training set, pass sanitization and Pose-Busters sanity checks, referred to as the PoseBusters-verified novel yield; (ii) EF-TALFM reduces end-to-end training and sampling time while delivering the highest PoseBusters-verified novel sampling throughput and approximate training exposure throughput; and (iv) EF-TALFM repro-duces training-set distributions of molecular size and global chemical attributes, while restrained refinement improves local geometric realism without materially changing molecular identity or population-level chemical statistics. 
+
+3.1.1 Experimental setup Benchmark dataset. We use PCQM4Mv2 [Hu et al., 2021], a large-scale quantum-chemistry dataset derived from PubChemQC and originally designed for HOMO–LUMO gap prediction in the OGB Large-Scale Challenge; its official training split provides DFT-optimized 3D structures for approximately 3.4M molecules. Following common practice in 3D small-molecule generation, we model only the heavy-atom scaffold. After preprocessing, we use a 90%/10% train/validation split. Further preprocessing details are provided in Appendix G.2. 
+
+Baseline methods. We select two strong, complementary bond-aware baselines, UAE-3D [Luo et al., 2025] and FlowMol [Dunn and Koes, 2024]. Across their respective evaluations, both report state-of-the-art results for de novo 3D molecular generation, collectively outperforming a broad range of prior 3D generators [Hoogeboom et al., 2022, Xu et al., 2023, Huang et al., 2024, Vignac et al., 2023, Hua et al., 2024, Le et al., 2024, Joshi et al., 2025, Irwin et al., 2025]. They cover two complementary generative settings: UAE-3D learns a variable-length atom-wise latent represen-tation that is later modeled by a latent diffusion model, whereas FlowMol uses equivariant flow matching to directly generate molecular structures, including bond types. We do not include other methods that generate only atom types and 3D coordinates [Hooge-boom et al., 2022, Xu et al., 2023, Joshi et al., 2025, Cheng et al., 2025], because geometry-based graph recovery can be insufficient for accurately reconstructing chemically annotated molecu-lar states, particularly for larger or heavy-atom-rich molecules where bond connectivity, bond orders, aromaticity, and formal charges may be ambiguous from coordinates alone (see Table 4 and Appendix G.1). 13 Evaluation metrics. We evaluate the ability of EF-TALFM to sample valid, diverse, and novel molecules. Connectivity measures the fraction whose recovered molecular graph is connected; sanitization measures the fraction of generated molecules that pass chemistry–toolkit validity checks; uniqueness is computed as the proportion of the unique sanitized molecules among all generated molecules; and novelty is computed as the proportion of generated molecules that are unique, sanitized, and absent from the training set. We also use PoseBusters sanity checks [Buttenschoen et al., 2024]. Detailed descriptions of all evaluation metrics are provided in Ap-pendix G.3. 
+
+Training, sampling, and comparison protocol. The methods operate in different representa-tion spaces and therefore do not share directly comparable notions of batch size, epoch, or train-ing step. UAE-3D and EF-TALFM use two-stage training, in which an autoencoder is followed by an unconditional latent generative model (with property supervision disabled for EF-TAVAE), whereas FlowMol trains a direct molecular graph flow model using adaptive graph-edge batches. We therefore use a common evaluation protocol and hardware while reporting each method’s native optimizer-step budget, parameter count, effective update units, and wall-clock time. For the PCQM4Mv2 generation results reported below, we train the 30 M-parameter FlowMol model for 100K optimizer steps and evaluate its validation-selected checkpoint. For UAE-3D, we train the 0.6M-parameter VAE for 400K steps and the 38 .6M-parameter latent generative model for 1M steps; for EF-TALFM, we train the 18 .5M-parameter TAVAE for 400K steps and the 5.4M-parameter latent flow model for 1M steps. We adapt the published UAE-3D and FlowMol QM9 configurations to PCQM4Mv2, with minor tuning for stable training. EF-TALFM uses a fixed molecule-level latent dimension of d = 32 , whereas UAE-3D uses d = 4 dimensions per atom; because most PCQM4Mv2 molecules contain more than 11 atoms, UAE-3D typically operates on a higher-dimensional molecule-level latent representation. All models are trained on single-node H100 GPUs. Detailed hyperparameters are provided in Appendices L to N. For sampling, EF-TALFM integrates its latent flow ODE with the adaptive fifth-order Dormand– Prince solver [Chen et al., 2018], UAE-3D uses its denoising diffusion probabilistic model (DDPM) sampler with 100 denoising steps, and FlowMol uses 100 evenly spaced Euler integration steps. We measure the time required to generate 10,000 molecules using batch size 5,000 under the same hardware setting. EF-TALFM samples are reconstructed and refined using the procedure in Section 2.4 and Figure 2(b); UAE-3D and FlowMol use the same downstream stages of overlong multiple-bond correction and geometry refinement, with their predicted bond types replacing Step 1. 
+
+3.1.2 Performance comparison against baselines Higher PoseBusters-verified novel yield than bond-aware baselines. Figure 3(a) shows that EF-TALFM produces the strongest overall generation performance in terms of the PoseBusters-verified novel yield, which counts the fraction of molecules that are unique, absent from the training set, pass sanitization and all six PoseBusters checks, including bond lengths, bond an-gles, internal steric clash, aromatic-ring flatness, double-bond flatness, and internal energy; it achieves 89.4%, compared with 75.6% for UAE-3D and 69.8% for FlowMol. This joint rate reflects 14 FlowMol UAE-3D EF-TALFM 50 60 70 80 90 100 PoseBusters-veri fi ed yield (%)              
+
+> 69.8 75.6
+> 89.4
+> FlowMol UAE-3D EF-TALFM 050 100 150 200 250 Time (sec)
+> 226 85 80
+> FlowMol UAE-3D EF-TALFM 025 50 75 100 125 PoseBusters-veri fi ed novel molecules (s −1 )
+> 31 89
+> 112
+> FlowMol UAE-3D EF-TALFM 0500 1000 1500 2000 2500 Time (min)
+> 40 h 1644 min
+> 882 min
+> 464 418
+> 1180
+> 464
+> FlowMol UAE-3D EF-TALFM 0510 15 20 25 Approx. exposure (10 3 s−1 )
+> 0.074 7.267
+> 23.220
+> Mol-space generator VAE Latent model
+> 2.076 5.191
+> 3.870 19.350
+> (a) Generation performance ( (b) End-to-end sampling time ( (c) Veri fi ed-novel sampling throughput ( (d) End-to-end training time ( (e) End-to-end training throughput (
+
+↑ ↓ ↑↓ ↑   
+
+> )))))
+
+Figure 3: Generation quality and end-to-end computational efficiency on PCQM4Mv2. Arrows in-dicate the better performance. Panel (a) shows that EF-TALFM achieves the highest PoseBusters-verified novel yield among the 10,000 molecules generated by each method, which counts unique, training-set-novel samples that pass sanitization and all six PoseBusters geometry checks. Panel (b) shows that EF-TALFM generates the 10,000 molecules in the shortest end-to-end time, including time for generator sam-pling, reconstruction, and relaxation. Panel (c) then shows that EF-TALFM delivers the highest sampling throughput, for PoseBusters-verified novel molecules, shown in panel (a). Panel (d) shows that EF-TALFM requires the shortest end-to-end training time while achieving the highest end-to-end training through-put. This pipeline-average rate divides approximate exposure by total training time, with stacked segments showing stage contributions. FlowMol’s displayed rate uses a molecule-equivalent proxy derived from its edge-level exposure; because the exposure units are not directly interchangeable, panel (e) contextualizes data-processing throughput rather than providing a FLOP-matched comparison. 
+
+the number of distinct, chemically valid, previously unseen candidates available for downstream evaluation and is therefore more informative for molecular discovery than validity or novelty considered separately. Detailed comparison results and metric definitions are provided in Table 5 and Appendix H; additional evaluations across baseline checkpoints and sampling-step budgets (Appendix I) lead to the same overall conclusion. 
+
+Lower wall-clock cost and higher throughput than bond-aware baselines. Figure 3(b–e) shows that EF-TALFM reduces practical end-to-end generation and training cost under the re-ported budgets. Its sampling-time speedups are 1.06 × over UAE-3D and 2.83 × over FlowMol; its PoseBusters-verified novel sampling throughput is 1.26 × and 3.62 × that of the respective baselines. EF-TALFM also achieves training-time speedups of 1.86 × and 2.72 × and approxi-mate training-throughput speedups of 3.20 × and 314 × over the same baselines. The FlowMol training-throughput value is a molecule-equivalent proxy, and exposure units are not directly comparable across latent-space and molecular-space models; accordingly, panel (e) contextual-izes data-processing throughput rather than providing a FLOP-matched comparison. The stage-15 level measurements indicate that the principal gain arises from generative modeling in a compact, fixed-dimensional molecule-level latent space. Detailed update, exposure, and stage-level timing statistics are provided in Table 8. 
+
+3.1.3 Distributional fidelity and postprocessing ablation 0 4 8 12 16 20           
+
+> Molecule size
+> 0.00 0.05 0.10 0.15
+> Probability density
+> ≤-1 0≥+1
+> Total formal charge
+> 0% 25% 50% 75% 100%
+> Relative frequency
+> 1≥2
+> Spin multiplicity
+> 0% 20% 40% 60% 80%
+> Relative frequency
+> Train Generated (Molecule data) Generated Final (Relaxed Molecule Graph)
+> No Yes
+> Has fused rings or not
+> 0% 20% 40% 60% 80%
+> Relative frequency
+> 0123≥4
+> Number of rings
+> 0% 15% 30% 45%
+> Relative frequency
+
+Figure 4: EF-TALFM matches training-set chemical distributions before and after postprocess-ing. Normalized distributions of atom count, ring count, fused-ring occurrence, spin multiplicity, and total charge are shown for the training data, raw outputs decoded from 100,000 generated latents, and final re-laxed molecular graphs. 
+
+EF-TALFM ultimately produces molecules through the complete reconstruction and geometry-refinement pipeline. To distinguish properties learned by the generative model from improve-ments introduced by postprocessing, we analyze both the raw decoded outputs and intermediate reconstruction stages. We sample 100,000 latent vectors, decode them into molecular data, and construct the final relaxed molecular graphs; see Figure 2(b) for a generated heavy-atom struc-ture. 
+
+Postprocessing preserves the learned population distribution. Figure 4 compares normal-ized distributions of atom count, ring count, fused-ring occurrence, spin multiplicity, and total charge. The agreement between the training data and raw decoded outputs indicates that EF-TALFM directly learns both variable molecular size and global chemical attributes. Comparing the raw and final distributions isolates the aggregate effect of reconstruction and refinement. Their close agreement shows that postprocessing does not substantially reshape the generated population. Consequently, the final relaxed molecules continue to closely track the correspond-ing training-set distributions. 
+
+Validity, uniqueness, and novelty are preserved across stages, while restrained refine-ment further improves bond geometry. Table 1 further separates the effects of overlong multiple-bond correction and restrained refinement. Molecular validity, uniqueness, and novelty remain essentially unchanged across the three stages, showing that these properties are primarily determined by the generated molecular state and graph reconstruction rather than by subsequent postprocessing. Overlong multiple-bond correction (Step 2) provides only modest improvements in geometric sanity. In contrast, geometric refinement (Steps 3-4) increases the PoseBusters pass 16 Table 1: Stagewise ablation of the EF-TALFM molecular reconstruction pipeline. Largest raw de-notes the atom-count largest connected fragment obtained after deterministic graph reconstruction; Pre-relaxed additionally applies overlong multiple-bond correction; and Relaxed additionally applies hydrogen-assisted restrained geometry refinement. Molecular validity, diversity, novelty, and feature consistency re-main nearly unchanged across the three stages. In contrast, restrained refinement produces the dominant improvement in geometric realism. PoseBusters pass rates are computed on the molecules that are unique, absent from the training set, and pass sanitization (N. & U. & S.) at each stage. Changes ( ∆) are reported in percentage points. Metric value (%) Change (percentage points) Metric ( ↑) Largest raw Pre-relaxed Relaxed ∆raw →pre ∆pre →rel ∆raw →rel 
+
+Molecular validity, diversity, and feature consistency 
+
+S. 98.24 98.25 98.25 0.01 0.00 0.01 U. & S. 98.20 98.21 98.21 0.01 0.00 0.01 N. & U. & S. 94.36 94.33 94.33 −0.03 0.00 −0.03 
+
+PoseBusters geometric sanity checks on N. & U. & S. molecules 
+
+Bond lengths 80.66 81.29 99.79 0.63 18.50 19.13 Bond angles 81.45 81.47 99.32 0.02 17.85 17.87 Internal steric clash 79.50 79.84 97.21 0.33 17.38 17.71 Aromatic-ring flatness 99.87 99.89 99.93 0.02 0.03 0.05 Double-bond flatness 96.86 97.40 98.09 0.54 0.69 1.23 Internal energy 93.61 93.81 99.71 0.20 5.90 6.10 
+
+All PoseBusters checks 64.00 64.65 94.74 0.65 +30.10 +30.74 
+
+rate by a large margin, with particularly large improvements in bond lengths, bond angles, in-ternal steric clashes, and internal energy. Thus, restrained refinement primarily improves local geometry while preserving molecular identity and population-level chemical statistics. We show ten final relaxed molecules in Appendix J, illustrating the range of molecular sizes, ring systems, fused-ring structures, and heteroatom compositions produced by the complete pipeline. These examples qualitatively reflect the diversity quantified by the large-sample distributional analysis; hydrogen atoms are omitted for clarity. 
+
+3.2 Property-conditioned molecule generation 
+
+Having established EF-TALFM’s unconditional generation performance, we next evaluate whether its latent representation supports effective property-conditioned generation. We train EF-TAVAE with property-supervision enabled, condition the latent flow on HOMO–LUMO gaps from the PCQM4Mv2 dataset and use the model’s internal property readout as a low-cost ranking signal for candidate selection. Target fidelity is then assessed against DFT-computed reference values. Detailed hyperparameters are provided in Appendix O. 17 −5 0510                                      
+
+> UMAP 1 0816
+> UMAP 2
+> −1.0 −0.5 0.0 0.5 1.0
+> Signed true error (eV)
+> gen :N= 77,724
+> ∗gen :N= 19,453 (25.0%)
+> −5 0510
+> UMAP 1 0816
+> UMAP 2
+> −1.0 −0.5 0.0 0.5 1.0
+> Signed true error (eV) ̂
+> gen :N= 23,315 ̂
+> ∗gen :N= 12,228 (52.4%)
+> 020 40 60 80 100 010 20 30 40 50 60 70
+> Hit rate (%)
+> UMAP density deciles
+> gen (25.0%) ̂gen (52.4%)
+> −5 0510
+> PCA 1 0.0 1.5 3.0
+> PCA 2
+> −1.0 −0.5 0.0 0.5 1.0
+> Signed true error (eV)
+> −5 0510
+> PCA 1 0.0 1.5 3.0
+> PCA 2
+> −1.0 −0.5 0.0 0.5 1.0
+> Signed true error (eV)
+> 020 40 60 80 100
+> Training-density percentile (higher = denser)
+> 010 20 30 40 50 60 70
+> Hit rate (%)
+> PCA density deciles
+> gen (25.0%) ̂gen (52.4%)
+> Conditioning target ytarget (eV)
+> gen ,̂gen :
+> ∗gen ,̂∗gen :4.1 4.1 4.6 4.6 5.0 5.0 5.4 5.4 5.8 5.8 6.2 6.2 6.6 6.6 7.0 7.0 7.4 7.4 7.8 7.8
+> (a) Generated populations in training space (b) Hit rate across training-density deciles
+
+Figure 5: Internal-readout selection increases DFT-verified hit rates across every training-density decile in the learned property representation. The top and bottom rows correspond to fixed uniform manifold approximation and projection (UMAP) and principal component analysis (PCA) map-pings of the penultimate molecule-path property representation r, respectively. Panel (a) compares the screened relaxed population Mgen (left) with its selected subset cMgen (right), obtained by retaining the target-wise best 30% ranked by esur . The signed true-property error, ytrue − ytarget is clipped at ±1.0 eV. Colors identify the ten conditioning targets. Generation hits with εtrue < 0.1 are shown as white-outlined diamond-shaped markers, whereas misses are represented by round-shaped markers whose target colors progressively fade toward gray with increasing absolute error. The floor shading and contours repre-sent the smoothed density of the full training population; contour boundaries enclose the highest-density regions containing q ∈ { 1, 10 , 50 , 90 , 99 , 99 .5}% of the training molecules. The corresponding hit popula-tions are M ∗
+
+gen and cM ∗
+
+gen . Panel (b) reports the corresponding hit rates across training-density percentile deciles; shaded bands denote 95% Wilson intervals and dashed lines indicate overall hit rates. 
+
+After describing the conditioning and evaluation protocol in Section 3.2.1, we assess DFT-verified targeting, novelty, and diversity in Section 3.2.2, and isolate the contributions of postprocessing and selection in Section 3.2.3. Our results show that selecting the target-wise best 30% of screened candidates by internal-readout error increases the DFT-verified hit rate from 25 .0% to 52 .4% 
+
+while retaining 62 .9% of the available hits. The improvement holds across the learned property representation, and the verified hits remain largely novel under exact training-set matching and diverse relative to property-matched training molecules. 18 3.2.1 Experimental setup and evaluation protocol Conditioning targets. For property-conditioned generation on the PCQM4Mv2 dataset, target HOMO–LUMO gaps are selected to span the central region of the training-set distribution. Ten target values are evenly spaced between the 10th and 90th percentiles and rounded to the nearest 
+
+0.1 eV , yielding G = {4.1, 4.6, 5.0, 5.4, 5.8, 6.2, 6.6, 7.0, 7.4, 7.8} (eV ). For each target ytarget ∈ G ,10,000 molecular samples are generated. 
+
+Reference property calculations. Reference HOMO–LUMO gaps ytrue are computed for the generated molecules using single-point Density Functional Theory (DFT) calculations in 
+
+Psi4 [Smith et al., 2020] at the B3LYP/6-31G(d) level, with density-fitted self-consistent field and no additional geometry optimization. We define the reference property error as 
+
+εtrue := |ytrue − ytarget |. (5) 
+
+Dataset preprocessing. To provide complete molecular inputs for reference DFT calculations using Psi4 , we generate molecules using an all-atom representation. Although the heavy-atom representation also predicts the number of hydrogens attached to each heavy atom, the explicit hydrogen atoms and their three-dimensional coordinates must subsequently be constructed. All-atom generation directly models the hydrogen atoms and their positions, reducing reliance on post hoc hydrogen placement and the associated uncertainty in preparing molecular structures for DFT evaluation. Therefore, we train EF-TALFM on PCQM4Mv2 using an all-atom molecular representation. Closed-shell species constitute the dominant population in PCQM4Mv2. To maintain a consis-tent electronic-state domain and avoid mixing this population with sparsely represented radical species, whose frontier-orbital energies depend on spin, we restrict both training and validation to molecular graphs containing no explicit RDKit radical electrons. The resulting fixed partition contains 3,000,981 training molecules and 115,302 validation molecules. 
+
+Generation post-processing and internal-readout selection. Following generation, the pre-dicted atoms and coordinates are converted into all-atom molecular graphs, where only the con-nected graphs (single fragment) are selected and subjected to the overlong multiple-bond correc-tion, restrained geometry refinement, radical filtering, and PoseBusters geometric validity checks. We denote the resulting screened population by Mgen . For internal-readout selection, candidates are ranked independently within each target by the internal-readout error 
+
+esur := | ˆymol − ytarget |, (6) where ˆymol is the model’s internal property estimate from the molecule-conditioned prediction route. The best 30% within each target define the final candidate set cMgen .We define the corresponding DFT-verified hit populations as 
+
+M ∗ 
+
+> gen
+
+= {m ∈ Mgen : εtrue (m) < 0.1 eV },
+
+cM ∗ 
+
+> gen
+
+= {m ∈ cMgen : εtrue (m) < 0.1 eV }.
+
+19 3.2.2 Reference-verified targeting and structural diversity Internal-readout selection improves DFT-verified targeting. From the initial 100,000 gen-erations, post-processing yields a screened pool of 77,724 candidates ( Mgen ) and a final selected set of 23,315 molecules ( cMgen ), obtained by retaining the target-wise best 30% ranked by esur . Of these, DFT verifies 19,453 screened candidates as hits ( M ∗
+
+> gen
+
+) and 12,228 selected candidates as hits ( cM ∗
+
+> gen
+
+), corresponding to hit rates of 25 .0% and 52 .4% , respectively. Thus, retaining 30% of 
+
+Mgen preserves 62 .9% 1 of its DFT-verified hits while more than doubling the hit rate. 
+
+Hit enrichment extends across the learned property representation. Figure 5 examines whether the aggregate hit-rate gain from internal-readout selection extends across the learned property representation or arises mainly in regions densely supported by the training data. Overall, selection enriches reference-verified hits throughout the representation. To construct this view, we re-encode the generated molecules with EF-TAVAE and project the penultimate molecule-path property representation r using principal component analysis (PCA) [Jolliffe and Cadima, 2016] and uniform manifold approximation and projection (UMAP) [McInnes et al., 2018] mappings fitted to a fixed sample of 100,000 training molecules. Figure 5(a) shows that selection concentrates the reference-verified hits while continuing to span both projections of the learned representation, whereas (b) quantifies this effect across training-density levels: selection improves the hit rate within every decile for both UMAP and PCA. This consistent improvement indicates that the readout provides useful ranking information throughout the representation rather than merely favoring candidates in its most densely supported regions. 
+
+Readout-selected hits remain structurally novel and diverse. Table 2 shows that the DFT-verified hits retained by internal-readout selection remain highly novel and structurally diverse. Within each target, 99 .4% of the selected hits are unique, and 97 .4% of those unique hits are unseen in the corresponding property-matched training subset under exact canonical-SMILES matching. Because exact-match novelty does not quantify how far an unseen molecule departs from the training chemistry, we complement it with fingerprint Tanimoto similarity to the nearest property-matched training molecule and Bemis–Murcko scaffold novelty; fingerprint construc-tion and metric details are given in Appendix K. These measures show that the selected hits are generally distinct from, but remain related to, the matched training chemistry, with many intro-ducing new scaffolds. The selected hits also retain substantial within-target diversity, although their distribution is more concentrated than the size-matched training control. Relative to the full hit set, selection only slightly increases nearest-training similarity and reduces scaffold novelty and internal diversity by a small margin, while leaving exact-match novelty nearly unchanged. Thus, readout-based prioritization improves property accuracy while largely preserving the nov-elty and diversity of EF-TALFM’s verified hits.         
+
+> 1Computed as |cM∗
+> gen |/|M∗
+> gen |=12 ,228 /19 ,453 =62 .9% .
+
+20 Table 2: Internal-readout selection preserves 97.4% exact-match novelty among unique verified hits, with only a slight reductions in scaffold novelty and internal diversity. M ∗ 
+
+> gen
+
+contains DFT-verified hits with εtrue < 0.1 eV , and cM ∗ 
+
+> gen
+
+contains those retained after selecting the best 30% within each target by esur . U. is within-target uniqueness. U.& N. is the fraction of unique molecules whose canonical SMILES is absent from the corresponding property-matched training set. The upper block additionally reports nearest-training fingerprint Tanimoto similarity and scaffold novelty. The lower block compares within-target pairwise similarity and internal diversity, of M ∗ 
+
+> gen
+
+and cM ∗
+
+> gen
+
+, with target-stratified, size-matched training controls, fM ∗ 
+
+> train
+
+and cM ∗
+
+> train
+
+, respectively; control results are the mean ± sample standard deviation over 20 resamples. All statistics are computed within targets before pooling. Fingerprint, scaffold, pooling, and resampling definitions are given in Appendix K. Maximum Tanimoto Cohort N U. (%) U.& N. (%) Median (IQR) < 0.4 (%) < 0.8 (%) Scaffold novelty (%) 
+
+M ∗ 
+
+> gen
+
+19,453 99.4 97.7 0.556 (0.173) 8.9 94.6 37.6 
+
+cM ∗ 
+
+> gen
+
+12,228 99.4 97.4 0.568 (0.171) 6.8 94.1 33.5 
+
+Nuniq Within-target unordered pairs Mean similarity Internal diversity 
+
+fM ∗ 
+
+> train
+
+19,338 19,725,045 0.0843 ± 0.0002 0.9157 ± 0.0002 
+
+M ∗ 
+
+> gen
+
+19,338 19,725,045 0.1161 0.8839 
+
+cM ∗ 
+
+> train
+
+12,154 7,732,833 0.0844 ± 0.0003 0.9156 ± 0.0003 
+
+cM ∗ 
+
+> gen
+
+12,154 7,732,833 0.1224 0.8776 
+
+3.2.3 Ablation study on post-processing stages 
+
+EF-TALFM generates molecular data rather than finalized molecular graphs. Graph reconstruc-tion and geometry refinement first transform these outputs into candidate structures; validity screening and readout-based ranking then determine the composition of the retained population. Evaluating only the final population would therefore conflate the model’s conditional generation performance with the effects of downstream processing and would not show how each stage changes targeting accuracy and retention. We ablate these stages on the same initial population of 100,000 generated structures. 
+
+The post-processing stages make distinct contributions to reliability and targeting. Ta-ble 3 and the top-right panel of Figure 6 illustrate that the three post-processing stages play com-plementary roles: refinement controls extreme failures, screening enforces physical validity with limited loss of accurate candidates, and selection concentrates reference evaluation on the most promising molecules. Table 3 first shows that geometry refinement primarily suppresses large-error outliers, reducing the mean error and its spread while leaving the median and threshold hit rates nearly unchanged. More refined candidates subsequently pass validity screening than their pre-relaxed counterparts, while the screened relaxed and pre-relaxed sets have comparable targeting accuracy; the main benefit of refinement is therefore improving structural reliability rather than typical target fidelity. Validity screening then removes a small fraction of the relaxed 21 Table 3: Internal-readout–based selection yields the largest gain in the 0.1 eV hit rate; geome-try refinement primarily reduces large-error outliers, while validation screening provides only modest additional improvement. The initial population contains N=100,000 generated molecular struc-tures. Among the 92,221 connected molecules, 90,807 pre-relaxed molecule graphs (i.e., reconstructed molecule graphs without geometry refinement) pass strict sanitization, and 90,725 are successfully evalu-ated by Psi4 to obtain the reference property ytrue . For the relaxed structures, 90,807 pass strict sanitiza-tion and 90,748 are successfully evaluated by Psi4 . Of the 90,807 sanitized relaxed molecules, we retain 77,976 (85.9%) with no explicit radical electrons as in the training distribution, and 77,724 (85.6%) further pass the PoseBusters geometric validity checks. Rows follow the pipeline path Pre-relaxed → Relaxed →
+
+Screened Relaxed → Selection on Screened Relaxed. The row marked † is off this path: it screens the pre-relaxed structures instead, and is reported to isolate the effect of geometry refinement under identi-cal screening. During selection, the screened relaxed molecules within each target value are ranked by the internal-readout error esur , and the indicated “Best” fraction is retained before pooling across targets. Means are reported as mean (std) of the molecule-wise absolute true-property errors; both quantities are in eV. For a threshold δ , Count is the number of retained molecules satisfying εtrue < δ , and Rate is Count as a percentage of the retained-set size listed in the N column, not of the initial 100,000. Retained counts are rounded independently within each target before pooling. True error εtrue (eV) εtrue < 0.1 eV εtrue < 0.2 eV Retained set N Mean (Std) ↓ Median ↓ Rate (%) ↑ Count ↑ Rate (%) ↑ Count ↑
+
+Geometry refinement 
+
+Pre-relaxed 90,725 0.628 (0.933) 0.285 22.8 20,711 39.7 36,053 Relaxed 90,748 0.532 (0.711) 0.279 22.0 19,972 39.6 35,925 
+
+Validity screening 
+
+Relaxed 77,724 0.350 (0.385) 0.232 25.0 19,453 44.9 34,919 
+
+> †
+
+Pre-relaxed 75,344 0.353 (0.395) 0.225 26.6 20,043 46.1 34,732 
+
+Selection with esur on screened refined structures 
+
+Best 10% 7,774 0.119 (0.140) 0.084 56.9 4,424 83.1 6,457 Best 20% 15,545 0.122 (0.144) 0.087 55.5 8,620 82.2 12,780 Best 30% 23,315 0.130 (0.157) 0.094 52.4 12,228 80.5 18,764 Best 50% 38,863 0.152 (0.161) 0.115 44.2 17,196 73.9 28,707 
+
+population while retaining nearly all candidates already within 0.1 eV of their targets, yielding a modest increase in hit rate. The largest targeting gain comes from readout-based selection, as depicted in Figure 6(c), where the distribution of the signed property error narrows around 0. The retention sweep in Table 3 shows how increasingly stringent readout-based selection trades can-didate coverage for higher DFT-verified hit rates; Figure 6 uses the 30% retention setting included in this sweep. 
+
+The internal-readout error is informative for candidate prioritization. Figure 6 also shows that the aggregate enrichment is not driven by only a subset of targets, and the internal readout supplies a broadly informative selection signal across the conditioning range. Figure 6(a) explains the selection gain: esur has a strong rank association with εtrue across Mgen (Spearman ρ = 0.754 ), 22 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4                                    
+
+> Surrogate error: esur = |̂ ymol −ytarget | (eV)
+> 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6
+> True error:  εtrue  = | ytrue  − ytarget | (eV)
+> All targets
+> ρ= 0.754
+> r= 0.837
+> n= 77,724
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> Sample count per square bin (log scale)
+> −3 −2 −1 012
+> Signed property error, ytrue −ytarget (eV)
+> 0123
+> Density  Pre-relaxed
+> Relaxed
+> Relaxed + PoseBusters
+> Relaxed + PoseBusters + esur best 30%
+> 0.00 0.10 0.20 0.30 0.40
+> Training-set  y density
+> 4.1 4.6 5.0 5.4 5.8 6.2 6.6 7.0 7.4 7.8
+> ytarget (eV)
+> 3.0 3.8 4.6 5.4 6.2 7.0 7.8
+> ytrue  (eV)
+> ytrue =ytarget
+> Training-set ydistribution Relaxed + PoseBusters Relaxed + PoseBusters + esur best 30% Median and interquartile range
+> (a) (b) (c)
+
+Figure 6: (a) Internal-readout error is a strong and practically useful indicator of the true error. 
+
+For 77,724 conditionally generated molecules, the internal-readout error esur is strongly correlated with the true error εtrue , with Spearman ρ = 0.754 and Pearson r = 0.837 . The binned-median trend (red solid line) broadly follows the diagonal x = y (dashed line), showing that molecules with smaller internal-readout errors tend to have true properties closer to their targets. (b) Selecting by internal-readout error substantially narrows the true-property distributions around the requested targets. For each target property ytarget , the panel shows the distribution of corresponding true properties ytrue for Mgen 
+
+(left-half violin) and for the best 30% independently selected by esur within each target (right-half violin). Circles and thick bars denote the median and interquartile range, respectively; gray bars show the training-set HOMO–LUMO gap distribution. (c) Geometry refinement, molecular validity screening, and internal-readout selection progressively concentrate generated molecules around the requested HOMO–LUMO gap. Pooled distributions of the signed property error ytrue − ytarget are shown across all conditioning targets. We compare all pre-relaxed molecules, relaxed molecules, screened relaxed molecules (Mgen ), and the target-wise best 30% of Mgen ranked by internal-readout error esur defined in Equation (6). The combined refinement-and-screening step substantially reduces the broad error tails, while internal-readout selection produces sharply concentrated distributions near zero. The dashed vertical line indicates exact agreement with the conditioning target, and the two dotted lines indicate signed property errors of 
+
+±0.1 eV. 
+
+and the binned medians broadly follow the diagonal. This relationship provides a low-cost order-ing of candidates for reference evaluation. Figure 6(b) further shows that the effect is consistent across all ten conditioning targets: selecting the target-wise best 30% narrows the true-property distributions and centers them more closely on the requested values. 
+
+# 4 Related work 
+
+Most 3D molecular generators begin sampling from a state whose size is tied to the number of atoms. Molecule-space diffusion and flow methods evolve N atom states and may additionally evolve O(N2) pairwise bonds [Hoogeboom et al., 2022, Vignac et al., 2023, Dunn and Koes, 2024, Irwin et al., 2025]; most two-stage latent methods replace raw atom features with N learned latent elements but retain the same size-dependent generative state [Xu et al., 2023, Joshi et al., 2025, Luo 23 et al., 2025]. A global embedding does not by itself remove this size dependence: one recent dif-fusion autoencoder uses a semantic code to condition a pre-instantiated atom-and-edge diffusion state [Li et al., 2026]. EF-TALFM instead applies a separate flow model to one fixed-dimensional molecule-level latent and creates atom-wise molecular structure only during decoding. This dis-tinction organizes the comparisons below: the relevant questions are what representation the generative model samples, when molecular size is determined, and how the sampled representa-tion is converted into a complete 3D molecule. EF-TALFM combines a separately trained flow model over a single fixed-dimensional molecule-level latent with EOM-terminated, atom-wise autoregressive Cartesian decoding. Unlike atom-wise latent generators and global-code-conditioned molecular diffusion, its flow model does not operate over atom-wise or pairwise molecular states. Unlike direct autoregressive generators, its autoregressive network is a decoder conditioned on a separately sampled molecule-level la-tent, and its bonds are reconstructed after decoding rather than predicted as a pairwise tensor. Deterministic atom ordering and rigid-pose alignment make the encoder–decoder map consis-tent enough for standard Transformer and feed-forward backbones, while enriched atom and molecule states support fixed post-decoding graph reconstruction. The same latent design sup-ports unconditional sampling or conditional sampling with an external property target. Optional property supervision organizes the latent and provides an internal property readout for candidate ranking without making the property part of the latent state. 
+
+Generative-state dimensionality and molecular size. A common latent design preserves an atom-wise state: an N-atom molecule is encoded as N latent point-cloud elements or tokens, which the second-stage model generates jointly [Xu et al., 2023, Joshi et al., 2025, Luo et al., 2025]. Because this latent state scales with N, molecular size generally must be supplied, sampled, or predicted before that state is instantiated. A recent diffusion autoencoder instead aggregates each molecule into one fixed-dimensional se-mantic embedding [Li et al., 2026]. This embedding conditions an equivariant diffusion decoder rather than serving as the sole input to a separate generative model: the diffusion state still con-tains N atom states and their pairwise edge types, so molecular size must be specified before sampling. Fixed-dimensional alternatives use either one global modulation code decoded as a continuous atomic-density field, or a fixed number of equivariant latent nodes decoded by a Bayesian Flow Network [Kirchmeyer et al., 2024, Chen et al., 2025]. A variable-length alternative grows the atom-wise latent sequence autoregressively, using a conditional diffusion model for each next latent and a separate stop classifier [Ottomano et al., 2026]. EF-TALFM instead samples one ordinary vector z ∈ Rd with a single latent-flow solve and lets an EOM-terminated Cartesian decoder determine molecular size. Its total decoding cost still contains 
+
+N causal Transformer steps, but its second-stage flow is fixed-dimensional and is run only once per molecule, without a diffusion or flow solve at every atom. Thus, neither an N-element latent state nor an N-atom noisy state is instantiated before EF-TALFM’s decoder begins. 24 Direct autoregressive 3D generation. Several direct autoregressive generators build a molecule atom by atom. Their shared design uses Transformer context to predict the next atom type and a lightweight conditional diffusion or flow head to sample its coordinates [Cheng et al., 2025, Li et al., 2025, Rose et al., 2025]. Another approach autoregresses over compressed octree tokens and applies to molecules alongside other 3D domains [Lu et al., 2025]. In these methods, the autoregressive network jointly models molecule-level variation and atom-wise construction. In EF-TALFM, the autoregressive Transformer is instead a decoder conditioned on one molecule-level latent sampled by a separate flow. A plain output module predicts coordinates and enriched atom states directly, without a per-token diffusion or flow solve or geometry-aware attention. 
+
+Bond-explicit and coordinate-only generation. One strategy generates atom types and co-ordinates without bond labels and recovers connectivity in post-processing [Hoogeboom et al., 2022, Xu et al., 2023, Joshi et al., 2025, Cheng et al., 2025]. Another jointly generates bond types and 3D geometry [Vignac et al., 2023, Huang et al., 2024, Hua et al., 2024, Le et al., 2024, Dunn and Koes, 2024, Irwin et al., 2025, Dunn and Koes, 2026, Reidenbach et al., 2026, Luo et al., 2025, Li et al., 2026]. Pairwise bond prediction commonly gives O(N2) edge outputs [Dunn and Koes, 2024, 2026, Reidenbach et al., 2026, Luo et al., 2025]. A third strategy first generates a one-dimensional molecular representation and then predicts its 3D conformer [Liu et al., 2025]. EF-TALFM likewise does not predict a dense bond tensor, but outputs coordinates with enriched atom and molecule states, including atom charge, hydrogen count, hybridization, chirality, radi-cal, aromaticity, conjugation, ring attributes, total charge, and multiplicity. These variables con-strain deterministic bond recovery and chemistry-aware refinement, placing EF-TALFM between minimal coordinate-only output and learned dense-edge generation. 
+
+Symmetry handling through canonicalization. A common strategy places roto-translational and permutation symmetry in the denoiser or flow through equivariant graph, Transformer, or scalar–vector message-passing operations [Hoogeboom et al., 2022, Xu et al., 2023, Huang et al., 2024, Hua et al., 2024, Le et al., 2024, Irwin et al., 2025, Dunn and Koes, 2026, Li et al., 2026]. A limitation of full E(3) symmetry is that reflection-invariant parameterizations cannot distinguish chirality unless reflection-sensitive information is added [Dumitrescu et al., 2025]. Non-equivariant backbones may instead learn rotational consistency from random rotation aug-mentation [Joshi et al., 2025, Luo et al., 2025, Cheng et al., 2025, Rose et al., 2025], or construct sample-dependent frames or rotations around the generative backbone [Guo et al., 2025, Ding and Hofmann, 2025]. Quotient-space and symmetrized diffusion methods place symmetry in the stochastic process or training objective [Ko and Lee, 2026, Xu et al., 2026]. Deterministic canoni-calization removes pose and ordering variation before learning, using, for example, inertial-frame tokenization or geometric spectral canonicalization [Li et al., 2025, Zhou et al., 2026]. For com-mon point-cloud group actions, however, a globally continuous canonical selector need not exist, motivating frame averaging and weighted frames [Dym et al., 2024]. EF-TALFM chooses anchors by canonical graph order and applies one triplet-based proper rigid alignment during preprocessing. Its Transformer and ResNet components therefore require no learned or equivariant frame, rotational augmentation, spectral decomposition, or geometry-25 aware attention. The selector can still change discontinuously, and graph symmetries and collinear or nearly collinear anchors require explicit conventions, as discussed in Appendix B; the distinction is where the symmetry is handled, not an escape from the continuity obstruction. 
+
+Canonicalization and quotient-space interpretation. Our preprocessing is an instance of canonical generative modeling: map each sample to an orbit representative, learn the distribution on the canonical slice, and, when required, randomize over the group to recover an invariant dis-tribution [Zhou et al., 2026]. EF-TALFM models and outputs the canonical slice directly because the same pose is used by the encoder, decoder, and reconstruction pipeline. Here, canonicaliza-tion is used as a general strategy rather than as a source of formal transformation guarantees. Our use of it centers on a graph-ordered triplet realization integrated with a molecule-level latent and variable-length autoregressive decoder. This one-time preprocessing also differs from alignment inside a diffusion or flow trajectory, where targets may be repeatedly realigned to the current noisy state or model output. Such realignment can alter the induced prediction target and sampler [Xu et al., 2026]. EF-TALFM trains and samples in the same fixed canonical coordinate system, so neither the latent flow nor the autoregressive decoder performs an in-trajectory alignment correction. 
+
+Property-conditioned latent generation. Latent-space methods differ in where property in-formation enters. We include the broader string- and graph-based molecular latent literature here because the relevant distinction is where property information enters, rather than the di-mensionality of the decoded molecular representation. An early VAE keeps its encoder and de-coder property-unconditioned and adds a latent property regressor for optimization [Gómez-Bombarelli et al., 2018]. Other VAEs condition both encoder and decoder [Lim et al., 2018], or use the semi-supervised factorization q(y | x), q(z | x, y), and p(x | y, z) [Kang and Cho, 2019]. Two-stage generators may condition both the molecular autoencoder and the second-stage latent denoiser [Xu et al., 2023, You et al., 2024]. Several property-conditioned variants instead keep the first-stage molecular mappings property-free and condition only the second-stage latent gener-ator [Kim et al., 2025, Qiu et al., 2026, Zhang et al., 2025]. Within this second-stage-only con-ditioning setup, one model jointly trains the autoencoder and latent denoiser using a combined reconstruction and denoising objective [Zhang et al., 2025]. Property labels can also supervise an autoencoding representation without being supplied as inputs to its encoder or decoder. Control then acts on the learned representation through latent optimization, predictor guidance, or targeted embedding edits [Gómez-Bombarelli et al., 2018, Lobo et al., 2026, Li et al., 2026]. Within EF-TAVAE, the property value is likewise used only as a supervision target for an internal property readout trained through complementary latent-only and molecule-conditioned routes; it is not supplied to the encoder or molecular decoder and is not part of the latent state. The second-stage flow models the marginal latent distribution pθθθ (z) for unconditional generation or the target-conditioned distribution pθθθ (z | y) when an external property target y is provided. After generation, the same VAE re-encodes each candidate and reuses its internal property readout 26 for ranking, without a separately trained property predictor or an external property evaluator during selection. Thus, EF-TALFM combines optional property-supervised latent organization, externally conditioned latent sampling, and same-model candidate selection. 
+
+# 5 Conclusion and future work 
+
+This work demonstrates that molecular size can be an outcome of generation rather than an in-put to the generator. In EF-TALFM, generation begins by sampling a single fixed-dimensional molecule-level latent, with molecular size and atom-wise structure determined only during de-coding. Among the evaluated methods, EF-TALFM leads in generating unique, training-set novel molecules that can pass sanitization and PoseBusters sanity checks, corresponding end-to-end sampling throughput, and approximate training-example throughput, highlighting both genera-tion quality and practical efficiency. The same architecture supports property-conditioned gener-ation, and its internal ranking mechanism substantially improves the recovery of molecules near a target property while retaining high novelty and structural diversity. Looking forward, this architecture could be extended to more complex systems, including biomolecules, periodic crystals, and hybrid molecular–material structures. Such extensions would require adapting the representation and decoder to relevant structural units and sym-metries, including residues and periodic lattices. Important next steps for property-conditioned design include targeting properties beyond the training distribution, accounting for uncertainty when ranking candidates, and incorporating feedback from higher-fidelity calculations or experiments. 
+
+Limitations. EF-TALFM does not generate bond labels. Its heavy-atom branch uses a deter-ministic chemistry-aware reconstruction algorithm, while its all-atom branch starts from fixed, rule-based Open Babel bond perception. Avoiding a learned dense pairwise output shifts con-nectivity and bond-order determination to heuristic post-processing, which can introduce recon-struction errors that require further geometry refinement. Future work could integrate learned bond refinement while retaining the fixed-dimensional latent flow. Our method also relies on canonical atom ordering and rigid-pose canonicalization. Given the canonical ordering, the alignment removes the continuous SE (3) symmetry up to numerical precision for non-degenerate geometries, with degenerate cases (e.g., collinear configurations) handled by a deterministic fallback; reflections are intentionally retained so that chirality is pre-served. The graph-based ordering is unique for most molecules but not for those with nontrivial graph automorphisms, where we fall back on a deterministic, consistently applied convention rather than a mathematically unique labeling (see Appendix B). This is sufficient for the molecular systems studied here; for highly symmetric molecules or broader molecular systems, combining canonicalization with lightweight equivariant components may offer additional robustness. 27 Finally, EF-TALFM is designed for large-scale molecular datasets. The use of standard Trans-formers makes it flexible and scalable, but may require substantial training data. Performance in low-data regimes may benefit from additional regularization, transfer learning, or stronger geometric inductive biases. 
+
+# Acknowledgments 
+
+This work was supported in part by funding from the Office of Naval Research under grant N00014-23-1-2590, the National Science Foundation under grant No. 2310831, No. 2428059, No. 2435696, No. 2440954, a Michigan Institute for Data Science Propelling Original Data Science (PODS) grant, Two Sigma Investments LP, and LG Management Development Institute AI Re-search. This work used computing resources from the Advanced Cyberinfrastructure Coordina-tion Ecosystem: Services & Support (ACCESS) program, which is supported by the U.S. National Science Foundation. 28 References 
+
+B. Baillif, J. Cole, P. McCabe, and A. Bender. Benchmarking structure-based three-dimensional molecular generative models using GenBench3D: Ligand conformation quality matters. arXiv preprint arXiv:2407.04424 , 2024. M. Buttenschoen, G. M. Morris, and C. M. Deane. Posebusters: Ai-based docking methods fail to generate physically valid poses or generalise to novel sequences. Chemical Science , 15 (9):3130–3139, 2024. doi: 10.1039/D3SC04185A. URL https://doi.org/10.1039/ D3SC04185A .R. T. Q. Chen. torchdiffeq. GitHub software repository, 2018. URL https://github.com/ rtqichen/torchdiffeq . PyTorch implementation of differentiable ordinary differential equation solvers. R. T. Q. Chen, Y. Rubanova, J. Bettencourt, and D. K. Duvenaud. Neural ordinary differential equations. In Advances in Neural Information Processing Systems , 2018. Z. Chen, Y. Jia, Z. Tian, W.-Y. Ma, and Y. Lan. Manipulating 3D molecules in a fixed-dimensional E(3)-equivariant latent space. In Advances in Neural Information Processing Systems , volume 38, 2025. A. H. Cheng, C. Sun, and A. Aspuru-Guzik. Scalable autoregressive 3D molecule generation. 
+
+arXiv preprint arXiv:2505.13791 , 2025. J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova. Bert: Pre-training of deep bidirectional trans-formers for language understanding. In 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies , volume 1, pages 4171–4186, 2019. Y. Ding and T. Hofmann. Scalable non-equivariant 3D molecule generation via rotational align-ment. In Proceedings of the 42nd International Conference on Machine Learning , 2025. A. Dumitrescu, D. Korpela, M. Heinonen, Y. Verma, V. Iakovlev, V. Garg, and H. Lähdesmäki. E(3)-equivariant models cannot learn chirality: Field-based molecular generation. In International Conference on Learning Representations , 2025. I. Dunn and D. R. Koes. Mixed continuous and categorical flow matching for 3D de novo molecule generation. arXiv preprint arXiv:2404.19739 , 2024. I. Dunn and D. R. Koes. FlowMol3: Flow matching for 3D de novo small-molecule generation. 
+
+Digital Discovery , 5:2052–2066, 2026. doi: 10.1039/D5DD00363F. N. Dym, H. Lawrence, and J. W. Siegel. Equivariant frames and the impossibility of continuous canonicalization. In Proceedings of the 41st International Conference on Machine Learning , 2024. R. Gómez-Bombarelli, J. N. Wei, D. Duvenaud, J. M. Hernández-Lobato, B. Sánchez-Lengeling, D. Sheberla, J. Aguilera-Iparraguirre, T. D. Hirzel, R. P. Adams, and A. Aspuru-Guzik. Auto-matic chemical design using a data-driven continuous representation of molecules. ACS Central Science , 4(2):268–276, 2018. doi: 10.1021/acscentsci.7b00572. 29 M. Guo, C. Liu, and P. Forré. Frame-based equivariant diffusion models for 3D molecular gener-ation. arXiv preprint arXiv:2509.19506 , 2025. E. Hoogeboom, V. G. Satorras, C. Vignac, and M. Welling. Equivariant diffusion for molecule generation in 3D. In K. Chaudhuri, S. Jegelka, L. Song, C. Szepesvari, G. Niu, and S. Sabato, editors, Proceedings of the 39th International Conference on Machine Learning , volume 162 of 
+
+Proceedings of Machine Learning Research , pages 8867–8887. PMLR, 2022. W. Hu, M. Fey, H. Ren, M. Nakata, Y. Dong, and J. Leskovec. OGB-LSC: A large-scale challenge for machine learning on graphs. In Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 2) , 2021. C. Hua, S. Luan, M. Xu, Z. Ying, J. Fu, S. Ermon, and D. Precup. MUDiff: Unified diffusion for complete molecule generation. In S. Villar and B. Chamberlain, editors, Proceedings of the Second Learning on Graphs Conference , volume 231 of Proceedings of Machine Learning Research ,pages 33:1–33:26. PMLR, 2024. H. Huang, L. Sun, B. Du, and W. Lv. Learning joint 2-D and 3-D graph diffusion models for complete molecule generation. IEEE Transactions on Neural Networks and Learning Systems , 35 (9):11857–11871, 2024. doi: 10.1109/TNNLS.2024.3416328. R. Irwin, A. Tibo, J. P. Janet, and S. Olsson. SemlaFlow: Efficient 3D molecular generation with latent attention and equivariant flow matching. In Y. Li, S. Mandt, S. Agrawal, and E. Khan, editors, Proceedings of The 28th International Conference on Artificial Intelligence and Statistics ,volume 258 of Proceedings of Machine Learning Research , pages 3772–3780. PMLR, 2025. R. Jiao, W. Huang, P. Lin, J. Han, P. Chen, Y. Lu, and Y. Liu. Crystal structure prediction by joint equivariant diffusion. In Advances in Neural Information Processing Systems , 2023. I. T. Jolliffe and J. Cadima. Principal component analysis: A review and recent developments. 
+
+Philosophical Transactions of the Royal Society A: Mathematical, Physical and Engineering Sci-ences , 374(2065):20150202, 2016. doi: 10.1098/rsta.2015.0202. C. K. Joshi, X. Fu, Y.-L. Liao, V. Gharakhanyan, B. K. Miller, A. Sriram, and Z. W. Ulissi. All-atom diffusion transformers: Unified generative modelling of molecules and materials. In A. Singh, M. Fazel, D. Hsu, S. Lacoste-Julien, F. Berkenkamp, T. Maharaj, K. Wagstaff, and J. Zhu, editors, 
+
+Proceedings of the 42nd International Conference on Machine Learning , volume 267 of Proceedings of Machine Learning Research , pages 28393–28417. PMLR, 2025. S. Kang and K. Cho. Conditional molecular design with deep generative models. Journal of Chemical Information and Modeling , 59(1):43–52, 2019. doi: 10.1021/acs.jcim.8b00263. H. Kim, B. Bae, M. Park, Y. Shin, T. Ideker, and H. Nam. A genotype-to-drug diffusion model for generation of tailored anti-cancer small molecules. Nature Communications , 16(1):5628, 2025. doi: 10.1038/s41467-025-60763-9. D. P. Kingma and M. Welling. Auto-encoding variational bayes. In 2nd International Conference on Learning Representations , 2014. 30 M. Kirchmeyer, P. O. Pinheiro, and S. Saremi. Score-based 3D molecule generation with neural fields. In Advances in Neural Information Processing Systems , volume 37, 2024. doi: 10.52202/ 079017-0340. G. Ko and J. Lee. Permutation-symmetrized diffusion for unconditional molecular generation. 
+
+arXiv preprint arXiv:2603.23255 , 2026. T. Le, J. Cremer, F. Noe, D.-A. Clevert, and K. T. Schütt. Navigating the design space of equiv-ariant diffusion-based generative models for de novo 3D molecule generation. In International Conference on Learning Representations , 2024. H. Li, W. Du, Y. Li, H. Guo, and S. Liu. InertialAR: Autoregressive 3D molecule generation with inertial frames. arXiv preprint arXiv:2510.27497 , 2025. T. Li, H. Liu, H. Guo, M. Gerstein, and M. R. Min. Disentangled autoencoding equivariant diffusion model for controlled generation of 3D molecules. Nature Communications , 17(1):4824, 2026. doi: 10.1038/s41467-026-71441-9. J. Lim, S. Ryu, J. W. Kim, and W. Y. Kim. Molecular generative model based on conditional vari-ational autoencoder for de novo molecular design. Journal of Cheminformatics , 10(1):31, 2018. doi: 10.1186/s13321-018-0286-7. Y. Lipman, R. T. Q. Chen, H. Ben-Hamu, M. Nickel, and M. Le. Flow matching for generative modeling. In International Conference on Learning Representations , 2023. Y. Liu, M. Ott, N. Goyal, J. Du, M. Joshi, D. Chen, O. Levy, M. Lewis, L. Zettlemoyer, and V. Stoy-anov. Roberta: A robustly optimized bert pretraining approach. arXiv preprint arXiv:1907.11692 ,2019. Z. Liu, Y. Luo, H. Huang, E. Zhang, S. Li, J. Fang, Y. Shi, X. Wang, K. Kawaguchi, and T.-S. Chua. NExT-Mol: 3D diffusion meets 1D language modeling for 3D molecule generation. In Interna-tional Conference on Learning Representations , 2025. A. A. Lobo, U. Awasthi, and L. Zhukov. Property-guided molecular generation and optimization via latent flows. In AI4Mat Workshop at ICLR 2026 , 2026. S. Lu, H. Lin, L. Yao, Z. Gao, X. Ji, Y. Liang, W. E, L. Zhang, and G. Ke. Unified cross-scale 3D generation and understanding via autoregressive modeling. arXiv preprint arXiv:2503.16278 ,2025. Y. Luo, Z. Liu, Y. Zhao, S. Li, H. Cai, K. Kawaguchi, T.-S. Chua, Y. Zhang, and X. Wang. Towards unified and lossless latent space for 3D molecular latent diffusion modeling. In Advances in Neural Information Processing Systems , 2025. L. McInnes, J. Healy, N. Saul, and L. Großberger. UMAP: Uniform manifold approximation and projection. Journal of Open Source Software , 3(29):861, 2018. doi: 10.21105/joss.00861. 31 B. K. Miller, R. T. Q. Chen, A. Sriram, and B. M. Wood. FlowMM: Generating materials with Riemannian flow matching. In R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp, editors, Proceedings of the 41st International Conference on Ma-chine Learning , volume 235 of Proceedings of Machine Learning Research , pages 35664–35686. PMLR, 2024. A. Morehead*, M. Cretu*, A. Panescu*, R. Anand*, M. Weiler*, T. Perez*, S. Blau, S. Farrell, W. Bhimji, A. Jain, H. Sahasrabuddhe, P. Liò, T. Jaakkola, R. Gómez-Bombarelli, R. Ying, B. Erichson, and M. Mahoney. Zatom-1: Towards a multimodal foundation model for 3d molecules and materials. arXiv preprint arXiv:2602.22251 , 2026. * denotes equal contribution. N. M. O’Boyle, M. Banck, C. A. James, C. Morley, T. Vandermeersch, and G. R. Hutchison. Open babel: An open chemical toolbox. Journal of Cheminformatics , 3(1):33, 2011. doi: 10.1186/ 1758-2946-3-33. F. Ottomano, G. Ren, Y. Li, K. E. Jelfs, and A. M. Ganose. Autoregressive latent diffusion for 3D molecule generation. arXiv preprint arXiv:2607.09277 , 2026. J. Qiu, Y. Li, W. Li, and X. Wang. DriftingMol: Decoder-coupled drift for one-pass property-conditional molecular generation. arXiv preprint arXiv:2605.24841 , 2026. M. Ragoza, T. Masuda, and D. R. Koes. Generating 3d molecules conditional on receptor binding sites with deep generative models. Chemical Science , 13(9):2701–2713, 2022. doi: 10.1039/ D1SC05976A. D. Reidenbach, F. Nikitin, O. Isayev, and S. G. Paliwal. Applications of modular co-design for de novo 3D molecule generation. Digital Discovery , 5:754–768, 2026. doi: 10.1039/D5DD00380F. D. Rose, R. A. Jacob, J. Kirchmair, and T. Langer. NEAT: Neighborhood-guided, efficient, autore-gressive set transformer for 3D molecular generation. arXiv preprint arXiv:2512.05844 , 2025. D. G. A. Smith, L. A. Burns, A. C. Simmonett, R. M. Parrish, M. C. Schieber, R. Galvelis, P. Kraus, H. Kruse, R. Di Remigio, A. Alenaizan, A. M. James, S. Lehtola, J. P. Misiewicz, M. Scheurer, R. A. Shaw, J. B. Schriber, Y. Xie, Z. L. Glick, D. A. Sirianni, J. S. O’Brien, J. M. Waldrop, A. Kumar, E. G. Hohenstein, B. P. Pritchard, B. R. Brooks, H. F. Schaefer, III, A. Y. Sokolov, K. Patkowski, A. E. DePrince, III, U. Bozkaya, R. A. King, F. A. Evangelista, J. M. Turney, T. D. Crawford, and C. D. Sherrill. Psi4 1.4: Open-source software for high-throughput quantum chemistry. The Journal of Chemical Physics , 152(18):184108, 2020. doi: 10.1063/5.0006002. A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin. Attention is all you need. In Advances in neural information processing systems , 2017. C. Vignac, N. Osman, L. Toni, and P. Frossard. MiDi: Mixed graph and 3D denoising diffusion for molecule generation. In Machine Learning and Knowledge Discovery in Databases: Research Track . Springer, 2023. doi: 10.1007/978-3-031-43415-0_33. T. Xie, X. Fu, O.-E. Ganea, R. Barzilay, and T. Jaakkola. Crystal diffusion variational autoencoder for periodic material generation. In International Conference on Learning Representations , 2022. 32 M. Xu, A. S. Powers, R. O. Dror, S. Ermon, and J. Leskovec. Geometric latent diffusion models for 3D molecule generation. In A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett, editors, Proceedings of the 40th International Conference on Machine Learning , volume 202 of Proceedings of Machine Learning Research , pages 38592–38610. PMLR, 2023. Y. Xu, Y. Wang, S. Luo, K. Gao, T. He, D. He, and C. Liu. Quotient-space diffusion models. arXiv preprint arXiv:2604.21809 , 2026. Y. You, R. Zhou, J. Park, H. Xu, C. Tian, Z. Wang, and Y. Shen. Latent 3D graph diffusion. In The Twelfth International Conference on Learning Representations . OpenReview.net, 2024. C. Zeni, R. Pinsler, D. Zügner, A. Fowler, M. Horton, X. Fu, Z. Wang, A. Shysheya, J. Crabbé, S. Ueda, R. Sordillo, L. Sun, J. Smith, B. Nguyen, H. Schulz, S. Lewis, C.-W. Huang, Z. Lu, Y. Zhou, H. Yang, H. Hao, J. Li, C. Yang, W. Li, R. Tomioka, and T. Xie. A generative model for inorganic materials design. Nature , 639(8055):624–632, 2025. doi: 10.1038/s41586-025-08628-5. Q. Zhang, W. Zhang, Y. Li, J. Wang, L. Zhang, and T. Hou. A rule-based algorithm for automatic bond type perception. Journal of Cheminformatics , 4(1):26, 2012. doi: 10.1186/1758-2946-4-26. Q. Zhang, J. Xiao, D. Niu, Z. Zhang, S. Ding, and Z. Li. Geometry-complete latent diffusion model for 3D molecule generation. Bioinformatics , 41(8):btaf426, 2025. doi: 10.1093/bioinformatics/ btaf426. C. Zhou, Z. Chen, Z. Li, J. Wang, K. Jiang, P. Li, R. Yu, M. Zhang, S. Bates, and T. Jaakkola. Rethinking diffusion models with symmetries through canonicalization with applications to molecular graph generation. arXiv preprint arXiv:2602.15022 , 2026. 33 A Training and sampling algorithms of EF-TALFM 
+
+Algorithm 1 Training algorithm of EF-TALFM 
+
+input Molecule data in the form of M =  u, {(xi, hi)}ni=1
+
+, initialized encoder fff φφφ , decoder fff ψψψ , z(0), MolEnc with parameters ξξξ m, AtomEnc 
+
+with ξξξ a, LatEnc with ξξξ z, Atom2Enc with ˜ξξξ a, MolDec with ζζζ m, AtomDec with ζζζ a, flow matching neural networks fff θθθ ; property y,initialized ννν(0)
+
+> [PROP]
+
+, PropDec with ζζζ y, if auxiliary property-prediction head enabled. 
+
+1: First Stage: Variational Autoencoder Training 
+
+2: repeat 
+
+3: Sample M =  u, {(xi, hi)}ni=1
+
+
+
+4: {(xi, hi)}ni=1 ← CanonicalAlignment ({(xi, hi)}ni=1)
+
+5: Append the nonphysical end-of-molecule token (xn+1, hn+1) to {(xi, hi)}ni=1
+
+6: Construct e(0) 
+
+> i
+
+← MolEnc ξξξ m (u) + AtomEnc ξξξ a (xi, hi), i = 1, . . . , n + 1
+
+7: [( zμ , zσ ), e(L) 
+
+> 1
+
+, · · · , e(L)
+
+> n+1
+
+] ← fff φφφ ([ z(0), e(0) 
+
+> 1
+
+, · · · , e(0)
+
+> n+1
+
+]) 
+
+8: Sample z ← zμ + zσ ⊙ εεε with εεε ∼ N (0, I)
+
+9: Decode ˆu ← MolDec ζζζ m (z)
+
+10: Encode ννν(0) 
+
+> 0
+
+← LatEnc ξξξ z (z)
+
+11: for i in 1, 2, · · · , n + 1 do 
+
+12: Construct causal attention matrix Acausal ,i
+
+13: ννν(L) 
+
+> i−1
+
+← fψψψ ([ ννν(0) 
+
+> 0
+
+, · · · , ννν(0)
+
+> i−1
+
+]; Acausal ,i)
+
+14: (ˆxi, ˆhi) ← AtomDec ζζζ a (ννν(L)
+
+> i−1
+
+)
+
+15: ννν(0) 
+
+> i
+
+← Atom2Enc ˜ξξξ a (xi, hi) ▷ Teacher forcing with ground-truth inputs 
+
+16: end for 
+
+17: if auxiliary property-prediction head enabled then 
+
+18: Construct molecule-conditioned and latent-only attention matrices, Amol and Alat 
+
+19: ννν(L) 
+
+> [PROP] ,lat
+
+← fψψψ ([ ννν(0) 
+
+> 0
+
+, ννν(0)
+
+> [PROP]
+
+, ννν(0) 
+
+> 1
+
+, · · · , ννν(0)
+
+> n+1
+
+]; Alat )
+
+20: ˆylat ← PropDec ζζζ y (ννν(L)
+
+> [PROP] ,lat
+
+)
+
+21: ννν(L) 
+
+> [PROP] ,mol
+
+← fψψψ ([ ννν(0) 
+
+> 0
+
+, ννν(0)
+
+> [PROP]
+
+, ννν(0) 
+
+> 1
+
+, · · · , ννν(0)
+
+> n+1
+
+]; Amol )
+
+22: ˆymol ← PropDec ζζζ y (ννν(L)
+
+> [PROP] ,mol
+
+)
+
+23: end if 
+
+24: Compute the full VAE loss LVAE as in Equation (4) 
+
+25: Update φφφ , ψψψ, z(0), ξξξ m, ξξξ a, ξξξ z, ˜ξξξ a, ζζζ m and ζζζ a
+
+26: until Converged 
+
+27: Second Stage: Latent Flow Matching Training 
+
+28: Fix parameters φφφ , ψψψ, z(0), ξξξ m, ξξξ a, ξξξ z, ˜ξξξ a, ζζζ m and ζζζ a
+
+29: repeat 
+
+30: Sample M =  u, {(xi, hi)}ni=1
+
+
+
+31: {(xi, hi)}ni=1 ← CanonicalAlignment ({(xi, hi)}ni=1)
+
+32: Append the nonphysical end-of-molecule token (xn+1, hn+1) to {(xi, hi)}ni=1
+
+33: Construct e(0) 
+
+> i
+
+← MolEnc ξξξ m (u) + AtomEnc ξξξ a (xi, hi), i = 1, . . . , n + 1
+
+34: [( zμ , zσ ), e(L) 
+
+> 1
+
+, · · · , e(L)
+
+> n+1
+
+] ← fff φφφ ([ z(0), e(0) 
+
+> 1
+
+, · · · , e(0)
+
+> n+1
+
+]) 
+
+35: Sample zε ∼ N (0, I) and t ∼ Unif (0, 1)
+
+36: Interpolate zt ← (1 − t) zε + t zμ
+
+37: Target vector field vvv ← zμ − zε
+
+38: Estimated vector field ˆvvv ← fff θθθ (zt ,t, y), omitting y if unconditional 
+
+39: Flow matching loss LFM ← ∥ vvv − ˆvvv∥22
+
+40: Update θθθ
+
+41: until Converged 
+
+output fff φφφ , fff ψψψ , fff θθθ , z(0), MolEnc , AtomEnc , LatEnc , Atom2Enc , MolDec , AtomDec , PropDec 
+
+34 Algorithm 2 Sampling algorithm of EF-TALFM                                                                              
+
+> input fffψψψ,fffθθθ,LatEnc ,Atom2Enc ,MolDec , and AtomDec ; property y=/0if unconditional. Sample z0∼N(0,I)
+> for tin 0,∆t,2∆t,· · · ,1−∆tdo
+> zt+∆t←zt+fffθθθ(zt,t,y)∆t
+> end for
+> ˆu←MolDec (z1)
+> Encode ννν(0)
+> 0←LatEnc (z1)
+> i←0
+> repeat
+> i←i+1
+> ννν(L)
+> i−1←fψψψ([ ννν(0)
+> 0,· · · ,ννν(0)
+> i−1]) (ˆxi,ˆhi)←AtomDec (ννν(L)
+> i−1)
+> ννν(0)
+> i←Atom2Enc (ˆxi,ˆhi)
+> until [EOS] atom-type label is emitted in ˆhi
+> output (ˆu,(ˆxj,ˆhj)i−1
+> j=1)▷Excluding the nonphysical end-of-molecule token at ith position
+
+# B Canonical atom position alignment 
+
+We define a molecule’s canonical pose relative to a fixed canonical atom ordering. The moti-vation is that, once atom rows are placed in a deterministic order, a deterministic rigid-frame construction can be used to choose one representative from the molecule’s SE (3) orbit. This lets a non-equivariant model operate on coordinates in a consistent canonical frame. By construc-tion, two coordinate inputs x and x′ that are related by an element of SE (3) and share the same canonical atom ordering produce the same aligned coordinates xfinal , up to numerical precision. Thus, the downstream model need not learn invariance to translations or proper rotations from data. The alignment first translates the first canonical atom to the origin. It then selects the first later canonical atom with displacement larger than ε from the origin and places this atom at (∥u∥, 0, 0),i.e., on the positive x-axis at its true distance from the origin. To fix the remaining proper-rotation degree of freedom, the algorithm searches in canonical order for the first atom that is sufficiently non-collinear with this axis, using tolerance τ. This atom is placed in the x–z plane using distances determined by the law of cosines. The resulting two right-handed bases define a proper rotation, which is required to have determinant +1.If no sufficiently non-collinear anchor exists, the molecule is treated as collinear for alignment purposes. In this case, all atoms are placed on the x axis by signed projection onto the canonical axis. This preserves which side of the first canonical atom each atom lies on, while avoiding an arbitrary choice of rotation around the molecular axis. For non-collinear geometries, the selected anchors define a full local reference frame and there-fore remove translation and proper-rotation ambiguity with respect to the fixed atom ordering. For collinear geometries, the signed projection gives a deterministic one-dimensional canonical representative; rotations around the molecular axis remain physically unobservable. Reflections are not quotiented, so mirror-image conformations remain distinct when stereochemistry is spec-ified (for generic non-planar conformations; mirror images of collinear or coplanar configurations coincide with proper rotations and are therefore identified). 35 In our preprocessing, we use ε = 0, τ = 10 −4, and δ = 10 −4 Å. After alignment, we verify that all pairwise interatomic distances are preserved up to tolerance δ . This check confirms that the transformation is rigid, up to numerical precision, and has not introduced geometric distortion. The tolerance is far below typical bond lengths, e.g., about 9.2 × 10 −3% of a 1.09 Å carbon– hydrogen bond. The full atom position alignment procedure is given in Algorithm 3. 
+
+Algorithm 3 Atom position alignment 
+
+input Positions of n atoms xorig ∈ Rn×3, canonical atom ordering function σ obtained by RDKit canonical-SMILES generation followed by substructure matching to the SDF molecule, axis tolerance ε ≥ 0, non-collinearity tolerance τ > 0, pairwise interatomic-distance tolerance 
+
+δ > 0.
+
+Canonical ordering: obtain x by reordering the rows of xorig according to σ .
+
+Translate: xtrans ← x − x1.
+
+if n = 1 then 
+
+xfinal ← xtrans 
+
+else 
+
+Find the first index j ← min {i ∈ { 2, . . . , n} : ∥xtrans  
+
+> i
+
+∥ > ε}.
+
+if no such j exists then 
+
+xfinal ← 0 ∈ Rn×3
+
+else 
+
+Let u ← xtrans  
+
+> j
+
+.Find the first index k ← min {i ∈ { 2, . . . , n} \ { j} : ∥u × xtrans  
+
+> i
+
+∥ > τ∥u∥∥ xtrans  
+
+> i
+
+∥} .
+
+if no such k exists then Collinear case: set ˆu ← u/∥u∥.
+
+for i = 1, . . . , n do 
+
+Set xfinal  
+
+> i
+
+← (⟨xtrans  
+
+> i
+
+, ˆu⟩ , 0, 0).
+
+end for else Initialize target frame: xtemp ← 0 ∈ Rn×3.Compute 
+
+d1 j ← ∥ xtrans  
+
+> j
+
+− xtrans 1 ∥, d1k ← ∥ xtrans  
+
+> k
+
+− xtrans 1 ∥, d jk ← ∥ xtrans  
+
+> k
+
+− xtrans  
+
+> j
+
+∥.
+
+Set 
+
+xtemp  
+
+> j
+
+← (d1 j , 0, 0).
+
+Compute 
+
+rk1 ← d21 j − d2 
+
+> jk
+
++ d21k
+
+2d1 j
+
+.
+
+Set 
+
+xtemp  
+
+> k
+
+←
+
+
+
+rk1, 0,
+
+q
+
+max {d21k − r2
+
+> k1
+
+, 0}
+
+
+
+.
+
+Compute proper rotation: compute R by solving the map between the two right-handed bases 
+
+[xtrans  
+
+> j
+
+, xtrans  
+
+> k
+
+, xtrans  
+
+> j
+
+× xtrans  
+
+> k
+
+] and [xtemp  
+
+> j
+
+, xtemp  
+
+> k
+
+, xtemp  
+
+> j
+
+× xtemp  
+
+> k
+
+],
+
+and require det (R) = + 1.
+
+Rotate: xfinal ← xtrans R.
+
+end if end if end if Verify rigidity for n ≥ 2: max 1≤i<ℓ ≤n ∥xfinal  
+
+> i
+
+− xfinal  
+
+> ℓ
+
+∥ − ∥ xi − xℓ∥ ≤ δ .
+
+output Canonically aligned positions xfinal .
+
+The atom ordering σ above is invariant to input atom renumbering, since RDKit canonical SMILES depends only on the molecular graph, not input atom order. For graphs with nontrivial automorphisms, however, the back-matching step is not uniquely determined and may tie-break using the input ordering; we therefore do not claim a mathematically unique atom labeling for all symmetric molecules, only a deterministic ordering for a fixed input that is used consistently 36 across training and evaluation. Such molecules form a measure-zero set under the free-action assumption of Zhou et al. [2026], so this does not affect the canonicalization guarantee, which holds μ-almost surely (see the discussion of related work in Section 4). 
+
+# C Chemically informative atom-level and molecule-level state variables 
+
+Molecular geometry is represented as atom types and their 3D coordinates, without explicitly generating pairwise bonds. Instead, atom-wise features provide implicit context about bonding, stereochemistry, and charge, allowing the model to place atoms in space in a way that is con-sistent with the underlying molecular structure. Each of these atom-wise features in h encodes constraints that would otherwise be enforced through explicit bonds, giving the model enough local chemical context to place atoms consistently in 3D: • Atomic number determines elemental identity and typical valence, atomic size, and pre-ferred bonding environments, thereby setting the baseline for how many neighbors an atom can support and at what distances. • Chirality tag specifies stereochemical configuration (e.g., tetrahedral centers), guiding the model toward correct 3D arrangements (e.g., avoiding mirror inversions at chiral centers). • Formal charge constrains electron count and influences preferred bonding patterns and geometry (e.g., planar vs. pyramidal nitrogen). • Number of attached hydrogens helps fix valence and saturates local bonding, reducing ambiguity in how many heavy-atom neighbors must be placed nearby. • Hybridization tag encodes orbital geometry (sp, sp2, sp3), directly informing expected bond angles and local spatial arrangement (linear, trigonal planar, tetrahedral). • Number of radical electrons identifies open-shell local electronic states and constrains valence assignments. • Aromaticity tag signals delocalized π-systems, encouraging planar ring structures and characteristic bond-length patterns. • Conjugation tag marks atoms participating in conjugated bonding environments. • Is-in-ring tag indicates topological constraints that restrict geometry (e.g., ring closure, limited flexibility, characteristic angles/strain). These features are provided by RDKit for each molecule and are encoded into categorical inte-ger labels based on the convention of the Open Graph Benchmark (OGB) [Hu et al., 2021]. For additional chemical context for generation, we include several molecule-wide descriptors: 37 • Total charge specifies the net molecular charge, constraining the overall electron count and ensuring consistency with atom-level formal charges. • Spin multiplicity encodes the global electronic state (e.g., singlet, doublet), determining the number of unpaired electrons and restricting allowable radical configurations. • Number of rings provides a coarse topological constraint on cyclic structure, helping guide ring formation and overall connectivity. • Fused ring indicator specifies whether the molecule contains fused ring systems, con-straining how rings can share atoms and influencing feasible geometries and bonding pat-terns. 
+
+# D Molecule reconstruction and geometry refinement 
+
+Heavy-atom molecule reconstruction and geometry refinement. To derive a generated heavy-atom molecule’s bonds, we first apply a deterministic chemistry-aware reconstruction procedure that is separate from the learned generator. This reconstruction procedure is heuristic rather than guaranteed exact: it maps continuous coordinates and discrete atom-wise predictions into a chemically interpretable heavy-atom molecular graph using chemistry-aware rules rather than learned bond generation. Bond topology reconstruction is derived from the atomic coordinates, atom types, and additional chemical descriptors provided by the generator. The descriptors include the atomic number to-gether with auxiliary local chemical attributes such as hybridization class, attached-hydrogen count, formal charge, radical, aromaticity, and ring-membership. We propose candidate heavy-heavy bonds between heavy atom pairs whose Euclidean distance falls below a scaled sum of covalent radii for the pair. Candidate edges are then greedily accepted in order of increasing dis-tance, subject to element- and hybridization-dependent valence limits and soft preferred-degree constraints. Bond orders are assigned in a second deterministic stage. Starting from the inferred heavy-atom connectivity graph, all accepted edges are initialized as single bonds and are then selectively promoted to double or triple bonds according to valence deficits implied by the predicted atom-wise features. The procedure further applies a small number of chemistry-motivated corrections, including Kekulé assignment for aromatic-like six-membered rings, strict valence clipping, and terminal oxo promotion when valence permits. The resulting heavy-atom graph is converted into an RDKit molecule, and optional per-atom formal-charge, radical, aromaticity, conjugation, and ring-membership annotations are applied through deterministic post-processing. A complete reconstruction algorithm is given in Algorithm 4. 38 Next we augment the existing heavy-atom reconstruction pipeline with a lightweight chemistry-aware geometry refinement stage designed to improve structural validity. Starting from the ini-tially reconstructed heavy-atom graph and the bond orders inferred from atom- and molecule-level features, we retain the largest connected component and discard the rest, since the recon-structed graph may contain multiple components. We first apply overlong multiple-bond correction, selectively downgrading a multiple bond when its interatomic distance is too long for the assigned bond order. We then add hydrogens and perform restrained force-field relaxation, softly constraining heavy atoms to remain close to the predicted scaffold while allowing local geometric corrections. This fixed post-processing pipeline improves geometric plausibility while preserving the model’s original 3D prediction as much as possible. 
+
+All-atom molecule reconstruction and geometry refinement. For an all-atom decoded se-quence, we use the rule-based bond-perception routines in Open Babel [O’Boyle et al., 2011], which take generated atom types and 3D coordinates and produce an initial candidate graph comprising heavy–heavy and heavy–hydrogen connectivity and candidate heavy–heavy bond orders. We inspect this raw graph for connectivity and the number of explicit hydrogen neigh-bors of each heavy atom against the decoder’s attached-hydrogen feature. If either check fails, we conditionally reconstruct the hydrogen layer by removing the explicit hydrogens, while retaining Open Babel’s heavy-atom connectivity, bond orders, formal charges, and radical states, and re-materializing the predicted number of hydrogens on each heavy atom. This operation can repair missing or incorrectly attached hydrogens, but does not reconstruct or reconnect the heavy-atom graph. We then apply the same connectivity-preserving overlong multiple-bond correction as in the heavy-atom branch. For geometry refinement, topology and explicit composition are retained throughout relaxation. Under the canonical ordering used for this representation, most ordinary hydrogens occur after the heavy atoms and are therefore among the later autoregressive predictions. Before the joint restrained relaxation, we replace the coordinate of an ordinary trailing hydrogen with a valence-based initialization only when its bond to the assigned parent has an implausible length or when it has a severe nonbonded clash. We first optimize the ordinary trailing hydrogens with all other atoms fixed. We then optimize the complete molecule while restraining the heavy-atom scaffold and leaving hydrogens unrestrained. Thus, as in the heavy-atom branch, it performs inexpen-sive local refinement without changing the selected molecular topology. However, unlike the heavy-atom branch, which returns an implicit-hydrogen molecule, the all-atom branch returns an explicit-hydrogen molecule. 
+
+Restraint parameters and optimization settings. Hydrogen-inclusive force-field relaxation uses a flat-bottom positional restraint on every heavy atom, with an unpenalized displacement radius of 0.15 Å, a restraint force constant of 200 kcal mol −1 Å−2, and at most 200 minimiza-tion iterations. The 0.15 Å radius allows small local corrections while remaining much smaller than a typical heavy-atom bond length; the force constant strongly penalizes larger deviations; and the iteration budget is intended for inexpensive local cleanup rather than conformational search. These fixed values are chemistry-motivated practical defaults rather than formally op-39 Algorithm 4 Heavy-atom graph reconstruction from generated coordinates and atom-wise fea-tures 
+
+input Heavy-atom coordinates ˆR = ( ˆr1, . . . , ˆrN ) ∈ RN×3, atomic numbers ˆz, hybridization tags ˆhhyb , chiral tags ˆhchiral , attached-hydrogen counts 
+
+ˆnH, predicted total charge ˆQ, predicted spin multiplicity ˆs, optional formal-charge tags ˆq, optional radical tags ˆrrad , optional atom-level conjugation/aromaticity/ring hints, and optional molecule-level ring descriptors 
+
+1: Decode per-atom formal charges from ˆq when available 
+
+2: Select reconstruction policy π ← ChoosePolicy (ˆz, ˆR, ˆQ)
+
+3: Initialize candidate bond list C ← /0
+
+4: for 1 ≤ i < j ≤ N do 
+
+5: Compute distance di j ← ∥ ˆri − ˆr j ∥2
+
+6: Compute bond threshold τi j ← λπ
+
+ rcov (ˆzi) + rcov (ˆz j )
+
+7: if di j ≤ τi j then 
+
+8: Append (di j , i, j) to C
+
+9: end if 
+
+10: end for 
+
+11: Sort C by increasing distance 
+
+12: Compute per-atom maximum valence targets {vmax  
+
+> i
+
+}Ni=1
+
+13: Compute per-atom preferred heavy-atom degrees {d⋆ 
+
+> i
+
+}Ni=1
+
+14: Initialize heavy-atom bond set E ← /0 and degrees deg (i) ← 0
+
+15: for all (di j , i, j) ∈ C in sorted order do 
+
+16: if deg (i) < vmax  
+
+> i
+
+and deg ( j) < vmax  
+
+> j
+
+then 
+
+17: if adding (i, j) does not violate the preferred-degree constraint then 
+
+18: if optional ring-count / fused-ring constraints are satisfied then 
+
+19: Add (i, j) to E
+
+20: Update deg (i) and deg ( j)
+
+21: end if 
+
+22: end if 
+
+23: end if 
+
+24: end for 
+
+25: Initialize all bond orders as single: bi j ← 1 for all (i, j) ∈ E
+
+26: Compute target atom valences {ti}Ni=1 from ˆz, ˆhhyb , ˆnH, optional decoded formal charges, and optional radical tags 
+
+27: Compute valence deficits δi ← ti − (deg (i) + ˆnH 
+
+> i
+
+)
+
+28: repeat 
+
+29: Score each bond (i, j) ∈ E for possible bond-order promotion using current deficits and local hybridization constraints 
+
+30: Let (i⋆, j⋆) be the highest-scoring promotable bond 
+
+31: if no promotable bond remains then 
+
+32: break 
+
+33: end if 
+
+34: Increase bond order bi⋆ j⋆ ← bi⋆ j⋆ + 1
+
+35: Update deficits δi⋆ , δ j⋆
+
+36: until No promotable bond remains 
+
+37: Apply aromatic-like six-ring Kekulé correction to {bi j }
+
+38: Clip bond orders to satisfy stricter valence limits 
+
+39: Promote eligible terminal oxo bonds from single to double order 
+
+40: Build heavy-atom RDKit molecule ˆGheavy ← BuildMol (ˆz, ˆR, E, {bi j }, ˆhchiral , ˆq, ˆrrad )
+
+41: if atom-level conjugation / aromaticity / ring hints are available then 
+
+42: ˆGheavy ← ApplyAtomFeatureHints ( ˆGheavy )
+
+43: end if 
+
+44: Compute reconstructed total formal charge from ˆGheavy 
+
+45: Compute multiplicity-parity consistency from input atomic numbers, attached-hydrogen counts, total charge ˆQ, and spin multiplicity ˆs
+
+46: Compute inferred ring count and inferred fused-ring indicator from E
+
+output Reconstructed heavy-atom molecule ˆGheavy , bond set E, bond orders {bi j }, and consistency diagnostics 
+
+timized hyperparameters. Although force-field refinement is conventional in coordinate-based 3D molecule-generation pipelines, prior work does not establish these exact restraint values; we therefore evaluate the effect of the refinement separately from graph reconstruction. 40 E Latent regularization 
+
+Let μμμ(b) ∈ Rd denote the posterior mean of sample b in a minibatch of size B, and let μ(b) 
+
+> j
+
+be its 
+
+j-th latent coordinate. We define 
+
+Lvar = 1
+
+d
+
+> d
+
+# ∑
+
+> j=1
+
+max 
+
+
+
+0, τ − Var b
+
+μ(b)
+
+> j
+
+
+
+, τ = 0.01 , (7) which softly enforces a minimum variance floor on each latent mean dimension, and 
+
+Lcov = 1
+
+d offdiag   Cov b(μμμ(b)) 2 
+
+> F
+
+, (8) Together, the variance floor discourages inactive latent coordinates, while the covariance penalty discourages redundant coordinates in the minibatch posterior means. 
+
+# F Learning and sampling from posterior mean 
+
+Unlike latent generative models that sample from the full aggregated VAE posterior, we construct the flow-training targets from the posterior means zμ . Before flow training, a fitted invertible affine map W whitens these means; the flow operates on ezμ = W (zμ ), and W −1 maps gener-ated terminal states back to the decoder’s latent coordinates. Using posterior means removes stochastic posterior noise from the target distribution and gives the flow model a deterministic representation of each molecule. The posterior scales zσ are still important during autoencoder training: together with the KL penalty, they regularize the latent geometry and encourage the de-coder to remain stable under local perturbations. Thus, the flow model learns the distribution of molecule-level latent codes, while the VAE regularization shapes this latent space to be smoother and more suitable for generation. 
+
+# G Experimental setup for unconditional generation 
+
+This section records the baseline choices, data preprocessing, and evaluation metrics used for unconditional generation. 
+
+G.1 Baseline selection 
+
+We use UAE-3D [Luo et al., 2025] and FlowMol [Dunn and Koes, 2024] as the primary baselines for de novo 3D molecule generation. ADiT [Joshi et al., 2025] is a closely related work that uses a scalable latent Transformer frame-work without explicit molecular graph generation. However, for non-periodic molecules, ADiT decodes only atom types and 3D coordinates and relies on RDKit-based post-processing to in-41 fer the molecular graph. Such geometry-based graph recovery can be insufficient for accurately reconstructing chemically annotated molecular states, particularly for larger or heavy-atom-rich molecules where bond connectivity, bond orders, aromaticity, and formal charges may be ambigu-ous from coordinates alone; see Table 4. We therefore treat ADiT as an important architectural reference rather than a main quantitative baseline. Table 4: Generated bond types improve reconstruction from atom types and 3D coordinates. Including generated bond types raises UAE-3D exact SMILES reconstruction from 76.8% to 99.5% while leaving sanitization nearly unchanged. 
+
+Connectivity Sanitization SMILES match Atom type + coordinates + bond 100.0% 99.5% 99.5% Atom type + coordinates 99.0% 99.2% 76.8% 
+
+G.2 Details of PCQM4Mv2 dataset preprocessing 
+
+Although PCQM4Mv2 is commonly treated as a predominantly neutral, closed-shell small-molecule corpus, our feature extraction reveals a small number of non-singlet entries. We therefore model spin multiplicity explicitly as a molecule-level feature and restrict the training corpus to multiplicity ≤ 4, retaining singlet through quartet states while excluding the extremely sparse high-spin tail. This filtering defines a well-supported chemical domain for generative modeling rather than declaring the excluded molecules invalid. 
+
+G.3 Evaluation metrics 
+
+We sample 10,000 molecules and compute validity and uniqueness rates as well as success rates for six PoseBusters module-level sanity checks [Buttenschoen et al., 2024], as follows. The thresholds below are the parameters used in our evaluation pipeline: • Connectivity: % of molecules with exactly one connected component, i.e., one fragment. • Sanitization: % of molecules with a canonical SMILES string produced by RDKit that passed the strict sanitization check. • Uniqueness: % of unique sanitized SMILES among all generated ones. • Novelty: % of novel unique sanitized SMILES against the training data set. • Reasonable bond lengths: % of molecules for which all bond lengths lie within the default 20% tolerance of the RDKit distance-geometry bounds. • Reasonable bond angles: % of molecules for which all bond angles lie within the default 20% tolerance of the RDKit distance-geometry bounds. 42 • Aromatic ring flatness: % of molecules for which all atoms in 5- and 6-membered aromatic rings lie within 0.1 ˚ A of the closest shared plane. • Double bond flatness: % of molecules for which the atoms in trigonal-planar aliphatic C = C
+
+systems and their neighbors lie within 0.1 ˚ A of the closest shared plane. • Reasonable internal energy: % of molecules for which the energy ratio is at most 7 relative to the average energy of an ensemble of 100 generated conformations. • No internal steric clash: % of molecules for which all non–covalently bound atom pairs are separated by at least 0.8 times the distance–geometry lower bound. g
+
+# H Detailed unconditional-generation results 
+
+Relative to FlowMol, EF-TALFM nearly matches the sanitization rate (98.25% versus 98.72%) and unique sanitized yield (98.21% versus 98.27%), while its connectivity is moderately lower (92.98% versus 98.72%). Meanwhile, EF-TALFM outperforms UAE-3D, its closest latent-space counterpart, on every reported molecule-level generation metric. Despite not generating explicit bond labels, EF-TALFM also remains close to both bond-aware baselines in 3D physical plausibility, passing each of the six geometric and chemical-validity checks from PoseBusters [Buttenschoen et al., 2024] at rates between 97.21% and 99.93% among molecules that are sanitized, unique, and absent from the training set. Table 5: EF-TALFM has the highest yield of sanitized, unique, and training-set-novel molecules, while remaining competitive on validity without generating bond labels. N. & U. & S. is the primary end-to-end generation metric for de novo discovery because it counts generated candidates that are jointly chemically valid, nonduplicate, and absent from the training set. EF-TALFM achieves 94.33%, versus 76.03% for UAE-3D and 69.83% for FlowMol. UAE-3D is the closest latent counterpart but uses variable-length atom-wise latents and predicts explicit bond types; FlowMol directly generates molecular graphs, including bond types. EF-TALFM instead generates no bond labels and recovers a graph deterministically from its decoded geometry and chemically enriched state. In (a), EF-TALFM outperforms UAE-3D on every metric and nearly matches FlowMol in sanitization and unique sanitized yield, with moderately lower connectivity. In (b), EF-TALFM nevertheless attains 97.21–99.93% pass rates across all six PoseBusters checks, close to the bond-explicit baselines. Panel (a) rates are computed over 10,000 generated molecules. C. denotes the fraction of connected molecules; S. the fraction passing strict RDKit sanitization; U. & S. the fraction of unique sanitized canonical SMILES; and N. & U. & S. the fraction that are sanitized, unique, and absent from the training set. Panel (b) PoseBusters rates are computed among the N. & U. & S. molecules: 7,603 for UAE-3D, 6,983 for FlowMol, and 9,433 for EF-TALFM. For fragmented outputs, SMILES-based and PoseBusters metrics are computed on the atom-count largest connected component after RDKit sanitization. 
+
+(a) End-to-end generation results (%) 
+
+Metric ( ↑) UAE-3D FlowMol EF-TALFM C. 99.60 100.00 92.98 S. 83.84 98.72 98.25 U. & S. 83.81 98.27 98.21 
+
+N. & U. & S. 76.03 69.83 94.33 (b) PoseBusters results among N. & U. & S. molecules (%) 
+
+Metric ( ↑) UAE-3D FlowMol EF-TALFM Bond lengths 99.96 100.00 99.79 Bond angles 99.93 100.00 99.32 Internal steric clash 99.64 99.90 97.21 Aromatic-ring flatness 100.00 100.00 99.93 Double-bond flatness 99.91 100.00 98.09 Internal energy 99.99 100.00 99.71 
+
+All PoseBusters checks 99.46 99.90 94.74 
+
+43 High-fidelity molecule reconstruction from a single fixed-dimensional latent. Table 6 contrasts UAE-3D’s variable-length atom-wise latent with EF-TAVAE’s single fixed-dimensional molecule-level latent. UAE-3D achieves near-lossless SMILES and coordinate reconstruction. Compared with UAE-3D, EF-TAVAE imposes a different, structurally more restrictive bottleneck: all information about a molecule must pass through one latent vector whose number of latent slots does not grow with N, rather than through a separate latent vector for each atom that grows with N. Nevertheless, EF-TAVAE retains near-complete atom- and molecule-level attributes and high decoded-molecule connectivity and sanitization without predicting pairwise bond labels. Its coordinate MAE of 0.041 Å is only a few percent of a typical covalent-bond length, indicating that the reconstruction error remains small on the molecular scale. Together with the generation results in Table 5, these results show that the chemical and geometric information retained by the fixed-dimensional latent is sufficient to support high-validity, high-novelty generation. Table 6: EF-TAVAE preserves high reconstruction fidelity through one fixed-dimensional molecule-level latent and without predicting bond labels. UAE-3D uses a variable-length sequence of atom-wise latent vectors and explicitly reconstructs pairwise bond types, whereas EF-TAVAE compresses the entire variable-size molecule into one d = 32 vector and relies on deterministic graph recovery. Under this substantially more restrictive bottleneck, EF-TAVAE retains 99.89% joint atom-feature recovery, 100.00% joint molecule-feature recovery, 99.23% sanitization, 92.16% exact SMILES recovery, and a coordinate MAE of 0.041 Å. Percentages are match/pass rates. 
+
+Metric UAE-3D EF-TAVAE 
+
+Decoded-molecule validity 
+
+Connectivity ↑ 100.00% 99.87% Sanitization ↑ 99.51% 99.23% 
+
+Reconstruction fidelity 
+
+SMILES match ↑ 99.35% 92.16% 
+
+Feature reconstruction 
+
+Atom-type match ↑ 100.00% 100.00% Bond-type match ↑ 99.98% –All atom features match ↑ – 99.89% All molecule features match ↑ – 100.00% 3D coordinate MAE ↓ 0.007Å 0.041Å 
+
+# I Additional performance comparison for unconditional generation 
+
+We present Table 7 for validity and novelty results from additional checkpoints, showing that extended UAE-3D training yields only modest gains, whereas longer FlowMol training improves validity slightly but reduces novelty. Table 8 provides the optimizer-update budgets, training-exposure proxies, and stage-level wall-clock times underlying the efficiency comparison in Figure 3(d–e). It shows that EF-TALFM has the shortest training time among the three methods under the reported budgets, despite not using the smallest update or exposure budget. Under the same number of optimizer updates, EF-TALFM 44 Table 7: EF-TALFM achieves high PCQM4Mv2 generation validity, substantially higher novelty, and competitive geometric re-alism. We report connectivity of the reconstructed molecule and sanitization, uniqueness, and novelty rates computed after retaining the atom-count largest connected component of each sampled molecule and applying strict RDKit sanitization. All rates are computed over 10,000 generated molecules. C. denotes the fraction of connected molecules; S. the fraction passing strict RDKit sanitization; U. & S. the fraction of unique sanitized canonical SMILES; and N. & U. & S. the fraction of generated molecules that are sanitized, unique, and absent from the training set. For fragmented outputs, SMILES-based and PoseBusters metrics are computed on the atom-count largest connected component after RDKit sanitization. 
+
+Metric ( ↑) UAE-3D ∗ UAE-3D § FlowMol † FlowMol ‡ FlowMol ≀ EF-TALFM C. 99.60 99.71 100.00 100.00 100.00 92.98 S. 83.84 85.89 98.72 99.00 98.57 98.25 U. & S. 83.81 85.88 98.27 98.49 98.10 98.21 N. & U. & S. 76.03 76.62 69.83 65.45 66.50 94.33 
+
+> ∗
+
+best validation checkpoint in 1M steps on latents; 100 DDPM denoising steps; 
+
+> §
+
+best validation checkpoint in 2M steps on latents; 500 DDPM denoising steps; 
+
+> †
+
+best validation checkpoint in 100K steps; 100 Euler integration steps; 
+
+> ‡
+
+best validation checkpoint in 100K steps; 250 Euler integration steps; 
+
+> ≀
+
+best validation checkpoint in 300K steps; 100 Euler integration steps. 
+
+achieves higher measured molecule throughput than UAE-3D, with almost twice the training exposure but substantially less time, showing the practical benefit of replacing variable-length atom-wise latents with a single fixed-dimensional molecule-level latent. EF-TALFM also com-pletes training faster than FlowMol despite using more optimizer updates because its generative model operates in latent space rather than directly on dense molecular graphs and sampled edge sets. Together, these comparisons show that EF-TALFM’s efficiency comes from reducing the cost of generative modeling rather than simply using a smaller training budget. Table 8: Training exposure comparison for molecular-space generation. EF-TALFM and UAE-3D use two-stage latent training, so training exposure is counted as the number of molecule examples supplied to each stage, including repeated appearances across optimizer updates. FlowMol instead trains directly in molecular space using sampled edge-level units. Because these units are not directly interchangeable, the reported exposure is a data-volume proxy rather than a measure of total compute.                                                      
+
+> Method Optimizer updates ∗Approx. exposure Training time EF-TALFM (Total )1.4M1,228 .8M882 min
+> Variational autoencoder 0.4M204 .8M418 min
+> Latent model 1.0M1,024 .0M464 min UAE-3D (Total )1.4M716 .0M1,644 min
+> Variational autoencoder 0.4M204 .8M464 min
+> Latent model 1.0M512 .0M1,180 min FlowMol 0.1M∼10 .7M2,400 min
+> ∗
+
+For EF-TALFM and UAE-3D, exposure is optimizer updates times batch size; one unit is one molecule example supplied to the VAE or latent generative model. This count does not measure scalar latent elements, padding overhead, or FLOPs. For FlowMol, the native exposure is edge-level: FlowMol was trained for 0.1M optimizer updates with 320 K sampled edges per update, or approximately 32 .0B edge presentations. The reported ∼ 10 .7M value is a rough molecule-equivalent proxy obtained by normalizing 32 .0B edge presentations by FlowMol’s sampler estimate of 3K sampled edges per molecule. 
+
+More specifically, Figure 3(d) and Table 8 show that EF-TALFM requires 882 min in total, com-pared with 1644 min for UAE-3D under the reported 1M-step latent-model budget, giving a 1.86 ×
+
+reduction in total training time. This gain mainly comes from the latent generative stage: TALFM trains its latent flow model in 464 min, compared with 1180 min for the UAE-3D latent model. If UAE-3D is trained to the 2M-step checkpoint evaluated in Table 7, its total training time increases 45 to approximately 2824 min, making EF-TALFM 3.20 × faster in total training time. Compared with FlowMol, EF-TALFM completes the full two-stage training pipeline in 882 min, whereas FlowMol requires 40 h to reach the 100K-step checkpoint used for its strongest novelty result in Table 7. For sampling, Figure 3(b–c) reports the time required to generate 10 ,000 molecules end-to-end, including generator sampling, reconstruction, and pose relaxation. Figure 7 separately compares generator sampling time for the same number of molecules. EF-TALFM requires 4 sec using the adaptive fifth-order Dormand–Prince solver implemented in torchdiffeq [Chen, 2018]. UAE-3D requires 30 sec with 100 DDPM denoising steps and 150 sec with 500 steps, whereas FlowMol requires 141 sec with 100 Euler integration steps. Thus, for generator sampling alone, EF-TALFM achieves approximate speedups of 7.50 × and 37 .50 × over UAE-3D with 100 and 500 steps, respectively, and 35 .25 × over FlowMol. FlowMol (100 steps) UAE-3D (100 steps) UAE-3D (500 steps) EF-TALFM 040 80 120 160 
+
+> Time (sec)
+> 141 30 150
+> 4
+> Generator sampling time ( ↓)
+
+Figure 7: EF-TALFM substantially reduces generator sampling time. Generator-only sampling time for 10 ,000 molecules. EF-TALFM uses the adaptive fifth-order Dormand–Prince solver, UAE-3D uses a DDPM sampler, and FlowMol uses Euler integration. 
+
+# J Example unconditional generated molecules from EF-TALFM 
+
+Figure 8 shows ten final relaxed molecules, illustrating the range of molecular sizes, ring sys-tems, fused-ring structures, and heteroatom compositions produced by the complete pipeline; see Table 9 for further details. These examples provide qualitative illustrations of the diversity quantified by the large-sample distributional analysis; hydrogen atoms are omitted for clarity. 
+
+# K Detailed property-conditioned generation results 
+
+Metric definitions. For each conditioning target g ∈ G , let Mg denote the generated molecules assigned to that target, Ug their set of unique molecules under the exact-match key defined below, and Tg the set of unique training molecules satisfying the same property tolerance, 
+
+Tg = {M ∈ Dtrain : |ytrain (M ) − g| < 0.1 eV } .
+
+46 Figure 8: EF-TALFM generates diverse, variable-size 3D molecules. Randomly sampled final relaxed molecules decoded from generated latents illustrate varied molecular sizes, ring systems, fused-ring structures, and heteroatom compositions. Hydrogen atoms are omitted for clarity. 
+
+Table 9: Representative sanitized samples decoded from generated latent codes exhibit diverse molecular sizes, ring systems, and heteroatom compositions. The generated molecules shown in Figure 8 are all connected, with spin multiplicity 1 and total charge 0.                                  
+
+> n_atoms canonical_smiles number_of_rings has_fused_rings 9CNCCN(C)C(C)=O 0011 CC(=O)CCCNCC(C)N 0011 CC(=O)CCCC1C=C(C)S1 2013 CC#CC(C)(OC(C)=O)OC(C)=O 0014 CCC(C)=C(N)c1ccc(C(C)O)[nH]1 1014 Cc1cc(C)cc(SC2CN=NN2)c1 2015 C=C(CCCC(O)C1=CCC1)C(O)=NO 1015 OC1CCCCNC=C(C23C=CC2C3)C1 4117 [H]N=C(O)NCNc1ccc(N)cc1C(=O)O 1017 COc1ccc(Cn2cccc2CO)c(C)c1 20
+
+Exact molecular identity is represented by canonical SMILES after removing explicit hydrogen atoms while retaining formal charges and bond orders. Each resulting string is used as an exact-match key. The pooled sample count, uniqueness rate, and exact-match training-set novelty among unique molecules are 
+
+N = ∑
+
+g∈G
+
+|Mg|, U. = ∑g |Ug|
+
+∑g |Mg|, Rexact = ∑g |Ug \ Tg|
+
+∑g |Ug| .
+
+Here, set membership is evaluated by exact equality of the canonical-SMILES keys. Unique molecules are formed separately within each target before pooling; the same molecule gener-ated under two targets therefore contributes once to each target-specific set. Let f(m) denote the 2,048-bit ECFP4 fingerprint of molecule m, calculated with radius 2, bond types included, and chirality excluded. We use ECFP4 to measure analogue-level graph similarity independently of 3D pose. Its radius-2 circular neighborhoods encode local environments extend-ing up to two bonds from each atom; the “4” denotes the corresponding diameter. The Tanimoto similarity between molecules Mi and M j is 
+
+τ(Mi, M j) = f(Mi)Tf(M j)
+
+∥f(Mi)∥1 + ∥f(M j)∥1 − f(Mi)Tf(M j).
+
+47 For each unique generated molecule M ∈ Ug, its exact maximum similarity to the target-matched training reference is 
+
+smax (M ) = max  
+
+> M′∈Tg
+
+τ(M , M ′).
+
+The pooled maximum-similarity vectors are concatenated across targets. The table reports their median, interquartile range 
+
+IQR (smax ) = Q0.75 (smax ) − Q0.25 (smax ),
+
+and the fraction below a threshold δ ∈ { 0.4, 0.8},
+
+Rδ = ∑g ∑M ∈Ug I[smax (M ) < δ ]
+
+∑g |Ug| .
+
+Let S (A ) denote the set of distinct nonempty Bemis–Murcko scaffolds occurring in molecular set A . Scaffold novelty is calculated target-wise and then pooled as 
+
+Rscaffold = ∑g S (Ug) \ S (Tg)
+
+∑g S (Ug) .
+
+Acyclic molecules have empty Bemis–Murcko scaffolds and therefore do not contribute to this calculation. Because scaffolds are collected separately within each target, the same scaffold can contribute once for each target in which it occurs. The pooled rate therefore describes novel target–scaffold pairs and does not globally deduplicate scaffolds across the ten targets. For internal-diversity analysis, the pooled number of unique molecules and the number of within-target unordered molecular pairs are 
+
+Nunique = ∑
+
+> g
+
+|Ug|, P = ∑
+
+> g
+
+|Ug|
+
+2
+
+
+
+.
+
+The pooled mean pairwise similarity is 
+
+τpair =
+
+# ∑
+
+> g
+
+# ∑ 
+
+> {Mi,Mj}⊂ Ug
+
+τ(Mi, M j)
+
+# ∑
+
+> g
+
+|Ug|
+
+2
+
+ ,
+
+and internal diversity is defined as 
+
+Dint = 1 − τpair .
+
+Thus, only pairs belonging to the same target are compared; no cross-target molecular pairs are introduced. For each target g and resampling replicate r, the training control is sampled without replacement and size-matched to the unique generated molecules for that target: 
+
+C (r) 
+
+> g
+
+⊆ Tg, C (r) 
+
+> g
+
+= Ug .
+
+48 Applying this construction to M ∗ 
+
+> gen
+
+and cM ∗ 
+
+> gen
+
+gives M ∗ 
+
+> train
+
+and cM ∗
+
+> train
+
+, respectively. For each replicate, the pooled training similarity τ(r) 
+
+> train
+
+uses the same pair-count-weighted expression as the generated cohort: target-wise mean similarities are weighted by their numbers of within-target unordered pairs, and no cross-target pairs are introduced. Over R = 20 target-stratified resamples, the reported training-control value is 
+
+μtrain = 1
+
+R
+
+> R
+
+# ∑
+
+> r=1
+
+τ(r)
+
+> train
+
+, σtrain =
+
+s
+
+1
+
+R − 1
+
+> R
+
+# ∑
+
+> r=1
+
+
+
+τ(r) 
+
+> train
+
+− μtrain 
+
+2
+
+,
+
+reported as μtrain ±σtrain . The corresponding training internal diversity is 1− μtrain , with the same sample standard deviation. Figure 6(a) shows that, across all target values, the internal-readout error is correlated with the true error, with Spearman ρ = 0.754 and Pearson r = 0.837 . Figure 9 further shows the same analysis for each individual target property. This relationship is consistent across the representa-tive target values shown ( ρ from 0.728 to 0.770 ; r from 0.798 to 0.842 ), and the binned-median trend broadly follows the ideal x = y relationship. Thus, molecules with smaller internal-readout errors are more likely to have true properties close to the target, supporting the use of the in-ternal property readout for ranking or filtering. The remaining molecule-level spread indicates that the internal-readout error should be interpreted as a selection criterion rather than a precise prediction of the individual true error. 
+
+Figure 9: The internal-readout property error is a strong and practically useful indicator of the true error. For conditionally generated molecules across 10 target HOMO–LUMO gaps, the internal-readout and true errors are strongly correlated, with Spearman ρ = 0.728 –        
+
+> 0.770 and Pearson r=0.798 –0.842 . The binned-median trend (red solid line) broadly follows the diagonal x=y(dashed line), showing that molecules with smaller internal-readout errors tend to have true properties closer to their targets.
+
+49 Table 10: Per-target and pooled novelty and internal diversity of generated molecules. Panels A and A ′ report DFT-verified hits before and after practical selection, respectively; both satisfy |ytrue − ytarget | < 0.1 eV , and the selected set retains the best 30% within each target ranked by esur . Panel B reports pairwise similarity and internal diversity for both hit sets and for the size-matched training control of M ∗
+
+> gen
+
+.Training-control values are the mean ± sample standard deviation over 20 target-stratified resamples. All metrics and pooled rows follow the definitions above. 
+
+Exact maximum training-set ECFP4 Tanimoto 
+
+ytarget Sample N U. U.& N. Median (IQR) < 0.4 < 0.8 Scaffold novelty (eV) (%) (%) (%) (%) (%) 
+
+Panel A: Generated hits, M ∗
+
+> gen
+
+4.1 1,070 99.9 99.4 0.452 (0.139) 26.9 99.2 53.1 4.6 1,230 99.7 98.4 0.500 (0.156) 16.1 97.7 36.4 5.0 1,746 99.9 98.3 0.538 (0.151) 8.9 96.8 31.1 5.4 2,048 99.6 97.1 0.574 (0.158) 5.0 94.9 31.1 5.8 2,696 99.5 96.3 0.611 (0.166) 3.4 93.2 29.4 6.2 2,140 99.3 97.3 0.565 (0.159) 5.9 94.7 34.1 6.6 2,064 99.1 96.3 0.578 (0.196) 9.1 90.2 39.2 7.0 2,261 99.6 98.8 0.548 (0.167) 9.8 95.3 39.1 7.4 2,220 98.8 97.9 0.543 (0.167) 8.2 94.0 36.7 7.8 1,978 99.1 98.6 0.552 (0.173) 8.5 94.3 50.6 
+
+Pooled 19,453 99.4 97.7 0.556 (0.173) 8.9 94.6 37.6 
+
+Panel A ′: Generated hits after practical selection, cM ∗
+
+> gen
+
+4.1 743 99.9 99.3 0.469 (0.141) 22.5 98.9 48.3 4.6 794 99.6 98.0 0.514 (0.153) 12.3 97.2 28.5 5.0 1,147 99.9 98.4 0.545 (0.148) 7.2 96.8 27.2 5.4 1,308 99.5 96.5 0.581 (0.156) 4.1 94.8 29.2 5.8 1,705 99.4 96.0 0.628 (0.152) 1.9 92.5 23.4 6.2 1,364 99.3 97.0 0.577 (0.149) 3.7 94.4 29.0 6.6 1,311 98.9 95.0 0.605 (0.210) 5.9 87.2 36.1 7.0 1,399 99.5 99.1 0.559 (0.151) 7.1 95.7 37.8 7.4 1,266 98.7 97.5 0.554 (0.171) 7.4 93.3 33.8 7.8 1,191 99.5 98.2 0.559 (0.164) 7.0 94.2 44.6 
+
+Pooled 12,228 99.4 97.4 0.568 (0.171) 6.8 94.1 33.5 
+
+M ∗ 
+
+> gen
+
+cM ∗ 
+
+> gen
+
+M ∗
+
+> train
+
+ytarget Unique N Pairs Mean sim. Int. div. Unique N Pairs Mean sim. Int. div. Mean sim. Int. div. 
+
+Panel B: Internal diversity and size-matched training controls 
+
+4.1 1,069 570,846 0.1065 0.8935 742 274,911 0.1085 0.8915 0.0835 ± 0.0014 0.9165 ± 0.0014 4.6 1,226 750,925 0.1043 0.8957 791 312,445 0.1059 0.8941 0.0839 ± 0.0010 0.9161 ± 0.0010 5.0 1,745 1,521,640 0.1058 0.8942 1,146 656,085 0.1081 0.8919 0.0848 ± 0.0008 0.9152 ± 0.0008 5.4 2,040 2,079,780 0.1136 0.8864 1,302 846,951 0.1163 0.8837 0.0854 ± 0.0009 0.9146 ± 0.0009 5.8 2,682 3,595,221 0.1350 0.8650 1,695 1,435,665 0.1457 0.8543 0.0857 ± 0.0006 0.9143 ± 0.0006 6.2 2,126 2,258,875 0.1130 0.8870 1,355 917,335 0.1236 0.8764 0.0848 ± 0.0006 0.9152 ± 0.0006 6.6 2,046 2,092,035 0.1054 0.8946 1,296 839,160 0.1158 0.8842 0.0847 ± 0.0007 0.9153 ± 0.0007 7.0 2,251 2,532,375 0.1098 0.8902 1,392 968,136 0.1161 0.8839 0.0827 ± 0.0007 0.9173 ± 0.0007 7.4 2,193 2,403,528 0.1137 0.8863 1,250 780,625 0.1190 0.8810 0.0820 ± 0.0008 0.9180 ± 0.0008 7.8 1,960 1,919,820 0.1255 0.8745 1,185 701,520 0.1278 0.8722 0.0841 ± 0.0007 0.9159 ± 0.0007 
+
+Pooled 19,338 19,725,045 0.1161 0.8839 12,154 7,732,833 0.1224 0.8776 0.0843 ± 0.0002 0.9157 ± 0.0002 
+
+50 L Hyperparameters for UAE-3D training on PCQM4Mv2 for unconditional generation 
+
+Table 11: Hyperparameter setup for PCQM4Mv2 unconditional VAE training in UAE-3D. 
+
+Category Hyperparameter Value Data Batch size 512 
+
+Data Data loader workers 8
+
+Data Rotation augmentation enabled 
+
+Data Translation augmentation enabled 
+
+Data Translation scale 0.1
+
+Data Center atomic coordinates enabled 
+
+Data Position standard deviation estimated from 10 ,000 
+
+training samples 
+
+Data Training/validation batch fraction 1.0 / 1.0
+
+Optimization Learning rate 5 × 10 −5
+
+Optimization Weight decay 1 × 10 −5
+
+Optimization Gradient accumulation 1
+
+Optimization Gradient clipping 1.0
+
+Optimization Precision bf16-mixed 
+
+Training Max epochs 2,000 
+
+Training Check validation every n epochs 5
+
+Training Save checkpoint every n epochs 20 
+
+Training Cache best-validation checkpoint every n epochs 5
+
+Training Test every n epochs 200 
+
+Architecture Encoder hidden dimension 64 
+
+Architecture Encoder attention heads 8
+
+Architecture Encoder blocks 6
+
+Architecture Latent dimension 4
+
+Architecture Decoder hidden dimension 64 
+
+Architecture Decoder attention heads 8
+
+Architecture Decoder blocks 4
+
+Architecture Dropout 0.1
+
+Loss Atom loss weight 1.0
+
+Loss Bond loss weight 1.0
+
+Loss Coordinate loss weight 1.0
+
+Loss Distance loss weight 1.0
+
+Loss Bond distance loss weight 10 .0
+
+Loss KLD weight 1 × 10 −8
+
+Loss Center prediction disabled 
+
+Loss Alignment prediction disabled 
+
+51 Table 12: Hyperparameter setup for PCQM4Mv2 unconditional latent diffusion model (LDM) training in UAE-3D. 
+
+Category Hyperparameter Value Data Batch size 512 
+
+Data Data loader workers 8
+
+Data Number of generated samples for test-time sampling 10 ,000 
+
+Data Rotation augmentation enabled 
+
+Data Translation augmentation enabled 
+
+Data Translation scale 0.1
+
+Data Center atomic coordinates enabled 
+
+Data Position standard deviation estimated from 10 ,000 
+
+training samples 
+
+Data Training/validation batch fraction 1.0 / 1.0
+
+Optimization Learning rate 1 × 10 −4
+
+Optimization Weight decay 0.05 
+
+Optimization Minimum learning rate 1 × 10 −5
+
+Optimization Warmup learning rate 1 × 10 −6
+
+Optimization Warmup steps 1,000 
+
+Optimization Learning-rate scheduler linear_warmup_cosine 
+
+Optimization Gradient accumulation 1
+
+Optimization Gradient clipping 1.0
+
+Optimization Precision bf16-mixed 
+
+Training Max epochs 10 ,000 
+
+Training Check validation every n epochs 5
+
+Training Save checkpoint every n epochs 5
+
+Training Cache best-validation checkpoint every n epochs 5
+
+Training Test every n epochs 200 
+
+VAE backbone Encoder hidden dimension 64 
+
+VAE backbone Encoder attention heads 8
+
+VAE backbone Encoder blocks 6
+
+VAE backbone Latent dimension 4
+
+VAE backbone Decoder hidden dimension 64 
+
+VAE backbone Decoder attention heads 8
+
+VAE backbone Decoder blocks 4
+
+VAE backbone Dropout 0.1
+
+Objective Atom loss weight 1.0
+
+Objective Bond loss weight 1.0
+
+Objective Coordinate loss weight 1.0
+
+Objective Distance loss weight 1.0
+
+Objective Bond distance loss weight 10 .0
+
+Objective KLD weight 1 × 10 −8
+
+Objective Center prediction disabled 
+
+Objective Alignment prediction disabled 
+
+Diffusion Backbone DiT enabled 
+
+Diffusion Conditioning none (unconditional) 
+
+Diffusion Hidden dimension 512 
+
+Diffusion Attention heads 8
+
+Diffusion Layers 8
+
+Diffusion MLP ratio 4.0
+
+Diffusion Dropout 0.0
+
+Diffusion Latent whitening isotropic 
+
+Diffusion DDPM denoising steps 100 
+
+Diffusion Noise temperature 0.95 
+
+Diffusion Classifier-free guidance drop probability 0.1
+
+Diffusion Classifier-free guidance weight 0.5
+
+Noise schedule Scheduler cosine 
+
+Noise schedule Continuous β0 0.1
+
+Noise schedule Continuous β1 20 
+
+52 M Hyperparameters for FlowMol training on PCQM4Mv2 for unconditional generation 
+
+Table 13: Hyperparameter setup for PCQM4Mv2 unconditional FlowMol training. 
+
+Category Hyperparameter Value Data atom_map 21 PCQM4Mv2 atom types 
+
+explicit_aromaticity true batch_size 16 
+
+num_workers 6
+
+max_num_edges 80 ,000 
+
+precision bf16-mixed max_epochs 18 
+
+accumulate_grad_batches 5
+
+val_loss_interval 0.25 
+
+Optimization base_lr 1 × 10 −4
+
+warmup_length 0.044 
+
+weight_decay 1 × 10 −12 
+
+restart_interval / restart_type 0 / linear ema_decay 0
+
+Flow matching parameterization ctmc time_scaled_loss true total_loss_weights of (x, a, c, e) (3.0, 0.4, 1.0, 2.0)
+
+distort_p 0.2
+
+fake_atom_p 0.0
+
+n_atom_charges 6
+
+Priors and schedules x prior centered normal, std. 1.0, aligned 
+
+a / c / e priors ctmc , unaligned 
+
+schedule_type linear for x, a, c, and e
+
+Vector field self_conditioning true n_hidden_scalars 512 
+
+n_hidden_edge_feats 256 
+
+n_vec_channels 64 
+
+n_molecule_updates 8
+
+n_message_gvps / n_update_gvps 3 / 3
+
+n_expansion_gvps 3
+
+n_recycles / convs_per_update 1 / 1
+
+n_cp_feats 4
+
+update_edge_w_distance true message_norm sum rbf_dmax / rbf_dim 10 / 32 
+
+time_embedding_dim 64 
+
+a_token_dim, c_token_dim, e_token_dim 64 each 
+
+stochasticity / high_confidence_threshold 30 .0 / 0.9
+
+dropout 0.1
+
+53 N Hyperparameters for EF-TALFM training on PCQM4Mv2 for unconditional generation 
+
+Table 14: Hyperparameters for PCQM4Mv2 unconditional EF-TAVAE training. 
+
+Category Hyperparameter Value Model architecture model transformer-p norm_first true latent_dim 32 
+
+encoder_embed_dim 384 
+
+encoder_n_layers 6
+
+encoder_n_heads 12 
+
+encoder_dim_feedforward 768 
+
+encoder_width_multiplier 3.0
+
+encoder_depth_multiplier 3.0
+
+decoder_embed_dim 384 
+
+decoder_n_layers 6
+
+decoder_n_heads 12 
+
+decoder_dim_feedforward 1,536 
+
+decoder_width_multiplier 3.0
+
+decoder_depth_multiplier 3.0
+
+Optimization / training precision bf16-mixed lr 1 × 10 −3
+
+lr_end 1 × 10 −6
+
+lr_scheduler cosine_with_lr_end warmup_proportion 0.0
+
+max_steps 400 ,000 
+
+num_decay_steps −1
+
+batch_size 512 
+
+accumulate_grad_batches 1
+
+optimizer adamw adam_betas (0.9, 0.98 )
+
+adam_eps 10 −8
+
+weight_decay 0.01 
+
+gradient_clip_val 5
+
+Loss / regularization pos_loss_type smoothl1-0.001 position_scale 1.0
+
+pos_weight 10 
+
+seq_weight 1
+
+charge_weight 1
+
+spinmp_weight 1
+
+kl_weight 1 × 10 −3
+
+vae_noise_scale 0
+
+vae_disable_learned_variance false vae_corruption_ratio 0.1
+
+vae_free_bits_per_dim 0.02 
+
+vae_sigma_clamp_min 0.01 
+
+vae_sigma_clamp_max 1.5
+
+vae_mu_var_floor 0.01 
+
+vae_mu_var_floor_weight 5 × 10 −3
+
+vae_mu_cov_weight 5 × 10 −4
+
+dropout 0.0
+
+max_positions 64 
+
+54 In the reported EF-TAVAE configuration, posterior scales are clamped to [0.01 , 1.5], the KL term uses 0.02 free nats per latent dimension, and 10% of teacher-forced atom-type inputs are masked. The coordinate, categorical-sequence, charge, and spin-multiplicity loss weights are 10 , 1, 1, and 
+
+1, respectively; βKL = 10 −3, λvar = 5 × 10 −3, and λcov = 5 × 10 −4. These settings correspond to the configuration entries in the table above. Table 15: Hyperparameter setup for PCQM4Mv2 unconditional latent flow matching training in EF-TALFM. 
+
+Category Hyperparameter Value Pretrained VAE pretrained_vae_subfolder vae pretrained_vae_checkpoint last.ckpt 
+
+Latent data setup model transformer-p probabilistic_model flow_matching context_dim 0
+
+gm_use_latent_stats true gm_latent_stats_filename latent_whitener.pt gm_disable_random_sample true 
+
+Dynamics model gm_dynamics_model completep_resnet gm_dynamics_d_model 384 
+
+gm_dynamics_n_layers 6
+
+gm_dynamics_n_heads 8
+
+gm_dynamics_hidden_dim 1,024 
+
+gm_dynamics_width_multiplier 3.0
+
+gm_dynamics_depth_multiplier 3.0
+
+gm_dynamics_time_embed true gm_dynamics_time_freqs 10 
+
+gm_dynamics_t_encoder_type logsnr_sinusoidal gm_dynamics_x_encoder_type linear gm_dynamics_activation gelu gm_dynamics_norm_method ln gm_dynamics_dropout 0.0
+
+init_std 0.02 
+
+Flow-matching objective gm_flow_path ot gm_t_lower_eps 10 −5
+
+gm_t_upper_eps 10 −5
+
+gm_t_norm_scale_cutoff 1
+
+gm_self_condition_prob −1
+
+gm_ae_total_weight −1.0
+
+gm_loss_type l2 
+
+Optimization / training precision bf16-mixed compile_model true lr 1 × 10 −4
+
+lr_end 1 × 10 −7
+
+lr_scheduler cosine_with_lr_end lr_interval step power 1
+
+warmup_proportion 0.001 
+
+max_steps 1,000 ,000 
+
+num_decay_steps −1
+
+batch_size 1,024 
+
+eval_batch_size 1,024 
+
+accumulate_grad_batches 1
+
+optimizer adamw adam_betas (0.9, 0.98 )
+
+adam_eps 10 −8
+
+weight_decay 0.01 
+
+gradient_clip_val 5
+
+55 O Hyperparameters for EF-TALFM training on PCQM4Mv2 for property-conditioned generation 
+
+Table 16: Hyperparameters for PCQM4Mv2 property-supervision enabled EF-TAVAE training. 
+
+Category Hyperparameter Value Model architecture model transformer-p norm_first true latent_dim 64 
+
+encoder_embed_dim 768 
+
+encoder_n_layers 12 
+
+encoder_n_heads 12 
+
+encoder_dim_feedforward 1,536 
+
+encoder_width_multiplier 6.0
+
+encoder_depth_multiplier 6.0
+
+decoder_embed_dim 768 
+
+decoder_n_layers 12 
+
+decoder_n_heads 12 
+
+decoder_dim_feedforward 3,072 
+
+decoder_width_multiplier 6.0
+
+decoder_depth_multiplier 6.0
+
+decoder_explicit_property_token true disable_encoder_context_condition true 
+
+Optimization / training precision bf16-mixed lr 7 × 10 −4
+
+lr_end 7 × 10 −6
+
+lr_scheduler cosine_with_lr_end warmup_proportion 0.0
+
+max_steps 1,000 ,000 
+
+num_decay_steps −1
+
+batch_size 256 
+
+accumulate_grad_batches 1
+
+optimizer adamw adam_betas (0.9, 0.98 )
+
+adam_eps 10 −8
+
+weight_decay 5 × 10 −3
+
+gradient_clip_val 5
+
+Loss / regularization pos_loss_type smoothl1-0.001 position_scale 1.0
+
+pos_weight 10 
+
+seq_weight 1
+
+charge_weight 1
+
+spinmp_weight 1
+
+context_weight 1
+
+kl_weight 1 × 10 −4
+
+kl_weight_scheduler linear decoder_property_molecule_only_prob 0.6
+
+decoder_property_latent_only_prob 0.4
+
+property_molecule_only_loss_weight 0.6
+
+property_latent_only_loss_weight 0.4
+
+vae_noise_scale 0.05 
+
+vae_disable_learned_variance false vae_corruption_ratio 0.0
+
+vae_free_bits_per_dim 0.01 
+
+vae_sigma_clamp_min −1
+
+vae_sigma_clamp_max −1
+
+vae_mu_var_floor 0.01 
+
+vae_mu_var_floor_weight 0
+
+vae_mu_cov_weight 0
+
+dropout 0.0
+
+max_positions 64 
+
+56 For conditional generation with property-supervision is enabled, molecule-condition route is ac-tivated with 60% of time, and latent-only route is activated with the rest 40% of time. The coor-dinate, categorical-sequence, charge, spin-multiplicity, context loss weights are 10 , 1, 1, 1, and 1;molecule-condition route loss weight is τmol = 0.6, and molecule-condition route loss weight is 
+
+1 − τmol = 0.4. These settings correspond to the configuration entries in the table above. Table 17: Hyperparameter setup for PCQM4Mv2 conditional latent flow matching training in EF-TALFM. 
+
+Category Hyperparameter Value Pretrained VAE pretrained_vae_subfolder vae pretrained_vae_checkpoint last.ckpt 
+
+Latent data setup model transformer-p probabilistic_model flow_matching context_dim 1
+
+gm_use_latent_stats true gm_latent_stats_filename latent_scalar.pt gm_disable_random_sample true 
+
+Dynamics model gm_dynamics_model completep_resnet gm_dynamics_d_model 512 
+
+gm_dynamics_n_layers 12 
+
+gm_dynamics_n_heads 8
+
+gm_dynamics_hidden_dim 1,024 
+
+gm_dynamics_width_multiplier 4.0
+
+gm_dynamics_depth_multiplier 3.0
+
+gm_dynamics_time_embed true gm_dynamics_time_freqs 32 
+
+gm_dynamics_t_encoder_type logsnr_sinusoidal gm_dynamics_x_encoder_type linear gm_dynamics_y_encoder_type mlp gm_dynamics_activation gelu gm_dynamics_norm_method ln gm_dynamics_dropout 0.0 
+
+init_std 0.02 Flow-matching objective gm_flow_path ot gm_t_lower_eps 10 −3
+
+gm_t_upper_eps 10 −3
+
+gm_t_norm_scale_cutoff 1
+
+gm_self_condition_prob -1 
+
+gm_ae_total_weight -1.0 
+
+gm_loss_type l2 
+
+Optimization / training precision bf16-mixed compile_model true lr 1.4 × 10 −3
+
+lr_end 2.8 × 10 −6
+
+lr_scheduler cosine_with_lr_end lr_interval step power 1
+
+warmup_proportion 0.01 
+
+max_steps 250 ,000 
+
+num_decay_steps −1
+
+batch_size 4,096 
+
+eval_batch_size 4,096 
+
+accumulate_grad_batches 1
+
+optimizer adamw adam_betas (0.9, 0.98 )
+
+adam_eps 10 −8
+
+weight_decay 0.01 
+
+gradient_clip_val 5
+
+57
