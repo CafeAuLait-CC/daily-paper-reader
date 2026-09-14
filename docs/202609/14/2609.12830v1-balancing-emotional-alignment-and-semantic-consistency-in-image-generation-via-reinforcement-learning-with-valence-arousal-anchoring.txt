@@ -1,0 +1,1367 @@
+1
+Balancing Emotional Alignment and Semantic
+Consistency in Image Generation via Reinforcement
+Learning with Valence-Arousal Anchoring
+Jisheng Dang, Zhenxuan Wang, Bin Li, Ronghao Lin, Bin Hu, Fellow, IEEE, Tat-Seng Chua
+Abstract—Continuous emotion control in text-to-image gener-
+ation requires a model to improve affective alignment without
+changing the objects, layout, or scene described by the prompt.
+Existing supervised emotion-injection methods often optimize
+feature-space proxies and may therefore exhibit emotion–semantic
+drift, in which stronger emotional conditioning is accompanied
+by unintended content changes. We address this problem with
+a flow-matching image-generation framework that combines
+continuous valence–arousal (VA) conditioning, Group Relative
+Policy Optimization (GRPO), and a neutral semantic anchor. The
+deterministic probability-flow ODE is converted into a marginal-
+preserving SDE, yielding non-degenerate transition densities for
+trajectory sampling and policy-ratio estimation. A frozen CLIP-
+based VA regressor supplies a terminal reward measuring the
+distance between the predicted and target VA coordinates, while
+an image generated from the same prompt under zero VA
+conditioning provides a feature-space reference for semantic
+preservation. A reduced denoising schedule is used for online
+RL sampling, whereas the original schedule is retained at
+inference. Experiments on 3,300 prompt–emotion combinations
+show substantially lower valence and arousal errors than the
+VA-conditioned baseline and an improved CLIPScore relative
+to EmotiCrafter, with a measurable trade-off in reference-free
+image quality. The results support anchor-regularized Flow-
+GRPO as a practical approach to balancing emotional alignment
+and semantic consistency in continuous-affect image synthe-
+sis. Our code is available at https://github.com/ramon-alana/
+eit-with-anchor-and-grpo.
+Index Terms—Emotional image generation, flow matching,
+Flow-GRPO, reinforcement learning, valence-arousal.
+I. INTRODUCTION
+Emotion-aware image generation aims to control not only
+what an image depicts, but also the affect that it conveys. This
+capability is useful in affective computing, human–computer
+interaction, personalized content creation, and creative or
+This work was supported by the National Natural Science Foundation of
+China (Grants No. 62227807 and U24B20186). This work was also supported
+by the Supercomputing Center of Lanzhou University.
+Jisheng Dang and Zhenxuan Wang are with School of Information Sci-
+ence & Engineering, Lanzhou University, Lanzhou 730000, China. (E-mail:
+dangjsh@mail2.sysu.edu.cn).
+Bin Li is with School of Environmental and Spatial Informatics, China
+University of Mining and Technology, Xuzhou 221116, China E-mail:
+tb24160013a41@cumt.edu.cn
+Ronghao Lin is with the College of Computer Science and Soft-
+ware Engineering, Shenzhen University, Shenzhen 518060, China (E-mail:
+linrh@szu.edu.cn)
+Bin Hu is with the School of Medical Technology, Beijing Institute of
+Technology, Beijing 100081, China (E-mail: bh@bit.edu.cn).
+Tat-Seng Chua is with the School of Computing, National University of
+Singapore, Singapore 119077 (E-mail: dcscts@nus.edu.sg).
+*Corresponding author: Ronghao Lin and Bin Hu.
+therapeutic applications [38]–[40]. Meanwhile, modern text-
+to-image models [1]–[3] provide strong semantic priors for
+generating complex scenes from natural-language prompts.
+Combining these two forms of control raises a central question
+that how can a generator change the perceived emotion of an
+image without changing the content requested by the user?
+This question is nontrivial because visual emotion is not
+an independent style attribute. Perceived affect arises from
+the interaction of global appearance cues, such as color,
+illumination, and atmosphere, with semantic cues, such as
+objects, actions, and scene context [11]–[13]. Some appear-
+ance cues can be adjusted while preserving the depicted event,
+whereas changing an object or action may alter both affect and
+meaning. A useful emotional generator must therefore distin-
+guish affective appearance changes from prompt-inconsistent
+semantic changes.
+The valence–arousal (VA) model [10] represents emotion
+in a continuous two-dimensional space, where valence de-
+scribes pleasantness and arousal describes activation. Com-
+pared with discrete emotion labels, VA coordinates support
+gradual changes and interpolation between affective states.
+EmotiCrafter [9] introduces this continuous control into text-
+to-image generation by injecting VA values into textual fea-
+tures. However, the emotion condition and the prompt seman-
+tics remain coupled in the learned representation. As the VA
+condition becomes stronger, the generator may alter objects,
+scene layout, illumination, or event content instead of changing
+affect alone.
+We refer to this failure mode as emotion–semantic drift.
+Fig. 1 provides an example: for the same prompt, the baseline
+changes the underlying scene across VA coordinates, whereas
+the desired behavior is to preserve the meadow and express
+affect through appearance-related attributes. The problem is
+therefore not merely to reduce emotion-prediction error; it is
+to improve continuous emotional alignment while limiting un-
+intended semantic displacement. Existing supervised emotion-
+conditioning methods mainly optimize intermediate feature
+regression, reconstruction, or contrastive objectives [9], [11].
+Such losses do not directly optimize the emotion predicted
+from the final decoded image. Conversely, optimizing only an
+image-level emotion score is under-constrained: a generator
+can obtain a better score by changing the scene itself. These
+observations motivate two complementary objectives. The
+first should evaluate continuous emotional alignment on the
+final image; the second should explicitly discourage prompt-
+inconsistent changes.
+arXiv:2609.12830v1  [cs.CV]  11 Sep 2026
+
+
+2
+(a) (3,3)
+(b) (1.5,1.5)
+(c) (0,0)
+(d) (-1.5,-1.5)
+(e) (-3,-3)
+(f) (3,3)
+(g) (1.5,1.5)
+(h) (0,0)
+(i) (-1.5,-1.5)
+(j) (-3,-3)
+Fig. 1: Comparison of emotion-semantic drift across five Valence-Arousal (VA) values for the prompt “a sunny meadow”,
+ordered from high (3,3) to low (-3,-3) as shown by the subcaptions. Top row (baseline): the model alters scene structure for
+non-neutral VA values. At (3,3), the scene becomes a festival. At (1.5,1.5), the composition becomes chaotic. At (0,0), the
+meadow is preserved. At (-1.5,-1.5), the sky darkens and trees become threatening. At (-3,-3), it turns into night. Bottom row
+(ours): our method preserves the meadow while modulating lighting and color appropriately for each VA coordinate.
+We implement the first objective through reinforcement
+learning (RL), which can optimize a terminal signal without
+differentiating through the reward model [16], [17]. A frozen
+VA predictor measures the distance between the generated
+image and the target coordinate. Applying policy optimization
+to a flow-matching generator nevertheless requires care. Its
+standard sampler follows a deterministic ODE [18], [19];
+different initial noise samples provide output diversity, but the
+transition from a fixed intermediate state is a Dirac distribu-
+tion and therefore has no ordinary density for the step-wise
+likelihood ratio used by GRPO. Following Flow-GRPO [20],
+we use a marginal-preserving SDE during training to obtain
+stochastic Gaussian transitions with tractable likelihoods.
+The emotional reward alone does not address semantic drift.
+We pair each emotion-conditioned output with a zero-VA
+output from the same prompt and initial latent. The zero-
+VA image acts as a content reference, and their distance in a
+CLIP space forms an anchor regularizer. The complete training
+flow as follows: EIT module injects target VA coordinate into
+prompt representation; flow-matching generator samples an
+image through the stochastic training policy; VA predictor
+supplies terminal reward to Flow-GRPO; the neutral branch
+supplies semantic anchor. The generator is then updated with
+the negative GRPO objective and anchor loss jointly. This
+coupling between output-level emotional optimization and
+prompt-paired semantic regularization is the central method-
+ological contribution of the work. The neutral anchor provides
+sample-specific reference rather than generic prior. Because
+branches share prompt and initial latent, feature difference is
+less affected by prompt variation or sampling-induced changes.
+Moreover, constraint is imposed in frozen visual space rather
+than pixel level, allowing emotional branch to modify color,
+lighting, and other cues. Anchor therefore is not intended to
+force identical images; it biases policy optimization away from
+semantic shortcuts and reduces overall semantic drift.
+The main contributions are summarized as follows:
+• We formulate continuous emotion-conditioned image
+generation as joint output-level VA optimization and se-
+mantic regularization. This formulation makes emotion–
+semantic drift an explicit optimization concern rather than
+treating prompt preservation as an implicit consequence
+of emotional conditioning.
+• We combine a VA terminal reward with a prompt-paired
+neutral anchor. Flow-GRPO optimizes the decoded image
+against a frozen VA predictor, while the anchor penal-
+izes the CLIP-feature displacement between emotion-
+conditioned and zero-VA outputs generated from the
+same prompt and initial latent.
+• We provide a parameter-efficient realization on a flow-
+matching backbone using LoRA and denoising reduction,
+together with experiments that separately examine the VA
+reward, anchor term, and backbone. Experiment results
+show reduced VA error and improved CLIPScore relative
+to the VA-conditioned baseline, while also exposing a
+remaining perceptual-quality trade-off.
+II. RELATED WORK
+A. Continuous Emotion-Conditioned Generation
+Early emotion-conditioned generators commonly use cate-
+gorical labels such as happiness, sadness, and anger. EmoGen
+maps discrete emotion labels to visual content descriptors
+
+
+3
+for domain-free emotional image generation [24]. Its control
+variable is therefore drawn from a finite set of categories,
+whereas our method accepts an arbitrary numerical coordi-
+nate in the continuous VA space together with a free-form
+prompt. Although category-based control is intuitive, it does
+not directly capture gradual affective transitions or distinguish
+nearby affective states within the same category.
+Dimensional affect models instead represent emotion in a
+continuous space. The circumplex model characterizes affec-
+tive states using valence and arousal [10]. EmotiCrafter injects
+a target VA coordinate into the text features of a pretrained
+text-to-image model, enabling a free-form prompt and con-
+tinuous emotion values to be specified jointly [9]. Visual-
+emotion analysis has progressed from stimuli-aware feature
+extraction and scene–object relational reasoning to subjec-
+tive emotion-distribution learning and cross-modal semantic-
+guided pretraining [12]–[15]. Recent studies have further
+enhanced visual-emotion representation through hierarchical
+feature interaction [25], structured emotional annotations [26],
+and multimodal VA recognition [27]. These studies primarily
+improve affect understanding and representation, whereas our
+work focuses on using continuous VA signals to guide image
+generation while mitigating semantic drift. In particular, they
+do not directly optimize the VA error of the final image
+together with a paired constraint that preserves the prompt-
+conditioned scene.
+Existing approaches differ in how emotional supervision and
+content preservation are implemented. Feature-injection meth-
+ods condition intermediate representations, while feedback-
+based methods evaluate decoded outputs. Text–image similar-
+ity promotes prompt relevance but does not explicitly preserve
+content. Our method combines continuous VA conditioning,
+output-level VA supervision, and a paired neutral reference.
+Building on EmotiCrafter, we address semantic drift by su-
+pervising the decoded image and introducing a prompt-paired
+neutral reference. EmoGen is excluded from our VA-error
+comparison because its categorical control does not directly
+correspond to the 5×5 continuous VA grid; a fair comparison
+would require a predefined category-to-VA mapping and a
+common prompt and backbone protocol.
+B. Reinforcement Learning in Generative Models
+Many objectives in image generation, including human
+preference, aesthetics, and task-specific scores, can only be
+evaluated after an image has been decoded. Preference datasets
+and learned reward models provide output-level supervision
+for these objectives [36], [37]. Policy optimization offers a
+means of improving such terminal objectives without differ-
+entiating through the evaluator. DPOK applies policy gradients
+with KL regularization to diffusion-model fine-tuning [16],
+while DDPO formulates iterative denoising as a Markov
+decision process [17]. Score-based SDE models provide a
+stochastic-process foundation for diffusion generation [35],
+and continuous-time formulations further connect generative
+modeling with stochastic control [28].
+PPO introduces clipped policy updates for stable optimiza-
+tion [22]. GRPO estimates relative advantages from a group
+of sampled outputs and avoids the need for a separately
+trained value model [21]. DanceGRPO extends group-relative
+optimization to diffusion-based visual generation [29]. Flow-
+GRPO adapts this approach to flow matching by replacing
+the deterministic training sampler with a marginal-preserving
+SDE and reducing the number of online denoising steps [20].
+Related group-relative objectives have also been investigated
+for masked generative models [30].
+These methods provide general mechanisms for optimizing
+decoded-image objectives, but the resulting behavior remains
+dependent on the task-specific reward and constraints. In
+emotional synthesis, a VA reward alone may favor semantic
+shortcuts, whereas an overly strong semantic penalty may
+suppress perceptible emotional changes. We therefore adopt
+Flow-GRPO rather than redefining it. Its role is to make the
+final-image VA signal amenable to optimization in a flow-
+matching generator, while our task-specific contribution is to
+couple this policy objective with continuous VA conditioning
+and a semantic reference matched by prompt and initial latent.
+C. Reinforcement Learning in Affective Computing
+Reinforcement learning has also been explored in affec-
+tive computing to optimize emotion-related objectives using
+feedback from generated or recognized visual content. In
+this setting, the supervision is typically obtained from the
+output rather than imposed solely through the generation
+process, making it relevant to our use of final-image VA su-
+pervision. EmoFeedback2 uses a large vision–language model
+to evaluate generated images and provide both an emotion-
+aware score and textual feedback [31]. Its feedback loop uses
+the vision–language model to guide subsequent generation.
+EmoSENSE instead adopts hierarchical fuzzy reinforcement
+learning: a high-level module associates discrete emotion cate-
+gories with visual attributes, while a low-level module adjusts
+the attribute mapping for different emotion–object combina-
+tions [23]. These studies demonstrate the value of output-level
+feedback, but their control variables and optimization signals
+differ from those of continuous VA-conditioned synthesis.
+More specifically, the differences between these approaches
+and ours lie in three aspects. First, EmoSENSE employ
+categorical emotion control simlar as EmoGen, whereas our
+method uses a continuous VA coordinate. Second, EmoFeed-
+back2 obtains learned score-and-text feedback from a vision–
+language model, whereas our scalar reward is defined as the
+negative numerical distance between the predicted and target
+VA coordinates. Third, our optimization incorporates a zero-
+VA image generated from the same prompt and initial latent
+as a paired semantic reference; neither categorical control
+nor affective feedback alone provides this constraint. This
+distinction motivates the proposed joint objective, and we do
+not claim that reward optimization or Flow-GRPO itself con-
+stitutes a novel contribution. Because the published systems
+employ different emotional interfaces, backbones, and evalu-
+ation protocols, the present experiments do not constitute a
+direct quantitative comparison with EmoGen, EmoFeedback2,
+or EmoSENSE.
+
+
+4
+III. METHOD
+A. Problem Formulation
+Let c denote a neutral text prompt and let y = (v, a) ∈
+[−3, 3]2 denote the target valence–arousal coordinate. Given
+an initial latent zT ∼N(0, I), the conditional generator Gθ
+produces an image xy = Gθ(zT , c, y). A frozen VA predictor
+PVA maps the image to ˆy = (ˆv, ˆa), while a frozen visual
+encoder f provides a representation used to measure semantic
+deviation. The objective is to reduce the distance between ˆy
+and y without changing the scene layout, object identity, or
+visual intent specified by c.
+These two requirements are tightly coupled and, in practice,
+often conflict with each other. When the emotional signal
+becomes stronger, the generator may indeed move closer to
+the desired emotion in the valence-arousal space, but such
+improvement is frequently achieved at the cost of semantic
+fidelity. For example, instead of expressing emotion through
+subtle changes in color tone, lighting, facial expression, or
+atmosphere, the model may alter the scene composition,
+replace important objects, or modify the environment in a
+way that changes the meaning of the original prompt. We
+refer to this phenomenon as emotion-semantic drift. Therefore,
+emotional image generation should not be viewed as a pure
+emotion prediction problem or a pure text-to-image generation
+problem, but rather as a joint optimization problem in which
+emotional expressiveness must be improved under an explicit
+semantic preservation constraint.
+Based on this observation, we treat the denoising generator
+as a policy and optimize two complementary terms: a terminal
+reward for continuous emotion alignment and an anchor regu-
+larizer for semantic preservation. The reward is defined on the
+final decoded image and can therefore be optimized without
+differentiating through the frozen VA predictor. The anchor
+term remains differentiable through the generated image and
+restricts the policy from obtaining a high emotional reward
+through large content changes. Sections III-C–III-F define the
+conditioning mechanism, anchor regularizer, stochastic policy,
+and joint objective, respectively.
+B. Framework Overview
+Fig. 2 illustrates the overall architecture. The framework
+jointly operates two complementary mechanisms during train-
+ing: Flow-GRPO for emotional alignment and an anchor-based
+constraint for semantic preservation. The former addresses
+the objective mismatch of supervised emotion injection, while
+the latter prevents the model from achieving high emotional
+reward by sacrificing semantic fidelity. Starting from a neu-
+tral text prompt, the model first produces a text representa-
+tion through the backbone text encoder. The target valence–
+arousal signal is then injected into this representation by an
+Emotion Injection Transformer (EIT), producing an emotion-
+conditioned embedding that guides the flow-matching image
+generator. The final image is evaluated along two paths. The
+emotion path applies a frozen VA predictor and returns a
+terminal reward to GRPO. The semantic path forms a neutral
+branch by setting the VA condition to (0, 0) and compares
+the decoded emotional and neutral images in the CLIP visual
+feature space. Thus, the embedding labels in Fig. 2 identify
+the conditioning signals used to generate the two branches;
+the anchor distance itself is evaluated between visual features
+of the corresponding decoded images, as defined in Eq. (5).
+If trained only on emotional reward, the model could
+exploit shortcuts by altering scene structure to improve the
+emotion score. Conversely, training only on the anchor would
+suppress emotional variation. Our framework balances these
+forces: Flow-GRPO encourages emotionally accurate genera-
+tion, while the anchor constraint regularizes the optimization
+trajectory so that the learned policy remains faithful to the
+original content. In this sense, the entire method can be un-
+derstood as a constrained emotional generation framework in
+which emotion alignment is directly optimized under semantic
+preservation.
+C. VA-Conditioned Generation
+A core requirement of our task is continuous emotional con-
+trol rather than selection from a small set of discrete emotion
+categories. We therefore inject the target VA coordinate into
+the text condition while retaining the generative prior of the
+pre-trained image backbone. Let Etext denote the frozen text-
+encoding stack of SD3.5M(Stable Diffusion 3.5 Medium). The
+neutral prompt representation is
+e0 = Etext(c) ∈RL×d,
+(1)
+where L is the sequence length after the backbone-specific
+tokenization and feature assembly, and d is the resulting
+channel dimension. This notation deliberately abstracts over
+the multiple text encoders used by SD3.5M and avoids as-
+signing a single encoder-specific token length to the combined
+condition.
+The Emotion Injection Transformer, parameterized by ϕ,
+fuses the continuous condition y = (v, a) with the neutral
+representation:
+ey = EITϕ(e0, y),
+eanchor = EITϕ(e0, 0).
+(2)
+The two branches share the EIT parameters and differ only in
+their VA inputs. The emotional representation ey conditions
+the flow-matching generator, whereas eanchor supplies the
+zero-VA condition used to construct the neutral reference. With
+DVAE denoting the frozen decoder, the emotional output is
+xemo = DVAE(z0) ,
+z0 ∼pθ(z0 | zT , ey),
+(3)
+where zT
+∼N(0, I) and θ denotes the trainable LoRA
+parameters of the image generator.
+LoRA is inserted into the attention layers of the image
+generator. The original backbone and VAE weights remain
+frozen, while the LoRA parameters θ and EIT parameters ϕ
+are optimized. This parameter-efficient design limits changes
+to the pre-trained generative prior and reduces the memory
+required for online trajectory sampling.
+
+
+5
+SD3.5 Text Encoders
+CLIP-L+OpenCLIP-G+T5-XXL
+VA Predictor 
+(CLIP)
+Ground Truth VA (v,a)
+s₀ ~ 
+𝒩(0, I)
+s_T
+s_1
+Inuput
+Neutral Text
+ Neutral_embeds 
++ VA(a,v)
++ (0,0)
+EIT (a,v)
+EIT (0,0)
+weight shared
+Anchor_
+embeds
+Emotional_
+embeds
+Anchor Loss
+ 𝓛anchor
+Neutral_ 
+embeds
+Ground_truth_
+embeds
+Group Computation
+Rewards
+R¹
+R²
+R³
+…
+Rᴳ
+Â¹
+Â²
+Â³
+…
+Âᴳ
+Adavantages
+[B, 77, 4096]
+Emotion Alignment
+Content Fidelity
+Gradient Feedback
+r̂ = (r - μ)/σ
+MDP = (𝒮, 𝒜, P, r, γ)
+16-channel VAE Decoder
+MMDiT-X Transformer (LoRA)
+Outputs
+Reward  Calculation
+reward = - error
+Pred(v̂,â)
+Emotion Alignment  Reward
+(4) Group Relative Policy Optimization
+Stable-Diffusion-3.5-medium
+LoRA
+Final Result
+Inference
+                                               ……          
+= data flow
+= emotion alignment path
+= content  fidelity path
+(1) Text & Emotion Encoding
+(2) Image Generation
+(3) Reward Modeling
+Reward Signal
+Fig. 2: Overview of the proposed framework for emotion-aware image generation with dual mechanisms: Flow-GRPO
+optimization and anchor-based semantic constraint.
+D. Anchor-Based Semantic Constraint
+Although continuous emotion injection allows the model
+to condition generation on target valence-arousal values, this
+alone is not sufficient to guarantee semantic fidelity. A com-
+mon failure mode in emotion-conditioned generation is that
+the model reduces emotional prediction error by making large
+semantic changes to the image, such as altering the scene type,
+replacing key objects, or dramatically changing the layout.
+These changes may improve the score of an emotion predictor,
+but they do so by violating the intended content of the
+prompt. To explicitly discourage such behavior, we introduce
+an anchor-based semantic constraint.
+The key idea is to construct, for each prompt, a neutral
+reference image that represents the prompt content without an
+explicit emotional displacement. The neutral branch uses the
+same prompt and the shared EIT under y = 0:
+xanchor = Gθ(zT , c, 0).
+(4)
+During computation of the semantic target, the anchor feature
+is detached from the gradient graph so that the neutral branch
+acts as a reference rather than being pulled toward the emo-
+tional output. We avoid pixel-level matching because color,
+illumination, and local appearance are legitimate carriers of
+emotion. Instead, the anchor loss is evaluated in the visual
+feature space:
+Lanchor = ∥f(xemo) −sg[f(xanchor)]∥2
+2 ,
+(5)
+where f(·) is the frozen CLIP image encoder and sg[·] denotes
+stop-gradient. The loss does not require the two images to
+be pixel-identical; it penalizes changes in their high-level
+visual representations and therefore favors preservation of the
+scene identity while permitting affective changes in tone and
+appearance.
+This design is particularly important in the reinforcement
+learning setting because the policy may otherwise exploit
+semantically undesirable shortcuts to reduce the VA error. The
+balancing coefficient λ determines the trade-off: larger values
+emphasize proximity to the neutral reference, whereas smaller
+values permit greater movement toward the target emotion.
+E. GRPO-based Optimization
+While the anchor term constrains semantic drift, emotion
+alignment is optimized from a terminal signal on the final
+decoded image. We model stochastic denoising as a finite-
+horizon MDP. At timestep t, the state is
+st = (c, y, t, zt),
+(6)
+
+
+6
+and the action is the next denoised latent at = zt−∆t. The
+corresponding policy is the conditional transition density
+πθ(at | st) = pθ(zt−∆t | zt, c, y),
+(7)
+where ∆t > 0 denotes the magnitude of one reverse-time
+step. A trajectory is τ = (zT , . . . , z0), and a nonzero reward
+is assigned only after decoding z0.
+1) VA Terminal Reward: The frozen predictor PVA consists
+of a CLIP image encoder [32] followed by the released valence
+and arousal regression heads used by EmotiCrafter [9]. It
+is not updated during policy optimization. Given (ˆv, ˆa) =
+PVA(xemo), the terminal reward is
+Ri = −
+p
+(ˆvi −v)2 + (ˆai −a)2.
+(8)
+Thus, larger rewards correspond to smaller Euclidean errors
+in the continuous VA space.
+2) Marginal-preserving Stochastic Policy:
+The original
+rectified-flow sampler follows the deterministic ODE
+dzt = vθ(zt, t, ey) dt,
+(9)
+where vθ is the conditional velocity field. Although different
+values of zT generate different images, a fixed zt has a
+deterministic successor under Eq. (9). Its conditional transition
+is therefore a Dirac measure, so the likelihood ratio required
+by policy-gradient optimization is not defined as an ordinary
+probability-density ratio.
+Following
+Flow-GRPO
+[20],
+we
+use
+the
+marginal-
+preserving SDE for rectified flow:
+dzt =
+
+vθ(zt, t, ey) + σ2
+t
+2t (zt + (1 −t)vθ(zt, t, ey))
+
+dt
++ σt d ¯wt,
+(10)
+where ¯wt is a standard Wiener process and σt controls the
+injected stochasticity. The additional score-dependent drift in
+Eq. (10), rather than noise injection alone, is what preserves
+the marginal density of the original probability path. We use
+the Flow-GRPO schedule σt = α
+p
+t/(1 −t), with noise
+coefficient α = 0.3. Euler–Maruyama discretization makes
+Eq. (7) an isotropic Gaussian whose mean depends on vθ and
+whose covariance is σ2
+t ∆tI. Consequently, both the transition
+likelihood and its ratio to an old or reference policy are
+tractable.
+3) Group-relative Policy Objective: For each condition
+(c, y), the old policy samples a group of G trajectories. Their
+terminal rewards are normalized within the group:
+bAi = Ri −µR
+σR + δ ,
+µR = 1
+G
+G
+X
+j=1
+Rj,
+(11)
+where σR is the group reward standard deviation and δ is a
+small numerical constant. The step-wise importance ratio is
+ri
+t(θ) =
+πθ(zi
+t−∆t | zi
+t, c, y)
+πθold(zi
+t−∆t | zi
+t, c, y).
+(12)
+We denote the quantity maximized by GRPO as
+JGRPO(θ) =
+1
+GT
+G
+X
+i=1
+T
+X
+t=1
+h
+min
+ ri
+t bAi, clip(ri
+t, 1 −ϵ,
+1 + ϵ) bAi
+−βDKL(πθ∥πref)
+i
+,
+(13)
+(a) Without anchor constraint
+(b) With anchor constraint (Ours)
+Fig. 3: Effect of the anchor constraint on a landscape prompt.
+Given the prompt “A tranquil lake surrounded by golden
+autumn trees, misty morning, no people” with target emotion
+(valence=3, arousal=3), the model without an anchor (left)
+introduces unintended elements such as a person and a boat.
+where ϵ is the clipping coefficient, β controls deviation from
+the frozen reference policy, and T is the number of sampled
+denoising transitions. Writing this term as JGRPO, rather
+than as a loss, makes its maximization direction explicit. To
+reduce the cost of collecting G trajectories for every condition,
+training uses the denoising-reduction schedule of Flow-GRPO.
+The reduced schedule is used only for online sampling and
+policy updates; the original denoising schedule is restored at
+inference.
+F. Overall Objective
+The final minimization objective combines the negative
+policy objective with the anchor regularizer:
+Ltotal = −JGRPO + λLanchor.
+(14)
+The sign of the first term reflects that JGRPO is maximized,
+whereas Ltotal is minimized. The coefficient λ controls the
+empirical trade-off between VA alignment and proximity to
+the zero-VA reference. Equation (14) therefore optimizes
+emotional alignment and semantic preservation jointly rather
+than applying semantic correction as a post-processing step.
+Fig. 3 provides a qualitative illustration of the two terms in
+Eq. (14): without the anchor, the sampled output introduces
+prompt-inconsistent elements, whereas the anchored output
+remains closer to the requested scene while moving toward the
+target VA condition. The aggregate effect of this regularizer
+is evaluated by the GRPO-only and full-model comparison in
+Section IV.
+IV. EXPERIMENTS
+This section reports the experimental setup, qualitative com-
+parisons, automatic metrics, component ablations, user study
+and further discussion.
+A. Implementation Details
+Following standard practice in emotional image genera-
+tion [9], we employ a dataset comprising paired neutral and
+
+
+7
+SDXL
+SD3.5M
+(a) Prompt: A mountain range under a starry night sky
+SDXL
+SD3.5M
+(b) Prompt: A oil painting shows an astronaut
+Fig. 4: Comparison of SDXL and SD3.5M under two different prompts. For each prompt, SD3.5M (right) generates images
+semantically closer to the prompt than SDXL (left), as reflected by higher CLIPScore. However, neither model alone achieves
+high emotional accuracy, motivating our GRPO+Anchor fine-tuning.
+Fig. 5: Overview of the dataset statistics. The figures show
+neutral prompt length, arousal and valence values, and emo-
+tional prompt length for different data splits (Blue, Green,
+Red).
+emotional prompts annotated with continuous valence–arousal
+(VA) values. Fig. 5 summarizes the prompt lengths, VA anno-
+tations, and data splits. Evaluation covers emotional accuracy,
+prompt consistency, and reference-free image quality. For the
+VA reward and V/A-error computation, we use the frozen
+predictors released with EmotiCrafter: a CLIP image encoder
+followed by separate regression checkpoints for valence and
+arousal. Images are processed with the predictor’s released
+CLIP preprocessing, and its outputs use the same [−3, 3]
+VA range as the target annotations. No predictor parameter
+is updated during GRPO training. Valence Error (V-Err) and
+Arousal Error (A-Err) are the mean absolute errors between
+these predictions and the target coordinates. Content preserva-
+tion is evaluated using CLIPScore [33], and perceptual image
+quality is assessed using CLIP-IQA [34].
+All metrics are reported on a held-out test set of 3,300
+images (132 prompts × 5 valence values × 5 arousal values),
+consistent with prior work [9]. Our experiments are designed
+to isolate the impact of both the backbone model (SDXL vs.
+SD3.5M) and the optimization strategy, including supervised
+baseline, anchor-only, GRPO-only, and their combination. We
+adopt SDXL [3] and SD3.5M [2], both fine-tuned with LoRA
+(rank r = 4).
+As shown in Fig. 4, we compare SDXL [3] and SD3.5M [2]
+under the same EIT injection settings. While SDXL has been
+widely adopted in prior conditional generation works, we
+observe that SD3.5M exhibits a stronger semantic prior that
+better preserves prompt-relevant content under emotional con-
+ditioning. Quantitatively, although SD3.5M shows a slightly
+higher initial VA error after EIT injection due to its more
+"rigid" semantic representation, it achieves substantially lower
+errors and higher CLIPScore after our GRPO+Anchor op-
+timization. This can be attributed to SD3.5M’s advanced
+MMDiT architecture and its richer text conditioning space
+(incorporating T5-XXL), which together provide a more re-
+liable foundation for the anchor-based semantic constraint.
+Consequently, SD3.5M enables the model to better disentangle
+emotional expression from prompt semantics, motivating its
+use as the backbone for all subsequent experiments in this
+paper.
+For reinforcement learning-based configurations, we adopt
+Flow-GRPO with group size G = 24, clipping range ϵ =
+1×10−4, and group-wise advantage normalization. In the SDE
+schedule of Eq. (10), the scalar noise coefficient is α = 0.3.
+When the anchor constraint is applied, the anchor loss is
+defined as the squared Euclidean distance between the CLIP
+embeddings of the generated image and a neutral reference
+image with VA = 0, with balancing coefficient λ = 0.5.
+The “Scale” settings reported in the ablation table refer to
+the residual-amplification factor inherited from the Emoti-
+Crafter EIT objective, rather than classifier-free guidance. It
+controls the magnitude of the target displacement from the
+neutral prompt feature toward the emotional prompt feature.
+All models are trained on two NVIDIA H100 GPUs for
+approximately 12 hours. The reward function is the negative
+Euclidean distance in Eq. (8).
+
+
+8
+Baseline
+(a) meadow
+(b) mountain
+(c) river
+(d) beach
+(e) horses
+Ours
+(f) meadow
+(g) mountain
+(h) river
+(i) beach
+(j) horses
+Fig. 6: Qualitative comparison across five prompts. For each prompt, we compare the baseline model (top row) and our method
+(bottom row). The prompts are (from left to right): (1) “A meadow filled with wildflowers”, (2) “A mountain range under a
+starry night sky”, (3) “A river running through a canyon”, (4) “A rocky beach with crashing waves”, (5) “People riding horses
+on a trail”. The baseline often alters the scene structure, while our method preserves the original content more consistently.
+(a) Variants on SD3.5M
+(b) Variants on SDXL
+(c) Baseline comparison
+Fig. 7: Ablation study on diverse backbones. Each group shows V-Err and A-Err on the top, and CLIPScore on the bottom. (a)
+On SD3.5M, Anchor only and GRPO only each improve one aspect but not both; their combination (Ours) achieves the best
+balance. (b) All SDXL variants underperform our full method. (c) Our method substantially outperforms both EmotiCrafter
+and SDXL All.
+B. Qualitative Results
+Figure 6 presents a qualitative comparison across five
+diverse prompts, highlighting the differences in semantic
+preservation between the baseline and our method. For each
+prompt, the baseline model tends to alter the underlying
+scene structure when generating variations, often introducing
+unintended changes such as shifts in lighting, composition,
+or object layout. For example, in the meadow and mountain
+scenes, the baseline outputs exhibit noticeable deviations from
+the original content, including changes in atmosphere and
+scene composition. Similarly, in the river and beach cases,
+structural elements such as terrain and water flow become
+less consistent. In the horses example, the baseline introduces
+additional variations in background and subject arrangement.
+In contrast, the selected outputs from our method retain
+more of the prompt-level content while producing emotion-
+ally varied images. Scene layout, object identity, and spatial
+relationships are generally more stable than in the baseline
+examples, indicating an overall reduction rather than complete
+elimination of emotion–semantic drift. Figures 8 and 9 further
+illustrate this tendency across the valence-arousal space for a
+person-centric prompt and a landscape prompt, respectively.
+a) Baseline Analysis.: The baseline results (left grid)
+reveal a clear case of emotion-semantic drift. When the target
+emotion is near neutral ((0, 0)), the generated image largely
+follows the prompt, where a boy sits under a tree reading
+
+
+9
+(a) Baseline (EmotiCrafter)
+(b) Ours (Anchor-Constrained GRPO)
+Fig. 8: Emotion variation across the valence-arousal (VA) space for the prompt “A boy reading a comic book under a tree.”
+Left: baseline method (EmotiCrafter) suffers from severe emotion-semantic drift. Right: our anchor-constrained GRPO method
+preserves all key elements (boy, tree, comic book) while smoothly adjusting emotional attributes such as lighting, color
+saturation, and facial expression. The book cover remains legible, and the background stays consistent across VA values,
+demonstrating effective content preservation.
+TABLE I: Ablation study under different settings, including scale variations, GRPO-only, and anchor-only configurations on
+both SDXL and SD3.5M. Results are reported as mean ± std over 3,300 samples. Lower values are better for V-Err and A-Err,
+while higher values are better for CLIPScore and IQA. Bold indicates the best in each column.
+SDXL
+SD3.5M
+Setting
+V-Err ↓
+A-Err ↓
+CLIP ↑
+IQA ↑
+V-Err ↓
+A-Err ↓
+CLIP ↑
+IQA ↑
+Scale=1.0
+1.901 ± 1.299
+1.879 ± 1.104 30.556 ± 2.830
+0.897 ± 0.107
+1.896 ± 1.315
+1.888 ± 1.111
+30.265 ± 2.662 0.891 ± 0.081
+Scale=1.5
+1.505 ± 1.067
+1.835 ± 1.082
+27.942 ± 3.457
+0.919 ± 0.069
+1.609 ± 1.117
+1.846 ± 1.073
+26.822 ± 3.554 0.895 ± 0.074
+GRPO only
+1.505 ± 0.304 1.837 ± 0.083
+27.877 ± 2.687
+0.916 ± 0.052
+1.097 ± 0.784 1.375 ± 0.884 28.648 ± 3.647 0.816 ± 0.165
+Anchor only
+1.538 ± 0.914
+1.846 ± 0.083
+28.312 ± 3.187
+0.974 ± 0.102
+1.174 ± 0.807
+1.652 ± 1.007
+29.183 ± 3.212 0.834 ± 0.127
+TABLE II: Comparison of the proposed method on backbones. Results are reported as mean ± std over 3,300 samples.
+Method
+V-Err ↓
+A-Err ↓
+CLIPScore ↑
+IQA ↑
+EmotiCrafter [9]
+1.510 ± 1.074
+1.828 ± 1.085
+27.742 ± 2.655
+0.917 ± 0.069
+SDXL All (GRPO+Anchor)
+1.491 ± 1.062
+1.836 ± 1.093
+27.888 ± 3.385
+0.912 ± 0.079
+Ours (SD3.5M + GRPO + Anchor)
+1.132 ± 0.707
+1.492 ± 1.080
+30.179 ± 3.312
+0.861 ± 0.137
+a book. However, as the valence or arousal deviates from
+zero, the generated content rapidly diverges from the intended
+semantics. This degradation manifests in two primary forms.
+First, key semantic elements are gradually lost. For example,
+under positive valence conditions (e.g., (3, −3)), the tree
+disappears, while under high arousal (e.g., (0, 3)), the comic
+book is replaced by a smartphone; in several cases, the boy
+is even replaced by a girl or an animal. Second, the model
+exhibits drastic scene-level changes under extreme emotional
+conditions. In the most extreme case (3, 3), the generated
+image contains a cat as the main subject, completely deviating
+from the original prompt.
+b) Our Method Analysis.: Compared with the baseline,
+our anchor-constrained GRPO method (right grid) more often
+retains the prompt’s central subject and key objects across
+the VA conditions. The boy, tree, and comic book remain
+identifiable in most samples, although local details and the
+background may still vary. The grid therefore suggests that
+the proposed method reduces emotion–semantic drift overall,
+rather than guaranteeing exact semantic preservation at every
+VA coordinate. Moreover, emotional variation is expressed
+mainly through attributes such as facial expression, color tem-
+perature, illumination, and atmosphere. This behavior supports
+smoother affective transitions with fewer large scene changes,
+while still allowing residual content variation and generation
+
+
+10
+(a) Baseline (EmotiCrafter)
+(b) Ours (Anchor-Constrained GRPO)
+Fig. 9: Emotion variation across the valence–arousal (VA) space for a landscape prompt “A tranquil lake surrounded by golden
+autumn trees, misty morning.” Left: the baseline (EmotiCrafter) exhibits severe emotion–semantic drift. Right: our anchor-
+constrained GRPO method maintains consistent scene structure (lake, autumn trees, mist) across all VA conditions, while
+expressing emotion through controlled changes in color, illumination, and atmosphere.
+TABLE III: Quantitative comparison with representative state-of-the-art baselines, including general text-to-image diffusion
+models, large multimodal models, and emotion-aware generation methods.
+Method
+V-Err ↓
+A-Err ↓
+CLIPScore ↑
+IQA ↑
+Cross Attention [1]
+2.080 ± 1.438
+1.923 ± 1.153
+31.082 ± 2.389
+0.942 ± 0.066
+Time Embedding [5]
+2.031 ± 1.348
+1.941 ± 1.168
+31.936 ± 2.125
+0.626 ± 0.104
+Textual Inversion [4]
+1.923 ± 1.170
+1.958 ± 1.188
+26.989 ± 3.594
+0.323 ± 0.131
+GPT-4+SDXL [3], [6]
+1.517 ± 1.060
+1.860 ± 1.090
+31.242 ± 2.705
+0.911 ± 0.088
+GPT-4+SD3.5M [6]
+1.622 ± 1.179
+1.826 ± 1.089
+31.211 ± 2.565
+0.891 ± 0.090
+OmniGen-v2 [7]
+1.540 ± 1.136
+1.845 ± 1.096
+31.017 ± 2.943
+0.790 ± 0.177
+FLUX.1-dev [8]
+1.602 ± 1.158
+1.844 ± 1.088
+30.809 ± 2.564
+0.898 ± 0.085
+EmotiCrafter [9]
+1.510 ± 1.074
+1.828 ± 1.085
+27.742 ± 2.655
+0.917 ± 0.069
+SDXL All (GRPO+Anchor)
+1.491 ± 1.062
+1.836 ± 1.093
+27.888 ± 3.385
+0.912 ± 0.079
+Ours (SD3.5M + GRPO + Anchor)
+1.132 ± 0.707
+1.492 ± 1.080
+30.179 ± 3.312
+0.861 ± 0.137
+∆
++25.0%
++18.4%
++8.78%
+−6.11%
+artifacts.
+C. Quantitative Results
+Table III compares the proposed method with general and
+emotion-conditioned generators. Our full method obtains the
+lowest emotional errors, with V-Err 1.132 and A-Err 1.492.
+Its CLIPScore of 30.179 improves on EmotiCrafter (27.742),
+although it remains below several general prompt-conditioning
+baselines. Its IQA score of 0.861 likewise indicates that the
+gain in emotion control is accompanied by a perceptual-quality
+trade-off rather than a uniform improvement on every metric.
+Cross Attention, Time Embedding, and Textual Inversion
+produce V-Err values above 1.92, suggesting that feature-space
+injection alone provides only indirect supervision for final-
+image emotion. Prompt rewriting improves the errors but does
+not match the direct VA-reward optimization of the proposed
+method.
+The SDXL All configuration jointly applies GRPO and
+the anchor on the SDXL backbone. It remains close to
+EmotiCrafter in VA error and CLIPScore, whereas replac-
+ing the backbone with SD3.5M yields a substantially larger
+improvement. The results should therefore be interpreted as
+evidence for the complete SD3.5M-based configuration, rather
+than attributing the full gain to GRPO alone. The strongest
+evidence for the anchor mechanism comes from comparing
+our full method with the GRPO-only variant on SD3.5M,
+as shown in Table I. GRPO-only achieves slightly lower
+VA errors (1.097/1.375) but sacrifices CLIPScore (28.648).
+In contrast, adding the anchor loss boosts CLIPScore to
+30.179 (+1.531) with only a minor increase in VA error.
+This trade-off is precisely the intended behavior, where the
+anchor constraint prevents the model from exploiting semantic
+shortcuts (e.g., changing scene layout or objects) to game the
+VA reward, thereby preserving the prompt’s original content
+
+
+11
+while maintaining strong emotional expressiveness.
+Moreover, relative to the SDXL-based counterpart in Ta-
+ble II, the SD3.5M configuration reduces V-Err by 0.359
+(24.1%) and A-Err by 0.344 (18.7%), while increasing CLIP-
+Score by 2.291. IQA decreases from 0.912 to 0.861, so
+the comparison supports improved emotional alignment and
+prompt consistency but not an across-the-board quality gain.
+D. Ablation Study
+To systematically evaluate the contribution of each compo-
+nent, we conduct ablation experiments across two backbone
+architectures. Fig. 7 summarizes the complete ablation, with
+panels 7a–7c reporting Valence/Arousal Errors in the upper
+plots and CLIPScore in the lower plots. Lower VA errors and
+higher CLIPScore indicate better performance.
+On SD3.5M (Group 1), using only the anchor loss yields a
+CLIPScore of 29.183, compared with 27.742 for EmotiCrafter,
+but its VA errors remain 1.174/1.652. Using only GRPO pro-
+duces the lowest VA errors (1.097/1.375) among the SD3.5M
+variants but a lower CLIPScore of 28.648. Their combination
+achieves the highest CLIPScore among the SD3.5M variants
+(30.179) while retaining low VA errors (1.132/1.492). The
+complementary pattern is consistent with the intended roles
+of the two terms: GRPO emphasizes emotional alignment,
+whereas the anchor penalizes semantic deviation.
+All SDXL-based configurations, including Anchor only,
+GRPO only, and their combination (SDXL All), produce
+higher VA errors (V-Err ≥1.491, A-Err ≥1.836) and lower
+CLIPScore (≤28.312) than our SD3.5M-based method. This
+demonstrates that the foundation model (SD3.5M) is critical
+for achieving both high emotional accuracy and content fi-
+delity. Our method reduces V-Err by 0.378 (25.0%) and A-Err
+by 0.336 (18.4%) compared to EmotiCrafter, while improving
+CLIPScore by 2.437(from 27.742 to 30.179). Compared to
+SDXL All (the best SDXL variant), our method improves V-
+Err by 0.359 (24.1%), A-Err by 0.344 (18.7%), and CLIPScore
+by 2.291. These gains provide the substantial improvement
+raised by the proposed emotional reward.
+The anchor constraint restricts semantic variation, making
+VA optimization harder: on SD3.5M, adding the anchor in-
+creases V-Err by 0.035 and A-Err by 0.117 compared to
+GRPO-only, but raises CLIPScore by 1.531. This confirms
+reduced semantic shortcutting, though CLIPScore alone does
+not fully measure scene-structure preservation.
+GRPO-only achieves the lowest VA errors (1.097/1.375), but
+its CLIPScore (28.648) is 1.531 below that of the full method.
+The combination of GRPO and the anchor therefore provides
+the best observed balance among the SD3.5M variants. The
+comparison with SDXL All further shows that the stronger
+SD3.5M backbone contributes materially to the reported VA-
+error and CLIPScore gains; this conclusion does not extend to
+IQA, on which SDXL All remains higher.
+E. User Study
+To complement the automatic metrics and directly assess
+human perception of emotional expressiveness and text–image
+alignment, we conduct a user study comparing the proposed
+Fig. 10: Training dynamics of GRPO on SD3.5M. The red
+curve (VA reward, defined as negative VA error) increases
+steadily throughout training, indicating progressively improved
+emotional alignment. In contrast, the blue curve (CLIPScore)
+exhibits a limited and mild decrease, reflecting the inherent
+trade-off between emotional expressiveness and semantic fi-
+delity, where the anchor constraint effectively stabilizes se-
+mantic consistency during RL optimization.
+method with EmotiCrafter [9] and an ablation variant without
+the anchor constraint (Ours w/o Anchor).
+a) Stimuli: A set of 10 diverse text prompts is selected,
+covering natural scenes, human activities, and objects (e.g., “a
+boy reading a comic book under a tree”, “a sunny meadow”,
+“a cat sleeping on a sofa”). For each prompt, images are
+generated under five target VA conditions: neutral (0,0), high
+valence (3,0), high arousal (0,3), high valence with high
+arousal (3,3), and low valence with low arousal (-3,-3). Three
+methods are evaluated: EmotiCrafter, Ours w/o Anchor, and
+Ours (Full), resulting in a total of 10 × 5 × 3 = 150 images.
+b) Participants: A total of 30 volunteers (18 female, 12
+male; age 18–41) are recruited via a university mailing list. All
+participants have normal or corrected-to-normal vision and are
+fluent in English. Each participant evaluates a random subset
+of 50 images to reduce fatigue.
+c) Evaluation Protocol: For each image, participants are
+presented with the original text prompt and the corresponding
+target VA values (e.g., “Valence = 3, Arousal = 3: very happy
+and excited”). They then rate the generated images along two
+independent dimensions using a 5-point Likert scale. The first
+dimension measures emotional expressiveness, indicating how
+well the image reflects the target emotion (1 = not at all,
+5 = perfectly). The second dimension evaluates text–image
+alignment, reflecting how well the image matches the content
+described in the prompt (1 = not at all, 5 = completely).
+d) Results: As summarized in Table IV, the proposed
+method receives higher mean ratings than both baselines on the
+two evaluation dimensions. Text–image alignment increases
+from 2.72 for EmotiCrafter to 4.45 for the proposed method,
+while emotional expressiveness increases from 3.67 to 4.32.
+These human ratings complement the model-based VA errors
+and support the intended emotion–semantic balance.
+The human evaluation results show higher mean ratings for
+both text–image alignment and emotional expressiveness in
+the evaluated samples. These results are consistent with an
+
+
+12
+TABLE IV: User study results (mean ± std, N=30). Higher is
+better. Percentages below our variants indicate relative change
+compared to EmotiCrafter baseline, where ∆denotes the
+improvement compared with EmotiCrafter [9]. All differences
+between Ours (Full) and baselines are statistically significant
+(p < 0.05 by paired t-test).
+Method
+Emotional Expressiveness ↑
+Text–Image Alignment ↑
+EmotiCrafter [9]
+3.67 ± 0.72
+2.72 ± 0.89
+Ours w/o Anchor
+4.15 ± 0.58
+3.58 ± 0.71
+∆
++13.1%
++31.6%
+Ours (Full)
+4.32 ± 0.51
+4.45 ± 0.48
+∆
++17.7%
++63.6%
+improved emotion–semantic balance, but they do not imply
+that the anchor prevents semantic drift in every generated
+image.
+F. Discussion in Emotional Image Generation
+A direct quantitative comparison with EmoGen [24],
+EmoFeedback2 [31], and EmoSENSE [23] is not available
+under the current protocol. EmoGen and EmoSENSE adopt
+categorical emotion interfaces that cannot be uniquely mapped
+to our continuous 5 × 5 VA grid, while EmoFeedback2 em-
+ploys a different backbone and vision–language-model-based
+feedback procedure. However, A controlled cross-framework
+evaluation would require a common prompt set, matched
+backbone, and predefined category-to-VA mapping. We there-
+fore limit our empirical claims to the methods evaluated in
+Tables III–II and do not infer superiority over these systems
+from the Related Work comparison.
+Within our evaluation setting, Flow-GRPO reduces the
+continuous VA error, while the anchor improves CLIPScore
+over GRPO-only; the SD3.5M backbone further contributes
+to both improvements. These results suggest that emotional
+alignment and semantic preservation require complementary
+optimization objectives. In particular, the anchor helps mitigate
+the semantic degradation that may arise when optimizing
+primarily for emotional alignment.
+Fig. 10 further illustrates this trade-off: the VA reward
+steadily increases during training, whereas CLIPScore shows
+a mild decline. This divergence indicates that stronger op-
+timization of the emotional objective can gradually affect
+semantic consistency, supporting the need for explicit semantic
+constraints to achieve a better balance between emotional
+fidelity and semantic preservation.
+V. CONCLUSION
+In this paper, we presented an anchor-regularized Flow-
+GRPO framework for continuous emotion-conditioned image
+generation. The marginal-preserving ODE-to-SDE conversion
+provides stochastic transition densities for online policy opti-
+mization, the frozen VA regressor supplies a terminal emotion
+reward, and the zero-VA anchor penalizes semantic deviation
+in the CLIP visual space. On the evaluated benchmark, the
+full SD3.5M configuration obtains the lowest valence and
+arousal errors and improves CLIPScore over EmotiCrafter
+and the GRPO-only variant. The lower IQA score relative to
+several baselines shows that stronger emotional alignment does
+not automatically imply uniformly higher perceptual quality.
+Overall, the results support joint reward optimization and
+semantic regularization as a practical direction for continuous-
+affect image synthesis.
+REFERENCES
+[1] R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer,
+“High-resolution image synthesis with latent diffusion models,” in Proc.
+IEEE/CVF Conf. Comput. Vis. Pattern Recognit. (CVPR), 2022.
+[2] P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y.
+Levi, D. Lorenz, A. Sauer, F. Boesel, et al., “Scaling rectified flow
+transformers for high-resolution image synthesis,” in Proc. Int. Conf.
+Learn. Represent. (ICLR), 2024.
+[3] D. Podell, Z. English, K. Lacey, A. Blattmann, T. Dockhorn, J. Müller,
+J. Penna, and R. Rombach, “SDXL: Improving latent diffusion models
+for high-resolution image synthesis,” arXiv preprint arXiv:2307.01952,
+2023.
+[4] R. Gal, Y. Alaluf, Y. Atzmon, O. Patashnik, A. H. Bermano, G. Chechik,
+and D. Cohen-Or, “An image is worth one word: Personalizing text-to-
+image generation using textual inversion,” in Proc. Int. Conf. Learn.
+Represent. (ICLR), 2023.
+[5] J. Ho, A. Jain, and P. Abbeel, “Denoising diffusion probabilistic models,”
+in Proc. Adv. Neural Inf. Process. Syst. (NeurIPS), 2020.
+[6] OpenAI, “GPT-4 technical report,” arXiv preprint arXiv:2303.08774,
+2023.
+[7] Z. Wu, et al., “OmniGen: Unified image generation and editing,” arXiv
+preprint arXiv:2506.18871, 2025.
+[8] Black Forest Labs, “FLUX.1: High-quality text-to-image generation
+with flow matching,” arXiv preprint arXiv:2506.15742, 2025.[refer-
+ence:0][reference:1]
+[9] S. Dang, Y. He, L. Ling, Z. Qian, N. Zhao, and N. Cao, “EmotiCrafter:
+Text-to-emotional-image generation based on valence-arousal model,” in
+Proc. IEEE/CVF Int. Conf. Comput. Vis. (ICCV), 2025.
+[10] J. A. Russell, “A circumplex model of affect,” J. Pers. Soc. Psychol.,
+vol. 39, no. 6, pp. 1161–1178, 1980.
+[11] S. Zhao, X. Yao, J. Yang, G. Jia, G. Ding, T.-S. Chua, B. W. Schuller,
+and K. Keutzer, “Affective image content analysis: Two decades review
+and new perspectives,” IEEE Trans. Pattern Anal. Mach. Intell., vol. 44,
+no. 10, pp. 6729–6751, 2022.
+[12] J. Yang, J. Li, X. Wang, Y. Ding, and X. Gao, “Stimuli-aware visual
+emotion analysis,” IEEE Trans. Image Process., vol. 30, pp. 7432–7445,
+2021, doi: 10.1109/TIP.2021.3106813.
+[13] J. Yang, X. Gao, L. Li, X. Wang, and J. Ding, “SOLVER: Scene-object
+interrelated visual emotion reasoning network,” IEEE Trans. Image
+Process., vol. 30, pp. 8686–8701, 2021, doi: 10.1109/TIP.2021.3118983.
+[14] J. Yang, J. Li, L. Li, X. Wang, Y. Ding, and X. Gao, “Seeking
+subjectivity in visual emotion distribution learning,” IEEE Trans. Image
+Process., vol. 31, pp. 5189–5202, 2022, doi: 10.1109/TIP.2022.3193749.
+[15] C. Chen, X. Sun, and Z. Liu, “UniEmoX: Cross-modal semantic-
+guided large-scale pretraining for universal scene emotion perception,”
+IEEE Trans. Image Process., vol. 34, pp. 4691–4705, 2025, doi:
+10.1109/TIP.2025.3587577.
+[16] Y. Fan, O. Watkins, Y. Du, H. Liu, M. Ryu, C. Boutilier, P. Abbeel,
+M. Ghavamzadeh, and K. Lee, “DPOK: Reinforcement learning for
+fine-tuning text-to-image diffusion models,” in Proc. Adv. Neural Inf.
+Process. Syst. (NeurIPS), 2023.
+[17] K. Black, M. Janner, Y. Du, I. Kostrikov, and S. Levine, “Training
+diffusion models with reinforcement learning,” in Proc. Int. Conf. Learn.
+Represent. (ICLR), 2024.
+[18] Y. Lipman, R. T. Q. Chen, H. Ben-Hamu, M. Nickel, and M. Le, “Flow
+matching for generative modeling,” in Proc. Int. Conf. Learn. Represent.
+(ICLR), 2023.
+[19] X. Liu, C. Gong, and Q. Liu, “Flow straight and fast: Learning to
+generate and transfer data with rectified flow,” in Proc. Int. Conf. Learn.
+Represent. (ICLR), 2023.
+[20] J. Liu, G. Liu, J. Liang, Y. Li, J. Liu, X. Wang, P. Wan, D. Zhang, and
+W. Ouyang, “Flow-GRPO: Training flow matching models via online
+RL,” in Proc. Adv. Neural Inf. Process. Syst. (NeurIPS), 2025.[refer-
+ence:2][reference:3]
+[21] Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y.
+K. Li, Y. Wu, et al., “DeepSeekMath: Pushing the limits of mathematical
+reasoning in open language models,” arXiv preprint arXiv:2402.03300,
+2024.
+
+
+[22] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov, “Prox-
+imal policy optimization algorithms,” arXiv preprint arXiv:1707.06347,
+2017.
+[23] J. Guo, H. Chen, Q. Wang, Y. Chen, G. Cheng, F. Wu, and E. G. Lim,
+“EmoSENSE: Modeling sentiment-semantic knowledge with hierarchi-
+cal reinforcement learning for emotional image generation,” IEEE Trans.
+Affect. Comput., vol. 17, no. 2, pp. 1806–1822, Apr.-Jun. 2026, doi:
+10.1109/TAFFC.2026.3654065.[reference:4][reference:5][reference:6]
+[24] J. Yang, J. Feng, and H. Huang, “EmoGen: Emotional image content
+generation with text-to-image diffusion models,” in Proc. IEEE/CVF
+Conf. Comput. Vis. Pattern Recognit. (CVPR), 2024.
+[25] Y. Guo, D. Hong, Z. Mao, and W. Wang, “UniEmo: Unifying emotional
+understanding and generation with learnable expert queries,” arXiv
+preprint arXiv:2507.23372, 2025.
+[26] Y. Guo, D. Hong, and Z. Mao, “EmoVerse: A MLLMs-driven emotion
+representation dataset for interpretable visual emotion analysis,” arXiv
+preprint arXiv:2511.12554, 2025.
+[27] V. Ahire, K. Shah, M. Khan, N. Pakhale, L. Sookha, M. Ganaie, and
+A. Dhall, “MAVEN: Multi-modal attention for valence-arousal emotion
+network,” in Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recognit.
+Workshops (CVPRW), 2025.
+[28] Y. Zhang, L. Wang, S. Gu, and C. Wu, “Score as action: Fine-tuning
+diffusion generative models by continuous-time reinforcement learning,”
+arXiv preprint arXiv:2502.01819, 2025.
+[29] Z. Xue, J. Wu, Y. Gao, F. Kong, L. Zhu, M. Chen, Z. Liu, W. Liu,
+Q. Guo, W. Huang, and P. Luo, “DanceGRPO: Unleashing GRPO
+on visual generation,” arXiv preprint arXiv:2505.07818, 2025.[refer-
+ence:7][reference:8]
+[30] Y. Luo, X. Hu, K. Fan, H. Sun, Z. Chen, B. Xia, T. Zhang, Y.
+Chang, and X. Wang, “Reinforcement learning meets masked gener-
+ative models: Mask-GRPO for text-to-image generation,” arXiv preprint
+arXiv:2510.13418, 2025.[reference:9][reference:10]
+[31] J. Jia, K. Shu, G. Yang, L. Xing, X. Chen, and A. Liu, “EmoFeedback2:
+Reinforcement of continuous emotional image generation via LVLM-
+based reward and textual feedback,” arXiv preprint arXiv:2511.19982,
+2025.
+[32] A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal,
+G. Sastry, A. Askell, P. Mishkin, J. Clark, G. Krueger, and I. Sutskever,
+“Learning transferable visual models from natural language supervi-
+sion,” in Proc. Int. Conf. Mach. Learn. (ICML), 2021, pp. 8748–8763.
+[33] J. Hessel, A. Holtzman, M. Forbes, R. L. Bras, and Y. Choi, “CLIPScore:
+A reference-free evaluation metric for image captioning,” in Proc. Conf.
+Empir. Methods Nat. Lang. Process. (EMNLP), 2021, pp. 7514–7528.
+[34] J. Wang, K. C. K. Chan, and C. C. Loy, “Exploring CLIP for assessing
+the look and feel of images,” in Proc. AAAI Conf. Artif. Intell. (AAAI),
+2023, pp. 2555–2563.
+[35] Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B.
+Poole, “Score-based generative modeling through stochastic differential
+equations,” in Proc. Int. Conf. Learn. Represent. (ICLR), 2021.
+[36] Y. Kirstain, A. Polyak, U. Singer, S. Matiana, J. Penna, and O. Levy,
+“Pick-a-Pic: An open dataset of user preferences for text-to-image
+generation,” in Proc. Adv. Neural Inf. Process. Syst. (NeurIPS), 2023.
+[37] J. Xu, X. Liu, Y. Wu, Y. Tong, Q. Li, M. Ding, J. Tang, and Y. Dong,
+“ImageReward: Learning and evaluating human preferences for text-to-
+image generation,” in Proc. Adv. Neural Inf. Process. Syst. (NeurIPS),
+2023.
+[38] Z. Zhang, L. Peng, T. Pang, J. Han, H. Zhao, and B. W. Schuller,
+“Refashioning emotion recognition modeling: The advent of generalized
+large models,” IEEE Trans. Comput. Soc. Syst., vol. 11, no. 5, pp. 6690–
+6704, 2024, doi: 10.1109/TCSS.2024.3396345.
+[39] A. Y. Lee and B. Sternthal, “The effects of positive mood on mem-
+ory,” J. Consum. Res., vol. 26, no. 2, pp. 115–127, Sep. 1999, doi:
+10.1086/209554.
+[40] J. Li, C. Luo, Q. Zhang, et al., “Can emotional design really evoke
+emotion in multimedia learning?,” Int. J. Educ. Technol. High. Educ.,
+vol. 17, no. 24, 2020, doi: 10.1186/s41239-020-00198-y.
+[41] J. Yang, W. Luo, and H. Huang, “EmoCtrl: Controllable emotional image
+content generation,” arXiv preprint arXiv:2512.22437, 2025.
+AUTHOR BIOGRAPHY
+Jisheng Dang
+received the Ph.D.
+degree from Sun Yat-sen University,
+China, advised by Prof. Jianhuang Lai
+and Prof. Huicheng Zheng. He worked
+as a research fellow at the NExT++
+laboratory of the National University
+of Singapore, advised by Prof. Tat-
+Seng Chua. He is now a tenured
+associate professor at the School of
+Information Science and Engineering, Lanzhou University.
+His research interests include multimodal learning, video
+understanding, and embodied intelligence. He has published
+several papers as the first author or corresponding au-
+thor in major journals and conferences including IEEE
+TPAMI/TIP/TNNLS/TITS/IJCAI/AAAI/ICLR/NeurIPS/PR.
+Bin Hu (Fellow, IEEE)
+received
+the Ph.D. degree in computer sci-
+ence from the Institute of Comput-
+ing Technology, Chinese Academy of
+Sciences, China, in 1998. Since 2008,
+he has been a Professor and Dean
+of the School of Information Science
+and Engineering, Lanzhou University.
+He has also held a guest professor-
+ship at ETH Zurich. He serves as
+Editor-in-Chief of IEEE Transactions
+on Computational Social Systems and is a Fellow of IET and
+AAIA. His research interests include pervasive computing,
+computational psychophysiology, data modeling, and artificial
+intelligence.
+Tat-Seng Chua received the Ph.D.
+degree from the University of Leeds,
+U.K. He is the KITHCT chair profes-
+sor with the School of Computing, Na-
+tional University of Singapore, where
+he was the acting and founding dean
+of the School from 1998 to 2000. He
+is the co-director of NExT, a joint
+center between NUS and Tsinghua
+University, to develop technologies for
+live social media search. He is the
+2015 winner of the prestigious ACM SIGMM Award. He is
+the chair of the Steering Committee of the ACM International
+Conference on Multimedia Retrieval (ICMR) and the Multime-
+dia Modeling (MMM) conference series. He is also the general
+co-chair of ACM Multimedia 2005, ACM CIVR (now ACM
+ICMR) 2005, ACM SIGIR 2008, and ACM Web Science 2015.
+He serves on the editorial boards of four international journals.
+He is the co-founder of two technology startups in Singapore
+and a Fellow of the Singapore Academy of Sciences, with
+103,316 citations on Google Scholar.
