@@ -1,0 +1,964 @@
+Branched Optimal Transport Amortization
+Semyon Semenov1
+Viktor Kovalchuk1
+Meir Roketlishvili1
+Albert Baichorov1
+Fakhri Karray1
+Martin Takáˇc1
+Arip Asadulaev1
+Abstract
+Methods of Branched Optimal Transport (BOT) mimic the economy and efficiency
+of natural tree-like structures, such as those found in rivers and biological systems.
+These methods are widely applicable for designing efficient networks in society,
+from river basins and blood vessels to mail and gas distribution systems. However,
+they remain understudied in the context of designing deep generative models,
+particularly at a large scale. Standard continuous-time generative models, such as
+the flow matching approach, fail to capture the inherent hierarchical and branching
+patterns present in real-world data. Current models provide no mechanism for
+flows to merge or share pathways to minimize total transport cost. Inspired by
+the "economy of scale" principle in BOT, we introduce a novel, scalable branched
+flow-matching algorithm designed to solve the branched optimal transport problem
+in high dimensions. Our method adapts the Benamou-Brenier continuous-time
+optimal transport formulation to learn branched generative flows. These flows
+allow probability mass to aggregate along common pathways before branching
+out to diverse targets. Parametrized by neural networks, our method effectively
+learns complex branched generative processes. We demonstrate its effectiveness
+on challenging high-dimensional tasks in biology and image generation.
+1
+Introduction
+Figure 1: BOTA Gaussian results for α = 0.5.
+Deep generative modeling has advanced rapidly,
+with diffusion models and simulation-free
+flow–based methods (e.g., flow matching and
+rectified flows) now supporting state-of-the-art
+synthesis, fast sampling, and scalable train-
+ing.
+These approaches learn vector fields
+(or stochastic dynamics) that transport a sim-
+ple base distribution to complex data distribu-
+tions, and many of them explicitly encourage
+straight transport trajectories between coupled
+samples—mirroring the displacement interpo-
+lation paradigm in classical optimal transport
+(OT) [10–12, 18].
+However, straight-line, independent motions of
+mass are often a poor fit for data with hierarchi-
+cal or multi-modal organization. ImageNet, for
+example, is built on the WordNet taxonomy: “golden retriever” and “labrador” are siblings under
+“dog,” which is nested under broader synsets such as “canine” and “mammal.” It is natural to expect
+that the generative process should share substantial computation along the path common to “dogs”
+1MBZUAI. Correspondence to: Semyon Semenov <semen.semenov@mbzuai.ac.ae>.
+Preprint.
+arXiv:2609.15072v1  [cs.LG]  14 Sep 2026
+
+
+before specializing to particular breeds. Such structures arise even more naturally and meaningfully
+in biological processes, which can also be observed as empirical distributions. Modeling such shared
+structure is difficult.
+Branched optimal transport generalizes classical OT by introducing economies of scale: moving
+two units of mass together along the same route is cheaper than moving them separately. Formally,
+BOT minimizes energies in which the cost along an edge is subadditive in the mass (often proportional
+to mα with 0 < α < 1), which causes optimal solutions to coalesce into tree- or network-like
+structures rather than independent straight paths. This mechanism closely matches how efficient
+networks form in nature and society, from river basins to mail and gas distribution systems [2, 5, 20].
+The BOT perspective is powerful for generative modeling because it encodes shared prefixes of
+computation: samples that belong to nearby leaves in a taxonomy naturally travel together for most
+of the journey, branching only when necessary. In contrast with Euclidean quadratic-cost OT—where
+displacement interpolation moves particles independently along straight segments defined by a
+Brenier map—BOT explicitly rewards branching, aligning the transport with hierarchical data.
+Mathematically, BOT has a mature foundation: it has been studied via discrete “irrigation” models,
+continuum formulations, and relaxations [3]. Beyond the modeling appeal, BOT solutions satisfy rich
+structural properties (e.g., optimal junctions have bounded degree), reflecting the network nature of
+the minimizers [3, 14, 16]. Despite its appeal, BOT is algorithmically challenging. Even in planar
+settings with finitely many sources/sinks, optimizing BOT networks is NP-hard, and require solving
+large PDE systems, which becomes prohibitive at modern data scales. This has kept BOT largely
+confined to small or low-dimensional instances.
+At the same time, contemporary generative models operate at unprecedented scale. Flow matching and
+rectified-flow variants are trained on web-scale datasets and large backbones, and they benefit from
+transport formulations that are differentiable end-to-end and hardware-accelerated. A scalable BOT
+solver would let us replace independent straight-path assumptions by economy-of-scale transport
+that respects data hierarchies practical training pipelines.
+Neural parameterizations are a natural fit. In standard OT, neural solvers already amortize
+transport maps or potentials and integrate cleanly with deep learning. Extending this spirit to BOT
+promises (i) amortized inference of branched routes that can be reused across batches and tasks,
+Contribution: We introduce Branched Optimal Transport Amortization (BOTA), a continuous
+and scalable solver for branched optimal transport. Our core contribution is a novel optimization
+problem that we adapt into a generative algorithm, which is efficiently parameterized by neural
+networks using a flow-matching objective. We demonstrate the effectiveness of our method on
+challenging biological and image generation tasks, showing that it successfully learns meaningful
+hierarchical generative processes that reflect the underlying structure of the data.
+2
+Background
+Notation. Let Ω⊂Rd be a compact and convex domain. We denote by P2(Ω) the space of
+probability measures on Ωwith a finite second moment. When a measure µ admits a density relative
+to the Lebesgue measure, we denote its density by ρ (i.e., dµ(x) = dρ(x)dx). Vectors are column
+vectors, ∥· ∥is the standard Euclidean norm, and ∇· is the divergence operator and ∥· ∥F is the
+Frobenius norm.
+Continuous Normalizing Flow
+A Continuous Normalizing Flow (CNF) [6] is a generative model
+that defines a probability density path through a Neural Ordinary Differential Equation (ODE):
+d
+dtxt = vθ(xt, t),
+xt=0 ∼µ0.
+(1)
+Let Φt be the flow map associated with this ODE, which transports a particle from its initial condition
+at time 0 to its location at time t. The pushforward density ρt = (Φt)#ρ0 evolving under this
+dynamics necessarily satisfies the continuity equation (2) with the parameterized velocity field vθ.
+Where continuity equation encodes mass conservation:
+∂tρt + ∇· (ρtvt) = 0
+on Ω× (0, 1),
+ρt=0 = ρ0,
+ρt=1 = ρ1.
+A key result is the change of variables formula, which describes how the log density evolves:
+d
+dt log ρt(xt) = −∇· vθ(xt, t).
+(2)
+2
+
+
+This allows for a likelihood calculation by integrating this quantity over time. Training can be done
+by directly maximizing likelihood (integrating (2)).
+Flow Matching.
+The core idea of Flow Matching (FM)[11, 18] is to train a CNF by directly
+regressing its velocity field vθ toward a target vector field ut that generates a desired probability path.
+The Flow Matching objective is: LFM(θ) = Et∼U[0,1], x∼ρt
+
+∥vθ(x, t) −ut(x)∥2
+.
+A critical challenge is that sampling x ∼ρt from the marginal path at arbitrary times is typically
+intractable. Conditional Flow Matching (CFM) [11] provides a solution by constructing the marginal
+path as a mixture of simpler and tractable conditional paths. Let z be a conditioning variable with
+distribution q(z). We define the marginal path as follows: ρt(x) =
+R
+ρt(x | z)q(z) dz, where each
+conditional path ρt(x|z) is generated by a corresponding conditional vector field ut(x | z). The
+marginal field ut(x) that generates ρt is then given by:
+ut(x) = Ez∼q
+ρt(x | z)
+ρt(x)
+ut(x | z)
+
+,
+(3)
+where q(z | x) is the posterior. The key theorem [11] is to minimize the Conditional Flow Matching:
+LCFM(θ) = Et, z∼q, x∼ρt(·|z)
+
+∥vθ(x, t) −ut(x | z)∥2
+(4)
+with t ∼U[0, 1] yields the same gradient for θ as minimizing the intractable LFM(θ) in (4). This
+makes CFM a practical objective, as it only requires sampling from conditional paths ρt(x|z) and
+knowing their closed-form drifts ut(x|z).
+The flexibility of CFM lies in the choice of conditional paths. The coupling q(z) is the independent
+joint distribution q(x0)q(x1), so z = (x0, x1). A common conditional path is a Gaussian bridge:
+ρt(x | z) = N(x | µt, σ2I), where µt = (1 −t)x0 + tx1 is a linear interpolation. The simple
+constant drift that generates this path is ut(x | z) = x1 −x0.
+Monge–Kantorovich Optimal Transport (OT) seeks a way to morph one probability distribution
+with minimal effort, as quantified by a cost function c(x, y). The Monge formulation seeks a
+deterministic map T : Ω→Ωthat pushes µ0 to µ1 and minimizes the total cost
+R
+c(x, T(x))dµ0(x)
+[19]. This problem can be ill-posed, its relaxation, the Kantorovich problem, searches over couplings
+(joint distributions) γ ∈Γ(µ0, µ1) with marginals µ0 and µ1:
+inf
+γ∈Γ(µ0,µ1)
+Z
+Ω×Ω
+c(x, y) dγ(x, y).
+(5)
+For cost c(x, y) = ∥x −y∥2, the square root of the solution is the Wasserstein-2 distance. The flow
+matching approach discussed in the section above can be connected with the flow matching to create
+the optimal transport CFM (OT-CFM) [18] method uses an optimal coupling to define conditionals.
+Here, z = (x0, x1) is sampled from an OT plan γ between µ0 and µ1 5. In practice, the OT plan γ is
+efficiently approximated using mini-batch OT by Sinkhorn algorithm [7].
+Benamou–Brenier OT frames transportation as a continuous-time problem. For flow Φt, we have
+a pushforward density ρt = (Φt)#ρ0 evolving under dynamics that satisfies continuity equation 2
+with the velocity field v. The Benamou–Brenier theorem states that the squared Wasserstein distance
+equals the minimal kinetic energy of such a flow:
+inf
+ρt, vt
+Z 1
+0
+Z
+Ω
+∥vt(x)∥2 ρt(x) dx dt
+subject to (2)
+
+.
+(6)
+The minimizers of this problem are constant-speed geodesics in the Wasserstein space. When an
+optimal transport map T exists for the static problem (e.g., when µ0 is absolutely continuous),
+the geodesic is given by interpolation: ρt = ((1 −t)Id + tT)#ρ0. The corresponding velocity
+field is constant along the trajectories, vt(xt) = T(x0) −x0, and the particle dynamics is linear:
+xt = (1 −t)x0 + tT(x0).
+3
+Branched Benamou–Brenier OT
+Branched Benamou–Brenier formulation studied by [4], which is also equivalent to the formulation
+of [20]. The idea is to consider the classical Benamou–Brenier optimal transport problem 6, but with
+3
+
+
+a concave cost function. The boundary conditions remain the same as in standard optimal transport:
+ρ(0, ·) = µ0 and ρ(1, ·) = µ1. With α ∈(0, 1) as the branching parameter, we define the cost that
+measures the work of moving a mass m over a distance ℓ, simply written as mαℓ. If α = 1, the cost
+becomes linear in the mass (m1ℓ), recovering the classical OT setting 2. By identifying the length
+ℓwith the velocity v and the mass m with the time-dependent probability density ρt, the dynamic
+branched optimal transport can be formulated as:
+Bα(µ0, µ1) =
+inf
+ρ(t,·), v(t,·)
+Z 1
+0
+X
+i∈It
+|vt,i| (ρt,i)α dt.
+(7)
+What the reader can notice is that for the cost (7) need to be finite, the measure ρ(t, ·) must be purely
+atomic for (almost every) time t! This means that the mass is concentrated at a points {xt,i}i∈It:
+ρ(t, ·) =
+X
+i∈It
+ρt,i δxt,i,
+where ρt,i = ρ(t, {xt,i}).
+The associated momentum is then q = ρv = P
+i∈It vt,i ρt,i δxt,i, where vt,i = v(t, xt,i) is the
+velocity of the atom xt,i. This formulation is computationally intensive, which motivates our
+development of a more efficient relaxation.
+4
+Branched Benamou Brenier Neural OT
+To build a Benamou Brenier style Branced OT flows we need to develop a flow algorithms that meet
+a few constraints:
+• The boundary constraint: we need a flow whose starting and end points are equal to the
+given distributions: ρ(0, ·) = µ0 ρ(1, ·) = µ1.
+• Mass-dependent cost: We need to have a time-dependent density function that we are using
+as part of the cost function.
+• Atomic mass constraint: Our density function must be atomic almost every time t, so the
+mass needs to be concentrated in a countable set of points.
+To meet these constraints, it is convenient to draw an analogy between branched optimal transport
+and continuous normalizing flows. Having a continued vector field, we can derive a time continuous
+probability density function that plays a central role in the formulation of branched optimal transport.
+Also, CNFs by design meet the the boundary constraint 2. So, first, let us parameterize the velocity
+field by a continuous normalizing flow.
+˙xt = vθ
+ xt, t
+
+,
+t ∈[t0, t1],
+whose density pθ(x, t) evolves under the instantaneous change–of–variables, CNF formula:
+log pθ(xt1, t1) = log pθ(xt0, t0) −
+Z t1
+t0
+tr
+ ∂xvθ(xt, t)
+
+dt.
+(8)
+This enforces the continuity equation by construction, making CNFs natural for dynamic OT objec-
+tives. To capture branched transport, we concavify the kinetic action by the density, mirroring the
+BOT cost mαℓwith α ∈(0, 1). Our learning objective over terminal samples is
+Lα(θ) =
+Z t1
+t0
+Z
+Ω
+vθ(x, t)
+pθ(x, t)α dx dt
+|
+{z
+}
+branched cost
+−λ Ext1∼µ1
+
+log pθ(xt1, t1)
+
+|
+{z
+}
+match data at t1
+.
+(9)
+The second term is the CNF maximum-likelihood fit to µ1 at t1. The first term is a BOT-style dynamic
+action: it penalizes kinetic effort ∥vθ∥but discounts it by pα
+θ with α < 1. Our method is a concave
+reweighting that implements the BOT principle move together, then split, while keeping the CNF
+machinery and training recipe.
+A challenge in implementing the BOT objective (9) within a CNF framework is the atomic mass
+constraint. The theoretical BOT formulation requires the evolving measure ρ(t, ·) to be a sum of
+4
+
+
+discrete point masses for the cost to be finite. However, CNFs naturally define a continuous density
+field pθ(x, t), making these two concepts fundamentally incompatible for optimization.
+To bridge this gap, we introduce a differentiable relaxation of the atomic constraint, which we term
+the soft-atomic cost. In a computational setting, we cannot handle continuous measures or an infinite
+number of atoms. We make two approximations. Instead of forcing the continuous density to collapse
+into discrete points, this objective encourages the density to cluster around a predefined set of K
+proxy atoms. This is achieved by softly assigning the mass of particles from the flow to these centers
+based on proximity.
+At any given time t, for a batch of particles xt sampled from the flow density pθ(·, t), we define
+the soft mass mk(t) and the average velocity vk(t) associated with center ck and where wk(x) is a
+soft-assignment weight, typically a Gaussian kernel that measures the influence of center ck on a
+particle at position x:
+wk(x) =
+exp(−∥x−ck∥2
+2σ2
+)
+PK
+j=1 exp(−∥x−cj∥2
+2σ2
+)
+,
+mk(t) = Ext∼pθ(·,t) [wk(xt)] ,
+(10)
+vk(t) = Ext∼pθ(·,t) [vθ(xt, t)wk(xt)]
+mk(t)
+.
+(11)
+The instantaneous soft-atomic cost is then formulated as a differentiable proxy to the theoretical BOT
+cost. By integrating soft cost over time, we reformulate the learning objective as:
+Lα(θ) =
+Z t1
+t0
+K
+X
+k=1
+vk(t)mk(t)αdt
+|
+{z
+}
+soft branched cost
+−λ Ext1∼µ1
+
+log pθ(xt1, t1)
+
+|
+{z
+}
+match data att1
+.
+(12)
+Lemma 1 (Differentiable Approximation of the Instantaneous Branched Transport Cost) Let ˆρt =
+1
+B
+PB
+j=1 δxj(t) be an empirical probability measure representing a distribution at time t with particles
+at positions {xj}B
+j=1 moving with velocities {vj}B
+j=1. Let {ck}K
+k=1 be a set of fixed centers in Rd.
+The function soft atomic cost, defined as:
+Csoft({xj}, {vj}) =
+K
+X
+k=1
+|vk|mα
+k,
+where for each center ck:
+mk = 1
+B
+B
+X
+j=1
+wjk
+(Soft Mass)
+|vk| =
+PB
+j=1 wjk|vj|
+PB
+j=1 wjk
+(Soft Average Speed)
+with weights wjk = softmax(−||xj −ck||2/2σ2)k, is a differentiable approximation of the true
+instantaneous branched transport cost functional for the discretized measure. In the limit as the
+kernel width σ →0, this cost converges to the cost of a hard assignment of particles to their nearest
+centers. Please see proofs in Appendix.
+5
+Branched Flow Matching via BOT Amortization
+The primary challenge of branched optimal transport, as formulated in Sec.3, is the difficulty of
+directly optimizing the branched Benamou-Brenier objective (9) over the space of continuous-time
+neural velocity fields. The objective is non-trivial, and the "atomic" constraint is inherently discrete.
+To bridge this, we introduce a practical two-stage method, Branched Optimal Transport Amortization
+(BOTA) also we call it Branched Flow Matching, which first solves a discrete-time version of the
+our proposed BOT soft-atomic relaxation for a fixed batch and then amortizes this solution into a
+continuous-time neural network using a flow matching objective. This approach is analogous to
+standard OT-CFM (9), but we replace the simple, straight-line (Euclidean) optimal transport plan Sec.
+2 with a more complex, branched transport plan.
+5
+
+
+5.1
+Discrete Branched Transport Solver
+First, we compute an exemplar branched flow for a single, fixed batch of N source samples {xi
+0}N
+i=1 ∼
+µ0 and N target samples {xi
+1}N
+i=1 ∼µ1. We discretize the time interval [0, 1] into T steps of size
+∆t = 1/T. Our goal is to find an optimal discrete velocity field V ∈RT ×N×D that transports the
+batch {xi
+0} to {xi
+1} while minimizing a discrete analogue of the branched transport cost. The particle
+trajectories {Xk}T
+k=0, where Xk = {xi
+k}N
+i=1, are computed via standard Euler integration:
+xi
+k+1 = xi
+k + Vk,i · ∆t,
+with xi
+0 given.
+Here, Vk,i ∈RD is the velocity of particle i at discrete time step k.
+We optimize V by minimizing a loss function that combines a terminal matching cost with the
+time-integrated soft-atomic energy:
+Ldiscrete(V ) =
+T −1
+X
+k=0
+Csoft(Xk, Vk)∆t + λ 1
+N
+N
+X
+i=1
+∥xi
+T −xi
+1∥2.
+The first term is a standard mean-squared error that forces the final positions xi
+T to match the target
+positions xi
+1. The second term is the discrete integral of the instantaneous branched transport cost,
+Csoft, which is defined precisely in Lemma 1 (Eq. 14) as:
+Csoft(Xk, Vk) =
+K
+X
+j=1
+|vj|k(mj)α
+k,
+where (mj)k and (|vj|)k are the soft mass and soft average speed, respectively, associated with the
+j-th proxy atom cj at time step k.
+It is important to note that our terminal matching term, λ 1
+N
+PN
+i=1 ∥xi
+T −xi
+1∥2, is a simple Mean
+Squared Error (MSE). This is a deliberate choice for computational efficiency. Since this discrete
+solver operates on a fixed, finite batch, we are computing a deterministic, point-to-point map for
+these specific N samples. We are not training a generative model to match the full distribution µ1 at
+this stage. Therefore, a direct MSE is the most appropriate and efficient loss to enforce the terminal
+constraint, in contrast to a heavier probabilistic loss (like a CNF log-likelihood) which would be
+unnecessary for this exemplar-finding step. By solving this optimization problem (e.g., via gradient
+descent on V ), we obtain an optimal discrete velocity field V ∗∈RT ×N×D and its corresponding
+optimal trajectory X∗∈R(T +1)×N×D. This pair (X∗, V ∗) represents a single, discrete branched
+transport path for the given batch.
+5.2
+Amortization via Flow Matching
+The discrete solution (X∗, V ∗) is only valid for the specific batch it was trained on. To create a
+generative model, we must learn a continuous-time neural velocity field vθ(x, t) that can generalize
+this branched behavior. We achieve this by "distilling" the discrete solution into vθ using a flow
+matching objective. This step reframes the problem as a standard supervised regression task. We
+treat the discrete solution (X∗, V ∗) as the ground truth. We construct a continuous-time target vector
+field, ut(x), by linearly interpolating the discrete solution. For continuous time t ∈[0, 1], we find its
+corresponding discrete time index k = ⌊t/∆t⌋(clamped to [0, T −1]) and the interpolation weight
+β = (t −k∆t)/∆t ∈[0, 1]. For each particle i, the target position xi
+t and target velocity ut(xi
+t) at
+time t are defined by linear interpolation:
+xi
+t = (1 −β)x∗,i
+k + βx∗,i
+k+1,
+ut(xi
+t) = (1 −β)V ∗
+k,i + βV ∗
+k′,i,
+where k′ = min(k + 1, T −1) is the next velocity index.
+The Branched Flow Matching (BFM) objective is then to regress the neural network vθ onto this
+continuous, interpolated target field ut:
+LBFM(θ) = Ei∼U[1,N],t∼U[0,1]
+hvθ(xi
+t, t) −ut(xi
+t)
+2i
+.
+By minimizing this objective, the network vθ learns to approximate the complex, branched velocity
+field derived from the discrete BOT solver. Once trained, vθ can be used as a generative model to
+transport new samples from µ0 to µ1 by solving the continuous-time ODE ˙x = vθ(x, t), effectively
+amortizing the expensive discrete optimization.
+6
+
+
+(a) 3 (Flow Matching)
+(b) 6 (Flow Matching)
+(c) 18 (Flow Matching)
+(d) 3 (BOTA)
+(e) 6 (BOTA)
+(f) 18 (BOTA)
+Figure 2: BOTA Gaussian mixture results for increasing number of Gaussians. Top row: Flow
+Matching. Bottom row: BOTA (α = 0.5).
+6
+Experiments
+6.1
+Gaussian Mixtures
+We compare how two flow-based methods transport mass from a single source distribution to a highly
+multi-modal target. The target is a mixture of K clusters (“branches”) arranged at the top; the source
+is a cluster (or mix of two clusters) at the bottom. We train the same-size models with (i) standard FM
+and (ii) BOTA. Each curve shows a sample’s trajectory from source (blue) to its destination cluster
+(purple). As K grows (3 →6 →18), FM learns many independent, fan-out paths that crowd and
+cross, offering little shared routing.
+BOTA instead discovers a shared “trunk” that later splits into branches, yielding short, structured,
+tree-like transport. The qualitative gap widens with more branches. Both use models the same time-
+conditioned MLP vθ(x, t): 64-d time embedding →3×256 SiLU layers →2-D output; integrated
+with 10 fixed Euler steps over t ∈[0, 1]. Training is identical: Adam (lr = 10−3, batch 256,
+10k iterations, seed 42. FM uses the standard flow-matching objective along linear source–target
+couplings. For the results, please see Figure 2. As you can notice, FM produces independent
+straight-line arms; BOTA discover shared trunks before splitting.
+7
+
+
+Table 1: Comparison of methods on the Tedsim dataset (50D PCA); mean ± std over 5 seeds.
+Metric
+BSBM
+CNF
+CFM
+FM
+BOTA
+W1
+17.72 ± 0.12
+13.76 ± 0.10
+12.01 ± 0.05
+12.03 ± 0.13
+11.86 ± 0.07
+W2
+17.96 ± 0.15
+13.81 ± 0.11
+12.12 ± 0.04
+12.15 ± 0.16
+12.02 ± 0.09
+RBF-MMD
+0.63 ± 0.007
+0.51 ± 0.005
+0.11 ± 0.002
+0.15 ± 0.007
+0.11 ± 0.003
+6.2
+Biological data
+Figure 3: BOTA results on complicated
+biology Tedsim dataset with α = 0.5.
+To further validate our method, we use the Tedsim dataset
+([15]) as a controlled reference point with known ground
+truth dynamics. Tedsim simulates a cellular differentiation
+process by modeling cell division from a root cell, gener-
+ating both gene expression profiles and heritable lineage
+barcodes. This provides a complete record of a simple,
+branching differentiation process.
+We apply our method to a specific Tedsim scenario, mod-
+eling the transport from a single progenitor cell to two
+distinct terminal states. This controlled experiment allows
+us to quantitatively assess our method’s ability to accu-
+rately reconstruct branching trajectories where the true
+pathways are known beforehand. Please see Figure 3 and
+Table 1. We use the same architecture for fair comparison
+for all types of models except for Mean-Flows which re-
+quires additional input r to encoding the start of sampling
+trajectory.
+Comparison baselines: For image data Flow Match-
+ing (FM)[11] and Mean Flows (MFs)[9] Branched
+Schrödinger Bridge Matching (BSBM)[17] and CNF[6]
+are used as baselines in our work. All methods are trained
+with exactly the same amount of iteration 100k, learning rate 1e-4 and optimizer Adam. The ex-
+periments highlight our model’s effectiveness in reconstructing branching trajectories. Our method
+produces the best results among all the models compared. By leveraging the natural branching
+structure inherent in the data, our approach achieves the highest performance score while maintaining
+computational efficiency. The parameter α ablation please see in Appendix.
+6.3
+Image data
+Figure 4: PCA of the learned flow
+for generating classes 0 and 1.
+MNIST. For our proof of concept with image data, we con-
+ducted experiments using the classic MNIST dataset [8]. We
+designed two experiments: first, mapping digits into the two
+classes 0 and 1 to examine branching structures in the data, and
+second, mapping the entire dataset from the Gaussian distribu-
+tion. As shown in Figure 4, our method successfully reveals
+branching structures in this image dataset as well. The hyperpa-
+rameters setting was set equal to the one chosen for the biology
+experiment.
+FFHQ. All experiments are conducted in the latent space of
+a pretrained ALAE model on FFHQ 1024x1024 dataset. The
+ALAE is used only for decoding latents to images during eval-
+uation and remains frozen at all times. We load latent vectors
+paired with gender labels and split them into 60,000 training
+and 10,000 test samples. Let D denote the latent dimension-
+ality inferred from the data. The goal of this experiment is to
+show that our method can produce a smooth and hierarchical
+interpolation between two classes. We learn a BOTA from
+source-class latents to target-class latents. (etc. female →
+8
+
+
+Figure 5: Branched flow interpolation on FFHQ dataset From left to right over the timestamps.
+Female →Male task.
+male); mini-batches for x0 and x1 are sampled from the respective class-specific training subsets.
+We amortize model a time-dependent vector field vθ(t, x) that defines the ODE d
+dtx(t) = vθ
+ t, x(t)
+
+integrated from t = 0 to t = 1.
+Architecture: vθ is an MLP with Tanh activations and hidden width 1024. A scalar time embedding
+(linear layer) is concatenated to x before the MLP; the output is D-dimensional. For the results please
+see Figure 5.
+7
+Related Work
+Branched optimal transport can be formalized in various ways, such as for traffic plans, irrigation
+flows, and branched networks. Some details on rectified flows, action matching, and generative flow
+networks are also provided. For example in [13], with a single source supply µ. The authors modeled
+the transportation network as a set of “fibers” χ(p, ·), where χ(p, t) represents the location of a
+particle p ∈Ωin time t, and (Ωis an abstract probability space) [2]. Such approaches provide insight
+into how continuous mass might cluster around “branch nodes,” but they remain computationally
+intractable for high-dimensional data.
+In parallel, the deep generative modeling community [1, 17] proposed Y-shaped and branched
+Generative Flows, a continuous-time flow framework that encourages branching of paths. However,
+these models do not explicitly solve the BOT optimization problem; they embed a BOT-inspired
+inductive bias in the model but do not guaranty a globally optimal branched transport plan for the
+given data. In other words, Y-shaped flows learn a hierarchy of transport heuristically within a
+single-stage network training, rather than computing or supervising with the ground-truth BOT.
+8
+Limitations and Broader Impact
+Our method relies on a differentiable soft-atomic relaxation whose geometry depends on choices
+such as proxy atoms and kernel bandwidth may require task-specific tuning. The two-stage discrete
+optimization and neural amortization procedure also adds design complexity. This work may support
+applications involving structured branching processes, such as cellular differentiation and other
+hierarchical systems, and improves the expressivity of generative models. However, it inherits
+standard generative-modeling risks, including misuse for synthetic data generation and amplification
+of dataset biases, especially in sensitive domains.
+9
+Conclusion
+We introduce Branched Optimal Transport Amortization (BOTA), a scalable generative algorithm
+designed to overcome the inability of standard continuous-time models to capture hierarchical, tree-
+like data structures. By adapting the Benamou-Brenier formulation with a concave "economy of
+scale" cost function, BOTA encourages probability mass to aggregate along shared "trunks" before
+branching out to specific targets. To make this computationally feasible, the method utilizes a novel
+differentiable "soft-atomic" relaxation and amortizes the solution into a continuous neural vector field
+via flow matching. Experiments demonstrate that BOTA effectively recovers underlying branching
+geometries and outperforms baseline methods in reconstructing complex, multi-modal distributions.
+9
+
+
+References
+[1] Arip Asadulaev, Semyon Semenov, Abduragim Shtanchaev, Eric Moulines, Fakhri Karray, and
+Martin Takac. Y-shaped generative flows. arXiv preprint arXiv:2510.11955, 2025.
+[2] Marc Bernot, Vicent Caselles, and Jean-Michel Morel. Traffic plans. Publicacions Matemà-
+tiques, pages 417–451, 2005.
+[3] Marc Bernot, Vicent Caselles, and Jean-Michel Morel. Optimal transportation networks:
+models and theory. Springer, 2009.
+[4] Lorenzo Brasco, Giuseppe Buttazzo, and Filippo Santambrogio. A benamou–brenier approach
+to branched transport. SIAM journal on mathematical analysis, 43(2):1023–1040, 2011.
+[5] Giuseppe Buttazzo and Eugene Stepanov. Optimal transportation networks as free dirichlet
+regions for the monge-kantorovich problem. Annali della Scuola Normale Superiore di Pisa-
+Classe di Scienze, 2(4):631–678, 2003.
+[6] Ricky TQ Chen, Yulia Rubanova, Jesse Bettencourt, and David K Duvenaud. Neural ordinary
+differential equations. Advances in neural information processing systems, 31, 2018.
+[7] Marco Cuturi. Sinkhorn distances: Lightspeed computation of optimal transport. In Advances
+in neural information processing systems, pages 2292–2300, 2013.
+[8] Li Deng. The mnist database of handwritten digit images for machine learning research [best of
+the web]. IEEE signal processing magazine, 29(6):141–142, 2012.
+[9] Zhengyang Geng, Mingyang Deng, Xingjian Bai, J Zico Kolter, and Kaiming He. Mean flows
+for one-step generative modeling. arXiv preprint arXiv:2505.13447, 2025.
+[10] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Advances
+in neural information processing systems, 33:6840–6851, 2020.
+[11] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow
+matching for generative modeling. arXiv preprint arXiv:2210.02747, 2022.
+[12] Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow straight and fast: Learning to generate
+and transfer data with rectified flow. arXiv preprint arXiv:2209.03003, 2022.
+[13] Francesco Maddalena, Giovanni Taglialatela, and Jean-Michel Morel. A variational model of
+irrigation patterns. Interfaces and Free Boundaries, 5(4):391–416, 2003.
+[14] Edouard Oudet and Filippo Santambrogio. A modica-mortola approximation for branched
+transport and applications. Archive for rational mechanics and analysis, 201(1):115–142, 2011.
+[15] Xiaoyu Pan, Hongyu Fan, Wei Li, Haochen Shen, Rui Wang, and Xiaobo Zhou. Tedsim: A
+simulation framework for single-cell rna sequencing data. Bioinformatics, 38(8):2208–2214,
+2022.
+[16] Filippo Santambrogio. Optimal transport for applied mathematicians. Birkäuser, NY, 55(58-63):
+94, 2015.
+[17] Sophia Tang, Yinuo Zhang, Alexander Tong, and Pranam Chatterjee. Branched schr\" odinger
+bridge matching. arXiv preprint arXiv:2506.09007, 2025.
+[18] Alexander Tong, Kilian Fatras, Nikolay Malkin, Guillaume Huguet, Yanlei Zhang, Jarrid Rector-
+Brooks, Guy Wolf, and Yoshua Bengio. Improving and generalizing flow-based generative
+models with minibatch optimal transport. arXiv preprint arXiv:2302.00482, 2023.
+[19] Cédric Villani. Optimal transport: old and new, volume 338. Springer Science & Business
+Media, 2008.
+[20] Qinglan Xia. Optimal paths related to transport problems. Communications in Contemporary
+Mathematics, 5(02):251–279, 2003.
+10
+
+
+Extended Analysis
+Lα(θ) =
+Z t1
+t0
+K
+X
+k=1
+∥¯vk(t)∥mk(t)α
+|
+{z
+}
+soft branched cost
+dt −λ Ext1∼µ1
+
+log pθ(xt1, t1)
+
+|
+{z
+}
+match data at t1
+.
+(13)
+Lemma 1 (Differentiable Approximation of the Instantaneous Branched Transport Cost). Let
+ˆρt = PB
+j=1 ρj δxj(t) be an empirical measure representing a particle approximation of a distribution
+at time t, with particle positions {xj(t)}B
+j=1 ⊂Rd and velocities {vj(t)}B
+j=1 ⊂Rd. Let {ck}K
+k=1 be
+a set of fixed centers. Define the soft_atomic_cost as
+Csoft({xj}, {vj}) =
+K
+X
+k=1
+∥¯vk∥mα
+k,
+where for each center ck,
+mk =
+B
+X
+j=1
+wjk ρj
+(Soft Mass),
+¯vk =
+PB
+j=1 wjk vj
+PB
+j=1 wjk + ε
+(Soft Averaged Velocity),
+with smooth weights
+wjk =
+exp
+ −∥xj −ck∥2/2σ2
+PK
+ℓ=1 exp(−∥xj −cℓ∥2/2σ2)
+.
+Then Csoft is differentiable in {xj, vj} for any σ > 0, and as σ →0, it converges to the hard-
+assignment cost where each particle is assigned to its nearest center.
+Proof. The instantaneous branched transport cost for a purely atomic measure ρt = P
+i ρt,i δxi [4] is
+given by
+F(ρt) =
+X
+i
+∥vt,i∥ρα
+t,i.
+To approximate this functional with a differentiable surrogate, we discretize space into K centers
+{ck} and replace the discontinuous Voronoi assignment with a soft weighting.
+In the hard, non-differentiable case, the partition of space into Voronoi cells {Vk} yields
+mhard
+k
+=
+B
+X
+j=1
+ρj 1xj∈Vk,
+¯vhard
+k
+=
+PB
+j=1 ρj vj 1xj∈Vk
+PB
+j=1 ρj 1xj∈Vk
+.
+This construction is non-differentiable because the indicator 1xj∈Vk is discontinuous.
+We therefore replace it with smooth, normalized kernel weights wjk as defined above. The Gaussian
+kernel ensures that wjk is infinitely differentiable in xj. As σ →0, the kernel becomes sharply
+peaked, so that
+wjk →1
+
+k = arg min
+ℓ
+∥xj −cℓ∥
+
+.
+Consequently,
+mk →mhard
+k
+,
+¯vk →¯vhard
+k
+.
+Substituting these quantities into the definition of Csoft gives
+Csoft =
+K
+X
+k=1
+∥¯vk∥mα
+k =
+K
+X
+k=1
+
+P
+j wjkvj
+P
+j wjk
+
+
+X
+j
+wjkρj
+
+
+α
+.
+11
+
+
+Each operation involved (sums, norms, powers, and exponentials) is differentiable for σ > 0 and
+ε > 0, ensuring that Csoft is a smooth, differentiable approximation of the branched transport cost.
+In the limit σ →0, the soft assignments converge to hard nearest-center assignments, and hence
+lim
+σ→0 Csoft =
+K
+X
+k=1
+∥¯vhard
+k
+∥(mhard
+k
+)α.
+If the centers coincide with the atom positions (ck = xk) and K = B, this expression recovers
+exactly
+F(ρt) =
+B
+X
+i=1
+∥vi∥ρα
+i .
+Thus, the proposed Csoft provides a differentiable surrogate that converges to the atomic branched
+transport cost in the small-σ limit.
+This differentiable reformulation replaces the hard, non-differentiable atomic constraint with a smooth
+objective that still promotes the desired clustering and branching behavior. It enables gradient-based
+learning of velocity fields that generate transport maps with the geometric structure characteristic
+of branched optimal transport, thereby providing a practical and effective objective for solving the
+branched optimal transport problem.
+Gaussian Data
+In this section, we further analyze the role of the branching parameter α in shaping transport ge-
+ometry through a series of Gaussian ablations (Fig. 6). These experiments provide both qualitative
+and structural insight into how trajectory behavior evolves across regimes. For larger values of α,
+trajectories become increasingly independent, closely resembling classical optimal transport solutions.
+In contrast, smaller values of α encourage mass to follow shared pathways, giving rise to pronounced
+trunk-and-branch structures. This transition highlights how α governs the balance between indepen-
+dent transport and cooperative routing, ultimately controlling the geometric organization of mass
+flow.
+Image Data
+Figure 7: Examples of MNIST digits generated by
+BOTA.
+In this supplementary section, we extend the
+analysis presented in the main paper with ad-
+ditional qualitative and quantitative results on
+MNIST and FFHQ.
+For MNIST, Figure 7 provides additional sam-
+ples generated by BOTA. These results illustrate
+that the model produces clean, well-formed dig-
+its across classes, with consistent stroke thick-
+ness and minimal visual artifacts. This comple-
+ments the main paper by showing that BOTA
+maintains stable trajectories even in discrete,
+multidimensional datasets, resulting in reliable
+class-conditional generations.
+Table 2: FID scores comparison on the FFHQ dataset.
+Method
+FID
+FM
+10.61 ± 1.39
+BOTA
+10.46 ± 1.80
+For high-resolution natural images, Table 2 re-
+ports the full FID scores on FFHQ. Also BOTA achieves a lower FID compared to Flow Matching,
+indicating that the learned transport field aligns more accurately with the underlying data distribution.
+The improvement in FID is consistent across seeds and corroborates the qualitative differences shown
+in the main paper.
+12
+
+
+(a) 3 Gaussians (α = 0.1)
+(b) 6 Gaussians (α = 0.1)
+(c) 18 Gaussians (α = 0.1)
+(d) 3 Gaussians (α = 0.5)
+(e) 6 Gaussians (α = 0.5)
+(f) 18 Gaussians (α = 0.5)
+(g) 3 Gaussians (α = 0.9)
+(h) 6 Gaussians (α = 0.9)
+(i) 18 Gaussians (α = 0.9)
+Figure 6: BOTA Gaussian mixture results for increasing number of Gaussians (3, 6, 18) and different
+branching parameters α. Top row: α = 0.1. Middle row: α = 0.5. Bottom row: α = 0.9.
+Biological Data
+We evaluate BOTA on the Tedsim dataset, a controlled benchmark with known branching differ-
+entiation dynamics. Tedsim simulates cellular development from a single progenitor into multiple
+terminal states, providing both gene expression data and lineage information, making it well-suited
+for assessing the recovery of branching trajectories.
+As shown in Fig. 8, BOTA accurately reconstructs the underlying bifurcation structure, producing
+smooth trajectories that align with the true developmental paths. The model captures a shared
+progenitor trunk followed by coherent lineage splits, without mode collapse or spurious branching.
+Quantitatively, BOTA achieves substantially lower soft-atomic cost and competitive distributional
+13
+
+
+(a) Learned branched transport on Tedsim dataset.
+Method
+Cost ↓
+FM
+405.08 ± 1.00
+CFM
+408.88 ± 1.00
+BOTA
+174.81 ± 5.02
+(b) Soft-atomic cost comparison.
+(c) Quantitative metrics (W1, W2, RBF-MMD) with α = 0.5.
+Figure 8: BOTA results on the Tedsim dataset combining qualitative transport structure and quantita-
+tive evaluation.
+metrics (W1, W2, RBF-MMD), confirming that the learned transport is both structurally meaningful
+and statistically consistent.
+14
+
+
+Runtime and complexity.
+The branched machinery adds a bounded, one-off training overhead and
+no sampling overhead. Stage 1 optimizes the discrete velocity tensor V ∈RT ×N×D directly, with no
+neural network: each iteration costs O(T · N · K · D), linear in the number of particles N, with no
+N 2 term (unlike an OT or Sinkhorn pairing, which costs O(N 2D) before training begins). Stage 2
+is unmodified flow matching, so its cost equals that of the FM baseline. Table 3 reports wall-clock
+training times on Tedsim (50-D PCA) under the identical training protocol of Table 1. In total, BOTA
+trains in roughly 2× the time of FM, paid once offline, while sampling cost is identical to FM since
+inference integrates a single velocity field of the same architecture.
+Table 3: Training cost on Tedsim (50-D PCA). The discrete solver stage involves no network training;
+the amortization stage is standard flow matching. Sampling cost is identical for all methods.
+FM
+CFM
+BOTA
+Solver stage
+—
+—
+425 s (no network)
+Network training
+360 s
+480 s
+360 s (unmodified FM)
+Total training
+1× FM
+1.3× FM
+≈2× FM
+Per-iteration cost in N
+O(N)
+O(N 2) if OT-paired
+O(T · N · K · D), linear in N
+Sampling cost
+1×
+1×
+1×
+15
