@@ -1,0 +1,2226 @@
+Accelerating Diffusion Sampling via
+Speculative Draft Trees
+Marcello Bullo
+Imperial College London
+m.bullo21@imperial.ac.uk
+Yanxiao Liu
+Imperial College London
+y.liu2@imperial.ac.uk
+Öykü Sıla Güner
+Imperial College London
+o.guner25@imperial.ac.uk
+Arpan Mukherjee
+Imperial College London
+a.mukherjee@imperial.ac.uk
+Deniz Gündüz
+Imperial College London
+d.gunduz@imperial.ac.uk
+Abstract
+Speculative sampling accelerates diffusion model generation by drafting inexpensive candidate
+states and correcting them under a coupling that preserves the target distribution exactly,
+reducing the number of expensive target evaluations. Existing diffusion samplers, notably
+those based on reflection maximal coupling, are topologically constrained: their lookahead
+drafts form a chain graph, a single linear sequence, which inherently limits the acceptance
+rate per target evaluation. We connect speculative sampling in diffusion models to relative
+entropy coding (REC). This perspective shows the lookahead need not be linear and motivates
+our central contribution, draft trees, which enrich the candidates considered per round and
+lower the target function evaluations. We further adopt greedy rejection sampling, an REC
+algorithm, as the draft–target coupling, improving acceptance while guaranteeing exact
+target samples. Experiments across diverse target and draft models demonstrate up to 8.3%
+acceleration over the reflection coupling baseline in practical settings.
+§ https://github.com/marcellobullo/tree-specdiff
+1 Introduction
+Denoising diffusion probabilistic models (DDPMs) (Sohl-Dickstein et al., 2015; Ho et al.,
+2020; Song et al., 2021b) have become the dominant paradigm for high-fidelity image
+generation. By learning to reverse a gradual noising process, diffusion models synthesize
+images through a sequence of denoising steps that progressively transform Gaussian noise
+into a sample from the target data distribution. Their remarkable generation quality has
+established diffusion models as the state of the art across a wide range of generative tasks
+(Yang et al., 2023).
+A major drawback of diffusion models, however, is their high inference cost. Image
+generation requires repeatedly evaluating a large neural network over tens to hundreds of
+denoising iterations, making sampling extremely slow. This computational bottleneck
+has motivated a broad range of acceleration techniques. Training-free approaches include
+improved solvers to reduce the number of sampling steps (Zhang and Chen, 2023; Lu et al.,
+2025), while training-based methods learn few-step generators, either by preserving the
+sampling trajectory, as in consistency models (Song et al., 2023) and their two-time flow-
+map generalizations (Geng et al., 2026; Zhou et al., 2026; Sabour et al., 2025), recently
+1
+arXiv:2609.17691v1  [cs.LG]  15 Sep 2026
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+100
+101
+102
+103
+104
+105
+106
+1×
+1.5×
+2×
+2.5×
+Proposals verified per target call (budget)
+Speedup Over
+Standard Sampler
+RMC (De Bortoli et al. 2025)
+D-GRS (ours)
+Figure 1: Efficiency frontier of speculative sampling. The plot compares the
+maximal speedup attainable over a standard sampler at a given proposal budget B for
+the setting described in Section 5.1. By allocating budget strictly to sequential depth,
+RMC rapidly saturates near a 2.00× speedup. In contrast, D-GRS allocates budget
+to multiple proposals per node, effectively raising the per-step acceptance probability.
+This branching strategy allows D-GRS to monotonically convert larger budgets into
+measurable acceleration, up to a 14% reduction in target model evaluations relative to
+RMC.
+extended to learn the solution map of the underlying SDE (McCallum et al., 2026),
+or by directly matching the output distribution (Yin et al., 2024a; Sauer et al., 2024).
+While effective in reducing latency, these approaches typically incur either additional
+training cost or degradation in sample quality (Dieleman, 2026; Lai et al., 2025). Parallel
+simulation provides an orthogonal acceleration strategy, trading additional computation
+and memory for reduced latency (Shih et al., 2023; Tang et al., 2024; Chen et al., 2024;
+Zhou and Sugiyama, 2025). Despite reducing the sequential depth of diffusion sampling, it
+typically requires multiple iterative refinement rounds and substantial parallel resources.
+Recently, speculative diffusion sampling (De Bortoli et al., 2025) has emerged as a
+complementary paradigm for accelerating diffusion inference. Inspired by speculative
+decoding for large language models (Leviathan et al., 2023; Chen et al., 2023), these
+methods first generate candidate denoising states using an inexpensive source (referred to
+as a proposal) before verifying them using the target diffusion model. Whenever multiple
+draft states are accepted, several denoising iterations are effectively skipped, leading
+directly to lower inference latency. Crucially, unlike approximate acceleration techniques,
+speculative diffusion sampling is exact: it preserves the sampling distribution of the target
+model, and therefore incurs no loss in image quality.
+Despite these advantages, existing speculative diffusion samplers are fundamentally
+topology constrained. They generate drafts sequentially along the diffusion trajectory,
+resulting in a linear chain of proposal states. From a broader perspective, speculative
+sampling is a budget allocation problem: given a fixed amount of parallel computation, how
+should proposal evaluations be allocated to maximize the probability of accepting draft
+2
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+states? Restricting proposals to a chain represents only one possible allocation strategy
+and can leave substantial parallelism underutilized, particularly in the low-acceptance
+regime that commonly arises in practice.
+In this paper, we take a first step toward lifting this restriction. Our contributions
+are two-fold. First, we generalize speculative diffusion sampling from linear draft chains
+to draft trees, enabling substantially richer allocations of parallel computation across
+candidate denoising trajectories.
+Second, we establish a novel connection between
+speculative sampling and relative entropy coding (REC) (Li, 2024; Li and El Gamal,
+2018; Flamich and Theis, 2023; Flamich, 2023). This connection leads naturally to a
+greedy rejection sampling (GRS) (Harsha et al., 2010) strategy for budget allocation,
+providing an efficient and principled mechanism for constructing draft trees. Extensive
+experiments demonstrate that our approach consistently improves speculative diffusion
+sampling, achieving speedups of up to 7.4% over existing methods for practical batch
+sizes ≤256, while preserving exact sampling (see Figure 1).
+2 Problem Setting
+DDPM. DDPMs define a fixed forward diffusion process that gradually perturbs data
+samples with Gaussian noise. Let X0 ∼pdata denote a data sample. The forward process
+(Xt)t∈[0,1] evolves according to the stochastic differential equation (SDE)
+dXt = ft(Xt) dt + gt dBt ,
+(1)
+where (Bt)t∈[0,1] is a d-dimensional Brownian motion. Image generation is performed by
+simulating the associated reverse-time process (Yt)t∈[0,1], which satisfies
+dYt = bq
+t(Yt) dt + εg1−t dWt
+(2)
+bq
+t(x) = −f1−t(x) + 1 + ε2
+2
+g2
+1−ts1−t(x) ,
+(3)
+where (Wt)t∈[0,1] is a d-dimensional Brownian motion, st(x) is the Stein score function,
+and ε ∈[0, 1] is the churn parameter controlling the stochasticity of the reverse process.
+In particular, ε = 1 recovers the standard reverse-time SDE, whereas ε = 0 yields the
+deterministic probability-flow ordinary differential equation (ODE). To simulate this
+reverse process, we introduce a uniform time grid
+tn = nγ ,
+n = 0, . . . , N ,
+γ = 1
+N ,
+and write Yn := Ytn. Applying the Euler–Maruyama discretization with ξn ∼N(0, Id)
+gives
+Yn+1 = Yn + γbq
+tn(Yn) + √γ εg1−tn ξn .
+(4)
+Hence, conditional on Yn = yn, the next state follows Yn+1
+ Yn = yn ∼N
+ mq
+n(yn), σ2
+nId
+,
+where
+mq
+n(y) := y + γbq
+tn(y)
+and
+σn := √γ εg1−tn .
+(5)
+3
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Equivalently, denoting the target transition kernel by Qn(· | yn), we have Qn(· | yn) =
+N
+ mq
+n(yn), σ2
+nId
+ , and the discretized reverse process forms a Markov chain with joint
+density
+q(y0, . . . , yN) = q0(y0)
+N−1
+Y
+n=0
+qn(yn+1 | yn) ,
+(6)
+where q0 denotes the initial Gaussian density of the reverse process.
+Speculative diffusion sampling. The principal computational bottleneck in diffusion
+inference is the repeated evaluation of the reverse drift bq
+tn, which is parameterized by
+a large neural network. Since Euler–Maruyama simulation proceeds sequentially, each
+state Yn+1 depends on the reverse drift evaluated at the preceding state Yn, limiting the
+utilization of modern parallel hardware. Speculative diffusion sampling addresses this
+bottleneck by exploiting parallel computation. Rather than simulating one denoising step
+at a time, an inexpensive proposal model first generates multiple draft states. The key
+assumption underlying speculative sampling is that drafting is significantly cheaper than
+verification. The drafted states are subsequently verified using the target reverse drift in
+parallel. Consequently, given a parallel compute budget of B, one batched target-model
+evaluation, corresponding to one neural function evaluation (NFE), can verify all proposed
+drafts.
+The effectiveness of speculative sampling depends critically on the quality of the
+proposal model. Better proposals lead to higher acceptance rates, allowing more denoising
+steps to be advanced per NFE and thereby increasing the overall speedup while preserving
+exact sampling. Existing speculative diffusion methods (De Bortoli et al., 2025) consider
+two proposal mechanisms. The first trains a lightweight diffusion model to approximate
+the target reverse drift. The second, referred to as the delayed reverse drift, avoids
+additional training by replacing the current reverse drift with one evaluated at an earlier
+state. Specifically, the target transition mean mq
+n(yn) = yn + γbq
+tn(yn) is approximated
+by the proposal mean
+mp
+n(yn) = yn + γbq
+tk(yk),
+k < n ,
+(7)
+while retaining the same transition variance σ2
+n = γε2g2
+1−tn. Empirically, delayed re-
+verse drift has been shown to produce higher-quality proposals than lightweight draft
+models (De Bortoli et al., 2025). Accordingly, we adopt it as the proposal mechanism
+throughout this paper.
+3 Speculative Algorithms
+In this section, we first state the general template that both algorithms instantiate, then
+review the reflection maximal coupling (RMC) algorithm of (De Bortoli et al., 2025), and
+finally introduce our diffusion-GRS (D-GRS) algorithm. At a high level, every speculative
+sampling algorithm consists of three phases: a drafting phase, a verification phase, and
+an acceptance phase. Given a parallel compute budget, the drafting phase sequentially
+generates candidate states according to a prescribed draft topology, the verification phase
+4
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+evaluates all drafted states in parallel using the target model, and the acceptance phase
+sequentially examines the verified states to determine whether a proposal can be accepted
+as the next target state. Consequently, speculative sampling algorithms differ primarily
+in the choice of draft topology and the acceptance criterion used after verification.
+Both RMC and D-GRS rely on a common one-dimensional reduction that exploits the
+translation and rotational invariance of isotropic Gaussian distributions, described next.
+Throughout, we use bY (or bS) to denote a proposed state and Y (or S) to denote the
+accepted target state.
+3.1 A General Template For Speculative Diffusion
+We begin from the general procedure, stated so that the two algorithms of this section differ
+only in the two components the paper varies: the draft topology and the verification rule.
+The template is agnostic to how proposals are produced and it is shown in Algorithm 1.
+3.1 Setting. Fix a round beginning at step n. The template requires only that the draft
+and target transitions be isotropic Gaussians sharing the variance schedule and differing
+in their means,
+Pn(· | y) = N
+ mp
+n(y), σ2
+nId
+,
+Qn(· | y) = N
+ mq
+n(y), σ2
+nId
+,
+(8)
+with mq
+n as in (5) and mp
+n arbitrary. This is exactly the structure the rank-1 reduction
+in 3.1.4 exploits, so both Algorithm 2 and Algorithm 3 below apply unchanged at every
+node.
+3.1 Draft Topology. A node is one candidate realisation of the process state at one step.
+Its depth is the step it realises and its parent is the state it was conditioned on. Because
+the reverse chain is Markov, each node is drawn conditionally on exactly one parent, so
+a draft set always carries the structure of a rooted tree, and we take such a tree as the
+general description of a draft topology.
+A draft tree is a finite rooted tree T = (V, pa) with vertex set V, root r, and parent
+map pa : V \ {r} →V. We write C(u) := pa−1(u) for the children of u, |u| for its depth,
+and
+V0 = {r},
+Vℓ:= {u ∈V : |u| = ℓ},
+I(T ) := {u ∈V : C(u)̸ = ∅},
+(9)
+for the layers and the internal nodes. The root holds the last accepted state bYr = Yn
+and node u̸ = r holds the drafted state bYu, a candidate realisation of step n + |u|. The
+number of drafted states is |V| −1, and the target model can be evaluated at all the tree
+nodes u ∈V, or only at the internal ones u ∈I(T ).
+The children of a node are i.i.d. candidates for the same step, of which verification
+retains at most one. Because the accepted candidate node is determined exclusively
+during the verification phase, the proposal mechanism must exhaustively expand all
+sibling branches. The uniform (K, L) family used in the paper is the case |C(u)| = K for
+5
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Algorithm 1 Speculative diffusion sampling for an arbitrary draft tree T .
+Require: draft and target mean functions mp, mq, scales {σn}, horizon N, draft tree
+T = (V, pa) of depth L, rule Verify
+Ensure: trajectory Y1:N with the law (6) of the target chain
+1: n ←0; Y0 ∼q0
+2: while n < N do
+3:
+Ln ←min{L, N −n}, bYr ←Yn, Tn ←T |Ln, In ←I(Tn)
+4:
+// Phase 1 – Drafting
+5:
+for ℓ= 1 to Ln do
+6:
+for all u ∈Vℓ−1 in parallel do
+7:
+  bYv
+
+v∈C(u)
+i.i.d.
+∼N
+ mp
+n+ℓ−1( bYu), σ2
+n+ℓ−1Id
+
+8:
+end for
+9:
+end for
+10:
+// Phase 2 – Verification
+11:
+for all u ∈In in parallel do
+12:
+evaluate mq
+n+|u|
+  bYu
+
+13:
+end for
+14:
+// Phase 3 – Acceptance
+15:
+u ←r; Nα ←0
+16:
+for ℓ= 1 to Ln do
+17:
+ Yn+ℓ, accepted, v⋆ ←Verify
+ mp
+n+ℓ−1( bYu), mq
+n+ℓ−1( bYu), σn+ℓ−1; { bYv}v∈C(u)
+
+18:
+if not accepted then
+19:
+Nα ←Nα + 1
+20:
+break
+21:
+end if
+22:
+Nα ←Nα + 1; u ←v⋆
+23:
+end for
+24:
+n ←n + min{Nα, Ln}
+25: end while
+26: return Y1:N
+every u of depth at most L −1, and Vℓ= ∅for ℓ> L. Therefore, |Vℓ| = Kℓand
+|I(T )| =
+L−1
+X
+ℓ=0
+Kℓ,
+|V| =
+L
+X
+ℓ=0
+|Vℓ| =
+L
+X
+ℓ=0
+Kℓ.
+(10)
+During the verification phase, when the target model is evaluated at u ∈V, a round costs
+B = |V| target evaluations, while it costs B = |I(T )| when the target model is evaluated
+at u ∈I(T ). The chain of RMC corresponds to the special case where K = 1, while a
+single-node proposal list to L = 1. Depth-dependent widths Kℓ, or irregular trees (e.g.,
+pruned), are covered by T directly and require no change to what follows.
+6
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Let V≤m := Sm
+ℓ=0 Vℓdenote the set of nodes of depth at most m, and let
+T |m := T
+V≤m
+ =
+ V≤m, pa|V≤m\{r}
+
+(11)
+denote the subtree of T induced by V≤m.
+A round starting at step n therefore operates on T |Ln with Ln := min{L, N −n},
+which equals T in every round but the last few.
+3.1 Round Structure. Algorithm 1 describes the speculative diffusion sampling procedure
+for an arbitrary draft tree T . Each iteration of the algorithm involves three distinct
+phases.
+1. The drafting phase executes a layer-wise expansion of the tree: this expansion is
+strictly sequential with respect to depth, as child nodes cannot be sampled prior to
+their respective parents. However, all nodes residing at the same depth level are
+generated concurrently.
+2. The verification phase computes the target means for all internal nodes of the
+current tree via a unified batched operation, representing the sole evaluation of the
+target model within a given iteration.
+3. Finally, the acceptance phase traverses downward from the root node, iteratively
+applying the verification criterion at each depth level and terminating immediately
+upon encountering the first rejection.
+The verification rule, denoted as Verify, serves as a modular component within this
+framework and is governed by the following formal contract. Given a parent node u,
+its associated proposal and target means, the corresponding step scale, and its set of
+drafted children { bYv}v∈C(u), the rule outputs a tuple (Y, accepted, v⋆). The primary
+component, Y , constitutes an exact sample drawn from the target transition distribution,
+Y ∼Q
+ · | bYu
+. This sample is obtained through one of two mutually exclusive mechanisms:
+either a valid child node is identified, wherein the boolean flag accepted evaluates to
+true and Y = bYv⋆for a specific v⋆∈C(u); alternatively, if no child satisfies the criterion,
+accepted evaluates to false, and Y is instead sampled from the normalized residual
+distribution formulated in (17) below. Algorithm 3 fulfills this contract for any arbitrary
+branching factor K ≥1, whereas Algorithm 2 is specialized for K = 1.
+The template leaves exactly two components free: the draft topology T and the
+verification rule Verify. The remainder of this section instantiates them. RMC takes T
+to be a chain (K = 1) and Verify to be the reflection maximal coupling by (De Bortoli
+et al., 2025); D-GRS takes T to be a K-ary tree and Verify to be our proposed D-GRS
+algorithm. Both rely on a common one dimensional reduction that exploits the translation
+and rotational invariance of isotropic Gaussian distributions, described next.
+3.1 Rank-1 Projection. Since the proposal P := N(µp, σ2Id) and target Q := N(µq, σ2Id)
+are isotropic Gaussians differing only in their means, we can reduce the d-dimensional
+coupling to a single dimension. Let
+∆:= (µq −µp)/σ,
+δ := ∥∆∥,
+e := ∆/δ,
+(12)
+7
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Algorithm 2 Reflection maximal coupling (RMC)
+Require: proposal sample bY ∼P = N(µp, σ2Id); target mean µq; shared scale σ
+Ensure: target sample Y ∼Q = N(µq, σ2Id); acceptance indicator accepted ∈{true, false}
+1: Obtain (bS, Z⊥, δ, e) from (12) and (14)
+// rank-1 projection
+2: R ←ϕ(bS −δ)
+ϕ(bS)
+// target-to-proposal likelihood ratio
+3: U ∼Uniform[0, 1]
+4: accepted ←1{U ≤1 ∧R}
+5: if not accepted then
+6:
+bS ←δ −bS
+// reflect bS about δ/2
+7: end if
+8: Y ←µp + σ(bSe + Z⊥)
+// Y ∼Q
+9: return Y, accepted, 1
+be the normalized mean displacement, its Euclidean norm, and the corresponding unit
+vector, respectively. Standardizing a state Y as Z := (Y −µp)/σ yields Z ∼N(0, Id)
+under P and Z ∼N(δe, Id) under Q. Note that any realization z ∈Rd admits the
+orthogonal decomposition
+z = e e⊤z
+|{z}
+s
++ (Id −ee⊤)z
+|
+{z
+}
+z⊥
+.
+(13)
+Under either distribution, the random variables S := e⊤Z and Z⊥are independent,
+and the orthogonal residual is Z⊥∼N(0, Id −ee⊤). Only the scalar projection differs:
+S ∼N(0, 1) under P, and S ∼N(δ, 1) under Q. Consequently, given a proposal sample
+bY ∼P, exact sampling from Q requires transforming only the scalar projection bS from
+N(0, 1) to N(δ, 1), while retaining the proposal’s orthogonal component Z⊥unchanged:
+bS := e⊤( bY −µp)/σ,
+Z⊥= (Id −ee⊤)( bY −µp)/σ .
+(14)
+Once a valid target scalar S ∼N(δ, 1) is obtained, the final state is reconstructed as
+Y = µp + σ(Se + Z⊥) .
+(15)
+One of the major distinctions between RMC and GRS lies in how they transform
+bS ∼N(0, 1) into S ∼N(δ, 1).
+3.2 Reflection Maximal Coupling (RMC)
+RMC (De Bortoli et al., 2025) instantiates the speculative sampling framework using a
+chain topology and reflection maximal coupling for acceptance. Specifically, the drafting
+phase sequentially generates a chain of L proposal states, where L is referred to as
+the lookahead. During the acceptance phase, each proposal is maximally coupled with
+the corresponding target transition, thereby minimizing the probability of rejecting the
+drafted state.
+Given a proposal bY , RMC first decomposes it into a scalar proposal bS along the
+displacement direction and an orthogonal component Z⊥using (12) and (14). The scalar
+8
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Yn
+bYn+1 | Yn
+bYn+2 | bYn+1
+bYn+3 | bYn+2
+bYn+4 | bYn+3
+bYn+5 | bYn+4
+bYn+6 | bYn+5
+RMC
+Yn
+bY (1)
+n+1 | Yn
+bY (2)
+n+1 | Yn
+bY (1)
+n+2 | bY (1)
+n+1
+bY (2)
+n+2 | bY (1)
+n+1
+bY (1)
+n+2 | bY (2)
+n+1
+bY (2)
+n+2 | bY (2)
+n+1
+D-GRS
+Figure 2: Allocation of a fixed compute budget under chain- and tree-structured drafting
+for B = |V|. Given a compute budget of W = 7 states, RMC constructs a single proposal
+chain. If an early proposal is rejected, all downstream proposals become unusable and
+are discarded. In contrast, D-GRS constructs a K-ary draft tree, here with K = 2 and
+L = 2. At each level, D-GRS may select among multiple candidate states, increasing the
+probability that at least one proposal can be accepted.
+proposal is accepted with probability equal to the target-to-proposal likelihood ratio,
+capped at one. If accepted, RMC retains bS and proceeds to the next proposal in the chain.
+Otherwise, it draws an exact sample from the residual distribution and terminates the
+current speculative trajectory, after which a new lookahead chain is drafted. For Gaussian
+proposal and target distributions with equal covariance, residual sampling admits a simple
+geometric implementation: the rejected scalar proposal is reflected about the midpoint
+between the proposal and target means. The resulting scalar is then combined with
+the unchanged orthogonal component to reconstruct an exact sample from the target
+distribution. The complete procedure is summarized in Algorithm 2. Here, ϕ denotes
+the standard Gaussian density function. In line 8, the residual sample is obtained by
+reflecting bS about the midpoint δ/2, yielding S = δ −bS.
+Drawbacks of RMC: Despite its simplicity and exactness, RMC is fundamentally
+constrained by its chain topology. Given a fixed parallel compute budget of B draft
+evaluations, RMC allocates the entire budget to a single lookahead trajectory of length
+B (setting L = B). Consequently, if a proposal is rejected early in the acceptance
+phase, all subsequent drafted states become unusable and are discarded, resulting in
+underutilization of the available parallel compute budget. This inefficiency becomes
+increasingly pronounced as the compute budget grows. To better exploit parallelism,
+we instead propose a tree-based draft topology that allocates the same budget across
+multiple speculative trajectories, as described next.
+3.3 Diffusion Greedy Rejection Sampling (D-GRS)
+GRS departs fundamentally from RMC in both its drafting topology and, consequently,
+its acceptance criterion.
+Topology: The chain employed by RMC represents only one possible allocation of
+a fixed parallel compute budget. To exploit this budget more effectively, we introduce
+9
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Algorithm 3 Diffusion Greedy Rejection Sampling (D-GRS)
+Require: proposals bY1:K
+i.i.d.
+∼P = N(µp, σ2Id); target mean µq; shared scale σ
+Ensure: target sample Y ∼Q = N(µq, σ2Id); acceptance indicator accepted ∈{true, false}
+1: for k = 1 to K do
+2:
+Obtain (bSk, Z⊥, δ, e) from (12) and (14)
+// rank-1 projection
+3: end for
+4: λ0 ←0, S1 ←1
+5: for k = 1 to K do
+6:
+ρk ←ϕ(bSk −δ)
+ϕ(bSk)
+,
+βk ←1 ∧(ρk −λk−1)+
+Sk
+7:
+Uk ∼Uniform[0, 1]
+8:
+if Uk ≤βk then
+9:
+Y ←µp + σ(bSke + Z⊥,k)
+10:
+accepted ←true
+11:
+return Y, accepted, k
+12:
+end if
+13:
+λk ←λk−1 + Gk
+14:
+Hk ←{s ∈R : ρ(s) ≥λk}
+15:
+Gk+1 ←Q(Hk) −λkP(Hk)
+// remaining target mass
+16: end for
+17: S ∼rK+1 defined in (17)
+18: Y ←µp + σ(Se + Z⊥,1)
+19: accepted ←false
+20: return Y, accepted, K + 1
+a more flexible topology based on draft trees, depicted in Figure 2. A K-ary draft tree
+expands every non-leaf node into K children, each representing a candidate realization of
+the next target state. Suppose drafting begins at time step n, and let Yn denote the current
+accepted target state, obtained either from the preceding draft tree or through residual
+sampling. We treat Yn as the root of the tree and draw K conditionally independent and
+identically distributed (i.i.d.) proposals from the proposal transition kernel at time n + 1.
+Each resulting proposal is then recursively expanded into K children, yielding a tree with
+L levels, excluding the root. Defining W as the number of target evaluations that fit in a
+single parallel batch, the pair (K, L) must satisfy
+B ≤W,
+(16)
+with B = |V| or B = |I(T )|, based on the verification mode.
+During drafting, every node at a given level generates K children using a proposal
+transition constructed from the target reverse drift already evaluated at the tree root Yn.
+Since the target model has not yet been evaluated at the intermediate parent states, the
+same root drift is reused throughout the draft tree. Conditional on a parent state, its K
+children are sampled independently from this delayed-drift proposal kernel. Once the full
+tree has been constructed, all drafted states are passed to the target model in parallel,
+yielding the parent-specific reverse drifts required for verification.
+Acceptance: The introduction of a tree topology fundamentally changes the acceptance
+problem. In contrast to RMC, where each proposed state is individually coupled with the
+10
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+target through a maximal coupling, tree-based speculative sampling requires selecting
+one state from a list of proposals and coupling the selected state with the target. This
+naturally gives rise to a list-coupling problem. More precisely, maximal coupling minimizes
+the Hamming cost 1{ bY̸ = Y } between a single proposal bY ∼P and a target sample
+Y ∼Q. At each node of our draft tree, however, we are given K conditionally i.i.d.
+proposals bY1, . . . , bYK ∼P and seek a coupling that minimizes the membership cost 1
+Y /∈
+{ bY1, . . . , bYK}
+	. The optimal transport formulation of Sun et al. (2023) characterizes
+the coupling that minimizes this cost. However, computing the optimal transport plan
+requires solving a linear program over the target domain, whose complexity grows
+exponentially with the number of proposals K. This is already costly for finite discrete
+state spaces and does not admit a tractable direct extension to continuous diffusion
+transitions. Computationally efficient approaches to list coupling have been studied in
+the context of language models; we provide a survey in the appendix. These methods,
+however, do not remain computationally tractable for continuous diffusion models.
+As a workaround, we draw inspiration from relative entropy coding (REC) (Li, 2024;
+Flamich and Gündüz, 2026), which is closely connected to speculative sampling, as
+elaborated below. REC is a class of algorithms that tackles a remote sampling problem:
+a sender, which has access to a target distribution Q and a proposal distribution P,
+communicates an index to a receiver, which shares P, allowing the receiver to reproduce
+an exact sample from Q. The fundamental communication cost of the index is governed,
+up to lower-order terms, by the relative entropy DKL(Q∥P), hence the name REC.
+Correspondingly, REC implementations, which can be based on Poisson processes (Li
+and El Gamal, 2018; Liu et al., 2024), dithered quantization (Zamir and Feder, 1992), or
+rejection sampling (Harsha et al., 2010; Flamich and Theis, 2023; Flamich, 2023), need
+to examine ˜Ω(exp(DKL(Q∥P))) shared proposals before identifying the communicated
+sample. This viewpoint parallels speculative sampling: both problems seek to couple
+proposal samples with an exact target sample while maximizing the probability that the
+target can be recovered from the available proposals. While RMC optimizes the single-
+proposal overlap, measured by the total variation distance, REC algorithms construct
+exact couplings by processing an ordered sequence of proposal samples. Motivated by this
+connection, we replace the unrestricted list-coupling problem with an order-preserving
+sequence-coupling problem. In list coupling, the K proposals may be jointly matched to
+the target without regard to their ordering; in sequence coupling, proposals are examined
+in their sampled order, and the first proposal satisfying the acceptance rule is selected.
+We then adapt the GRS procedure underlying the communication protocol of Harsha
+et al. (2010) to continuous diffusion transitions and embed it within our draft-tree topology.
+At each node, GRS sequentially examines the K verified children, greedily assigns as much
+remaining target mass as possible to each proposal, and accepts the first proposal selected
+by the resulting coupling. If none of the K children is accepted, the algorithm samples
+from the remaining target residual and terminates the current speculative path. More
+specifically, GRS maintains a sequence of scalar levels {λk}K
+k=0, together with residual
+masses {Gk}K+1
+k=1 . The level λk records how much of the target-to-proposal likelihood ratio
+has already been assigned to the first k proposals, while Gk+1 denotes the target mass
+that remains unassigned after round k. Initially, no target mass has been assigned, so
+11
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+λ0 = 0 and G1 = 1. Let ρ(s) := dQ
+dP (s) = ϕ(s−δ)
+ϕ(s)
+denote the target-to-proposal likelihood
+ratio in the one-dimensional coordinate. At round k, GRS considers only the portion of
+ρ( bSk) that remains above the previously assigned level λk−1. The proposal is therefore
+accepted with probability
+βk := 1 ∧
+ ρ( bSk) −λk−1
+
++
+Sk
+.
+This greedily assigns the largest admissible slice of the remaining target mass to the
+current proposal while ensuring that the acceptance probability does not exceed one. If
+the proposal is rejected, the assigned level is increased to λk = λk−1 + Gk, which induces
+the super-level set
+Hk = {s ∈R : ρ(s) ≥λk} .
+The remaining target mass is then Gk+1 = Q(Hk) −λkP(Hk). After K unsuccessful
+rounds, GRS samples from the normalized residual measure with density
+rK+1(s) =
+ q(s) −λKp(s)
+
++
+GK+1
+,
+(17)
+thereby preserving exactness. The D-GRS procedure is summarized in Algorithm 3.
+4 Performance Analysis
+In this section, we provide performance analyses of the proposed D-GRS algorithm, and
+compare it to the RMC baseline. Specifically, we show the exactness of D-GRS and
+compute its acceptance probability. The complete proofs are deferred to Appendix B.
+Theorem 1 (Exactness). The output Y of Algorithm 3 with target distribution Q =
+N(µq; σ2Id) satisfies Y ∼Q.
+The proof follows from the residual-measure characterization of GRS (Flamich and
+Theis, 2023, Lemmas III.1-2): one can explicitly calculate the target mass generated
+by the first K proposal branches, and the amount contributed by a sample from its
+normalized residual distribution. The proposal and residual branches together recover
+the target distribution Q exactly. Next, we explicitly characterize the probability that
+Algorithm 3 accepts at least one drafted child.
+Theorem 2 (Acceptance Probability). Denote δ := ∥mq−mp∥2
+σ
+. For Algorithm 3, the
+probability of accepting at least one of the K proposals is given by
+P(∃k ∈{1, · · · , K} : Y = bYk) = 1 −GK+1 .
+(18)
+Furthermore, for any δ ∈R+, we have
+GK+1 = Φ
+1
+δ ln λK −δ
+2
+
+−λKΦ
+1
+δ ln λK + δ
+2
+
+,
+(19)
+where Φ(x) is the standard Gaussian survival function.
+12
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Note that setting K = 1 and δ ∈R+, we obtain
+P(∃k ∈{1, · · · , K} : Y = bYk) = 2Φ
+δ
+2
+
+,
+(20)
+the optimal acceptance probability for maximal coupling which is achieved by
+RMC (De Bortoli et al., 2025, Proposition 3.1). The per-step acceptance probabilities for
+different value of K are plotted in Figure 6 in Appendix B.2.
+5 Experiments
+We evaluate the performance of D-GRS relative to RMC across three generative tasks:
+(i) diffusion sampling from a Gaussian mixture target utilizing analytically tractable
+scores; (ii) pixel-space generation, including conditional sampling on CIFAR-10 (32 ×
+32) (Krizhevsky and Hinton, 2009) and unconditional sampling on FFHQ (64×64) (Karras
+et al., 2019) datasets; and (iii) text-to-image latent space sampling via Stable Diffusion 3
+(SD3) (Esser et al., 2024).
+Protocol. All methods are evaluated under the self-speculative regime of (De Bortoli
+et al., 2025) for B = |V|. Specifically, the draft is constructed directly from the target
+denoiser by freezing the velocity field computed at the root of the speculation tree (or the
+window head for RMC) and reusing it throughout the draft trajectory. Sampling follows
+the Euler-Maruyama discretization of the linear probability path xσ = (1 −σ)x0 + σ ξ,
+ξ ∼N(0, Id), with stochasticity level (churn) ε ∈(0, 1]1.
+Cost metric and matched budgets. Following (De Bortoli et al., 2025) we measure the
+computational cost in NFEs. To compare D-GRS and RMC at equal cost per target
+call, we evaluate every D-GRS configuration (K, L) against an RMC chain of length
+B. Both methods therefore process an identical verification batch of size B per round,
+differing only in structural allocation. Consequently, the proposal budget B serves as the
+natural x-axis throughout our comparisons. All costs are reported as expected NFE per
+trajectory/image.
+5.1 Gaussian Mixture Target
+Setting. We reproduce the low-dimensional setting of (De Bortoli et al., 2025, App. I.2).
+The target is a mixture of 5 isotropic Gaussians in Rd, d = 500, with µi ∼U
+
+[−2, 2]d
+and σi ∼U([0.10, 0.25]) drawn once from a fixed seed and then held fixed across all
+runs. We use the exact velocity field which, under the linear probability path, is available
+in closed form. We use T = 30 generation steps with stochasticity ε = 0.1. We sweep
+the full grid L ∈{2, . . . , 7} × K ∈{1, . . . , 7}, and run 100 independent trajectories per
+entry. Speedups are reported relative to the reference cost of the standard sampler,
+(K, L) = (1, 1), which spends 30 target calls per trajectory.
+1ε = 0 recovers the deterministic flow sampler, rendering speculation vacuous as the acceptance
+probability drops to zero.
+13
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+1
+2
+3
+4
+5
+6
+7
+K (children per node)
+2
+3
+4
+5
+6
+7
+L (lookahead)
+1.78×
+B=2
+1.98×
+B=6
+1.98×
+B=12
+1.96×
+B=20
+1.97×
+B=30
+1.99×
+B=42
+1.99×
+B=56
+1.94×
+B=3
+1.97×
+B=14
+1.99×
+B=39
+1.99×
+B=84
+1.96×
+B=155
+1.98×
+B=258
+1.98×
+B=399
+1.97×
+B=4
+1.96×
+B=30
+1.96×
+B=120
+1.96×
+B=340
+1.96×
+B=780
+1.97×
+B=1.55k
+1.99×
+B=2.8k
+1.98×
+B=5
+1.98×
+B=62
+1.98×
+B=363
+1.98×
+B=1.36k
+1.99×
+B=3.9k
+1.96×
+B=9.33k
+1.96×
+B=19.6k
+1.99×
+B=6
+1.99×
+B=126
+2.00×
+B=1.09k
+1.97×
+B=5.46k
+1.97×
+B=19.5k
+1.99×
+B=56k
+1.99×
+B=137k
+1.97×
+B=7
+1.96×
+B=254
+1.97×
+B=3.28k
+1.97×
+B=21.8k
+1.98×
+B=97.7k
+1.98×
+B=336k
+1.97×
+B=961k
+RMC
+1
+2
+3
+4
+5
+6
+7
+K (children per node)
+1.78×
+B=2
+1.80×
+B=6
+1.84×
+B=12
+1.85×
+B=20
+1.86×
+B=30
+1.87×
+B=42
+1.87×
+B=56
+1.93×
+B=3
+2.02×
+B=14
+2.07×
+B=39
+2.11×
+B=84
+2.14×
+B=155
+2.14×
+B=258
+2.17×
+B=399
+1.96×
+B=4
+2.09×
+B=30
+2.12×
+B=120
+2.18×
+B=340
+2.21×
+B=780
+2.23×
+B=1.55k
+2.23×
+B=2.8k
+1.97×
+B=5
+2.09×
+B=62
+2.19×
+B=363
+2.22×
+B=1.36k
+2.23×
+B=3.9k
+2.28×
+B=9.33k
+2.29×
+B=19.6k
+1.95×
+B=6
+2.08×
+B=126
+2.15×
+B=1.09k
+2.21×
+B=5.46k
+2.24×
+B=19.5k
+2.26×
+B=56k
+2.33×
+B=137k
+1.98×
+B=7
+2.09×
+B=254
+2.17×
+B=3.28k
+2.23×
+B=21.8k
+2.24×
+B=97.7k
+2.27×
+B=336k
+2.31×
+B=961k
+D-GRS (ours)
+1.8
+1.9
+2.0
+2.1
+2.2
+Speedup Over Standard Sampler
+Figure 3: Expected speedup in the Gaussian mixture setting over 100 independent
+trajectories per (K, L) pairs. Performance for RMC (left) remains uniform across the
+grid, whereas D-GRS (right) exhibits steady improvement as B is increasingly allocated
+to width K.
+Results. Figure 3 shows the expected speedups across the (K, L) grid and corresponding
+budgets B. RMC speedup plateaus (≈1.96×–2.00×) across six orders of magnitude in
+B, bottlenecked by the geometric decay of its linear sequential look-ahead. Conversely,
+D-GRS allocates budget to K proposals per node to boost per-step acceptance, avoiding
+the rapid saturation of look-ahead scaling. For L ≥3, D-GRS strictly dominates, yielding
+a 2.33× speedup at (6, 6) compared to RMC’s 1.99×. Overall, D-GRS reduces target
+calls by 8–9% (2.14× vs. 1.96× at B = 155) without compromising exactness.
+5.2 Pixel-Space Diffusion
+For both conditional and unconditional diffusion sampling over the pixel-space, we
+adopt pretrained denoisers provided by Karras et al. (2022). At time step t, the model
+Dθ(xt; ς) = E[x0 | xt = x0+ςξ] estimates the uncorrupted data x0 from a noisy observation
+xt, perturbed by standard Gaussian noise ξ at a noise scale ς. To integrate this denoiser
+into our setting, we recast it as a velocity field vθ(xt, t) along a linear interpolant. By
+applying ς = t/(1 −t), the velocity field evaluates to vθ(xt, t) = 1
+t xt −Dθ
+
+xt
+1−t;
+t
+1−t
+
+.
+Finally, to ensure numerical stability during generation, the evaluated noise scale is clipped
+to ς ∈[10−3, 80], which remains strictly within the original model’s native sampling range.
+Experimental Setup. Each sampler generates 100 images over 100 time steps. For CIFAR-
+10, the generation is conditioned on labels sampled uniformly at random from the ten
+available classes. We evaluate four configuration pairs (K, L) ∈{(2, 3), (2, 5), (3, 4), (4, 4)},
+which correspond to computational budgets B ∈{14, 62, 120, 340}, with RMC executed
+on the matched windows (1, B). This procedure is repeated across three stochasticity
+levels, ε ∈{0.1, 0.3, 0.6}. Figure 4 illustrates the resulting mean and standard deviation
+14
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+2.4
+2.6
+CIFAR-10
+NFE Speedup
+= 0.1
+= 0.3
+= 0.6
+0
+200
+Budget B
+2.0
+2.1
+2.2
+FFHQ
+NFE Speedup
+= 0.1
+0
+200
+Budget B
+= 0.3
+0
+200
+Budget B
+= 0.6
+Pixel Space Diffusion
+Sampler
+D-GRS
+RMC
+Figure 4: NFE speed-up relative to proposal budget B for CIFAR-10 (top) and FFHQ
+(bottom) at varying stochasticity ϵ ∈{0.1, 0.3, 0.6}.
+of the speedups relative to the baseline standard sampler, which incurs a fixed cost of
+100 NFEs per image.
+Results. In Figure 4, we report the NFE speedups per image against the computational
+budget B for two datasets with distinct spatial resolutions: CIFAR-10 (32 × 32, top row)
+and FFHQ (64 × 64, bottom row). Across both tasks, increasing the churn level degrades
+the sampling efficiency of both methods. Specifically, higher stochasticity increases the
+divergence between the draft and target transition kernels, widening the gap between
+their respective means, thereby attenuating the sampling acceptance rates across both
+coupling mechanisms.
+On CIFAR-10, RMC exhibits a marginal empirical advantage at the minimal budget
+(B = 14), where its linear sequential topology achieves greater effective depth compared to
+the shallow branching of a tree. However, for B ≥62 the efficiency trend reverses: RMC
+suffers from plateaued scaling, yielding a fixed speedup irrespective of B, whereas D-GRS
+efficiently leverages its speculative tree topology to maintain monotonically increasing
+speedups.
+On the higher-dimensional FFHQ benchmark, absolute speedups are inherently
+reduced (≈2.0–2.2×, down from 2.2–2.6× on CIFAR-10), as the mean discrepancy
+between the draft and target kernels scales with
+√
+d. Crucially, the relative advantage of
+D-GRS becomes absolute in this higher dimensional regime, strictly dominating RMC at
+every tested budget and churn level. To empirically verify exactness, we evaluate FID
+on 50,000 samples generated with K = 2, L = 3, and ε = 0.3. On CIFAR-10, D-GRS
+15
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+10
+20
+30
+40
+50
+Budget B
+1.10
+1.12
+1.14
+1.16
+1.18
+SD3
+NFE Speedup
+K = 2
+K = 3
+K = 4
+K = 5
+K = 6
+K = 7
++6.7%
+= 0.8, L = 2
+High-Dimensional Latent Space Diffusion
+Sampler
+D-GRS
+RMC
+Figure 5: Expected NFE speed-up over the vanilla target sampler as a function of K
+(512 × 512 resolution, ε = 0.8, L = 2).
+K
+-
+Target score: 26.90 ± 0.37
+Method
+2
+3
+4
+5
+6
+7
+D-GRS
+26.78 ± 0.34
+26.32 ± 0.34
+26.67 ± 0.34
+26.72 ± 0.35
+26.75 ± 0.33
+26.65 ± 0.35
+RMC
+26.59 ± 0.35
+26.74 ± 0.33
+26.48 ± 0.34
+26.77 ± 0.34
+26.39 ± 0.37
+26.87 ± 0.33
+Table 1: CLIP scores (mean ± standard error of the mean over n = 100 prompts) for
+L = 2, comparing D-GRS and RMC across different K values against the target baseline.
+and RMC achieve FID scores of 1.824 and 1.822, respectively, closely tracking the 1.79
+baseline from Karras et al. (2022). On FFHQ, D-GRS and RMC yield respective scores
+of 2.86 and 2.88, performing comparably to, though slightly above, the 2.39 baseline
+(Karras et al., 2022).
+5.3 High-dimensional Latent Space Diffusion
+Stable Diffusion 3.5 (SD3)2 is natively trained via rectified flow. It therefore relies on
+ODE integration, with transitions being deterministic point masses. Consequently, draft
+and target proposals exhibit a total variation distance of one, rendering speculation
+vacuous. We resolve this by sampling from a marginal-preserving SDE family along
+the identical linear probability path, requiring no retraining. The score is computed
+directly from the velocity as sθ = −(xσ +(1−σ)vθ)/σ. Adding the drift −1
+2ε2g2sθ (where
+g2(σ) = 2σ/(1 −σ)) and noise of scale εg ensures every marginal pσ remains invariant.
+Under an Euler–Maruyama discretization, each step yields a Gaussian kernel N(m, ς2I).
+Since the standard deviation ς = εg√−γ is purely a function of the time schedule, draft
+and target kernels diverge only by their means—the exact mathematical structure required
+by our coupling framework. A detailed derivation is deferred to Appendix C.3.
+2The model is publicly available at Huggingface as stabilityai/stable-diffusion-3.5-medium.
+16
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Experimental Setup. We evaluate high-resolution generation at 512×512, utilizing T = 50
+generation steps, a free-guidance scale of 7.0, and a stochasticity level of ε = 0.8. To adapt
+the native resolution to ours, we adopt a timestep shift of 3.0. Throughout the simulations,
+we fix the lookahead at L = 2 and sweeping the branching factor K ∈{2, 3, 4, 5, 6, 7},
+yielding budgets B ∈{6, 12, 20, 30, 42, 56}. Generative sampling is executed within the
+VAE latent space of dimension d = 16 × 64 × 64 = 65,536. All configurations generate
+100 images conditioned on an identical, pre-sampled set of 100 prompts drawn uniformly
+without replacement from the COCO 2014 validation set (Lin et al., 2014).
+Results. Figure 5 illustrates the empirical speed-up over the standard target sampler as a
+function of K and a constrained lookahead depth of L = 2. As the number of proposals per
+node (K) scales from 2 to 7, the corresponding computational budget B expands from 6 to
+56. Consistent with prior topological analyses, the proposed method effectively translates
+this expanded budget into measurable acceleration. By allocating compute toward K, D-
+GRS yields a monotonically increasing speedup that peaks near 1.18× at K = 6 (B = 42),
+with an increment of 6.7% relative to RMC. In contrast, RMC fails to meaningfully
+exploit the additional budget. Bottlenecked by the geometric decay of its sequential
+acceptance, the reflection sampler exhibits severe saturation, plateauing between 1.10×
+and 1.12× across the entire parameter sweep. This widening performance gap clearly
+demonstrates that scaling multiple proposals per node (K) successfully improves per-step
+acceptance rates, allowing the branching topology to strictly dominate the linear chain
+in high-dimensional text-to-image synthesis. To empirically show the exactness of both
+sampling procedures, we report in Table 1 the CLIP scores (Radford et al., 2021) for
+each budget configuration, computed using openai/clip-vit-large-patch14.
+6 Conclusions and Future Work
+We identify a key topological limitation of reflection maximal coupling (RMC), which
+allocates its speculative budget to a single draft chain. To better utilize parallel com-
+putation, we introduce draft trees and propose D-GRS, which adapts greedy rejection
+sampling from the relative entropy coding literature to the resulting list-coupling problem.
+Across our experiments, D-GRS improves NFE speed-up over RMC by up to 8.3% in
+practical settings.
+This work is a first step toward more efficient speculative diffusion sampling. Important
+open directions include overcoming the rapid degradation of exact coupling efficiency
+with generation dimension and adapting the draft topology online to the proposal quality
+and available compute budget.
+17
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+References
+Josh Abramson, Jonas Adler, Jack Dunger, Richard Evans, Tim Green, Alexander
+Pritzel, Olaf Ronneberger, Lindsay Willmore, Andrew J. Ballard, Joshua Bambrick,
+Sebastian W. Bodenstein, David A. Evans, Chia-Chun Hung, Michael O’Neill, David
+Reiman, Kathryn Tunyasuvunakool, Zachary Wu, Akvil˙e Žemgulyt˙e, Eirini Arvaniti,
+Charles Beattie, Ottavia Bertolli, Alex Bridgland, Alexey Cherepanov, Miles Congreve,
+Alexander I. Cowen-Rivers, Andrew Cowie, Michael Figurnov, Fabian B. Fuchs, Hannah
+Gladman, Rishub Jain, Yousuf A. Khan, Caroline M. R. Low, Kuba Perlin, Anna
+Potapenko, Pascal Savy, Sukhdeep Singh, Adrian Stecula, Ashok Thillaisundaram,
+Catherine Tong, Sergei Yakneen, Ellen D. Zhong, Michal Zielinski, Augustin Žídek,
+Victor Bapst, Pushmeet Kohli, Max Jaderberg, Demis Hassabis, and John M. Jumper.
+Accurate structure prediction of biomolecular interactions with alphafold 3. Nature,
+630(8016):493–500, Jun 2024. ISSN 1476-4687. doi: 10.1038/s41586-024-07487-w. URL
+https://doi.org/10.1038/s41586-024-07487-w.
+Omer Bar-Tal, Hila Chefer, Omer Tov, Charles Herrmann, Roni Paiss, Shiran Zada,
+Ariel Ephrat, Junhwa Hur, Guanghui Liu, Amit Raj, Yuanzhen Li, Michael Rubinstein,
+Tomer Michaeli, Oliver Wang, Deqing Sun, Tali Dekel, and Inbar Mosseri. Lumiere: A
+space-time diffusion model for video generation. In SIGGRAPH Asia 2024 Conference
+Papers, SA ’24, New York, NY, USA, 2024. Association for Computing Machinery.
+ISBN 9798400711312. doi: 10.1145/3680528.3687614. URL https://doi.org/10.
+1145/3680528.3687614.
+Charles H Bennett, Peter W Shor, John A Smolin, and Ashish V Thapliyal. Entanglement-
+assisted capacity of a quantum channel and the reverse shannon theorem. IEEE
+transactions on Information Theory, 48(10):2637–2655, 2002.
+Adam Block and Yury Polyanskiy. The sample complexity of approximate rejection
+sampling with applications to smoothed online learning. In The Thirty Sixth Annual
+Conference on Learning Theory, pages 228–273. PMLR, 2023.
+Nicholas Boffi, Michael Albergo, and Eric Vanden-Eijnden. How to build a consistency
+model: Learning flow maps via self-distillation.
+Advances in Neural Information
+Processing Systems, 38:33346–33382, 2025a.
+Nicholas Matthew Boffi, Michael Samuel Albergo, and Eric Vanden-Eijnden. Flow map
+matching with stochastic interpolants: A mathematical framework for consistency
+models. Transactions on Machine Learning Research, 2025b. ISSN 2835-8856. URL
+https://openreview.net/forum?id=cqDH0e6ak2.
+Charlie Chen, Sebastian Borgeaud, Geoffrey Irving, Jean-Baptiste Lespiau, Laurent
+Sifre, and John Jumper. Accelerating large language model decoding with speculative
+sampling. arXiv preprint arXiv:2302.01318, 2023.
+Haoxuan Chen, Yinuo Ren, Lexing Ying, and Grant M Rotskoff. Accelerating diffusion
+models with parallel sampling: Inference at sub-linear time complexity. Advances in
+Neural Information Processing Systems, 37:133661–133709, 2024.
+18
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Paul Cuff. Distributed channel synthesis. IEEE Transactions on Information Theory, 59
+(11):7071–7096, 2013.
+Majid Daliri, Christopher Musco, and Ananda Theertha Suresh. Coupling without
+communication and drafter-invariant speculative decoding. In 2025 IEEE International
+Symposium on Information Theory (ISIT), pages 1–6. IEEE, 2025.
+Valentin De Bortoli, Alexandre Galashov, Arthur Gretton, and Arnaud Doucet. Ac-
+celerated diffusion models via speculative sampling. In International Conference on
+Machine Learning (ICML) (ICML), pages 12590–12631. PMLR, 2025.
+Prafulla Dhariwal and Alexander Nichol. Diffusion models beat gans on image synthesis.
+Advances in neural information processing systems, 34:8780–8794, 2021.
+S Dieleman. The paradox of diffusion distillation. 2024.
+Sander Dieleman. Learning the integral of a diffusion model, 2026. URL https://sander.
+ai/2026/05/06/flow-maps.html.
+Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry
+Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al. Scaling rectified
+flow transformers for high-resolution image synthesis. In International Conference on
+Machine Learning, pages 12606–12633. PMLR, 2024.
+Angela Fan, Mike Lewis, and Yann Dauphin. Hierarchical neural story generation. In
+Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics,
+pages 889–898, 2018.
+Gergely Flamich. Greedy poisson rejection sampling. Advances in Neural Information
+Processing Systems, 36:37089–37127, 2023.
+Gergely Flamich and Deniz Gündüz. Data compression with stochastic codes. IEEE
+BITS the Information Theory Magazine, 2026. doi: 10.1109/MBITS.2026.3702602.
+Tutorial paper on relative entropy coding, to appear in the IEEE BITS magazine.
+Gergely Flamich and Lucas Theis. Adaptive greedy rejection sampling. In 2023 IEEE
+International Symposium on Information Theory (ISIT), pages 454–459. IEEE, 2023.
+Gergely Flamich and Lennie Wells. Some notes on the sample complexity of approximate
+channel simulation. In First ’Learn to Compress’ Workshop@ ISIT 2024, 2024.
+Kevin Frans, Danijar Hafner, Sergey Levine, and Pieter Abbeel. One step diffusion via
+shortcut models. In The Thirteenth International Conference on Learning Representa-
+tions, 2025. URL https://openreview.net/forum?id=OlzB6LnXcS.
+Zhengyang Geng, Mingyang Deng, Xingjian Bai, Zico Kolter, and Kaiming He. Mean
+flows for one-step generative modeling. Advances in Neural Information Processing
+Systems, 38:75460–75482, 2025.
+19
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Zhengyang Geng, Yiyang Lu, Zongze Wu, Eli Shechtman, J. Zico Kolter, and Kaiming
+He. Improved mean flows: On the challenges of fastforward generative models. In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+(CVPR), pages 30467–30476, June 2026.
+Yuanxin Guo, Sadaf Salehkalaibar, Stark C Draper, and Wei Yu. One-shot achievability
+region for hypothesis testing with communication constraint. In 2024 IEEE Information
+Theory Workshop (ITW), pages 55–60. IEEE, 2024.
+Prahladh Harsha, Rahul Jain, David McAllester, and Jaikumar Radhakrishnan. The
+communication complexity of correlation. IEEE Transactions on Information Theory,
+56(1):438–449, 2010.
+Jiajun He, Gergely Flamich, and José Miguel Hernández-Lobato. Accelerating relative
+entropy coding with space partitioning. Advances in Neural Information Processing
+Systems, 37:75791–75828, 2024.
+Spencer Hill, Fady Alajaji, Tamás Linder, and Gergely Flamich. Rejection sampling is
+optimal for relative entropy coding. 2026. To appear at the 2026 IEEE Information
+Theory Workshop (ITW).
+Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models.
+Advances in Neural Information processing systems, 33:6840–6851, 2020.
+Jonathan Ho, Tim Salimans, Alexey A Gritsenko, William Chan, Mohammad Norouzi,
+and David J Fleet. Video diffusion models. In ICLR workshop on deep generative
+models for highly structured data, 2022.
+Peter Holderrieth, Douglas Chen, Luca Eyring, Ishin Shah, Giri Anantharaman, Yutong
+He, Zeynep Akata, Tommi Jaakkola, Nicholas Matthew Boffi, and Max Simchowitz.
+Diamond maps: Efficient reward alignment via stochastic flow maps. arXiv preprint
+arXiv:2602.05993, 2026.
+Ari Holtzman, Jan Buys, Li Du, Maxwell Forbes, and Yejin Choi. The curious case of
+neural text degeneration. In International Conference on Learning Representations
+(ICLR), 2020.
+Xixi Hu, Keyang Xu, Bo Liu, Qiang Liu, and Hongliang Fei. Amo sampler: Enhancing
+text rendering with overshooting. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition (CVPR), pages 13157–13166, June 2025a.
+Zhengmian Hu, Tong Zheng, Vignesh Viswanathan, Ziyi Chen, Ryan Rossi, Yihan Wu,
+Dinesh Manocha, and Heng Huang. Towards optimal multi-draft speculative decoding.
+In International Conference on Learning Representations (ICLR), volume 2025, pages
+3181–3203, 2025b.
+Tero Karras, Samuli Laine, and Timo Aila. A style-based generator architecture for
+generative adversarial networks. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition (CVPR), June 2019.
+20
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine. Elucidating the design space of
+diffusion-based generative models. Advances in Neural Information Processing Systems,
+35:26565–26577, 2022.
+Ashish Khisti, M Reza Ebrahimi, Hassan Dbouk, Arash Behboodi, Roland Memisevic,
+and Christos Louizos. Multi-draft speculative sampling: Canonical decomposition and
+theoretical limits. In International Conference on Learning Representations (ICLR),
+2025.
+Diederik Kingma, Tim Salimans, Ben Poole, and Jonathan Ho. Variational diffusion
+models. Advances in neural information processing systems, 34:21696–21707, 2021.
+Szymon Kobus, Lucas Theis, and Deniz Gündüz. Gaussian channel simulation with
+rotated dithered quantization. In 2024 IEEE International Symposium on Information
+Theory (ISIT), pages 1907–1912. IEEE, 2024.
+Alex Krizhevsky and Geoffrey Hinton. Learning multiple layers of features from tiny
+images. 2009.
+Chieh-Hsin Lai, Yang Song, Dongjun Kim, Yuki Mitsufuji, and Stefano Ermon. The
+principles of diffusion models. arXiv preprint arXiv:2510.21890, 2025.
+Yaniv Leviathan, Matan Kalman, and Yossi Matias. Fast inference from transformers
+via speculative decoding. In International Conference on Machine Learning (ICML)
+(ICML), pages 19274–19286. PMLR, 2023.
+Cheuk Ting Li. Channel simulation: Theory and applications to lossy compression and
+differential privacy. Foundations and Trends® in Communications and Information
+Theory, 21(6):847–1106, 2024.
+Cheuk Ting Li and Venkat Anantharam. A unified framework for one-shot achievability
+via the poisson matching lemma. IEEE Transactions on Information Theory, 67(5):
+2624–2651, 2021.
+Cheuk Ting Li and Abbas El Gamal.
+Strong functional representation lemma and
+applications to coding theorems. IEEE Transactions on Information Theory, 64(11):
+6967–6978, 2018.
+Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan,
+Piotr Dollár, and C Lawrence Zitnick. Microsoft COCO: Common objects in context.
+In European conference on computer vision, pages 740–755. Springer, 2014.
+Yijun Lin, Jinhao Sheng, Qingyue Cai, and Feng Zhou. Spectr-gbv: Multi-draft block
+verification accelerating speculative decoding. arXiv preprint arXiv:2604.25925, 2026.
+Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le.
+Flow matching for generative modeling. In The eleventh international conference on
+learning representations, 2022.
+21
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow straight and fast: Learning to
+generate and transfer data with rectified flow. In International conference on learning
+representations (ICLR), 2023.
+Yanxiao Liu and Cheuk Ting Li. One-shot coding over general noisy networks. IEEE
+Transactions on Information Theory, 71(11):8346–8357, 2025.
+Yanxiao Liu, Wei-Ning Chen, Ayfer Ozgur, and Cheuk Ting Li. Universal exact compres-
+sion of differentially private mechanisms. Advances in Neural Information Processing
+Systems, 37:91492–91531, 2024.
+Yanxiao Liu, Sepehr Heidari Advary, and Cheuk Ting Li. Nonasymptotic oblivious relaying
+and variable-length noisy lossy source coding. IEEE Transactions on Information
+Theory, 72(6):4555–4564, 2026.
+Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu. Dpm-
+solver: A fast ODE solver for diffusion probabilistic model sampling in around 10 steps.
+Advances in Neural Information Processing Systems, 35:5775–5787, 2022.
+Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu. Dpm-
+solver++: Fast solver for guided sampling of diffusion probabilistic models. Machine
+Intelligence Research, 22(4):730–751, 2025.
+Eric Luhman and Troy Luhman. Knowledge distillation in iterative generative models
+for improved sampling speed. arXiv preprint arXiv:2101.02388, 2021.
+Chris J Maddison. A Poisson process model for Monte Carlo. Perturbation, Optimization,
+and Statistics, pages 193–232, 2016.
+Chris J Maddison, Daniel Tarlow, and Tom Minka. A* sampling. Advances in Neural
+Information Processing Systems, 27, 2014.
+Sam McCallum, Zander W. Blasingame, Timothy Herschell, Niklas Rindtorff, Alexander
+Tong, and James Foster. Strong stochastic flow maps. In ICML 2026 Workshop
+on Structured Probabilistic Inference & Generative Modeling, 2026.
+URL https:
+//openreview.net/forum?id=X0Bj1j4vbW.
+Xupeng Miao, Gabriele Oliaro, Zhihao Zhang, Xinhao Cheng, Zeyu Wang, Zhengxin
+Zhang, Rae Ying Yee Wong, Alan Zhu, Lijie Yang, Xiaoxiang Shi, et al. Specinfer:
+Accelerating large language model serving with tree-based speculative inference and
+verification. In Proceedings of the 29th ACM International Conference on Architectural
+Support for Programming Languages and Operating Systems, Volume 3, pages 932–949,
+2024.
+Peter Potaptchik, Adhi Saravanan, Abbas Mammadov, Alvaro Prat, Michael Samuel
+Albergo, and Yee Whye Teh. Meta flow maps enable scalable reward alignment. In
+Forty-third International Conference on Machine Learning (ICML), 2026.
+Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, Ilya Sutskever, et al.
+Language models are unsupervised multitask learners. OpenAI blog, 1(8):9, 2019.
+22
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini
+Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al. Learn-
+ing transferable visual models from natural language supervision. In International
+Conference on Machine Learning (ICML), pages 8748–8763. PMLR, 2021.
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models. In Proceedings of the
+IEEE/CVF conference on computer vision and pattern recognition, pages 10684–10695,
+2022.
+Joseph Rowan, Truong Buu Phan, and Ashish Khisti. List-level distribution coupling
+with applications to speculative decoding and lossy compression. Advances in Neural
+Information Processing Systems, 38:5576–5619, 2025.
+Amirmojtaba Sabour, Sanja Fidler, and Karsten Kreis.
+Align your flow:
+Scaling
+continuous-time flow map distillation. Advances in Neural Information Processing
+Systems, 38:146459–146512, 2025.
+Tim Salimans and Jonathan Ho. Progressive distillation for fast sampling of diffusion
+models. In International Conference on Learning Representations, 2022. URL https:
+//openreview.net/forum?id=TIdIXIpzhoI.
+Axel Sauer, Dominik Lorenz, Andreas Blattmann, and Robin Rombach. Adversarial
+diffusion distillation. In European Conference on Computer Vision, pages 87–103.
+Springer, 2024.
+Andy Shih, Suneel Belkhale, Stefano Ermon, Dorsa Sadigh, and Nima Anari. Parallel
+sampling of diffusion models. Advances in Neural Information Processing Systems, 36:
+4263–4276, 2023.
+Alexander Soen, Hisham Husain, Valentin De Bortoli, and Arnaud Doucet. Accelerating
+speculative diffusions via block verification. arXiv preprint arXiv:2606.13426, 2026.
+Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli. Deep un-
+supervised learning using nonequilibrium thermodynamics. In International conference
+on machine learning, pages 2256–2265. pmlr, 2015.
+Jiaming Song, Chenlin Meng, and Stefano Ermon. Denoising diffusion implicit models.
+In International Conference on Learning Representations, 2021a.
+URL https://
+openreview.net/forum?id=St1giarCHLP.
+Yang Song and Stefano Ermon. Generative modeling by estimating gradients of the data
+distribution. Advances in neural information processing systems, 32, 2019.
+Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Er-
+mon, and Ben Poole. Score-based generative modeling through stochastic differential
+equations. In International Conference on Learning Representations, 2021b. URL
+https://openreview.net/forum?id=PxTIG12RRHS.
+23
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Yang Song, Prafulla Dhariwal, Mark Chen, and Ilya Sutskever. Consistency models. In
+International Conference on Machine Learning, pages 32211–32252. PMLR, 2023.
+Ziteng Sun, Ananda Theertha Suresh, Jae Hun Ro, Ahmad Beirami, Himanshu Jain, and
+Felix Yu. Spectr: Fast speculative decoding via optimal transport. Advances in Neural
+Information Processing Systems, 36:30222–30242, 2023.
+Zhiwei Tang, Jiasheng Tang, Hao Luo, Fan Wang, and Tsung-Hui Chang. Accelerating
+parallel sampling of diffusion models. In International Conference on Machine Learning
+(ICML), 2024.
+Joseph L. Watson, David Juergens, Nathaniel R. Bennett, Brian L. Trippe, Jason Yim,
+Helen E. Eisenach, Woody Ahern, Andrew J. Borst, Robert J. Ragotte, Lukas F.
+Milles, Basile I. M. Wicky, Nikita Hanikel, Samuel J. Pellock, Alexis Courbet, William
+Sheffler, Jue Wang, Preetham Venkatesh, Isaac Sappington, Susana Vázquez Torres,
+Anna Lauko, Valentin De Bortoli, Emile Mathieu, Sergey Ovchinnikov, Regina Barzilay,
+Tommi S. Jaakkola, Frank DiMaio, Minkyung Baek, and David Baker.
+De novo
+design of protein structure and function with rfdiffusion. Nature, 620(7976):1089–
+1100, Aug 2023. ISSN 1476-4687. doi: 10.1038/s41586-023-06415-8. URL https:
+//doi.org/10.1038/s41586-023-06415-8.
+Ling Yang, Zhilong Zhang, Yang Song, Shenda Hong, Runsheng Xu, Yue Zhao, Wentao
+Zhang, Bin Cui, and Ming-Hsuan Yang. Diffusion models: A comprehensive survey of
+methods and applications. ACM computing surveys, 56(4):1–39, 2023.
+Tianwei Yin, Michaël Gharbi, Taesung Park, Richard Zhang, Eli Shechtman, Frédo
+Durand, and William T Freeman. Improved distribution matching distillation for
+fast image synthesis. In Proceedings of the 38th International Conference on Neural
+Information Processing Systems, pages 47455–47487, 2024a.
+Tianwei Yin, Michaël Gharbi, Richard Zhang, Eli Shechtman, Frédo Durand, William T.
+Freeman, and Taesung Park. One-step diffusion with distribution matching distilla-
+tion. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), pages 6613–6623, June 2024b.
+Ram Zamir and Meir Feder. On universal quantization by randomized uniform/lattice
+quantizers. IEEE Transactions on Information Theory, 38(2):428–436, 1992.
+Qinsheng Zhang and Yongxin Chen. Fast sampling of diffusion models with exponential
+integrator. In International Conference on Learning Representations, 2023.
+Xuandong Zhao, Lei Li, and Yu-Xiang Wang. Permute-and-flip: An optimally stable
+and watermarkable decoder for LLMs.
+In International Conference on Learning
+Representations, (ICLR), 2025.
+Huanjian Zhou and Masashi Sugiyama. Parallel simulation for log-concave sampling
+and score-based diffusion models. In International Conference on Machine Learning
+(ICML), pages 79192–79225. PMLR, 2025.
+24
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Linqi Zhou, Mathias Parger, Ayaan Haque, and Jiaming Song. Terminal velocity matching.
+In The Fourteenth International Conference on Learning Representations, 2026. URL
+https://openreview.net/forum?id=plISxvVf6j.
+25
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+A Literature Review
+A.1 Diffusion Models
+Diffusion models implicitly learn data distributions from empirical samples. The gen-
+erative process is initialized with a sample from a tractable prior, typically a Gaussian
+distribution, and iteratively denoises it to recover a sample from the target data distribu-
+tion (Lai et al., 2025). This mechanism is formalized by defining a fixed forward process
+that progressively corrupts the data with noise, coupled with a parameterized neural
+network trained to reverse this corruption. Several theoretical frameworks formulate this
+concept, including the Denoising Diffusion Probabilistic Model (DDPM) (Sohl-Dickstein
+et al., 2015; Ho et al., 2020) and noise-conditioned score networks (Song and Ermon,
+2019). These were subsequently unified as discretizations of a single continuous-time
+stochastic differential equation (SDE) (Song et al., 2021b), alongside the more recent
+flow matching paradigm (Lipman et al., 2022; Liu et al., 2023). Fundamentally, these
+formulations are mathematically equivalent up to a transformation of the model’s output
+parameterization and noise schedule (Kingma et al., 2021; Lai et al., 2025). A critical
+practical consequence of this equivalence is that the training objective does not uniquely
+dictate the sampling algorithm: models trained via denoising can be sampled determinis-
+tically using a probability flow ordinary differential equation (ODE) (Song et al., 2021b),
+while models trained under a flow matching objective can employ stochastic sampling
+schemes (Liu et al., 2023; Hu et al., 2025a). These generative frameworks have estab-
+lished state-of-the-art performance across a diverse array of modalities, encompassing
+image synthesis (Dhariwal and Nichol, 2021; Rombach et al., 2022; Karras et al., 2022),
+video generation (Ho et al., 2022; Bar-Tal et al., 2024), protein design (Watson et al.,
+2023), prediction of biomolecular structure (Abramson et al., 2024), and numerous other
+applications (Yang et al., 2023).
+Despite their empirical success, a primary limitation of diffusion models is the iterative
+nature of the sampling process. Efforts to accelerate inference by reducing the number of
+integration steps have been extensively investigated and generally branch into training-free
+and training-based methodologies (Dieleman, 2024, 2026; Lai et al., 2025). Training-free
+approaches leverage the fixed, pre-trained model and achieve acceleration through the
+deployment of advanced ODE and SDE solvers that allow for larger step sizes without
+compromising accuracy (Song et al., 2021a; Zhang and Chen, 2023; Lu et al., 2022,
+2025). Conversely, training-based methods explicitly optimize a model to execute large
+synthesis steps. These approaches vary along two primary axes. The first is the source
+of supervision: they may distill knowledge from a pretrained teacher model (Luhman
+and Luhman, 2021; Salimans and Ho, 2022; Song et al., 2023; Sabour et al., 2025) or
+train a few-step model entirely from scratch (Song et al., 2023; Frans et al., 2025; Geng
+et al., 2025; Boffi et al., 2025a). The second axis concerns the matching objective: certain
+techniques enforce the preservation of trajectories connecting noise to data (Salimans
+and Ho, 2022; Song et al., 2023; Boffi et al., 2025b), whereas others constrain the final
+model output to match the target marginal distribution (Yin et al., 2024b,a; Sauer et al.,
+2024). While initially developed for ODE trajectories, these acceleration techniques have
+recently been generalized to SDEs. This includes methods that learn transition kernels to
+26
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+replicate the process’s marginal distributions (Potaptchik et al., 2026; Holderrieth et al.,
+2026), as well as those that learn the solution map pathwise, conditioned on specific
+realizations of the driving noise (McCallum et al., 2026).
+A.2 Speculative Sampling for Language Models
+Standard autoregressive decoding approaches, such as top-k sampling (Radford et al.,
+2019; Fan et al., 2018), nucleus sampling (Holtzman et al., 2020), and the permute-and-flip
+decoder (Zhao et al., 2025), generate tokens one at a time and therefore incur the inherent
+latency of one target-model call for each token. Speculative sampling (Chen et al., 2023;
+Leviathan et al., 2023) alleviates this bottleneck by employing a smaller draft model
+to propose multiple future tokens, while the larger target model verifies these proposed
+continuations in parallel, with a rejection-correction step ensuring that the exact target-
+model distribution is preserved. The resulting efficiency gain depends on how closely the
+draft distribution approximates the target distribution: more accurate proposals yield
+higher acceptance rates and longer verified blocks. Recent works have further advanced this
+paradigm through optimal-transport-based token selection (Sun et al., 2023), tree-based
+inference and verification (Miao et al., 2024), and multi-draft architectures (Khisti et al.,
+2025; Hu et al., 2025b; Lin et al., 2026). Multi-draft speculative decoding can be viewed
+as an application of list-coupling schemes (Rowan et al., 2025), which strictly extend
+ordinary coupling for speculative decoding (Daliri et al., 2025). Recently, speculative
+sampling has been used to accelerating the diffusion modesl (De Bortoli et al., 2025; Soen
+et al., 2026).
+A.3 Relative Entropy Coding
+The sequential coupling methodology introduced here for speculative diffusion is theo-
+retically grounded in greedy rejection sampling (Harsha et al., 2010). This technique
+falls within a broader family of remote coupling methods identified by various terms in
+the literature, including channel simulation (Li, 2024), channel synthesis (Cuff, 2013),
+and reverse channel coding (Bennett et al., 2002). Hereafter, we refer to this class of
+schemes as relative entropy coding (REC) (Flamich and Gündüz, 2026). Fundamentally,
+REC is formulated as a lossy compression problem designed to establish the minimal
+communication overhead required to simulate a target stochastic channel over a noiseless
+link. The nomenclature derives from the theoretical result that, in the regime of exact
+simulation, the fundamental lower bound on this communication cost is governed by a
+relative entropy measure.
+In this work, we employ greedy rejection sampling (Harsha et al., 2010), a methodology
+whose capabilities have been significantly expanded in recent literature (Flamich and Theis,
+2023; Flamich, 2023; Hill et al., 2026). A parallel and prominent class of REC frameworks
+relies on Poisson processes. Rooted in the Poisson functional representation (Li and
+El Gamal, 2018)-a concept intimately connected to A∗sampling (Maddison et al., 2014;
+Maddison, 2016)-these schemes have found broad application across diverse domains.
+Notable examples include hypothesis testing (Guo et al., 2024), network information
+theory (Li and Anantharam, 2021; Liu and Li, 2025; Liu et al., 2026), and machine
+27
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+learning (He et al., 2024). Related methodologies for approximate channel simulation
+have been proposed by Block and Polyanskiy (2023); Kobus et al. (2024); Flamich and
+Wells (2024). Nevertheless, since these approaches yield inexact simulations and therefore
+fall short of the theoretical relative entropy limit, they are precluded from the standard
+definition of REC.
+B On Performance Analysis
+In this section, we provide proofs of the theoretical guarantees discussed in Section 4.
+For completeness, we restate the theorems before presenting their proofs.
+Throughout this section P = N(µp, σ2Id) and Q = N(µq, σ2Id) denote the proposal
+and target distributions on Ω= Rd. Furthermore, let J denote the index of the proposal
+accepted by Algorithm 3, so that Y = bYJ. Let also (λj)j≥0 be an increasing sequence of
+levels that define superlevel sets of the density ratio ρ = dQ
+dP , i.e.,
+Hj := {y ∈Ω: ρ(y) ≥λj} .
+Finally, Φ(x) := 1 −Φ(x) is the standard Gaussian survival function, and (x)+ :=
+max{x, 0}.
+B.1 Proof of Exactness
+Theorem 3 (Exactness). The output Y of Algorithm 3 with target distribution Q =
+N(µq; σ2Id) satisfies Y ∼Q.
+Proof. Let bY1:K
+i.i.d.
+∼P be K proposals. By the residual-measure characterization of greedy
+rejection sampling (Flamich and Theis, 2023, Lemma III.1-2), for every measurable set
+A ⊆Rd, the target mass that remains after the first j proposals is
+∆j(A) = Q(A) −P
+
+J ≤j, bYJ ∈A
+
+=
+Z
+A
+(ρ(y) −λj)+ P(dy).
+(21)
+Note that if we take A = Ω, we have
+∆j(Ω) = 1 −P(J ≤j) = P(J > j) := Gj+1.
+(22)
+Hence when Gj+1 > 0, the normalized residual distribution is
+rj(A) = ∆j(A)
+Gj+1
+.
+(23)
+Therefore, by combining (21), (22), and (23), for every measurable A ⊆Rd, we have
+P(Y ∈A) = P
+
+J ≤j, bYJ ∈A
+
++ P(J > j) rj(A)
+= Q(A) −∆j(A) + Gj+1
+∆j(A)
+Gj+1
+= Q(A).
+Therefore Y ∼Q exactly.
+28
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+B.2 Proof of Acceptance Probability
+Theorem 4 (Acceptance Probability). Denote
+∆:= (µq −µp)/σ,
+δ := ∥∆∥,
+e := ∆/δ.
+For Algorithm 3, the probability of accepting at least one of the K proposals is given
+by
+P(∃k ∈{1, · · · , K} : Y = bYk) = 1 −GK+1 .
+(24)
+Furthermore, for any δ ∈R+, we have
+GK+1 = Φ
+1
+δ ln λK −δ
+2
+
+−λKΦ
+1
+δ ln λK + δ
+2
+
+,
+(25)
+where Φ(x) = 1 −Φ(x) is the standard Gaussian survival function.
+Proof. By Lemma III.1 of Flamich and Theis (2023), Gj is the probability that greedy
+rejection sampling reaches proposal j, i.e. Gj = Pr(J ≥j). Consequently the probability
+that the first j proposals are all rejected is
+Pr(J > j) = Pr(J ≥j + 1) = Gj+1,
+so Pr(J ≤j) = 1 −Gj+1, and therefore
+Pr
+ ∃k ∈{1, . . . , K} : Y = bYk
+ = Pr(J ≤K)
+= 1 −GK+1.
+The remainder of the proof computes GK+1. Combining (21) and (22), we obtain
+Gj+1 = ∆j(Ω) =
+Z
+Ω
+(ρ(y) −λj)+ P(dy).
+(26)
+Since the integrand in (26) vanishes outside the superlevel set
+Hj := {y ∈Ω: ρ(y) ≥λj} ,
+we have
+Gj+1 =
+Z
+Hj
+(ρ(y)λj) P(dy) = Q(Hj) −λj P(Hj).
+(27)
+Computing Gj+1 has thus been reduced to computing the P- and Q-masses of a superlevel
+set of the density ratio. For Gaussian P and Q with a common covariance σ2Id, the log
+target-to-proposal ratio becomes:
+ln ρ(y) = ∥y −µp∥2 −∥y −µq∥2
+2σ2
+= 2(µq −µp)⊤y −
+ ∥µq∥2 −∥µp∥2
+2σ2
+29
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+= (µq −µp)⊤ y −¯µ
+
+σ2
+= δ e⊤(y −¯µ)
+σ
+,
+with ¯µ := 1
+2(µp + µq). Let
+s(y) := 1
+σ e⊤(y −¯µ) ,
+then the likelihood ratio becomes a monotone function of the scalar statistic s,
+ρ(y) = exp (δ s(y)) .
+Because δ > 0, the map t 7→eδt is strictly increasing, and the superlevel set is the
+half-space
+Hj = {y : ρ(y) ≥λj} = {y : s(y) ≥τj} ,
+τj = ln λj
+δ
+.
+Now, to characterize the masses Q(Hj) and P(Hj), we are left with the characterization
+of the the laws of s when X ∼P and Y ∼Q. s is an affine functional of a Gaussian
+vector, hence Gaussian with means
+E[s(X)] = e⊤(µp −¯µ)
+σ
+= e⊤(µp −µq)
+2σ
+= −δ
+2,
+E[s(Y )] = e⊤(µq −¯µ)
+σ
+= e⊤(µq −µp)
+2σ
+= +δ
+2,
+and same unit variance
+Var[s(X)] = Var[s(Y )] = e⊤(σ2Id)e
+σ2
+= ∥e∥2 = 1.
+Therefore,
+s(X) ∼N
+
+−δ
+2, 1
+
+,
+s(Y ) ∼N
+δ
+2, 1
+
+.
+Standardising the two laws of s then gives
+Q(Hj) = Φ
+
+τj −δ
+2
+
+,
+P(Hj) = Φ
+
+τj + δ
+2
+
+,
+which, substituted into (27), becomes
+Gj+1 = Q(Hj) −λj P(Hj)
+= Φ
+
+τj −δ
+2
+
+−λjΦ
+
+τj + δ
+2
+
+.
+Taking j = K completes the proof.
+Remark 1 (Recovering RMC). In the special case of K = 1 we recover RMC. In fact,
+λ1 = G1 = 1 yields τ1 = 0, and hence
+Pr(J ≤1) = 1 −G2
+30
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+0
+0.5
+1
+1.5
+2
+2.5
+3
+3.5
+4
+4.5
+0
+0.2
+0.4
+0.6
+0.8
+1
+Normalized Mean Mismatch δ = ∥µq −µp∥2/σ
+Per-step Acceptance Probability
+D-GRS Per-step Acceptance Probability
+K = 1
+K = 2
+K = 4
+K = 8
+Figure 6: Per-step acceptance probability of D-GRS for different number K of draft
+proposals.
+= 1 −Φ
+
+−δ
+2
+
++ Φ
+δ
+2
+
+= 2Φ
+δ
+2
+
+.
+This is the same acceptance probability as De Bortoli et al. (2025).
+Remark 2 (Degenerate and anisotropic cases). Theorem 2 assumes δ > 0, which is needed
+for τj = ln λj/δ to be defined. If δ = 0 then P = Q, ρ ≡1, and the first proposal is
+accepted almost surely, so G2 = 0 and the acceptance probability equals 1 for every K ≥1;
+this is also the limit of (24) as δ ↓0. The argument extends verbatim to any common
+covariance Σ ≻0 upon replacing δ by the Mahalanobis distance δ = ∥Σ−1/2(µq −µp)∥
+and s by s(y) = e⊤Σ−1/2(y −¯µ) with e = Σ−1/2(µq −µp)/δ.
+C Extended Experimental Results
+In this section, we provide more details about our experimental settings.
+C.1 Implementation Details
+The delayed-drift proposal. In our experiments, we instantiate the template with (7),
+taking the target drift evaluated at the root: ˜mp
+n′(y) = y + γ bq
+tn(Yn) for every step n′ ≤L
+of the round. The proposal mean is therefore the same map at every depth, so the
+drafting phase in Algorithm 1 specializes to
+bYv ∼N
+  ˜mp
+n( bYu), σ2
+n+ℓ−1Id
+, v ∈C(u), |u| = ℓ−1,
+with ˜mp
+n( bYu) = bYu + γbq
+tn(Yn), Yn = Yr. Note that this would require 1 extra target call
+per round (other than the one needed for verification) to compute the target drift at the
+root node bq
+tn(Yn).
+31
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+1
+2
+3
+4
+5
+6
+7
+Branching Factor K
+1.8
+1.9
+2.0
+2.1
+2.2
+2.3
+Speedup Over Standard Sampling
+L = 2
+L = 3
+L = 4
+L = 5
+L = 6
+L = 7
+RMC saturates at 
+2 ×
+2
+3
+4
+5
+6
+7
+Lookahead depth L (D-GRS)
+Figure 7: NFE speedup over standard sampling on the Gaussian-mixture target as a
+function of tree width K. Points indicate the mean per-replicate speedup, averaged
+over 100 independent trials. Coloured lines depict D-GRS across lookahead depths
+L ∈{2, . . . , 7} (see color bar), with shaded bands showing ±1 standard error.
+Root-drift Prefetching. When the delayed-drift is used as proposal, the drafting phase
+requires evaluating bq
+tn(Yn) at the root of every round, that is, one target evaluation in
+addition to the one used for verification. Following De Bortoli et al. (2025), we avoid this
+by reusing a drift already computed during the preceding round, a device we refer to as
+root-drift prefetching: bq
+tn(Yn) is replaced by bq
+tn′( ˜Y ) for some pair (n′, ˜Y ) whose drift is
+already available.
+C.2 The Value of K and L
+We next isolate the two mechanisms by which a proposal budget may be allocated: the
+branching factor K, i.e. the number of candidate children expanded per node, and the
+lookahead depth L. Figure 7 reports the speedup over standard sampling as a function
+of K, stratified by L, with each point averaged over 100 independent replicates.
+RMC admits no branching, as it drafts a single linear chain, and consequently
+saturates at ≈2× irrespective of the chain length. This ceiling admits a closed-form
+characterization. Under the assumption that the per-step acceptance probability of the
+coupling α is fixed for each step, the expected length of the accepted prefix of a chain of
+n drafted states is
+n
+X
+i=1
+αi = α (1 −αn)
+1 −α
+−−−→
+n→∞
+α
+1 −α,
+so that, since each round commits the accepted prefix together with one resampled
+state at the cost of a single target evaluation, the number of committed steps per target
+32
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+network function evaluation is bounded above by 1/(1 −α). The measured acceptance
+probability α ≈0.52 yields a predicted ceiling of 2.09×, in close agreement with the
+observed 2×. Extending the chain beyond this regime therefore incurs additional draft
+computation without any attendant reduction in target evaluations: the geometric decay
+of the acceptance probability along the chain, rather than the draft budget, constitutes
+the binding constraint.
+The relative value of depth L and width K is governed by the per-step acceptance
+probability of the coupling, which is controlled by the ratio δ defined in (12). Conse-
+quently, K, L are complementary rather than interchangeable, and their relative priority is
+separated by a problem-dependent crossover. Below it, depth is the binding constraint: a
+shallow tree exhausts its lookahead before branching can be exploited, and no K recovers
+the deficit. At L = 2 the best configuration attains only 1.876×, short of the RMC ceiling,
+whereas at K = 1 the tree degenerates to a chain and D-GRS reproduces that ceiling.
+D-GRS surpasses RMC only once the lookahead is deep enough to sustain an accepted
+run, here from (K, L) = (2, 3) onward. Above the crossover, the two parameters compete
+for the same budget: the marginal benefit of depth is exhausted by L ≈5, beyond which
+the L ∈{5, 6, 7} curves lie within one standard error of one another, while widening from
+K = 5 to K = 7 at L = 6 still yields 0.09×, up to a best of 2.34× at (K, L) = (7, 6).
+Once the lookahead is sufficient, additional budget is better spent on width than on
+depth.
+C.3 SD3 Conversion
+Unlike DDPMs, SD3 is trained as a rectified flow (flow matching) model, i.e. it directly
+parameterizes a probability-flow ODE. We recall here how this ODE is recast as the SDE
+in (2), which requires identifying the drift ft, the diffusion coefficient gt and the score st
+implied by the SD3 interpolant.
+Unlike DDPMs, SD3 is trained as a rectified flow model: it parameterises a probability-
+flow ODE, whose transitions are deterministic point masses, yielding a total variation
+distance of one. Speculation is therefore vacuous for the native SD3 sampler, and applying
+our framework requires transitions that are genuinely Gaussian.
+We obtain them without retraining, by exhibiting SD3 as a member of the family of
+reverse-time SDEs (2) that share its marginals. Concretely, the conversion identifies the
+drift ft, the diffusion coefficient gt and the score st implied by the SD3 interpolant, so
+that the reverse drift (2) and its Euler–Maruyama discretisation (4)–(5) apply verbatim.
+The outcome, recorded in (36)–(37) below, is a Gaussian transition kernel whose variance
+is independent of the state, which is precisely the structure the rank-1 reduction (12)–(15)
+requires.
+Interpolant and velocity field. Let X0 ∼pdata and ξ ∼N(0, Id) be independent. For
+t ∈[0, 1], SD3 perturbs data along the linear interpolant
+Xt = αtX0 + βt ξ,
+αt = 1 −t,
+βt = t,
+(28)
+so that X0 ∼pdata and X1 ∼N(0, Id). Along (28) the velocity is constant, dXt
+dt = ξ −X0,
+and the network vθ is trained by conditional flow matching to regress it from the corrupted
+33
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+state alone. Since the pair (X0, ξ) is not identifiable from Xt, the minimiser of the training
+objective is the conditional expectation, that is the marginal velocity field
+vt(x) := E
+dXt
+dt
+ Xt = x
+
+(29)
+= E[ξ | Xt = x] −E[X0 | Xt = x].
+(30)
+Drift and diffusion coefficient. Any affine interpolant of the form (28) is the marginal
+law of a linear SDE
+dXt = ftXt dt + gt dBt,
+since for such an SDE the conditional mean and variance of Xt | X0 obey dαt
+dt = ftαt and
+dβ2
+t
+dt = 2ftβ2
+t + g2
+t . Inverting these relations,
+ft = 1
+αt
+dαt
+dt ,
+g2
+t = 2βt
+dβt
+dt −ftβt
+
+,
+(31)
+and substituting αt = 1 −t, βt = t yields the SD3 coefficients
+ft(x) = −
+x
+1 −t,
+g2
+t =
+2t
+1 −t.
+(32)
+Score. The reverse drift (3) is expressed through the Stein score, which the flow matching
+parameterization does not supply directly. It is, however, an affine function of the velocity.
+Taking conditional expectations in (28) gives
+x = (1 −t) E[X0 | Xt = x] + t E[ξ | Xt = x].
+Eliminating E[X0 | Xt = x] from (30) then leaves
+vt(x) = E[ξ | Xt = x] −x
+1 −t
+.
+(33)
+Combining (33) with st(x) = −E[ξ | Xt = x]/βt Karras et al. (2022), we have
+st(x) = −x + (1 −t) vt(x)
+t
+.
+(34)
+Reverse process. Substituting f1−t(x) = −x/t, g2
+1−t = 2(1 −t)/t and (34), all evaluated
+at time 1 −t, into the reverse drift (3) gives
+bq
+t(x) = −
+ 1 + ε2v1−t(x) −ε2 x
+t ,
+(35)
+and the reverse process (2) is
+dYt = bq
+t(Yt) dt + ε g1−t dWt,
+with g1−t =
+p
+2(1 −t)/t.
+34
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Transition kernels. Applying the Euler–Maruyama discretisation (4) on the uniform
+grid tn = nγ yields, conditionally on Yn = y, the Gaussian transition Qn(· | y) =
+N
+ mq
+n(y), σ2
+nId
+ of (5), with
+mq
+n(y) = y −γ
+ 1 + ε2v1−tn(y) + ε2 y
+tn
+
+,
+(36)
+σn = √γ ε g1−tn = ε
+s
+2γ (1 −tn)
+tn
+.
+(37)
+The scale (37) is a function of the time grid and the churn level alone, and in particular
+does not depend on the state. A draft kernel obtained by substituting a delayed velocity
+into (36) consequently shares the variance of the target kernel and differs from it only in
+its mean, which is the structure required by (12)–(15). Both RMC and D-GRS therefore
+apply to SD3 without modification.
+Remark 3 (The role of churn). The churn level cannot be taken to zero. At ε = 0 the
+scale (37) vanishes, both transitions degenerate to point masses, and their total variation
+distance equals one, so every proposal is rejected and speculation reduces to the standard
+sampler.
+Its effect on acceptance is not monotone: raising ε increases the denominator of
+δ = ∥mq
+n −mp
+n∥/σn, but it also increases the numerator, both through the factor 1 + ε2
+in (36) and through the larger displacement of the drafted states from the point at which
+the delayed velocity was evaluated.
+Timestep shift. Since SD3 is trained at 1024 × 1024 resolution and its noise schedule
+is resolution dependent. Following Esser et al. (2024), we adapt it to the 512 × 512
+generation of our experimental setting by applying the shift
+t 7−→
+κ t
+1 + (κ −1) t,
+κ = 3.0,
+(38)
+to the uniform grid before evaluating vθ. The conversion above is unaffected, since (34)
+and (35) hold pointwise in t.
+C.4 Qualitative Assessment of Correctness
+In order to qualitatively asses the correctness of the proposed algorithm D-GRS and the
+baseline implementation RMC (De Bortoli et al., 2025) in the context of image generation,
+we show 64 of the generated images for the experimental setting reported in Section 5.
+Figures 8 and 9 show the generated images for CIFAR-10, FFHQ, respectively. Table 2
+reports the prompts from COCO 2014 used for the conditional image generation using
+SD3, and Figure 10 shows the generated images.
+35
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+Prompts
+1 a person at a table with a sandwich and a
+drink
+33 A Ma and Pa statue outside some high rise
+office buildings
+2 A land with a lot of different animals.
+34 A guy is skiing there is a lot of snow.
+3 A street light at an intersection in a small
+town.
+35 a large blue bowl of almonds, bananas and
+walnuts
+4 A cat sitting on top of a laptop computer.
+36 Dog jumping in air to catch flying disc with
+adult sitting in background.
+5 A group of people sitting around a table
+together
+37 A woman holding an umbrella standing next
+to a black wall.
+6 A horse in the water next to the birds
+38 A lady is in the hospital and sitting in a chair
+smiling.
+7 a man sitting down with a telephone up to his
+ear
+39 A bathroom that has a broken wall in the
+shower.
+8 A vase with a bird on it and a matching
+wineglass with flowers on it.
+40 A long, narrow yellow kitchen with black and
+white floor tiles.
+9 A man sitting in a chair holding a remote and
+watching television in a living room.
+41 a blue bird sitting on someone’s arm in a room
+10 a stack of traffic signs on a pole next to a
+street.
+42 A table with a huge glass vase and fake flowers
+come out of it.
+11 A red motorcycle parked next to a beach near
+the ocean.
+43 A man sitting next to a woman at a table.
+12 The grey cat with white feet sits on a televsion
+set.
+44 A few sliced of olive pizza sitting on a white
+plate.
+13 A couple of people that are standing near a
+train.
+45 A group of children sitting around each other.
+14 A young man doing a skateboard trick outside. 46 an image of boy on a skateboard doing tricks
+15 A boat sitting on the ground, where their use
+to be water.
+47 A slice of layer cake on a plate that is
+garnished
+16 A kitchen area with two refrigerators and a
+microwave.
+48 A bridge in a city on an overcast day.
+17 Black and White picture of figurines around a
+vase with flowers
+49 A skateboard that has its wheels on the floor.
+18 some baseball players are playing baseball on a
+field
+50 A group of bicycles on a subway train.
+19 Animals surrounding a car and making a large
+mess.
+51 The woman sits on the curb writing on a
+notepad near a fire hydrant.
+20 a bird stands on top of a laptop keyboard
+52 a man getting ready to hit a tennis ball with a
+racket
+21 A person holding up a paper with a red stop
+sign on it.
+53 A white polar bear laying on top of a pool of
+water.
+22 This is an image of a row of scooters
+54 There are keyboard keys on a wooden table.
+23 a train on a train track with a sky background 55 A variety of old motorcycles on display in a
+shop
+24 A bird aggressively protects his patch of turf.
+56 A cat sleeping on the tv with his paw hanging
+down.
+25 Two airplanes flying through a blue sky with
+smoke pouring out of their rear ends.
+57 A group of people riding skis down a snow
+covered slope.
+26 a building with a clock near the ceiling and
+skylights
+58 A bunch of goats are eating out of a box
+27 a very tall giraffe standing in the wilderness
+59 A man standing on a grass tennis court and
+holding a tennis racket in his hand.
+28 An umbrella lies behind a park bench that a
+small television is on.
+60 A large clock tower over a church next to trees.
+29 a lime and green bus parked on a grass field
+parking lot.
+61 A young boy doing a trick on his skate board.
+30 A man is surfboarding right up to the steep
+shoreline.
+62 A white bath tub sitting under a window next
+to a sink.
+31 one plane flies upside down over another plane 63 A cat is sitting outside on the ledge of a
+window.
+32 Two girls sitting on the ground, one with a hat
+on, the other with an open umbrella.
+64 Some people are riding along in a horse drawn
+Carriage
+Table 2: The first 64 prompts from COCO 2014 Lin et al. (2014) used to conditionally
+generate the images shown in Figure 10, following the experimental setting of Section 5.3.
+36
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+ε = 0.1
+ε = 0.3
+ε = 0.6
+RMC
+D-GRS
+Figure 8: 64 CIFAR-10 samples (32×32) selected at random generated at K = 4, L = 4,
+T = 100, for increasing churn ε. Top row: RMC. Bottom row: D-GRS.
+37
+
+
+Accelerating Diffusion Sampling via Speculative Draft Trees
+ε = 0.1
+ε = 0.3
+ε = 0.6
+RMC
+D-GRS
+Figure 9: First 64 FFHQ samples (64×64) generated samples at K = 4, L = 4, T = 100,
+for increasing churn ε. Top row: RMC. Bottom row: D-GRS.
+(a) RMC
+(b) D-GRS
+Figure 10: First 64 images 512×512 selected at random generated by SD3 conditionally
+on the prompts reported in Table 2, using (a) RMC and (b) D-GRS with (K = 1, L = 56)
+and (K = 7, L = 2), respectively, in the setting described in Section 5.3, i.e., T = 50,
+free-guidance of 7, churn ε = 0.8.
+38
