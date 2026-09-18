@@ -1,0 +1,2861 @@
+LYRIC: Language-Driven Physics-Based Character Control for
+Contact-Rich Whole-Body Object Interaction
+ZEYU HAN, Northeastern University, USA
+ZICHONG MENG, Northeastern University, USA
+JULIAN TANKE, Sony AI America Inc, USA
+MINAMI MATSUMOTO, Sony Interactive Entertainment Inc, Japan
+SERGEY BASHKIROV, Sony Interactive Entertainment Inc, USA
+YINGRUO FAN, Sony Corporation of America, USA
+SELIM ENGIN, Sony Corporation of America, USA
+DONGSEOK SHIM, Sony Group Corporation, Japan
+TAKASHI SHIBUYA, Sony Group Corporation, Japan
+YUKI MITSUFUJI, Sony Corporation of America, USA
+HUAIZU JIANG, Northeastern University, USA
+Fig. 1. Given only a text prompt and a sparse terminal object goal, our method produces physically simulated whole-body object interactions: the character
+approaches, grasps, carries, and places diverse objects with realistic hand contact.
+We present LYRIC, a generative flow-matching controller for Language-
+driven phYsics-based contact-Rich Interaction Control, that enables sim-
+ulated characters to perform contact-rich whole-body object interactions
+from a free-form language instruction and a sparse terminal object goal. To
+obtain reliable expert trajectories from imperfect motion-capture references,
+a single tracking policy is trained using geometry-conditioned interaction
+rewards and relaxed reference tracking near hand–object contact. To guide
+interaction progress without prescribing a full-body kinematic reference, we
+factorize the controller into a task-level planner that predicts short-horizon
+object and humanoid-root trajectories, and an action generator that resolves
+whole-body motion and contacts in closed loop. After behavior cloning, we
+freeze the planner and post-tune the action generator on policy using the
+planner’s predictions as stable supervision for intermediate task progression.
+In a controlled OMOMO evaluation, our tracker achieves 64.3% success com-
+pared with 53.2% for an InterMimic reimplementation, while a unified policy
+achieves 76.5% on the full OMOMO dataset. On the held-out split, LYRIC
+achieves 90.3% task success, compared with 74.2% for the strongest matched
+kinematic-planner baseline, with better semantic alignment and motion
+quality. Without retraining, the controller also supports test-time object-
+waypoint guidance. Qualitative results further demonstrate robust, natural
+contact-rich interactions and zero-shot transfer to novel object shapes. The
+webpage is available at https://neu-vi.github.io/LYRIC/.
+CCS Concepts: • Computing methodologies →Physical simulation;
+Reinforcement learning; Motion processing; Control methods.
+Additional Key Words and Phrases: physics-based animation, whole-body
+control, contact-rich object interaction, loco-manipulation, flow policy
+1
+Introduction
+Controlling physically simulated characters to perform diverse, nat-
+ural behaviors is a central goal in character animation, and recent ad-
+vances in reinforcement learning have brought remarkable progress
+arXiv:2609.19688v1  [cs.RO]  17 Sep 2026
+
+
+2
+•
+Han et al.
+to this pursuit. Natural language provides an intuitive interface for
+directing character behaviors, allowing users to specify both what
+the character should accomplish and how the motion should be per-
+formed. A key remaining frontier is contact-rich object interaction:
+enabling simulated characters to pick up, carry, and manipulate
+objects with coordinated whole-body motion and dexterous hands.
+We aim to control characters to perform the desired interaction from
+only a free-form language instruction and a sparse terminal object
+goal as shown in Fig. 1.
+Recent work on physics-based character control has extended
+whole-body policies to object interaction [Tessler et al. 2025; Wang
+et al. 2023; Xu et al. 2025, 2026], which are directed through dense
+motion references or structured 3D goals (e.g., desired object poses).
+While these inputs specify useful spatial guidance, free-form lan-
+guage provides a complementary and intuitive means for expressing
+interaction semantics and manner of execution. Due to the rapid
+progress of text-conditioned kinematic generators [Li et al. 2024,
+2023; Peng et al. 2026, 2025; Xu et al. 2023], a natural idea to support
+language instructions is placing them upstream of a tracking con-
+troller, as in recent work of character control for locomotion [Lin
+et al. 2025; Tevet et al. 2024; Wu et al. 2025c]. For contact-rich in-
+teractions, however, a generated human–object trajectory may be
+kinematically plausible yet difficult to realize under physical dy-
+namics and contact constraints, particularly because the object is
+unactuated. Closed-loop replanning [Tevet et al. 2024] and mutual
+fine-tuning [Lin et al. 2025] improve the coupling between genera-
+tion and execution while retaining a dense full-body trajectory as
+the interface to physical control. The quality of the generated refer-
+ence can therefore become a bottleneck, since errors in hand–object
+coordination or contact timing can make the prescribed interaction
+difficult to realize even with a capable tracking controller.
+Generative control policies offer a promising alternative by mod-
+eling a distribution over motor actions conditioned directly on the
+language instruction, task goal, and current simulated state. They
+can adapt body motion and contacts as object interactions unfold
+without following a separately generated full-body trajectory at
+deployment. Such policies are commonly initialized by imitating
+expert controllers via behavior cloning or policy distillation [Huang
+et al. 2025; Tessler et al. 2025; Truong et al. 2024; Wu et al. 2025b; Xu
+et al. 2026; Zhang et al. 2026]. Subsequent refinement commonly uses
+DAgger-style imitation or on-policy reinforcement learning [Chen
+et al. 2025; Ren et al. 2024; Tessler et al. 2025; Xu et al. 2026; Zhang
+et al. 2026, 2025] to improve robustness beyond the state distribution
+covered by offline expert demonstrations. However, applying this
+paradigm to contact-rich whole-body object interaction presents
+two challenges. First, imitating experts requires high-quality rollouts.
+For whole-body object interaction, expert controllers are typically
+trained to track motion-capture kinematic references, whose finger
+poses may be unreliable near hand–object contact, thereby compro-
+mising the resulting expert rollouts. Second, on-policy post-tuning
+needs a task signal for how the instructed interaction should unfold.
+Yet neither the language instruction nor the terminal object goal
+provides sufficient supervision for intermediate task progression.
+In this paper, we present LYRIC, a generative controller for
+Language-driven phYsics-based contact-Rich Interaction Control
+that enables contact-rich whole-body object interaction from a free-
+form language instruction and a sparse terminal object goal. To
+address the first challenge, we propose geometry-conditioned in-
+teraction rewards, which adapts grasp supervision to local object
+thickness, to train a single tracking policy from imperfect motion-
+capture references. Near demonstrated contact, the tracker relaxes
+reference tracking for the hands and supporting upper-body joints,
+allowing it to deviate from unreliable captured hand poses while
+preserving the remaining body and object motion. Together, these
+mechanisms produce physically executed expert rollouts with reli-
+able hand interaction. To address the second challenge, we factorize
+the controller into two models: a task-level trajectory planner and
+a whole-body action generator, both parameterized as conditional
+flow matching Transformers [Lipman et al. 2022; Peebles and Xie
+2023]. The planner predicts short-horizon object and humanoid-root
+trajectories that express the intended object motion and accompa-
+nying locomotion without prescribing joint poses or contacts. The
+action generator realizes these task-level plans as whole-body ac-
+tions through closed-loop execution. We train both flow models by
+behavior cloning on successful tracking rollouts, then freeze the
+planner and post-tune the action generator on policy. During post-
+tuning, the frozen planner’s predictions provide stable, instruction-
+conditioned object–root supervision beyond the terminal goal, while
+simulation-based objectives evaluate physical execution. At deploy-
+ment, the planner and action generator operate without the tracking
+policy or a prescribed dense full-body motion.
+Our experiments demonstrate reliable contact-rich motion track-
+ing and language-driven character control. In a controlled subject-
+specific comparison on three OMOMO [Li et al. 2023] subjects, our
+tracking formulation achieves 64.3% success, compared with 53.2%
+for an InterMimic reimplementation [Xu et al. 2025], demonstrating
+the benefit of our interaction rewards and contact-dependent track-
+ing relaxation. Our unified tracker achieves a 76.5% tracking success
+rate on the full OMOMO using a single policy, providing abundant,
+high-quality rollouts for behavior cloning. Our language-driven gen-
+erative controller achieves a 90.3% task success rate on the held-out
+split, compared with 74.2% for the strongest kinematic-planner base-
+line with a fine-tuned tracker, while also improving text–motion
+alignment and overall motion quality. We further demonstrate con-
+trol through user-specified object waypoints and zero-shot transfer
+to novel object shapes.
+Our contributions are summarized as follows:
+• We propose geometry-conditioned interaction rewards that adapt
+grasps to local object geometry. Along with relaxed reference
+tracking, a single tracking policy is developed to convert imper-
+fect motion-capture references into physically executed expert
+trajectories with reliable hand interaction.
+• We introduce a flow-matching controller for language-driven
+contact-rich whole-body object interaction, comprising a task-
+level trajectory planner and a whole-body action generator. The
+planner’s object–root trajectories guide closed-loop execution
+and provide intermediate supervision for on-policy post-tuning
+while leaving joint motion and contacts to the action generator.
+• Controlled evaluations show higher tracking success than In-
+terMimic [Xu et al. 2025] and better task success, instruction
+
+
+LYRIC: Language-Driven Physics-Based Character Control for Contact-Rich Whole-Body Object Interaction
+•
+3
+adherence, and motion quality than text-conditioned kinematic-
+planner baselines. We further demonstrate test-time object-
+waypoint guidance and qualitative zero-shot transfer to novel
+within-category shapes.
+2
+Related Work
+Physics-Based Character and Object Interaction Control. Physics-
+based character control learns motor policies under simulated dy-
+namics, ranging from reference-motion imitation to reusable motion
+priors and high-level language- or goal-conditioned control [Ju-
+ravsky et al. 2022, 2024; Luo et al. 2023; Peng et al. 2018, 2022, 2021;
+Tessler et al. 2024; Yao et al. 2022]. Recent work extends these con-
+trollers to object interaction through reference tracking, structured
+interaction specifications, or geometry-grounded control representa-
+tions [Liang et al. 2026; Lin et al. 2026; Tessler et al. 2025; Wang et al.
+2023; Xu et al. 2025, 2026]. Language-conditioned planner–tracker
+systems use generated kinematic character–object trajectories to
+guide physical execution, but remain constrained by full-body ref-
+erences whose character and object trajectories may not be jointly
+realizable under contact dynamics [Lin et al. 2025; Wu et al. 2025c].
+Constructing the tracking expert also requires reliable contact
+supervision. Existing trackers commonly use reference-derived con-
+tacts, body-object distances, object-tracking objectives, or generic
+grasp priors [Tessler et al. 2025; Wang et al. 2023; Xu et al. 2025,
+2026]. Recent methods introduce explicit contact commands, wrist-
+guided finger learning, or geometry-aware interaction representa-
+tions [Li et al. 2026; Lin et al. 2026; Yu et al. 2026]. Our geometry-
+conditioned interaction rewards instead make the desired hand-
+object relationship depend directly on local geometry, encouraging
+enclosure around thin structures and support beneath flat surfaces
+to produce more natural and stable expert trajectories.
+Kinematic Human-Object Interaction Generation from Language.
+Text-conditioned human motion generation has progressed rapidly
+with diffusion models, autoregressive motion tokens, and motion–
+language pretraining [Jiang et al. 2023; Meng et al. 2025a,b; Tevet
+et al. 2022; Zhang et al. 2023, 2024]. Recent methods extend language-
+conditioned motion generation to object interaction by generating
+coordinated human and object trajectories from language and other
+interaction cues, using object geometry, contact prediction, affor-
+dance reasoning, or physics-informed guidance to improve inter-
+action quality [Diller and Dai 2024; Li et al. 2024, 2023; Peng et al.
+2026, 2025; Ron et al. 2025; Wu et al. 2025a; Xu et al. 2023, 2024;
+Yang et al. 2024]. FlowHOI further applies flow matching to gener-
+ate language-grounded hand poses, object poses, and contact states
+for downstream robot retargeting [Zeng et al. 2026]. Nevertheless,
+these methods primarily produce kinematic interaction sequences
+rather than closed-loop actions for a physically simulated humanoid.
+Our method instead maps language and the current simulated state
+directly to whole-body actions, allowing the controller to revise its
+motion and contact strategy during execution.
+Generative Policies for Physics-Based Control. Diffusion and flow
+policies provide expressive action distributions for multimodal con-
+trol [Ajay et al. 2022; Chi et al. 2025; Janner et al. 2022; Lipman
+et al. 2022]. In character animation, PDP directly generates actions,
+CLoSD couples a text-conditioned motion planner with a physics
+tracker, Diffuse-CLoC predicts state-action look-ahead distributions,
+and UniPhys integrates planning and control in a unified diffu-
+sion framework [Huang et al. 2025; Tevet et al. 2024; Truong et al.
+2024; Wu et al. 2025b]. These methods primarily address object-free
+motion or retain a generated full-body reference. SCRIPT trains a
+text-conditioned diffusion action policy through flow matching and
+improves it with online RL, but focuses on object-free humanoid mo-
+tion [Zhang et al. 2026]. Conversely, InterPrior combines generative
+character control with RL for object manipulation, but is conditioned
+on structured interaction goals rather than language [Xu et al. 2026].
+Our method brings these directions together in a text-conditioned
+flow-matching controller that coordinates whole-body motion and
+dexterous object manipulation in physics simulation. Rather than
+tracking a dense full-body reference, the planner in our model pre-
+dicts only short-horizon object and humanoid-root trajectories to
+guide the closed-loop action generator, leaving detailed body motion
+and contact strategies to the controller.
+RL for Diffusion and Flow Policies. Recent work has developed RL
+methods for post-training diffusion and flow policies. DDPO for-
+mulates diffusion denoising as a multi-step decision process, while
+DPPO adapts policy-gradient fine-tuning to continuous robot con-
+trol [Black et al. 2023; Ren et al. 2024]. Flow-based methods make
+online optimization tractable through stochastic flow formulations,
+likelihood estimation, or flow-matching surrogate objectives [Chen
+et al. 2025; McAllister et al. 2026; Yang et al. 2026; Yi et al. 2026; Zhang
+et al. 2025]. Related VLA systems combine language-conditioned
+flow action models with RL alignment for dexterous robot manip-
+ulation [Apanasevich et al. 2026]. Our focus is character control,
+where the policy must coordinate whole-body motion and dexter-
+ous manipulation of a dynamically simulated object. We adopt the
+Flow-SDE formulation from 𝜋RL, which converts deterministic flow
+sampling into a stochastic process suitable for PPO-based online re-
+finement [Chen et al. 2025]. We derive dense task rewards from the
+planner’s predicted object and humanoid-root trajectories and use
+on-policy post-tuning to improve recovery from contact-induced
+state deviations during execution. To our knowledge, this is the
+first online RL post-training of a text-conditioned flow-matching
+controller for contact-rich character control, jointly coordinating
+locomotion and dexterous manipulation of an unactuated object in
+physics simulation.
+3
+Methodology
+We first formulate the language-driven object interaction control
+task and provide an overview of our three-stage pipeline (Sec. 3.1).
+Each stage is then described in detail: geometry-conditioned interac-
+tion tracking (Sec. 3.2), factorized text-conditioned control (Sec. 3.3),
+and on-policy post-tuning (Sec. 3.4).
+3.1
+Overview
+Task formulation. We consider a physics-based humanoid char-
+acter, represented as SMPL-X [Loper et al. 2015], interacting with
+a single unactuated object. The humanoid has 51 actuated 3-DoF
+joints, of which 30 belong to the two hands.
+
+
+4
+•
+Han et al.
+Fig. 2. Training pipeline for LYRIC. We first train a physics-based HOI tracking expert from kinematic demonstrations. We then roll out the expert to
+collect physically grounded state–action trajectories and train the trajectory planner and action generator offline by behavior cloning. Finally, we freeze
+the planner and post-tune the action generator on policy in simulation using planner-derived plan-following rewards together with interaction, style, and
+terminal-placement objectives. We use  to mark frozen components and \ to mark trainable components.
+The interaction unfolds as a discrete-time control loop. At control
+step 𝑡, we define the state of the humanoid–object system as
+s𝑡= [sH
+𝑡, sO
+𝑡],
+sH
+𝑡= [ℎ𝑡, pH
+𝑡, RH
+𝑡, vH
+𝑡, 𝝎H
+𝑡],
+sO
+𝑡= [pO
+𝑡, RO
+𝑡, vO
+𝑡, 𝝎O
+𝑡],
+(1)
+where ℎ𝑡is the humanoid root height, and p, R, v, and 𝝎denote
+positions, 6D rotations, and linear and angular velocities. The su-
+perscripts H and O indicate whether a quantity belongs to the hu-
+manoid or to the object. Contact-rich control further depends on
+how the two bodies touch, so from the state and the object geome-
+try we derive interaction features 𝝓𝑡, including humanoid–object
+contact states, signed distances and surface directions, and local
+object-shape descriptors, whose exact composition is specified in
+the appendix. The controller’s observation is o𝑡= [s𝑡; 𝝓𝑡], and its
+action a𝑡∈R153 specifies joint-position targets tracked by joint-
+level PD controllers; the simulator advances the state through its
+dynamics F as s𝑡+1 = F (s𝑡, a𝑡). Unless stated otherwise, we express
+positions, vectors, and orientations in the humanoid-root-centric
+heading frame, aligned with the root’s yaw, and measure root and
+object heights relative to the ground.
+Given an initial state s0, a natural-language instruction 𝑦that
+specifies the interaction semantics and manner, and a desired termi-
+nal object pose 𝑔that constrains the object only at the end of the
+interaction, the task is to find a controller 𝜋that generates actions
+a𝑡∼𝜋( · | o≤𝑡, a<𝑡,𝑦,𝑔) ,
+(2)
+where o≤𝑡= (o0, . . . , o𝑡) and a<𝑡= (a0, . . . , a𝑡−1) collect the past
+observations and actions. The induced closed-loop rollout should
+realize the instructed interaction and bring the object to 𝑔. Because
+the object is unactuated, all task-directed object motion must be
+produced through contact with the humanoid.
+Proposed method. Fig. 2 summarizes the three-stage training pipeline
+of LYRIC. Motion-capture datasets of human-object interaction
+record natural, contact-rich whole-body strategies and pair each
+sequence with a language description. Such demonstrations are
+kinematic though, specifying the intended human and object mo-
+tion but not the motor commands or contact forces that realize it.
+Stage I therefore trains a tracking policy with geometry-conditioned
+interaction rewards (Sec. 3.2) and rolls it out under observation
+perturbations to broaden coverage around each demonstration, con-
+verting the demonstrations into a dataset of physically executed
+state–action trajectories.
+Stage II trains the controller from this dataset via behavior cloning
+(Sec. 3.3). We design the controller to also support subsequent on-
+policy post-tuning, which improves robustness to simulated states
+outside the distribution covered by offline expert rollouts. Such
+post-tuning, however, requires task supervision for how the interac-
+tion should unfold. Rewarding only the terminal object placement
+does not capture whether the object is manipulated as specified by
+the language instruction, while the instruction itself does not pro-
+vide per-step spatial targets. We therefore factorize the controller
+into a planner that predicts short-horizon object and humanoid-
+root trajectories and a whole-body action generator that realizes
+these plans. The predicted trajectories condition action generation
+and also provide per-step task targets for post-tuning. The same
+instruction admits many valid interactions, so we model both the
+planner and the action generator as distributions over their outputs
+with flow matching [Lipman et al. 2022] and sample one coherent
+interaction at test time.
+Stage III realizes this post-tuning by freezing the planner and
+post-tuning the action generator on policy in simulation, using the
+predicted object–root trajectories to construct dense task rewards
+alongside interaction, motion-style, and terminal-placement objec-
+tives (Sec. 3.4). These planner-derived targets guide intermediate
+
+
+LYRIC: Language-Driven Physics-Based Character Control for Contact-Rich Whole-Body Object Interaction
+•
+5
+Fig. 3. Correcting imperfect hand–object interactions. Given imperfect
+kinematic hand poses (left), our geometry-conditioned interaction objectives
+allow the tracker to form natural and stable hand motion while largely
+preserving the demonstrated whole-body motion (right).
+interaction progress, while interaction, motion-style, and terminal-
+placement objectives evaluate the realized execution in simulation.
+At deployment, the frozen planner and the post-tuned action gen-
+erator together realize 𝜋, without any tracking policy, kinematic
+reference, or externally provided object trajectory or contact se-
+quence. A user-specified object trajectory can optionally replace the
+planner’s plan for spatial control (Sec. 4.6).
+3.2
+Geometry-Conditioned Interaction Tracking
+Tracking policy and reward. As shown in Stage I of Fig. 2, we use a
+single tracking policy to convert each demonstration into physically
+executed state–action trajectories. Interaction tracking conditions
+the policy on a kinematic demonstration, which serves as the refer-
+ence, and rewards it for reproducing the demonstrated humanoid
+and object motion under the simulator dynamics F . Following In-
+terMimic [Xu et al. 2025], the input at control step 𝑡comprises
+the observation o𝑡and residuals from the current state s𝑡to the
+reference states ˆs (the hat marks reference quantities) at two fu-
+ture frames. We further add the last action a𝑡−1, which tells the
+policy what it most recently commanded, and a one-hot object iden-
+tity, which lets a single policy specialize its behavior across objects.
+Whereas InterMimic trains one teacher policy per subject and dis-
+tills them into a unified student, our formulation enables a single
+policy trained directly over all subjects and objects.
+The per-step tracking reward combines three groups of nonnega-
+tive costs and peaks when all costs vanish:
+𝑟track
+𝑡
+= exp
+h
+−
+
+𝐸ref
+𝑡
++ 𝐸grasp
+𝑡
++ 𝐸reg
+𝑡
+i
+.
+(3)
+Here, 𝐸ref
+𝑡
+is the reference-tracking cost from [Xu et al. 2025], which
+penalizes deviation of the simulated humanoid, the object, and their
+contacts from the reference at the current step. Matching the ref-
+erence hand poses and contacts alone, however, does not ensure
+a grasp that can hold the object due to the noisy motion-captured
+data. We therefore introduce 𝐸grasp
+𝑡
+, a geometry-conditioned grasp
+cost that scores the arrangement of the hand’s contacts against the
+local object geometry. 𝐸reg
+𝑡
+collects the regularization terms. Figure 3
+illustrates how our interaction objectives refine imperfect reference
+hand poses while largely preserving the demonstrated whole-body
+motion. Below, we describe how 𝐸ref
+𝑡
+is relaxed during contact and
+then introduce 𝐸grasp
+𝑡
+and 𝐸reg
+𝑡. Additional details are given in the
+appendix.
+Gated reference tracking. Motion-captured interaction data of-
+ten contain imperfect finger poses, especially around object con-
+tact, although the captured hand motion remains a useful reference
+away from contact. We therefore retain hand-pose tracking during
+free motion and relax it during contact, resorting to the geometry-
+conditioned grasp cost to refine the hand pose toward a more stable
+grasp. Because the refined hand pose may deviate from its reference,
+the supporting arm may also need to adjust while still following the
+demonstrated arm motion overall. We keep the reference-tracking
+terms for the remaining body parts and the object unchanged to
+preserve the demonstrated whole-body interaction. Specifically, we
+introduce a per-hand reference-contact gate 𝜂∈[0, 1] (0 means
+no contact at all), computed from reference contacts over a short
+temporal window. The gate affects three groups of body parts dif-
+ferently:
+• Fingers and wrist. Their reference-tracking terms in 𝐸ref
+𝑡
+are
+weighted by 1 −𝜂, while the corresponding per-hand grasp
+cost introduced below is weighted by 𝜂. At 𝜂= 0, these refer-
+ence terms retain their full weights and the grasp cost has zero
+weight. At 𝜂= 1, these reference terms have zero weight and
+the grasp cost has its full weight.
+• Elbow, shoulder, and thorax. Their reference-tracking terms
+are scaled by 1−𝜂(1−𝑤), where𝑤∈(0, 1) is a fixed part-specific
+fraction that increases from the elbow through the shoulder to
+the thorax. Reference tracking therefore relaxes progressively
+less farther up the kinematic chain.
+• All other parts and the object. Their reference-tracking terms
+retain their original weights for all values of 𝜂.
+Geometry-conditioned grasp cost. As the gate relaxes hand-pose
+tracking when the reference indicates contact, the grasp cost must
+judge the resulting grasp on its own merits. Our key insight is that
+the object’s local shape constrains what a functional grasp can look
+like. We can thus score the geometric prerequisites of a grasp from
+the shape and the contacts the hand makes on it. A thin structure,
+such as a handle or pole, affords enclosure, where the fingers wrap
+around it and press from opposing sides. In contrast, a broad surface
+affords support, where the hand spreads its contacts to stabilize the
+object. Our cost therefore scores each hand by two complementary
+criteria that encode necessary geometric conditions for a stable
+grasp, one for enclosure and one for support.
+To simplify notation, all quantities below refer to one hand at
+a control step, omitting the hand and time indices. The per-hand
+grasp cost is defined as
+𝑒grasp = 𝛼(1 −𝑄enc) + (1 −𝛼) (1 −𝑄sup) ,
+(4)
+where 𝑄enc,𝑄sup ∈[0, 1] measure enclosure and support quality as
+defined below. 𝛼∈[0, 1] weights the two modes and is computed
+around an interaction anchor r, the object-surface point nearest
+to the centroid of the reference hand, as shown in Fig. 4. We set 𝛼
+by the local object thickness around r, read from a precomputed
+thickness field akin to the shape diameter function [Shapira et al.
+2008]. The complete term 𝐸grasp
+𝑡
+weights each hand’s 𝑒grasp by its
+gate 𝜂and sums over both hands.
+Enclosure mode. Fig. 4(a) illustrates 𝑄enc for a thin local struc-
+ture, where a stable grasp requires squeezing it between the thumb
+
+
+6
+•
+Han et al.
+Fig. 4. Geometry-conditioned grasp objectives. Enclosure rewards op-
+posing contacts on thin structures, while support rewards distributed con-
+tact on broad surfaces.
+and the fingers, engaging several fingers, and placing contacts on
+opposing sides of its cross section. We estimate the local long axis k
+of the structure as the direction of least variation among the nearby
+surface normals. A cross-sectional plane orthogonal to k, centered
+at the midpoint of the local thickness profile, is then constructed.
+Partitioning the plane into 𝐵uniform angular sectors, we project
+the contacting finger joints onto it and score each sector by the
+contact it receives. The score 𝑜𝑏∈[0, 1] rises from 0 toward 1 as
+contacts accumulate in the sector’s direction, with soft assignment
+to neighboring sectors and saturating aggregation of repeated con-
+tacts. The opposite score ¯𝑜𝑏∈[0, 1] reads the same measure on the
+far side of the cross section, around the direction opposite to sector
+𝑏(the dashed line in Fig. 4(a)). The enclosure quality is defined as
+𝑄enc = 𝐺tf𝐺part
+Í
+𝑏𝑜𝑏¯𝑜𝑏
+Í
+𝑏𝑜𝑏
+,
+(5)
+which multiplies three terms, one per requirement above. The thumb–
+finger gate 𝐺tf increases with the contact of the thumb and of the
+other fingers and vanishes when either is absent, since the squeeze
+needs the thumb opposing the fingers. The participation gate 𝐺part
+grows with the number of distinct non-thumb fingers in contact
+and reaches one when all four participate, since more fingers make
+the hold more secure. The fraction is high only when contacts have
+counterparts on the opposite side, which distinguishes enclosing
+the structure from merely touching it.
+Support mode. Fig. 4(b) illustrates 𝑄sup for a broad surface,
+which the hand cannot enclose, so a stable support requires physical
+contact with the surface and a footprint spread over it. We estimate
+the local surface normal around r and take the tangent plane orthog-
+onal to it. We project all hand joints onto this plane, producing the
+two-dimensional footprint as shown in Fig. 4(b), whose covariance
+𝚺tan gives an area-like measure of its extent through √det 𝚺tan. The
+support quality is defined as
+𝑄sup = 𝐺contact𝜓
+√︁
+det(𝚺tan)
+
+,
+(6)
+which multiplies two terms, one per requirement above. The contact-
+coverage gate𝐺contact increases with the number of hand joints phys-
+ically contacting the object and vanishes without contact, which
+prevents a widely spread but hovering hand from receiving a high
+support score. The spread term 𝜓normalizes the footprint extent to
+[0, 1], reaching 0 for a collapsed footprint and 1 for a fully spread
+hand, which prevents a compact cluster of contacts from being
+treated as effective support.
+Regularization terms. The enclosure and support modes evaluate
+the spatial arrangement of hand–object contacts, but they do not by
+themselves cover the entire interaction process. Therefore, in addi-
+tion to InterMimic’s energy costs on joint and object accelerations
+and on contact forces, which discourage jerky motion and excessive
+force, we add three hand-interaction regularization terms to 𝐸reg
+𝑡,
+listed below.
+• Palm alignment. We encourage the palm to face the local
+object surface, guiding contact formation and correcting wrist-
+orientation errors common in motion-captured interaction data.
+• Contact anchor. We penalize the distance between the simu-
+lated hand-contact region and the corresponding object-local
+contact region indicated by the kinematic reference. This pre-
+serves where the demonstrated interaction occurs while allow-
+ing the geometry-conditioned objective to refine how the hand
+grasps the object.
+• Hold stability. Once contact is established, we penalize sliding
+of contacting finger joints in the object frame and the loss of
+previously established finger contacts. New contacts are not
+penalized, so the term specifically discourages grasp slip and
+contact breaking.
+Tracking-policy training and rollout collection. We train the track-
+ing policy with PPO [Schulman et al. 2017] to maximize the ex-
+pected return under Eq. (3). During training, we randomly perturb
+the policy’s observation o𝑡, preparing it for the observation noise
+used during rollout collection. We terminate an episode when the
+humanoid, the object, or their distance field deviates from the ref-
+erence beyond a threshold, when the humanoid falls, or when a
+body–object contact present in the reference is lost in simulation.
+After training, we generate multiple rollouts for each demonstra-
+tion by executing the policy under independently resampled obser-
+vation noise. Resampling the noise produces varied state–action
+trajectories around each demonstration. Only rollouts that reach the
+end of the demonstration without early terminations are retained.
+Each retained rollout records the states s𝑡and executed actions a𝑡at
+every control step and is paired with its terminal object pose 𝑔and
+the language instruction 𝑦of the demonstration it tracks, forming
+the training data for Stage II.
+3.3
+Factorized Text-Conditioned Controller
+Controller factorization. As shown in Stage II of Fig. 2, we fac-
+torize the controller 𝜋of Eq. (2) into the trajectory planner 𝜋P and
+the whole-body action generator 𝜋A. Both are parameterized as
+conditional flow-matching transformers [Lipman et al. 2022], with
+𝐿P and 𝐿A blocks for the planner and action generator, respectively.
+The planner predicts only the object and humanoid-root trajectories,
+without joint poses of the humanoid or contact labels, and leaves the
+body motion and contacts to the action generator. These trajectories
+condition action generation and are later reused as task supervision
+for on-policy post-tuning (Sec. 3.4). It can also serve as the interface
+for spatial control, where a user-specified object or root trajectory
+
+
+LYRIC: Language-Driven Physics-Based Character Control for Contact-Rich Whole-Body Object Interaction
+•
+7
+Fig. 5. Receding-horizon trajectory planning. The planner predicts a
+30-step object and humanoid root trajectory (dotted curves), which guides
+the action generator and is refreshed every 8 control steps.
+can replace it at deployment (Sec. 4.6) to guide the resulting motion
+along a desired path.
+Trajectory planner. The planner is defined as
+P𝑡∼𝜋P ( · | q≤𝑡,𝑦,𝑔) ,
+(7)
+where q≤𝑡= (q0, . . . , q𝑡) is the history of the object and humanoid-
+root poses q𝑖, taken from s𝑖. Restricting the planner’s state input
+to the compact representation of object and humanoid-root poses
+allows us to incorporate motion history from the full episode while
+keeping computation lightweight. P𝑡is a sequence of future object
+and humanoid-root poses over a horizon of 𝑇P steps. The object
+trajectory specifies the intended object motion, and the humanoid-
+root trajectory specifies the coarse locomotion that this motion
+requires. An illustration is shown in Fig. 5.
+As shown in Fig. 6 (a), the input to the planner transformer con-
+sists of the token of terminal object pose 𝑔, the tokens of object–root
+history q≤𝑡, and the noised trajectory tokens to be denoised. The
+goal and history tokens form a causal prefix that does not attend to
+future trajectory tokens, enabling KV caching for efficient planner
+inference. Each noised trajectory token attends to the prefix and
+other trajectory tokens bidirectionally, so that later poses inform
+earlier ones and the plan stays consistent along the horizon. The in-
+struction 𝑦is encoded by a frozen CLIP text encoder and conditions
+every transformer block through adaptive normalization.
+Whole-body action generator. The action generator is defined as
+A𝑡∼𝜋A ( · | C𝑡, P𝑡,𝑦,𝑔) ,
+(8)
+where C𝑡is the control context of the 𝐾latest observations and
+executed actions,
+C𝑡= [c𝑖]𝑡
+𝑖=𝑡−𝐾+1 = [(o𝑖, a𝑖−1)]𝑡
+𝑖=𝑡−𝐾+1 .
+(9)
+Pairing each executed action with the observation that follows it
+shows the model the effect of its own actions. The shared heading
+frame for the pose history, terminal object pose, and predicted tra-
+jectories is anchored at the humanoid root at step 𝑡−𝐾+ 1, the first
+step of the control context C𝑡. During training, the action genera-
+tor is supervised with sequences A𝑡of 𝑇A future 153-dimensional
+joint-target actions.
+As illustrated by Fig. 6 (b), we implement the action generator as
+a transformer over context and future-action tokens. Each context
+pair c𝑖is embedded as one context token, and each noisy future
+action is embedded as one future-action token. The interaction fea-
+tures 𝝓are encoded by a shared MLP and concatenated with the
+Fig. 6. Architectures of the trajectory planner and action generator.
+Gray tokens denote noisy inputs. In the attention masks, P/F denote pre-
+fix/future tokens, and colored/white cells indicate allowed/blocked attention;
+rows are queries and columns are keys.
+other inputs before token projection. The context tokens attend to
+one another in both directions and never to the future-action tokens.
+Each future-action token attends to all context tokens and to the
+earlier future-action tokens only. This causal structure allows us
+to generate only the action tokens needed for execution, avoiding
+full-sequence generation and accelerating inference. The instruc-
+tion 𝑦, the terminal object pose 𝑔, and the plan P𝑡condition every
+transformer block through adaptive normalization.
+Model training. The successful rollouts collected in Sec. 3.2 su-
+pervise both the planner and the action generator via behavior
+cloning. We train both models with the conditional flow-matching
+loss [Lipman et al. 2022]. For a target sequence x and model-specific
+conditioning c, we sample z ∼N (0, I) and 𝜏∼U[0, 1], set x𝜏=
+(1 −𝜏)z + 𝜏x, and minimize
+LFM = E
+
+∥v𝜃(x𝜏,𝜏; c,𝑦,𝑔) −(x −z)∥2
+2
+
+,
+(10)
+where v𝜃is the velocity field predicted by the transformer, and𝑦and
+𝑔condition both models. For a training example cut from a rollout at
+a step𝑡, the planner has target x = (q𝑡+1, . . . , q𝑡+𝑇P) and conditioning
+c = q≤𝑡, and the action generator has target x = (a𝑡, . . . , a𝑡+𝑇A−1)
+and conditioning c = (C𝑡, P𝑡).
+The two models are trained jointly, but we apply stop-gradient to
+the trajectory P𝑡when conditioning the action generator. Early in
+training this trajectory P𝑡is mostly the one from the expert rollout,
+and it is progressively replaced by trajectories sampled from the
+planner to reduce the distribution discrepancy between training
+and inference.
+Model inference. At inference, each model draws z ∼N (0, I)
+and samples its output by integrating dx𝜏/d𝜏= v𝜃(x𝜏,𝜏; c,𝑦,𝑔)
+from x0 = z to 𝜏= 1. The planner is re-run at fixed intervals,
+and its predicted trajectory is held between updates to give the
+action generator a consistent trajectory over each interval. As rollout
+proceeds, we remove the elapsed poses from the trajectory and re-
+express the remainder in the shared heading frame. We continue to
+denote this remaining trajectory by P𝑡. At every control step, the
+action generator samples a single action token conditioned on the
+latest context C𝑡, the remaining trajectory P𝑡, the instruction 𝑦, and
+the terminal object pose 𝑔. The resulting action is executed as a𝑡.
+
+
+8
+•
+Han et al.
+Fig. 7. Qualitative effect of on-policy post-tuning. Frames are ordered left to right; the top row shows Flow-BC and the bottom row shows Flow-BC + FT.
+While Flow-BC captures the intended behavior, small execution errors accumulate into unstable whole-body compensation or loss of object control, evident
+during overhead chair transport, box rotation, and floor-lamp relocation. On-policy post-tuning preserves balance and maintains stable object contact through
+these challenging phases, enabling execution to proceed toward the target placement.
+3.4
+On-Policy Post-Tuning
+During closed-loop execution, contact errors can drive the system
+beyond the states covered by expert rollouts, where the behavior-
+cloned action generator may fail to recover (Fig. 7). We therefore
+post-tune the action generator as shown in Stage III of Fig. 2. Since
+the language instruction and terminal object goal do not provide
+per-step spatial targets for post-tuning, we reuse the planner’s pre-
+dicted object and humanoid-root trajectories as task supervision.
+The planner is kept frozen during post-tuning, so that these predic-
+tions provide a consistent training signal while the action generator
+adapts to its on-policy rollouts.
+Post-tuning reward. During post-tuning, each episode is initial-
+ized from a state sampled from a retained Stage I rollout (Sec. 3.2). To
+retain the interaction behavior learned offline while improving phys-
+ical execution, we combine low-rank adaptation (LoRA) [Hu et al.
+2021] with velocity-field regularization. LoRA restricts the trainable
+weight updates to a low-rank form while keeping the pretrained
+generator weights frozen, and the regularizer penalizes deviations
+from the frozen behavior-cloned velocity field to discourage drift.
+We adopt the Flow-SDE formulation [Chen et al. 2025], which
+converts deterministic flow sampling into a stochastic process with
+tractable transition likelihoods, enabling PPO-based policy optimiza-
+tion. The LoRA-adapted action generator serves as the actor, while
+a separate MLP critic estimates the value function for PPO updates.
+The per-step reward 𝑟𝑡uses no per-frame kinematic reference and
+combines motion naturalness, task completion, and task quality,
+𝑟𝑡= 𝑤motion𝑟motion
+𝑡
++ 𝑏goal1goal(𝑡) + 𝑤task𝑟task
+𝑡
+,
+(11)
+where 𝑟motion
+𝑡
+measures the quality using a frozen text-conditioned
+score-matching motion prior [Mu et al. 2025], which discourages
+mechanically effective but visually unnatural motion. The prior
+evaluates a short window of humanoid kinematics and does not
+observe the object, leaving manipulation progress to the task reward.
+The indicator 1goal(𝑡) is one at the first step satisfying the terminal-
+pose dwell criterion and zero otherwise, giving the character a
+one-time task finishing reward.
+The task quality is defined as
+𝑟task
+𝑡
+= exp
+h
+−
+
+𝜆obj𝑚obj(𝑡)2 + 𝜆root𝑚root(𝑡)2 + 𝐸int
+𝑡
+i
+,
+(12)
+where 𝑚obj(𝑡) and 𝑚root(𝑡) are the trajectory-following errors for
+the object and humanoid-root, respectively. 𝐸int
+𝑡
+is the interaction
+error. A large error in either trajectory following or the interaction
+quality strongly suppresses the task reward. We introduce them in
+detail below.
+Trajectory-following errors. To guide the action generator
+along the frozen planner’s trajectories, we measure discrepancies
+between simulated and predicted object and humanoid-root poses.
+𝑚ℓ(𝑡) =
+(
+1
+|V𝑡|
+Í
+𝑗∈V𝑡𝑑ℓ
+qℓ
+𝑡, ˜qℓ
+𝑡| 𝑗
+
+,
+V𝑡≠∅,
+0
+V𝑡= ∅.
+(13)
+Here, ˜qℓ
+𝑡| 𝑗denotes the pose predicted for step 𝑡by the planner pro-
+duced at step 𝑗, and𝑑ℓmeasures its discrepancy from the correspond-
+ing simulated pose qℓ
+𝑡. We store each plan’s predicted trajectories.
+V𝑡is the set of planning steps 𝑗whose predicted horizons include
+the current step 𝑡. Several earlier plans can predict poses for the
+same control step. Averaging their discrepancies reduces sensitivity
+to an individual plan sample and measures consistency with the
+planner’s recent predictions.
+Simulation-based interaction quality. Trajectory following
+constrains the object and humanoid-root motion but does not de-
+termine how the hands establish and maintain contact. We there-
+fore use the interaction cost 𝐸int
+𝑡
+to evaluate the interaction real-
+ized in simulation. It combines physical hand–object contact, the
+geometry-conditioned grasp cost, palm alignment, hold stability,
+and the energy costs on joint and object accelerations and contact
+forces introduced in Sec. 3.2. Because Stage III has no kinematic
+reference, we omit the reference contact labels and the reference
+contact-anchor term. For the geometry-conditioned grasp cost, the
+interaction anchor r is instead chosen as the object-surface point
+nearest to the current simulated hand. The reference-derived gate 𝜂
+is likewise replaced by activation based on simulated hand–object
+proximity.
+
+
+LYRIC: Language-Driven Physics-Based Character Control for Contact-Rich Whole-Body Object Interaction
+•
+9
+Table 1. Contact-rich interaction tracking on OMOMO [Li et al. 2023]. Top: controlled ablation of the proposed interaction objectives under the
+InterMimic [Xu et al. 2025] training protocol. Bottom: performance of the unified tracking policy trained on the full retargeted dataset. †Results from our Isaac
+Lab reimplementation based on the official InterMimic code, retrained under the same subject-specific protocol.
+Method
+SR (%)↑
+Time (fr)↑
+Human (cm)↓
+Object (cm)↓
+Jitter (m/s2)↓
+Controlled comparison (3 subject-specific policies per method)
+InterMimic [Xu et al. 2025]†
+53.23
+89.5
+7.84
+12.89
+18.77
+Ours w/o grasp cost
+59.20
+95.4
+8.36
+13.83
+18.43
+Ours w/o palm alignment
+61.25
+96.5
+8.13
+13.62
+17.39
+Ours w/o contact anchor
+60.18
+95.5
+8.16
+14.06
+18.37
+Ours w/o hold stability
+59.30
+96.7
+8.51
+14.16
+18.39
+Ours w/o gated reference tracking
+59.88
+93.4
+7.49
+12.32
+17.64
+Ours
+64.29
+97.0
+8.17
+13.55
+16.90
+Unified tracking policy
+Ours (unified)
+76.50
+148.6
+7.50
+15.13
+12.41
+Reference-free terminations. Unlike the tracking stage, Stage III
+has no full-body kinematic reference, so failures must be detected
+from the planner and simulated states themselves. We use plan
+divergence, measured by 𝑚obj(𝑡) and 𝑚root(𝑡), to detect large rollout
+failures such as dropped objects or motion that departs from the
+planned trajectory.
+However, a small plan error does not necessarily indicate suc-
+cessful execution: when the planner requests only a small object
+movement, even a stationary object can remain within the error tol-
+erance. This limitation arises because the plan divergence measures
+error on an absolute scale, without accounting for the amount of
+motion requested. We therefore introduce a complementary object-
+progress criterion, which measures the relative fraction of the planned
+object displacement that has actually been achieved. Together, the
+two criteria detect both large deviations from the plan and insuffi-
+cient progress along it. A humanoid fall also terminates the episode,
+whereas successful completion requires the object to remain within
+the terminal-pose tolerance for the prescribed dwell period. Detailed
+definitions are provided in the appendix.
+4
+Experiments
+We evaluate LYRIC on OMOMO [Li et al. 2023]. Our evaluations
+assess task success, instruction adherence, and the quality of the
+simulated character motion.
+4.1
+Implementation Details
+We implement all models in PyTorch and use Isaac Lab for simula-
+tion. The control loop runs at 30 Hz, while the simulator steps at
+120 Hz. The actor and critic of the unified tracking policy are MLPs
+with hidden widths (4096, 4096, 2048) and ReLU activations. The
+subject-specific tracking policies evaluated in Sec. 4.3 use smaller ac-
+tor and critic MLPs with hidden widths (1024, 1024, 512). For Stage I
+rollout collection, we generate 100 rollouts per demonstration.
+In Stage II, the planner and action generator have 𝐿P = 6 and
+𝐿A = 12 transformer blocks, with model widths 192 and 768, respec-
+tively. The planner predicts object and humanoid-root trajectories
+over 𝑇P = 30 control steps and refreshes them every eight control
+steps. The action generator conditions on 𝐾= 4 observation–action
+pairs and is trained with sequences of 𝑇A = 8 future actions. We
+jointly train the two models with AdamW for one million updates
+on eight NVIDIA H100 GPUs, using a global batch size of 2048
+and a peak learning rate of 2 × 10−4. Unless otherwise stated, both
+models sample their outputs using five Euler integration steps with
+deterministic flow ODE integration at inference.
+Post-tuning uses LoRA with rank 16 and scaling parameter 𝛼= 32.
+The actor learning rate is 10−4, and the velocity-field regularizer
+has weight 10−3. We set a fixed budget of 2000 PPO iterations on
+eight NVIDIA H100 GPUs. Complete simulation settings, interac-
+tion features, reward definitions, and training hyperparameters are
+provided in the appendix.
+4.2
+Dataset and Evaluation Metrics
+Dataset. OMOMO [Li et al. 2023] contains 4,890 motion-capture
+sequences of 17 subjects interacting with 13 objects. All simulated
+rollout evaluations initialize each episode from frame 0 of the corre-
+sponding sequence.
+Evaluation metrics. We evaluate reference-tracking performance
+and language-driven interaction control, together with physical
+artifacts and temporal motion quality.
+Tracking policy metrics. Following InterMimic [Xu et al. 2025],
+we report tracking success rate, average rollout duration, character
+tracking error, and object tracking error. Tracking success rate is the
+percentage of sequences completed without triggering any of the
+failure conditions defined in Sec. 3.2. Time is the average number of
+executed control frames. Human and Object measure character and
+object reference-tracking errors in centimeters. Following Motion-
+Bricks [Wang et al. 2026], we additionally report Jitter to measure
+the motion smoothness.
+Text-conditioned controller metrics. We report task success,
+rollout duration, humanoid-motion alignment with the instruction,
+and motion diversity. Success rate is computed under the repeated-
+attempt protocol described in Sec. 4.4. A controller rollout is suc-
+cessful if it satisfies the task-completion condition before triggering
+an applicable failure termination defined in Sec. 3.4. Time is the
+average number of control frames executed per rollout.
+
+
+10
+•
+Han et al.
+(a) More natural hand–object interaction.
+(b) Avoiding compensatory motion caused by poor grasp quality.
+(c) Stable execution during challenging manipulation.
+Fig. 8. Qualitative comparison between our tracking policy and Inter-
+Mimic. Top: InterMimic; bottom: our stage I tracking policy. Our geometry-
+conditioned tracking policy produces more natural and stable interactions,
+while InterMimic often exhibits less suitable grasping, compensatory body
+motion, or failure to maintain the interaction.
+We assess the alignment between the instruction and the realized
+humanoid motion using a learned text–motion evaluator. We train
+the evaluator on retargeted OMOMO using the model and training
+protocol in prior work [Guo et al. 2022]. Following MARDM [Meng
+et al. 2025b], the evaluator uses an essential-motion representa-
+tion comprising root motion and the positions of 21 body joints. It
+does not observe object or finger motion, so its scores characterize
+only the humanoid-motion component of instruction alignment.
+Complete evaluator training and scoring details are provided in
+Appendix D.1. The evaluator provides three metrics. R@1 and R@3
+measure the fractions of motions for which the paired instruction
+is retrieved among the top one and top three text candidates, re-
+spectively. MM-Dist measures the mean Euclidean distance between
+paired text and motion embeddings. Diversity measures the mean
+Euclidean distance between sampled pairs of motion embeddings
+and is interpreted relative to the reference-motion value rather than
+maximized independently.
+Physical and temporal motion-quality metrics. Task suc-
+cess, duration, and instruction alignment do not directly measure
+physical artifacts or temporal irregularities. We therefore report sep-
+arate metrics for these two aspects of motion quality. We compute
+Penetrate, Float, and Skate using the public HumoS [Tripathi et al.
+2025] implementation. Penetrate measures the depth of the lowest
+body vertex below the ground tolerance, while Float measures the
+clearance of the lowest body vertex above it. Skate measures the
+horizontal displacement of ground-contacting feet across adjacent
+frames. Following PhysDiff [Yuan et al. 2023], Phys-Err aggregates
+these three physical artifacts as the sum of Penetrate, Float, and
+Skate. All four quantities are reported in millimeters. Jerk measures
+third-order temporal variation in m/s3. We use the public imple-
+mentation released with prior work [Tanke et al. 2021] to compute
+NDMS, which measures the similarity of local joint-velocity win-
+dows to real motion.
+4.3
+Contact-Rich Interaction Tracking
+Comparison setup and evaluation protocol. InterMimic [Xu et al.
+2025] is the closest baseline in terms of training physics-based poli-
+cies to track paired humanoid and object trajectories. To ensure fair
+comparison, following its subject-specific protocol, we train one
+tracking policy per subject on the original OMOMO data without
+retargeting. We reimplement its tracking pipeline in Isaac Lab, with
+all ablation variants matching the policy capacity, base tracking
+formulation, and training setup, and differing only in the hand-
+interaction components introduced in Sec. 3.2. Because evaluating
+every variant over all 17 subjects would require training 17 policies
+for each ablation variant, we conduct the ablation on a three-subject
+subset of 1,022 sequences that preserves the object coverage of the
+full dataset.
+We additionally evaluate five variants of our complete tracking ob-
+jective, each removing one component introduced in Sec. 3.2 while
+retaining the others. Ours w/o grasp cost removes the geometry-
+conditioned grasp cost 𝐸grasp
+𝑡
+, including both its enclosure and sup-
+port modes. Ours w/o palm alignment removes the regularizer that
+encourages the palm to face the local object surface. Ours w/o contact
+anchor removes the penalty on deviation from the reference hand-
+contact region, while retaining the interaction anchor used to com-
+pute local grasp geometry. Ours w/o hold stability removes the penal-
+ties on sliding finger contacts and the loss of established contacts.
+Ours w/o gated reference tracking disables the contact-dependent
+relaxation of reference tracking for the hand and supporting arm
+chain, while retaining the grasp cost and its reference-contact gate.
+Separately, for the unified tracking policy used to collect Stage II
+training data, we retarget the complete dataset to a canonical SMPL-
+X embodiment using our interaction-preserving adaptation of Om-
+niRetarget [Yang et al. 2025] and train one unified policy jointly
+over all subjects and objects with object-identity one-hot condition-
+ing. Because this setting changes both the training data and the
+policy configuration, we report it separately from the controlled
+comparison.
+Quantitative evaluation. Table 1 evaluates the proposed hand-
+interaction components under the controlled subject-specific train-
+ing protocol. Under matched policy capacity and training settings,
+
+
+LYRIC: Language-Driven Physics-Based Character Control for Contact-Rich Whole-Body Object Interaction
+•
+11
+Table 2. Text-conditioned character control on OMOMO. Flow-BC denotes our controller with a trajectory planner and an action generator, trained by
+behavior cloning as described in Sec. 3.3; Flow-BC (w/o planner) removes the intermediate trajectory planner and conditions the action generator directly on
+the 9-D terminal object goal. Flow-BC + FT denotes LYRIC, our final controller after the proposed RL post-tuning in Sec. 3.4. The Mocap row reports the
+corresponding metrics computed on the ground-truth motion-capture sequences.
+Task
+Semantic
+Motion quality
+Method
+SR (%)↑
+Time (fr)
+R@1↑
+R@3↑
+MM-Dist↓
+Div. →
+Penet.↓
+Float↓
+Skate↓
+Phys-Err↓
+Jerk↓
+NDMS↑
+Train split (3485 sequences)
+Mocap (reference)
+–
+–
+0.669
+0.963
+1.60
+15.76
+15.62
+6.56
+7.45
+29.27
+38.9
+0.579
+Flow-BC (w/o planner)
+83.01
+187.8
+0.354
+0.639
+5.57
+13.93
+0.07
+13.04
+6.93
+20.05
+269.9
+0.427
+Flow-BC
+80.32
+128.3
+0.390
+0.709
+4.62
+14.69
+0.03
+12.98
+7.27
+20.27
+290.2
+0.439
+Flow-BC + FT (LYRIC)
+91.33
+135.2
+0.374
+0.698
+4.61
+15.08
+0.02
+13.25
+7.19
+20.46
+281.7
+0.452
+Held-out split (267 sequences)
+Mocap (reference)
+–
+–
+0.488
+0.853
+2.91
+–
+12.76
+8.95
+8.06
+29.77
+41.0
+0.570
+Flow-BC (w/o planner)
+79.03
+156.7
+0.323
+0.604
+5.84
+–
+0.03
+7.35
+7.00
+14.38
+269.6
+0.439
+Flow-BC
+74.16
+119.8
+0.347
+0.626
+5.56
+–
+0.00
+8.12
+7.00
+15.12
+281.2
+0.440
+Flow-BC + FT (LYRIC)
+90.26
+148.8
+0.361
+0.666
+4.94
+–
+0.02
+7.08
+6.75
+13.85
+256.7
+0.451
+our complete objective achieves a success rate of 64.29%, compared
+with 53.23% for InterMimic, an absolute improvement of 11.06 per-
+centage points. Removing any proposed component reduces success
+to between 59.20% and 61.25%. The largest reductions occur with-
+out the geometry-conditioned grasp cost and hold stability, which
+lower success to 59.20% and 59.30%, respectively. The complete ob-
+jective also produces the longest average rollout and the lowest jitter
+among the controlled variants. Together, these results indicate that
+the proposed terms provide complementary guidance for contact
+acquisition, geometry-adaptive grasp formation, and stable contact
+maintenance.
+Importantly, success and tracking error capture different objec-
+tives: successful physical interaction can require deliberate deviation
+from the kinematic reference. This is evident when gated reference
+tracking is removed, which achieves the lowest human and object
+errors (7.49 cm and 12.32 cm) but reduces success from 64.29% to
+59.88%. Strictly tracking the captured arm and hand motion limits
+the local adjustments needed to accommodate the simulated ob-
+ject geometry and establish viable contacts. Our complete objective
+therefore deliberately relaxes reference fidelity where necessary,
+yielding substantially higher interaction success with only modest
+increases in tracking error.
+The bottom block reports the unified tracking policy used to
+collect Stage II training trajectories. This single policy achieves a
+76.50% success rate and an average rollout duration of 148.6 frames
+on the complete retargeted OMOMO dataset. Its successful rollouts
+provide abundant and high-quality trajectories across the dataset
+for training the generative controller, without requiring separate
+subject-specific policies or a subsequent distillation stage.
+Qualitative comparison. Figure 8 further illustrates the effect of
+the proposed hand-interaction costs. In Fig. 8 (a), both methods
+complete the interaction, but our policy produces cleaner and more
+animation-friendly hand–object motion, with contact configura-
+tions that better match the local object geometry. In Fig. 8 (b), the
+weaker grasp quality of InterMimic leads to unnatural whole-body
+compensation to keep the object in place, while our method main-
+tains stable contact and more natural character motion throughout
+the sequence. In Fig. 8 (c), the contact failure becomes more severe:
+InterMimic loses the interaction entirely, whereas our tracker re-
+mains stable and completes the task successfully. These examples
+show that the benefit of our geometry-conditioned interaction re-
+wards is not only higher task success, but also improved motion
+quality and more plausible hand–object behavior. We have more
+video results for our unified tracking policy on the supplementary
+webpage.
+4.4
+Text-Conditioned Character Control
+Data and evaluation protocol. We collect a clean dataset of 3,752
+successful trajectories using the unified tracking policy with obser-
+vation noise disabled. Following InterMimic [Xu et al. 2025], we use
+this dataset for Stage III episode initialization and evaluate the gen-
+erative controller on these retained sequences rather than the full
+OMOMO dataset. Each evaluation episode of the text-conditioned
+controller runs for at most 1,000 control steps. Following existing
+work [Xu et al. 2025, 2026], generative controller success rate is re-
+ported per sequence over repeated attempts under a fixed global
+episode budget and a sequence is counted as solved if at least one
+attempt succeeds. Of the 3,752 retained trajectories, 267 are from
+subject 14 and are reserved for held-out evaluation, following In-
+terMimic [Xu et al. 2025]. Our evaluation protocol requires more
+than 300 valid motion embeddings to compute Diversity. Since the
+held-out split contains only 267 trajectories, we omit Diversity on
+this split.
+Table 2 summarizes the quantitative results for text-conditioned
+character control. We discuss the effectiveness of the trajectory
+planner and planner-guided on-policy post-tuning below.
+Effectiveness of the trajectory planner. To evaluate the contribution
+of the planner 𝜋P, we train Flow-BC (w/o planner), which removes
+the trajectory planner and conditions the action generator directly
+on the 9-D terminal object goal instead of the object and humanoid-
+root trajectories predicted over the next 30 steps. All other Stage-II
+
+
+12
+•
+Han et al.
+Fig. 9. Gallery of contact-rich whole-body object interactions driven by language instructions. Representative rollouts of LYRIC, with frames in each
+sequence ordered from left to right. See the supplementary webpage for additional video results.
+training settings are kept unchanged. Evaluation uses the same
+protocol except that the Flow-BC (w/o planner) variant omits the
+plan-divergence and object-progress terminations.
+Since removing the planner disables the plan-divergence and
+object-progress termination terms, the controller has more oppor-
+tunity to complete placement before an episode terminates. Under
+these more permissive termination conditions, we observe a modest
+
+
+LYRIC: Language-Driven Physics-Based Character Control for Contact-Rich Whole-Body Object Interaction
+•
+13
+increase in placement success. The longer average rollout durations
+on both the training and held-out splits also reflect the additional
+execution time afforded by removing these termination terms. Con-
+sequently, the planner-free variant’s success rates are not directly
+comparable with those of variants that retain these termination
+terms. Meanwhile, removing the planner substantially weakens se-
+mantic alignment. On the training split, R@3 decreases from 0.709
+to 0.639 and MM-Dist increases from 4.62 to 5.57. The same trends
+hold on the held-out split. These results support the planner’s role in
+preserving text-specified interaction behavior: its predicted object
+and humanoid-root trajectories guide how the character manipu-
+lates the object, rather than only specifying where the object should
+be placed.
+Effectiveness of planner-guided post-tuning. We next evaluate Stage III,
+where the frozen planner provides object–root trajectory targets
+for on-policy post-tuning of the action generator. On-policy post-
+tuning (Flow-BC + FT) improves success from 80.32% to 91.33% on
+the training split and from 74.16% to 90.26% on the held-out subject.
+These gains demonstrate that post-tuning improves task execution
+and that this improvement generalizes to the held-out subject.
+On the training split, post-tuning introduces small trade-offs in re-
+trieval accuracy, with R@1 decreasing from 0.390 to 0.374 and R@3
+decreasing from 0.709 to 0.698. However, MM-Dist remains nearly
+unchanged, while Diversity moves closer to the reference value.
+On the held-out split, all reported semantic metrics improve: R@1
+increases from 0.347 to 0.361, R@3 from 0.626 to 0.666, and MM-
+Dist decreases from 5.56 to 4.94. Thus, although the planner-guided
+post-tuning stage primarily targets reliable physical execution, it
+preserves the language-conditioned behavior learned during of-
+fline training and improves semantic generalization to the held-out
+subject.
+Post-tuning also improves nearly all physical and temporal motion-
+quality metrics on the held-out split. Float decreases from 8.12
+to 7.08 mm, Skate from 7.00 to 6.75 mm, Phys-Err from 15.12 to
+13.85 mm, and Jerk from 281.2 to 256.7 m/s3, while NDMS increases
+from 0.440 to 0.451. Penetration remains negligible for both mod-
+els. On the training split, post-tuning similarly reduces Skate and
+Jerk and improves NDMS, although Float and Phys-Err increase
+slightly. The substantial success gains are therefore not accompa-
+nied by a broad degradation in motion quality. Instead, post-tuning
+improves temporal quality and most physical metrics, particularly
+on the held-out subject. The remaining gap to the Mocap reference
+in Jerk and NDMS may reflect additional temporal variation relative
+to kinematic motion capture introduced by physics-based control,
+including contact forces, feedback corrections, and high-frequency
+actuation.
+Qualitative results. Figure 7 compares Flow-BC and Flow-BC +
+FT on representative contact-rich interactions. Flow-BC generally
+captures the intended behavior, but small execution errors can com-
+pound into unstable whole-body compensation or loss of object
+control, as seen during overhead chair transport, box rotation, and
+floor-lamp relocation. After post-tuning, the controller maintains
+better balance and more stable object contact through these chal-
+lenging phases, allowing execution to continue toward the requested
+placement. These examples complement the quantitative gains in
+Table 2 by illustrating the improved physical execution achieved
+by planner-guided post-tuning, where the frozen planner provides
+task-level trajectory supervision during on-policy refinement.
+Figure 9 shows representative rollouts of our final controller
+across objects with substantially different geometry and scale. For
+the same object, different instructions produce distinct interaction
+strategies: the controller lifts, pulls, or kicks the floor lamp; pulls,
+carries, or kicks the plastic box; carries the table normally or over-
+head; and lifts, pulls, or pushes the suitcase. These behaviors re-
+quire different contact choices and coordinated whole-body motion,
+demonstrating that language controls the interaction semantics and
+manner rather than merely specifying an object displacement. We
+provide additional video results for our final generative controller,
+as well as a comparison between Flow-BC and Flow-BC + FT, on
+the supplementary webpage.
+4.5
+Kinematic-Planner Baselines
+Baseline construction. An alternative to our factorized controller is
+to use a text-conditioned kinematic motion generator as the planner
+and execute its predicted dense full-body humanoid and object tra-
+jectories with a tracking policy, as in prior language-driven physics
+systems centered on full-body human-motion generation [Lin et al.
+2025; Tevet et al. 2024; Wu et al. 2025c]. We construct two baselines
+following this approach. In both, a text-conditioned rectified-flow
+generator predicts per-frame humanoid root poses, joint rotations,
+and object poses. Our unified tracking policy from Sec. 3.2 uses the
+current simulated state to track these predicted trajectories. The
+two generators share the same architecture, motion representation,
+and text encoder, but are trained separately for one-shot generation
+and short-horizon replanning, which we elaborate below. The first
+baseline uses one-shot kinematic planning followed by tracking. At
+each episode reset, it generates a whole-sequence kinematic refer-
+ence conditioned on the text instruction, initial character–object
+state, and target object pose, and we track this entire reference with-
+out replanning. Following prior diffusion-based motion generation
+methods [Tevet et al. 2022], we cap its length to𝑇= min(𝑇demo, 300),
+where 𝑇demo is the duration of the corresponding ground-truth
+mocap sequence. If the episode continues beyond the reference,
+the tracker continues following its final frame. The other base-
+line follows CLoSD-style closed-loop replanning [Tevet et al. 2024]:
+it conditions on recent 30-frame simulated motion, predicts a 60-
+frame kinematic horizon, executes 32 frames using our tracker, and
+then replans. To compare the planning interfaces under analogous
+post-tuning, the fine-tuned variants keep each kinematic planner
+frozen and update only its tracker, mirroring our frozen-planner
+post-tuning of the action generator. Tracker fine-tuning combines
+the tracking reward from Sec. 3.2 against the generated kinematic
+reference, with the task-completion bonus 𝑏goal1goal(𝑡) from Sec. 3.4.
+The combined generator–tracker parameter budget is matched to
+our controller, and all methods use the same evaluation protocol.
+Results. Table 3 shows that tracker fine-tuning (+FT) substantially
+improves task success for both kinematic-planner baselines. These
+gains demonstrate the benefit of adapting the tracker to generated
+references and the task-completion reward, even while keeping the
+kinematic planner frozen.
+
+
+14
+•
+Han et al.
+Table 3. Comparison with kinematic-planner baselines on OMOMO. 1-shot kin. planner generates a complete text-conditioned kinematic character–
+object motion sequence once, which a closed-loop tracking policy then executes. Replan. kin. planner uses CLoSD-style [Tevet et al. 2024] closed-loop
+replanning, repeatedly generating a short kinematic horizon from recent simulated motion and executing a prefix with the tracker. 1-shot kin. planner + FT
+and Replan. kin. planner + FT keep the corresponding generator frozen and further fine-tune the tracker against its generated references using PPO. Time
+denotes average rollout duration in control frames.
+Task
+Semantic
+Motion quality
+Method
+SR (%)↑Time (fr) R@1↑R@3↑MM-Dist↓Div. →Penet.↓Float↓Skate↓Phys-Err↓Jerk↓NDMS↑
+Train split (3485 sequences)
+Mocap (reference)
+–
+–
+0.669
+0.963
+1.60
+15.76
+15.62
+6.56
+7.45
+29.27
+38.9
+0.579
+1-shot kin. planner
+42.81
+96.5
+0.251
+0.491
+7.39
+13.77
+0.02
+14.08
+9.55
+23.65
+478.2
+0.375
+1-shot kin. planner + FT
+76.50
+125.2
+0.269
+0.536
+6.51
+13.81
+0.02
+16.05
+10.94
+27.01
+655.1
+0.359
+Replan. kin. planner
+15.95
+70.7
+0.159
+0.365
+9.24
+13.33
+0.06
+18.00
+10.02
+28.08
+567.2
+0.340
+Replan. kin. planner + FT 33.97
+157.9
+0.136
+0.326
+9.75
+11.14
+0.05
+16.84
+9.59
+26.48
+653.1
+0.297
+Ours (LYRIC)
+91.33
+135.2
+0.374
+0.698
+4.61
+15.08
+0.02
+13.25
+7.19
+20.46
+281.7
+0.452
+Held-out split (267 sequences)
+Mocap (reference)
+–
+–
+0.488
+0.853
+2.91
+–
+12.76
+8.95
+8.06
+29.77
+41.0
+0.570
+1-shot kin. planner
+37.08
+88.8
+0.162
+0.368
+9.48
+–
+0.00
+8.82
+9.19
+18.01
+475.7
+0.344
+1-shot kin. planner + FT
+74.16
+120.1
+0.200
+0.429
+8.10
+–
+0.04
+13.18
+10.89
+24.11
+647.4
+0.334
+Replan. kin. planner
+10.49
+60.6
+0.127
+0.314
+10.26
+–
+0.00
+12.54
+10.14
+22.68
+563.0
+0.335
+Replan. kin. planner + FT 37.83
+108.5
+0.107
+0.277
+10.45
+–
+0.00
+13.33
+10.13
+23.45
+671.0
+0.290
+Ours (LYRIC)
+90.26
+148.8
+0.361
+0.666
+4.94
+–
+0.02
+7.08
+6.75
+13.85
+256.7
+0.451
+Nevertheless, the strongest kinematic-planner baseline (1-shot
+kin. planner + FT) reaches only 76.50% success on the training
+split and 74.16% on the held-out split, compared with 91.33% and
+90.26% for our direct action controller. The replanning baseline
+performs substantially worse than its one-shot counterpart both
+before and after tracker fine-tuning. Although the one-shot baseline
+can not update its kinematic reference during execution, it gener-
+ates the complete motion from a mocap-like initial condition and
+retains a single coherent kinematic trajectory. The replanning base-
+line instead repeatedly conditions on simulator-realized histories
+that contain accumulated tracking errors, potentially moving the
+conditioning states away from the kinematic generator’s training
+distribution. This distribution shift can compound across replanning
+cycles, causing the generated reference to progressively drift in both
+task intent and motion coherence, consistent with that baseline’s
+substantially weaker semantic metrics. This effect is particularly
+severe in contact-rich object interaction, where the object is unac-
+tuated, so small execution errors can therefore alter both the object
+state and the subsequent human–object interaction context seen
+by the kinematic generator. Fine-tuning the tracker improves its
+ability to execute these references but cannot correct drift produced
+by the frozen generator. Thus, the comparison does not suggest that
+closed-loop feedback is inherently harmful; rather, it shows that
+replanning is ineffective when the generator does not generalize to
+the physical-state distribution created by its own execution.
+In contrast, our controller learns action distributions from phys-
+ically executed rollouts and updates its actions using the latest
+simulated state and contacts. Its planner specifies short-horizon
+object and humanoid-root trajectories rather than a dense full-body
+reference, leaving the action policy free to adjust joint motions and
+contact configurations during execution. During post-tuning, the
+same object–root trajectories also provide task-level supervision for
+refining physical execution.
+Our method also provides stronger overall semantic and phys-
+ical quality than the kinematic-planner baselines, with better R-
+Precision and MM-Dist, lower physical error and Jerk, and higher
+NDMS. Notably, although tracker fine-tuning increases the success
+of both baselines, it also increases Jerk and reduces NDMS. Fine-
+tuning improves the tracker, but the pipeline still requires it to realize
+a separately generated full-body kinematic reference under physical
+dynamics and contact constraints, leaving a potential mismatch be-
+tween motion generation and execution. Our controller avoids this
+full-body generator–tracker interface by directly generating actions
+from the current simulated state and contacts, with further adap-
+tation through on-policy post-tuning. This design achieves higher
+task success together with better semantic and motion quality than
+the kinematic-planner baselines. Additional qualitative comparisons
+with the kinematic-planner baselines are provided on the supple-
+mentary webpage.
+4.6
+Test-Time Spatial Control
+We further test whether the learned trajectory planner can support
+user-specified spatial constraints at test time without retraining.
+Following CHOIS [Li et al. 2024], we specify 𝑘∈{1, 3, 7} interme-
+diate object waypoints for each sequence in the held-out split. We
+constrain only the horizontal (𝑥,𝑦) object position, following the
+CHOIS waypoint-control setting, so that the user specifies where
+the object should move while leaving its height and orientation free
+to adapt to the interaction. For this experiment, both guided and
+unguided variants use 20 planner denoising steps, while the action
+sampler remains unchanged, so that guidance is the only varying
+factor.
+
+
+LYRIC: Language-Driven Physics-Based Character Control for Contact-Rich Whole-Body Object Interaction
+•
+15
+Fig. 10. Representative object waypoint-guided interactions. Blue
+disks indicate user-specified object waypoints; blue and gray curves show
+the guided and unguided simulator-realized object trajectories, respectively.
+Guidance steers the object toward the intermediate waypoints.
+Table 4. Test-time object waypoint control on the held-out OMOMO
+split. Waypoint errors are measured in centimeters at the commanded
+frames; Plan and Exec. denote the predicted plan and physically executed
+object trajectory, respectively.
+𝑘= 1
+𝑘= 3
+𝑘= 7
+Method
+Plan
+Exec.
+Plan
+Exec.
+Plan
+Exec.
+No guidance
+22.35
+38.79
+21.80
+30.73
+21.18
+29.79
++ Guidance
+10.43
+20.48
+10.61
+17.68
+12.07
+14.51
+Waypoint guidance mechanism. We adopt gradient-based test-
+time guidance, following the general principle of guided generative
+sampling [Bansal et al. 2024; Chung et al. 2022; Dhariwal and Nichol
+2021]. Our factorized design allows us to apply spatial guidance
+to the trajectory planner while the action generator adapts whole-
+body actions to realize the guided plan. The planner predicts only a
+30-frame (1 s) horizon, whereas a waypoint may lie several seconds
+into the future. We therefore use two guidance regimes. At each
+planner update, we determine whether the waypoint’s time frame
+lies within the current planning horizon. If it does, we apply full-
+strength guidance to the object-position token at the corresponding
+plan time frame. Otherwise, we apply weaker, temporally decayed
+guidance to the final object-position token, encouraging progress
+toward the waypoint before its specified time frame is covered
+by the plan. As successive updates advance the planning horizon,
+guidance therefore transitions from influencing the plan endpoint
+to enforcing the waypoint at its specified time. See appendix for
+more detailed explanation.
+Results. We evaluate waypoint accuracy using horizontal Eu-
+clidean position errors, measured in centimeters at the commanded
+frames. Plan error measures the distance between each waypoint
+and the object position predicted by the planner for its commanded
+frame; Exec. error measures the corresponding deviation of the phys-
+ically simulated object. As shown in Table 4, guidance consistently
+improves waypoint accuracy across all three control settings. For
+𝑘= 1, 3, and 7, Plan error decrease from 22.35, 21.80, and 21.18 cm
+Fig. 11. Zero-shot generalization to novel object shapes. Our policy
+successfully performs diverse interactions with novel within-category object
+geometries without fine-tuning.
+to 10.43, 10.61, and 12.07 cm, respectively. The improvement re-
+mains substantial after physical execution, with Exec. error decreas-
+ing from 38.79, 30.73, and 29.79 cm to 20.48, 17.68, and 14.51 cm.
+These results show that the test-time guidance effectively steers the
+learned planner toward user-specified spatial constraints, and that
+this control transfers to the physically simulated object. The larger
+Exec. error relative to Plan error reflects the additional difficulty
+of realizing the guided trajectory through contact-rich whole-body
+control. Figure 10 visualizes representative waypoint-guided interac-
+tions. The guided object trajectories are steered toward the specified
+intermediate waypoints while the controller maintains physically
+plausible whole-body interaction. More video results of waypoint
+control are provided on the supplementary webpage.
+Spatial guidance introduces a moderate trade-off in terminal task
+completion. Relative to 89.89% success without guidance, placement
+success becomes 85.39%, 86.14%, and 83.15% for 𝑘= 1, 3, and 7,
+respectively. Guidance imposes additional spatial and temporal con-
+straints on the object trajectory while keeping the action policy
+fixed. The resulting plans can be more difficult to execute in that
+case, causing some episodes to terminate due to plan divergence
+before final placement. Thus, the proposed guidance substantially
+improves intermediate object-trajectory control while largely pre-
+serving the original terminal placement capability, without any
+additional training.
+4.7
+Zero-Shot Generalization to Novel Object Shapes
+To qualitatively evaluate zero-shot generalization to novel object
+geometry, we replace each test object with several semantically
+
+
+16
+•
+Han et al.
+Table 5. User study on motion tracking and language-driven char-
+acter control. Each cell is the percentage of trials in which raters chose
+that method. Fidelity asks which rollout best follows the mocap reference
+(tracking) or the written instruction (language-driven control); Naturalness
+asks which moves most naturally.
+Preference (%) ↑
+Method
+Fidelity
+Naturalness
+Interaction tracking policy (2 alternatives, chance 50%)
+InterMimic [Xu et al. 2025]
+35.3
+21.2
+Ours
+64.7
+78.8
+Language-driven control (4 alternatives, chance 25%)
+1-shot kin. planner + FT
+1.7
+1.1
+Replan. kin. planner + FT
+0.8
+0.4
+Flow-BC
+30.1
+25.2
+Flow-BC + FT
+67.4
+73.3
+matched meshes from Objaverse [Deitke et al. 2023], while retain-
+ing the original text prompt. Each mesh is orientation-aligned, uni-
+formly scaled, and center-registered without policy fine-tuning.
+As shown in Fig. 11, the frozen policy transfers across substantial
+within-category shape variations while maintaining coordinated
+whole-body motion and object control, including lifting, carrying,
+pulling, and fine-grained fingertip grasps. More results are provided
+in the appendix and supplementary webpage.
+4.8
+User Study
+We conduct a blinded user study to evaluate the perceptual quality of
+both stages. For tracking, raters compare our subject-specific track-
+ing policy with InterMimic given the mocap reference. Given the
+language instruction, raters compare our behavior-cloned controller,
+its on-policy post-tuned version, and the one-shot and replanning
+kinematic-planner baselines with fine-tuned trackers. We evaluate
+both fidelity to the conditioning signal and motion naturalness, with
+full study details provided in the appendix.
+Table 5 shows a clear preference for our methods. For tracking,
+our tracker is preferred over InterMimic in both fidelity (64.7%)
+and naturalness (78.8%), supporting the perceptual benefit of the
+geometry-conditioned hand-interaction costs. For language-driven
+control, our on-policy post-tuned controller receives 67.4% of the
+fidelity preference and 73.3% of the naturalness preference, sub-
+stantially outperforming its behavior-cloned counterpart and both
+kinematic-planner baselines with fine-tuned trackers. These results
+support the perceptual benefits of on-policy post-tuning for in-
+struction adherence and motion naturalness, complementing the
+improvements in task success.
+5
+Conclusion
+We presented LYRIC, a generative flow-matching controller for
+contact-rich whole-body object interaction from a free-form lan-
+guage instruction and a sparse terminal object goal. Geometry-
+conditioned interaction rewards and relaxed reference tracking al-
+low a unified tracking policy to convert imperfect motion-capture
+references into physically executed expert trajectories with reliable
+hand interaction. The controller separates task progression from
+motor execution: a task-level planner predicts short-horizon object
+and humanoid-root trajectories, while an action generator resolves
+whole-body motion and contacts in closed loop. During on-policy
+post-tuning, the frozen planner provides stable supervision for in-
+termediate task progression as the action generator learns from
+its own rollouts. At deployment, the controller requires neither
+the tracking policy nor a prescribed dense full-body motion. Con-
+trolled evaluations show higher tracking success than an InterMimic
+reimplementation and higher task success, semantic alignment, and
+motion quality than matched kinematic-planner baselines. The fac-
+torization also supports test-time object-waypoint guidance and
+qualitative transfer to novel within-category shapes. Future work
+could extend the framework to articulated-object and multi-object
+interactions and study generalization across broader geometric and
+semantic variation.
+References
+Anurag Ajay, Yilun Du, Abhi Gupta, Joshua Tenenbaum, Tommi Jaakkola, and Pulkit
+Agrawal. 2022. Is conditional generative modeling all you need for decision-making?
+arXiv preprint arXiv:2211.15657 (2022).
+I Apanasevich, M Artemyev, R Babakyan, P Fedotova, Denis Grankin, E Kupryashin, A
+Misailidi, D Nerus, A Nutalapati, G Sidorov, et al. 2026. Green-VLA: Staged Vision-
+Language-Action Model for Generalist Robots. arXiv preprint arXiv:2602.00919
+(2026).
+Arpit Bansal, Hong-Min Chu, Avi Schwarzschild, Roni Sengupta, Micah Goldblum,
+Jonas Geiping, and Tom Goldstein. 2024. Universal guidance for diffusion models.
+In International Conference on Learning Representations, Vol. 2024. 51304–51323.
+Kevin Black, Michael Janner, Yilun Du, Ilya Kostrikov, and Sergey Levine. 2023. Training
+diffusion models with reinforcement learning. arXiv preprint arXiv:2305.13301 (2023).
+Kang Chen, Zhihao Liu, Tonghe Zhang, Zhen Guo, Si Xu, Hao Lin, Hongzhi Zang,
+Quanlu Zhang, Zhaofei Yu, Guoliang Fan, et al. 2025. 𝜋rl: Online rl fine-tuning for
+flow-based vision-language-action models. arXiv preprint arXiv:2510.25889 8 (2025).
+Cheng Chi, Zhenjia Xu, Siyuan Feng, Eric Cousineau, Yilun Du, Benjamin Burchfiel,
+Russ Tedrake, and Shuran Song. 2025. Diffusion policy: Visuomotor policy learning
+via action diffusion. The International Journal of Robotics Research 44, 10-11 (2025),
+1684–1704.
+Hyungjin Chung, Jeongsol Kim, Michael T Mccann, Marc L Klasky, and Jong Chul
+Ye. 2022. Diffusion posterior sampling for general noisy inverse problems. arXiv
+preprint arXiv:2209.14687 (2022).
+Matt Deitke, Dustin Schwenk, Jordi Salvador, Luca Weihs, Oscar Michel, Eli VanderBilt,
+Ludwig Schmidt, Kiana Ehsani, Aniruddha Kembhavi, and Ali Farhadi. 2023. Obja-
+verse: A universe of annotated 3d objects. In Proceedings of the IEEE/CVF conference
+on computer vision and pattern recognition. 13142–13153.
+Prafulla Dhariwal and Alexander Nichol. 2021. Diffusion models beat gans on image
+synthesis. Advances in neural information processing systems 34 (2021), 8780–8794.
+Christian Diller and Angela Dai. 2024. Cg-hoi: Contact-guided 3d human-object inter-
+action generation. In Proceedings of the IEEE/CVF Conference on Computer Vision
+and Pattern Recognition. 19888–19901.
+Chuan Guo, Shihao Zou, Xinxin Zuo, Sen Wang, Wei Ji, Xingyu Li, and Li Cheng. 2022.
+Generating diverse and natural 3d human motions from text. In 2022 IEEE/CVF
+Conference on Computer Vision and Pattern Recognition (CVPR). IEEE, 5142–5151.
+Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang,
+Lu Wang, and Weizhu Chen. 2021. Lora: Low-rank adaptation of large language
+models. arXiv preprint arXiv:2106.09685 (2021).
+Xiaoyu Huang, Takara Truong, Yunbo Zhang, Fangzhou Yu, Jean Pierre Sleiman, Jessica
+Hodgins, Koushil Sreenath, and Farbod Farshidian. 2025. Diffuse-cloc: Guided
+diffusion for physics-based character look-ahead control. ACM Transactions on
+Graphics (TOG) 44, 4 (2025), 1–12.
+Masatomo Inui, Nobuyuki Umezu, and Ryohei Shimane. 2016. Shrinking sphere: A
+parallel algorithm for computing the thickness of 3D objects. Computer-Aided Design
+and Applications 13, 2 (2016), 199–207.
+Michael Janner, Yilun Du, Joshua B Tenenbaum, and Sergey Levine. 2022. Planning
+with diffusion for flexible behavior synthesis. arXiv preprint arXiv:2205.09991 (2022).
+Biao Jiang, Xin Chen, Wen Liu, Jingyi Yu, Gang Yu, and Tao Chen. 2023. Motiongpt:
+Human motion as a foreign language. Advances in Neural Information Processing
+Systems 36 (2023), 20067–20079.
+Jordan Juravsky, Yunrong Guo, Sanja Fidler, and Xue Bin Peng. 2022. Padl: Language-
+directed physics-based character control. In SIGGRAPH Asia 2022 Conference Papers.
+1–9.
+
+
+LYRIC: Language-Driven Physics-Based Character Control for Contact-Rich Whole-Body Object Interaction
+•
+17
+Jordan Juravsky, Yunrong Guo, Sanja Fidler, and Xue Bin Peng. 2024. Superpadl: Scaling
+language-directed physics-based control with progressive supervised distillation. In
+ACM SIGGRAPH 2024 Conference Papers. 1–11.
+Jiaman Li, Alexander Clegg, Roozbeh Mottaghi, Jiajun Wu, Xavier Puig, and C Karen
+Liu. 2024. Controllable human-object interaction synthesis. In European Conference
+on Computer Vision. Springer, 54–72.
+Jiaman Li, Jiajun Wu, and C Karen Liu. 2023. Object motion guided human motion
+synthesis. ACM Transactions on Graphics (TOG) 42, 6 (2023), 1–11.
+Xinyao Li, Xialin He, Runpei Dong, and Saurabh Gupta. 2026. ContactMimic: Humanoid
+Object Interaction via Contact Control. arXiv preprint arXiv:2607.08742 (2026).
+Dayang Liang, Yuhang Lin, Xinzhe Liu, Jiyuan Shi, Yunlong Liu, and Chenjia Bai. 2026.
+Interreal: A unified physics-based imitation framework for learning human-object
+interaction skills. arXiv preprint arXiv:2603.07516 (2026).
+Yutang Lin, Jieming Cui, Yixuan Li, Baoxiong Jia, Yixin Zhu, and Siyuan Huang. 2026.
+Lessmimic: Long-horizon humanoid interaction with unified distance field repre-
+sentations. arXiv preprint arXiv:2602.21723 (2026).
+Yuhang Lin, Yijia Xie, Jiahong Xie, Yuehao Huang, Ruoyu Wang, Jiajun Lv, Yukai
+Ma, and Xingxing Zuo. 2025.
+SimGenHOI: Physically Realistic Whole-Body
+Humanoid-Object Interaction via Generative Modeling and Reinforcement Learning.
+arXiv:2508.14120 (2025).
+Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. 2022.
+Flow matching for generative modeling. arXiv preprint arXiv:2210.02747 (2022).
+Matthew Loper, Naureen Mahmood, Javier Romero, Gerard Pons-Moll, and Michael J.
+Black. 2015. SMPL: a skinned multi-person linear model. ACM Trans. Graph. 34, 6,
+Article 248 (Oct. 2015), 16 pages. doi:10.1145/2816795.2818013
+Zhengyi Luo, Jinkun Cao, Josh Merel, Alexander Winkler, Jing Huang, Kris Kitani, and
+Weipeng Xu. 2023. Universal humanoid motion representations for physics-based
+control. arXiv preprint arXiv:2310.04582 (2023).
+David McAllister, Songwei Ge, Brent Yi, Chung Min Kim, Ethan Weber, Hongsuk Choi,
+Haiwen Feng, and Angjoo Kanazawa. 2026. Flow Matching Policy Gradients. In
+ICLR.
+Zichong Meng, Zeyu Han, Xiaogang Peng, Yiming Xie, and Huaizu Jiang. 2025a. Ab-
+solute coordinates make motion generation easy. arXiv preprint arXiv:2505.19377
+(2025).
+Zichong Meng, Yiming Xie, Xiaogang Peng, Zeyu Han, and Huaizu Jiang. 2025b. Rethink-
+ing diffusion for text-driven human motion generation: Redundant representations,
+evaluation, and masked autoregression. In Proceedings of the Computer Vision and
+Pattern Recognition Conference. 27859–27871.
+Yuxuan Mu, Ziyu Zhang, Yi Shi, Dun Yang, Minami Matsumoto, Kotaro Imamura,
+Guy Tevet, Chuan Guo, Michael Taylor, Chang Shu, et al. 2025. Smp: Reusable
+score-matching motion priors for physics-based character control. arXiv preprint
+arXiv:2512.03028 (2025).
+William Peebles and Saining Xie. 2023. Scalable diffusion models with transformers. In
+2023 IEEE/CVF International Conference on Computer Vision (ICCV). IEEE, 4172–4182.
+Xiaogang Peng, Zeyu Han, Zichong Meng, Yiming Xie, Jihua Zhu, Gang Hua, and
+Huaizu Jiang. 2026. Surface Keypoint Representation for Multi-Object and Ar-
+ticulated Human-Object Interaction Generation. arXiv preprint arXiv:2608.03158
+(2026).
+Xiaogang Peng, Yiming Xie, Zizhao Wu, Varun Jampani, Deqing Sun, and Huaizu Jiang.
+2025. Hoi-diff: Text-driven synthesis of 3d human-object interactions using diffusion
+models. In Proceedings of the Computer Vision and Pattern Recognition Conference.
+2878–2888.
+Xue Bin Peng, Pieter Abbeel, Sergey Levine, and Michiel Van de Panne. 2018. Deepmimic:
+Example-guided deep reinforcement learning of physics-based character skills. ACM
+Transactions On Graphics (TOG) 37, 4 (2018), 1–14.
+Xue Bin Peng, Yunrong Guo, Lina Halper, Sergey Levine, and Sanja Fidler. 2022. Ase:
+Large-scale reusable adversarial skill embeddings for physically simulated characters.
+ACM Transactions On Graphics (TOG) 41, 4 (2022), 1–17.
+Xue Bin Peng, Ze Ma, Pieter Abbeel, Sergey Levine, and Angjoo Kanazawa. 2021.
+Amp: Adversarial motion priors for stylized physics-based character control. ACM
+Transactions on Graphics (ToG) 40, 4 (2021), 1–20.
+Allen Z Ren, Justin Lidard, Lars L Ankile, Anthony Simeonov, Pulkit Agrawal, Anirudha
+Majumdar, Benjamin Burchfiel, Hongkai Dai, and Max Simchowitz. 2024. Diffusion
+policy policy optimization. arXiv preprint arXiv:2409.00588 (2024).
+Roey Ron, Guy Tevet, Haim Sawdayee, and Amit H Bermano. 2025.
+Hoidini:
+Human-object interaction through diffusion noise optimization. arXiv preprint
+arXiv:2506.15625 (2025).
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017.
+Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 (2017).
+Lior Shapira, Ariel Shamir, and Daniel Cohen-Or. 2008. Consistent mesh partitioning
+and skeletonisation using the shape diameter function. The Visual Computer 24, 4
+(2008), 249–259.
+Julian Tanke, Chintan Zaveri, and Juergen Gall. 2021. Intention-based Long-Term
+Human Motion Anticipation. In International Conference on 3D Vision.
+Chen Tessler, Yunrong Guo, Ofir Nabati, Gal Chechik, and Xue Bin Peng. 2024. Masked-
+mimic: Unified physics-based character control through masked motion inpainting.
+ACM Transactions On Graphics (TOG) 43, 6 (2024), 1–21.
+Chen Tessler, Yifeng Jiang, Erwin Coumans, Zhengyi Luo, Xue Bin Peng, and
+Gal Chechik. 2025. Maskedmanipulator: Versatile whole-body control for loco-
+manipulation. In Proceedings of the SIGGRAPH Asia 2025 Conference Papers. 1–11.
+Guy Tevet, Sigal Raab, Setareh Cohan, Daniele Reda, Zhengyi Luo, Xue Bin Peng,
+Amit H Bermano, and Michiel van de Panne. 2024. Closd: Closing the loop be-
+tween simulation and diffusion for multi-task character control. arXiv preprint
+arXiv:2410.03441 (2024).
+Guy Tevet, Sigal Raab, Brian Gordon, Yonatan Shafir, Daniel Cohen-Or, and Amit H
+Bermano. 2022. Human motion diffusion model. arXiv preprint arXiv:2209.14916
+(2022).
+Shashank Tripathi, Omid Taheri, Christoph Lassner, Michael J. Black, Daniel Holden,
+and Carsten Stoll. 2025. HUMOS: Human Motion Model Conditioned on Body
+Shape. In European Conference on Computer Vision. Springer, 133–152.
+Takara Everest Truong, Michael Piseno, Zhaoming Xie, and Karen Liu. 2024. Pdp:
+Physics-based character animation via diffusion policy. In SIGGRAPH Asia 2024
+Conference Papers. 1–10.
+Tingwu Wang, Olivier Dionne, Michael De Ruyter, David Minor, Davis Rempe, Kaifeng
+Zhao, Mathis Petrovich, Ye Yuan, Chenran Li, Zhengyi Luo, et al. 2026. MotionBricks:
+Scalable Real-Time Motions with Modular Latent Generative Model and Smart
+Primitives. ACM Transactions on Graphics (TOG) 45, 4 (2026), 1–22.
+Yinhuai Wang, Jing Lin, Ailing Zeng, Zhengyi Luo, Jian Zhang, and Lei Zhang. 2023.
+Physhoi: Physics-based imitation of dynamic human-object interaction. arXiv
+preprint arXiv:2312.04393 (2023).
+Xinyue Wei, Minghua Liu, Zhan Ling, and Hao Su. 2022. Approximate convex de-
+composition for 3d meshes with collision-aware concavity and tree search. ACM
+Transactions on Graphics (TOG) 41, 4 (2022), 1–18.
+Lin Wu, Zhixiang Chen, and Jianglin Lan. 2025a. HOI-Dyn: Learning Interaction
+Dynamics for Human-Object Motion Diffusion. arXiv preprint arXiv:2507.01737
+(2025).
+Yan Wu, Korrawe Karunratanakul, Zhengyi Luo, and Siyu Tang. 2025b. Uniphys:
+Unified planner and controller with diffusion for flexible physics-based character
+control. In Proceedings of the IEEE/CVF International Conference on Computer Vision.
+13214–13224.
+Zhen Wu, Jiaman Li, Pei Xu, and C Karen Liu. 2025c. Human-object interaction from
+human-level instructions. In Proceedings of the IEEE/CVF International Conference
+on Computer Vision. 11176–11186.
+Sirui Xu, Zhengyuan Li, Yu-Xiong Wang, and Liang-Yan Gui. 2023. Interdiff: Generating
+3d human-object interactions with physics-informed diffusion. In Proceedings of the
+IEEE/CVF International Conference on Computer Vision. 14928–14940.
+Sirui Xu, Hung Yu Ling, Yu-Xiong Wang, and Liang-Yan Gui. 2025. Intermimic: To-
+wards universal whole-body control for physics-based human-object interactions. In
+Proceedings of the Computer Vision and Pattern Recognition Conference. 12266–12277.
+Sirui Xu, Samuel Schulter, Morteza Ziyadi, Xialin He, Xiaohan Fei, Yu-Xiong Wang,
+and Liangyan Gui. 2026. InterPrior: Scaling Generative Control for Physics-Based
+Human-Object Interactions. arXiv preprint arXiv:2602.06035 (2026).
+Sirui Xu, Ziyin Wang, Yu-Xiong Wang, and Liang-Yan Gui. 2024. Interdreamer: Zero-
+shot text to 3d dynamic human-object interaction. Advances in Neural Information
+Processing Systems 37 (2024), 52858–52890.
+Jie Yang, Xuesong Niu, Nan Jiang, Ruimao Zhang, and Siyuan Huang. 2024. F-hoi:
+Toward fine-grained semantic-aligned 3d human-object interactions. In European
+Conference on Computer Vision. Springer, 91–110.
+Lujie Yang, Xiaoyu Huang, Zhen Wu, Angjoo Kanazawa, Pieter Abbeel, Carmelo Sfer-
+razza, C Karen Liu, Rocky Duan, and Guanya Shi. 2025. Omniretarget: Interaction-
+preserving data generation for humanoid whole-body loco-manipulation and scene
+interaction. arXiv preprint arXiv:2509.26633 (2025).
+Shunpeng Yang, Ben Liu, and Hua Chen. 2026.
+PolicyFlow: Policy Optimization
+with Continuous Normalizing Flow in Reinforcement Learning. arXiv preprint
+arXiv:2602.01156 (2026).
+Heyuan Yao, Zhenhua Song, Baoquan Chen, and Libin Liu. 2022. Controlvae: Model-
+based learning of generative controllers for physics-based characters. ACM Trans-
+actions on Graphics (TOG) 41, 6 (2022), 1–16.
+Brent Yi, Hongsuk Choi, Himanshu Gaurav Singh, Xiaoyu Huang, Takara E. Truong,
+Carmelo Sferrazza, Yi Ma, Rocky Duan, Pieter Abbeel, Guanya Shi, Karen Liu, and
+Angjoo Kanazawa. 2026. Flow Policy Gradients for Robot Control. arXiv preprint
+arXiv:2602.02481 (2026).
+Wongyun Yu, Youngwoon Kim, and Minsu Cho. 2026. WristMimic: Full-Body Humanoid
+Control with Wrist-Guided Manipulation. arXiv preprint arXiv:2607.06438 (2026).
+Ye Yuan, Jiaming Song, Umar Iqbal, Arash Vahdat, and Jan Kautz. 2023. Physdiff: Physics-
+guided human motion diffusion model. In 2023 IEEE/CVF International Conference
+on Computer Vision (ICCV). IEEE, 15964–15975.
+Huajian Zeng, Lingyun Chen, Jiaqi Yang, Yuantai Zhang, Fan Shi, Peidong Liu, and
+Xingxing Zuo. 2026. FlowHOI: Flow-based Semantics-Grounded Generation of
+Hand-Object Interactions for Dexterous Robot Manipulation.
+arXiv preprint
+arXiv:2602.13444 (2026).
+
+
+18
+•
+Han et al.
+Jingyan Zhang, Han Liang, Ruichi Zhang, Bin Li, Juze Zhang, Xin Chen, Jingya Wang,
+Lan Xu, and Jingyi Yu. 2026. SCRIPT: Scalable Diffusion Policy with Multi-stage
+Training for Language-driven Physics-based Humanoid Control. arXiv preprint
+arXiv:2605.22894 (2026).
+Jianrong Zhang, Yangsong Zhang, Xiaodong Cun, Yong Zhang, Hongwei Zhao, Hong-
+tao Lu, Xi Shen, and Ying Shan. 2023. Generating human motion from textual
+descriptions with discrete representations. In Proceedings of the IEEE/CVF conference
+on computer vision and pattern recognition. 14730–14740.
+Mingyuan Zhang, Zhongang Cai, Liang Pan, Fangzhou Hong, Xinying Guo, Lei Yang,
+and Ziwei Liu. 2024. Motiondiffuse: Text-driven human motion generation with
+diffusion model. IEEE transactions on pattern analysis and machine intelligence 46, 6
+(2024), 4115–4128.
+Tonghe Zhang, Chao Yu, Sichang Su, and Yu Wang. 2025. ReinFlow: Fine-tuning flow
+matching policy with online reinforcement learning. arXiv preprint arXiv:2505.22094
+(2025).
+
+
+LYRIC: Language-Driven Physics-Based Character Control for Contact-Rich Whole-Body Object Interaction
+•
+19
+Appendix contents.
+(1) Tracking policy details
+(2) Text-conditioned controller
+(3) On-policy post-tuning
+(4) Evaluation details
+(5) Human study
+A
+Tracking Policy Details
+A.1
+Simulation and Tracking Setup
+The supplied InterMimic colliders approximate thin structures such
+as poles too coarsely, leaving a mismatch between the collision sur-
+face and visible geometry. A hand can consequently make simulated
+contact while appearing displaced from the object. We regener-
+ate the colliders with CoACD [Wei et al. 2022], using a concavity
+threshold of 0.03, at most 16 convex pieces, and at most 64 vertices
+per piece. Both our tracker and the InterMimic policies used for
+comparison are trained with these same regenerated colliders.
+For canonical-body retargeting, we adapt OmniRetarget [Yang
+et al. 2025] to optimize root and joint poses between SMPL-X bodies
+with the same topology. The optimization preserves object-relative
+contact locations and stance feet while penalizing penetration and
+abrupt pose changes. The object trajectory stays fixed during opti-
+mization; afterward, we translate the humanoid and object together
+to align the sequence with the ground.
+For the tracker, interaction feature 𝝓𝑡follows InterMimic [Xu
+et al. 2025]: joint-to-nearest-surface proximity vectors for the body
+and fingers, and simulated contact indicators at non-root joints. The
+proximity vectors encode surface direction and proximity in the
+humanoid heading frame.
+We also report the hyperparameters in the following tables: Ta-
+ble 6 lists the physical settings and tracking-policy training parame-
+ters, and Table 7 specifies the observation-noise ranges. Table 8 lists
+the tracking reward coefficients.
+A.2
+Geometry-Conditioned Grasp Rewards
+Local thickness. We estimate surface thickness from interior tangent-
+sphere diameters [Inui et al. 2016]. Near r, a Gaussian-weighted
+average with spatial scale 2 cm smooths variations between surface
+samples. Writing this local average as thick(r), the mode weight is
+𝛼= sigmoid
+ 0.08 m −thick(r)
+0.02 m
+
+.
+(14)
+Thus 8 cm is the transition thickness, i.e., at 8 cm, enclosure mode
+and support mode get the same weights, and 2 cm controls its soft-
+ness.
+Cross-section construction. To construct the cross section, we esti-
+mate the local structure’s long axis and interior center. We obtain k
+by applying weighted PCA to nearby surface normals and selecting
+the direction of smallest variance. We then move nearby surface
+points inward along their normals by half the local thickness. For
+a cylindrical pole, this corresponds to moving inward by approxi-
+mately one radius toward its centerline. We average the resulting
+interior points using the same neighborhood weights and place the
+cross-sectional plane through this estimated center, perpendicular
+to k.
+Sector occupancy 𝑜𝑏. Let 𝜒𝑖∈{0, 1} indicate whether finger joint
+𝑖contacts the object. We project the contacting joints onto the cross-
+sectional plane and divide their directions around its center into
+𝐵= 16 angular sectors. Each contacting joint contributes a total
+of one, distributed mainly to the sector containing it and partly to
+neighboring sectors to avoid abrupt changes at sector boundaries.
+For each sector 𝑏, we sum these contributions from all contacting
+joints and denote the result by 𝑛𝑢𝑚𝑏. The occupancy score is then
+𝑜𝑏= 1 −exp(−5𝑛𝑢𝑚𝑏).
+(15)
+The score increases with accumulated contact but saturates, so addi-
+tional contacts in an already occupied direction provide diminishing
+benefit. For ¯𝑜𝑏, we sum the occupancies on the opposite side of the
+cross section and apply the same saturation with coefficient 3.
+Thumb and finger gates. We count the contacting joints on the
+thumb and on the remaining four fingers, denoting these counts by
+𝑛𝑢𝑚thumb and 𝑛𝑢𝑚other, respectively. We also count how many of
+the four non-thumb fingers have at least one joint in contact and
+denote this number by 𝑛𝑢𝑚finger. The gates are
+𝐺tf =  1 −𝑒−𝑛𝑢𝑚thumb  1 −𝑒−𝑛𝑢𝑚other,
+𝐺part =
+𝑛𝑢𝑚finger
+4
+0.75
+.
+(16)
+The first gate requires contact from both the thumb and the other
+fingers: it is zero if either group has no contact. The second gate
+increases with the number of participating fingers, so several con-
+tacting joints on one finger cannot replace contact from multiple
+fingers.
+Support gate and spread. We average the vectors from nearby
+object-surface points to the palm to estimate the outward surface
+direction. We then project all 15 finger joints onto the plane per-
+pendicular to this direction. Their covariance 𝚺tan is computed with
+equal weights, dividing the sum by 15. The quantity 𝐴= √det 𝚺tan
+measures how widely the joints spread across the plane. It is small
+when the joints cluster together or lie nearly along a line, and grows
+when they spread in both directions.
+We use the total number of contacting joints, 𝑛𝑢𝑚thumb+𝑛𝑢𝑚other,
+to compute the contact gate, and normalize the spread measure
+through 𝜓:
+𝐺contact = 1 −exp
+
+−0.3 𝑛𝑢𝑚thumb + 𝑛𝑢𝑚other
+
+,
+𝜓(𝐴) =
+
+
+0,
+𝐴≤𝐴0,
+ 𝐴−𝐴0
+𝐴1 −𝐴0
+1.8
+,
+𝐴0 < 𝐴< 𝐴1,
+1,
+𝐴≥𝐴1.
+(17)
+The contact gate is zero without contact and approaches one as
+more joints make contact. For the spread term, 𝐴0 = 3 × 10−4 m2 is
+the lower threshold below which no spread credit is given, while
+𝐴1 = 10−3 m2 is the threshold for full credit.
+B
+Text-Conditioned Controller
+B.1
+Interaction Features
+Table 9 specifies the action generator’s interaction features. The
+contact indicators are the same as the tracker’s; signed distances
+
+
+20
+•
+Han et al.
+Table 6. Physical settings and unified-tracker training parameters. PD gains are stiffness/damping; friction values apply to both static and dynamic
+friction.
+Physics and control
+Value
+PPO
+Value
+Reference lookahead
+1 and 16 steps
+Parallel environments
+16,384
+Position / velocity iterations
+4/1
+Rollout length
+32 steps
+Self-collision / continuous detection
+Off / on
+Actor / critic minibatch
+131,072/65,536
+Object density
+200 kg/m3
+Update epochs per rollout
+5
+Ground / object friction
+0.9/0.6
+Optimizer
+Adam
+Ground / object restitution
+0.1/0.05
+Initial actor / critic learning rate
+3 × 10−5 each
+Object contact / rest offset
+0.02/0 m
+Actor / critic schedule
+Linear / constant
+Object linear / angular damping
+0.01/0.01
+Discount / GAE parameter
+0.99/0.95
+Leg PD gains
+800/80
+PPO clipping
+0.2
+Torso PD gains
+1000/100
+Actor gradient-norm limit
+1.0
+Arm, neck, and head PD gains
+500/50
+Fixed exploration std.
+0.055
+Finger PD gains
+100/10
+Entropy coefficient
+0
+Actuator effort limit
+3000 N m
+Normalized observation clipping
+[−5, 5]
+Actuator velocity limit
+50 rad/s
+Action clipping
+[−1, 1]
+Teacher checkpoint
+Epoch 34,000
+Table 7. Actor observation perturbations. Each entry is the half-width
+of an independent component-wise uniform distribution, applied before
+observation normalization.
+Feature
+Humanoid
+Object
+Root height
+0.02 m
+—
+Position
+0.05 m
+0.07 m
+6D rotation components
+0.05
+0.07
+Linear velocity
+0.35 m/s
+0.50 m/s
+Angular velocity
+0.25 rad/s
+0.35 rad/s
+Surface-proximity vectors
+0.03
+—
+Table 8. Tracking reward coefficients.
+Term
+Coefficient
+Humanoid position / rotation
+30/1.5
+Object position / rotation / linear velocity
+5/0.1/0.1
+Interaction geometry
+5
+Required / undesired contact
+5/3
+Hand-contact sharpness
+5
+Geometry-conditioned grasp
+0.15
+Palm alignment
+0.35
+Reference contact anchor
+1.5
+Hold stability
+0.05
+Joint / object acceleration
+10−4/(2 × 10−5)
+Contact force
+10−9
+are positive outside the object, and their unit gradients give the
+outward surface direction.
+Local shape descriptors. For the shape features, we use Gaussian-
+weighted neighborhoods of surface points with spatial scale 5 cm.
+Linearity and planarity measure whether the neighboring surface
+points lie mainly along a line or within a plane.
+Table 9. Action-generator interaction features 𝝓𝑡. Direction vectors use
+the humanoid heading frame.
+Feature
+Dimensions
+Scene-contact indicators, excluding pelvis
+51
+Object signed distance at each body joint
+52
+Unit signed-distance gradient
+52 × 3
+Local thickness at the nearest surface point
+52
+Local linearity and planarity
+52 × 2
+Patch descriptors at two palms and pelvis
+3 × 7
+Total
+436
+Each patch descriptor is evaluated at the surface point nearest
+to the corresponding palm or pelvis. A palm query uses the mean
+position of its five proximal finger joints. The seven values are the
+dominant elongation direction (three), the extent along and perpen-
+dicular to it (two), and the local surface centroid’s offset from the
+query surface point in the perpendicular plane (two). The two ex-
+tents are twice the standard deviation along the dominant direction
+and the root-mean-square distance from that axis, respectively.
+B.2
+Training Settings
+Text augmentation. To improve robustness to different phrasings
+of the same interaction, for each original instruction, we prepare
+eight alternative phrasings that preserve the same interaction and
+manner of execution. During training, we randomly select the origi-
+nal instruction or one of these paraphrases, allowing the model to
+encounter different wording for the same motion. We encode the se-
+lected text using CLIP ViT-B/32, which produces a 512-dimensional
+sentence embedding. Text conditioning is dropped with probability
+0.1 during training; classifier-free guidance is disabled at deploy-
+ment.
+Plan conditioning. The probability of conditioning on a sampled
+plan instead of training data increases linearly from zero at update
+
+
+LYRIC: Language-Driven Physics-Based Character Control for Contact-Rich Whole-Body Object Interaction
+•
+21
+Table 10. Additional settings for Stage II.
+Setting
+Value
+AdamW weight decay
+10−4
+Gradient-norm clipping
+1
+Warmup / start of cosine decay
+104/9 × 105 updates
+EMA decay
+0.9999
+Planner heads / feed-forward width
+4/1024
+Action heads / feed-forward width
+8/2048
+600,000 to one at 900,000. For sampled plans, the number of Euler
+steps is sampled uniformly from {2, 3, 4, 5}.
+B.3
+Waypoint Guidance
+At each flow step, we estimate the final trajectory and adjust the
+current sample to bring its predicted object positions closer to the
+requested waypoints. Let vP denote the planner’s velocity field, with
+conditioning omitted for brevity. From the current trajectory sample
+x𝜏, we estimate the final trajectory in normalized coordinates as
+ˆP = x𝜏+(1−𝜏)vP(x𝜏,𝜏). We convert the estimated object positions to
+world coordinates, denoting the position at frame 𝑓by pobj
+𝑓(ˆP). For
+a waypoint target w𝑓, we measure the squared horizontal distance
+between the predicted and requested positions:
+J (ˆP) = 1
+2
+∑︁
+𝑓
+𝜔𝑓
+
+h
+pobj
+𝑓(ˆP) −w𝑓
+i
+𝑥𝑦
+
+2
+2
+.
+(18)
+The weights 𝜔𝑓determine which predicted positions receive guid-
+ance. A waypoint within the planning horizon receives weight one
+at its requested frame. When no waypoint lies within the horizon,
+we instead guide the final predicted position toward the next way-
+point, using weight 0.15 times the planning horizon divided by the
+time remaining until that waypoint. Both durations are measured in
+control steps, and all other positions receive zero weight. We then
+combine the usual flow update with a gradient step that reduces the
+waypoint error:
+x𝜏+Δ𝜏= x𝜏+ Δ𝜏vP(x𝜏,𝜏) −𝜉∇x𝜏J (ˆP).
+(19)
+We differentiate through the velocity prediction, allowing the correc-
+tion to adjust the root trajectory together with the object trajectory.
+We use 𝜉= 40 and Δ𝜏= 1/20, starting guidance after the first Euler
+step.
+C
+On-Policy Post-Tuning
+C.1
+Velocity-Field Regularization
+Let Ileg contain the 24 action coordinates of the hips, knees, ankles,
+and toes. For a timestep sampled from an on-policy rollout, we use
+the normalized action a𝑡as the target of the flow interpolation in
+Eq. (10). Both the trainable field and the frozen behavior-cloned field
+are evaluated at the same noisy action, flow time, and conditioning
+(C𝑡, P𝑡,𝑦,𝑔).
+Table 11. Additional post-tuning optimization settings.
+Setting
+Value
+Parallel environments / rollout steps
+16,384/32
+Update epochs per rollout
+4
+Optimizer / critic learning rate
+AdamW / 10−4
+Weight decay / gradient-norm clipping
+10−4/1
+Discount / GAE parameter
+0.99/0.95
+PPO clip / value-loss coefficient
+0.2/2
+Entropy coefficient
+0
+Flow-SDE steps / noise level
+5/0.5
+Maximum episode duration
+10 s
+Writing the trainable and frozen fields’ output coordinates as 𝑣𝜃,𝑗
+and 𝑣BC,𝑗, the penalty is
+Lvel = E𝑡,𝜏,z
+
+1
+24
+∑︁
+𝑗∈Ileg
+ 𝑣𝜃,𝑗−𝑣BC,𝑗
+2
+
+.
+(20)
+The expectation averages on-policy timesteps and the Gaussian
+noise and uniform flow times used by flow matching.
+We add 10−3Lvel to the actor loss; the frozen field is evaluated
+with LoRA disabled and receives no gradients. Only the leg coordi-
+nates are constrained by this loss, preserving their pretrained action
+patterns while allowing the arms and hands to adapt.
+C.2
+Optimization Settings
+LoRA modifies attention query, value, and output projections, feed-
+forward layers, and the action projection. The critic has widths
+(2048, 1024, 512) and observes the state, text, committed plan, goal,
+following errors, and completion state.
+The critic receives 20 critic-only rollout iterations before joint
+updates begin. Training starts at frame zero with probability 0.3, or
+uniformly within the first 70% of a retained rollout otherwise. We
+report additional training configs in Table. 11.
+C.3
+Motion Prior
+Training data and representation. We train SMP [Mu et al. 2025]
+on retargeted OMOMO motion capture, excluding subject 14. The
+motion prior’s 20-frame windows contain 156 character features
+per frame: root pose and velocities (15), local 6D rotations of 21
+non-finger joints (126), and head, wrist, and ankle positions (15).
+The window shares the last frame’s root heading and horizontal
+origin, retaining absolute height. Velocities are obtained by finite
+differences, and all channels are standardized using training-set
+statistics.
+Prior training and reward. The prior predicts the Gaussian noise
+injected into a motion window, trained with an ℓ1 prediction loss
+and a 50-step cosine DDPM schedule. The transformer has three
+blocks, width 320, five heads, and feed-forward width 1280, with
+frozen CLIP text embeddings supplied through cross-attention.
+We use AdamW for 800,000 updates with batch size 512, learn-
+ing rate 2 × 10−4, weight decay 0.01, and EMA decay 0.995. Text
+augmentation follows Stage II.
+
+
+22
+•
+Han et al.
+Table 12. Post-tuning reward coefficients.
+Term
+Weight
+𝑤task/𝑤motion
+0.5/0.5
+𝑏goal
+100
+𝜆obj, 𝜆root
+(0.15 m)−2 each
+Grasp / palm / hold
+0.15/0.35/0.05
+Hand-contact sharpness
+5
+Joint / object acceleration
+2 × 10−5 each
+Contact force / reference anchor
+10−9/0
+We compute motion prior rewards following SMP [Mu et al. 2025].
+For our implementation, we use diffusion steps {8, 15, 22} and esti-
+mate the error-normalization statistics from simulated motion win-
+dows during critic warmup. These statistics remain fixed throughout
+subsequent post-tuning.
+C.4
+Reference-Free Terminations
+Plan divergence. We exponentially smooth the object and root
+following errors over approximately one second and half a second,
+respectively, so that brief deviations do not immediately end an
+episode. We terminate when the smoothed object error exceeds
+0.30 m or the root error exceeds 0.25 m.
+Insufficient object progress. For each plan, we compare how far the
+object has moved with how far the plan requested it to move. We
+measure both displacements using 𝑑obj, taking the largest displace-
+ment reached so far so that returning toward the starting pose does
+not erase earlier progress. Denoting the requested and achieved
+displacements by 𝐷plan
+𝑗
+(𝑡) and 𝐷ach
+𝑗
+(𝑡), the achieved fraction is
+𝑢𝑗(𝑡) = min
+
+
+𝐷ach
+𝑗
+(𝑡)
+𝐷plan
+𝑗
+(𝑡)
+, 1
+
+
+.
+(21)
+We average this fraction across active plans requesting at least 2 cm
+of motion and smooth the result over one second, starting from
+one. We terminate when the smoothed fraction falls below 0.40,
+indicating that the object consistently achieves less than 40% of the
+requested motion.
+Fall and completion. A pelvis height below 0.15 m triggers a fall
+termination. Successful completion requires the object to remain
+within 0.20 m of its goal under 𝑑obj for 15 steps (0.5 s).
+C.5
+Component Ablation
+Table 13 evaluates five variants initialized from the same Flow-
+BC checkpoint. w/o trajectory-following costs sets 𝜆obj = 𝜆root = 0
+while retaining the plan-divergence terminations. w/o motion prior
+sets 𝑤motion = 0 and increases 𝑤task from 0.5 to 1 to preserve the
+overall weighting of the dense reward. w/o completion bonus sets
+𝑏goal = 0 and enables value bootstrapping at successful termina-
+tion. w/o hand-interaction costs removes the physical hand–object
+contact, geometry-conditioned grasp, palm-alignment, and hold-
+stability costs from 𝐸int
+𝑡, while retaining the energy costs. w/o object-
+progress termination disables this criterion during both post-tuning
+and evaluation, while retaining the plan-divergence and fall ter-
+minations. The complete objective achieves the highest success
+on both the training and held-out splits, at 91.33% and 90.26%, re-
+spectively. Removing either the trajectory-following costs or the
+completion bonus causes the largest reductions, showing that dense
+short-horizon guidance and sparse completion supervision provide
+complementary task signals. Interestingly, weakening these objec-
+tives improves several mocap-based semantic and motion-quality
+metrics. This reflects a trade-off between reference-distribution sim-
+ilarity and physical task completion: corrective reaching, regrasping,
+and terminal placement may depart from common mocap patterns,
+whereas smoother motions that avoid such corrections can score
+better without successfully manipulating the object.
+Removing the motion prior degrades retrieval-based semantic
+alignment and temporal motion quality, as reflected by lower R-
+Precision and NDMS and higher Jerk. Although the motion-prior
+reward is introduced to encourage natural humanoid motion, the
+variant without it also exhibits lower task success. Inspection of pol-
+icy rollouts suggests that the text-conditioned motion prior provides
+dense guidance during the pre-contact phase, when the unactuated
+object has not yet moved and the object-plan-following term of-
+fers little signal for approaching the object and initiating contact.
+Without this guidance, the policy sometimes remains near the ob-
+ject without initiating the interaction. These observations suggest
+that the motion prior serves not only as a style regularizer, but
+also as an implicit behavioral prior for object approach and contact
+acquisition.
+Removing the hand-interaction costs also reduces task success,
+despite improving several generic motion-quality metrics. This con-
+trast shows that smooth, mocap-like motion alone does not guar-
+antee a functional and stable grasp, highlighting the importance of
+explicitly optimizing interaction quality.
+Finally, disabling object-progress termination during both post-
+tuning and evaluation roughly doubles rollout duration but still
+reduces success. Longer execution therefore does not recover stalled
+interactions; the progress criterion complements absolute plan-
+following errors by detecting insufficient object motion under small
+incremental plans.
+D
+Evaluation Details
+D.1
+Text–Motion Evaluator
+Data and representation. Evaluator training uses retargeted mo-
+tion capture before filtering by teacher success. We exclude sub-
+ject 14 and split the remaining clips into 4,337 training and 228
+validation examples. Each clip’s original caption and eight para-
+phrases remain in the same split; a caption is sampled randomly
+during training.
+The essential-motion representation [Meng et al. 2025b] contains
+four root channels—yaw velocity, horizontal velocity, and height—
+and the root-relative positions of 21 body joints, giving 67 dimen-
+sions. Positions are expressed in the humanoid heading frame. We
+compute normalization statistics on training clips.
+Training. Following Guo et al. [Guo et al. 2022], training has two
+stages. First, a temporal convolutional autoencoder reconstructs 40-
+frame windows with an ℓ1 reconstruction loss and penalties on latent
+
+
+LYRIC: Language-Driven Physics-Based Character Control for Contact-Rich Whole-Body Object Interaction
+•
+23
+Table 13. Ablation of on-policy post-tuning components on OMOMO. All variants are initialized from the same Flow-BC checkpoint and remove only
+the indicated component. For the ablation without object-progress termination, this termination criterion is disabled during both post-tuning and evaluation.
+Bold indicates the best value among variants using the standard evaluation termination criteria.
+Task
+Semantic
+Motion quality
+Method
+SR (%)↑Time (fr) R@1↑R@3↑MM-Dist↓Div. →Penet.↓Float↓Skate↓Phys-Err↓Jerk↓NDMS↑
+Train split (3485 sequences)
+Flow-BC + FT
+91.33
+135.2
+0.374
+0.698
+4.61
+15.08
+0.02
+13.25
+7.19
+20.46
+281.7
+0.452
+w/o trajectory-following costs
+81.81
+141.4
+0.381
+0.710
+4.60
+14.19
+0.04
+13.69
+6.74
+20.46
+272.2
+0.446
+w/o motion prior
+87.72
+137.1
+0.364
+0.693
+4.56
+14.65
+0.00
+13.70
+6.90
+20.59
+308.0
+0.448
+w/o completion bonus
+80.69
+145.3
+0.405
+0.736
+4.19
+14.66
+0.02
+13.64
+6.84
+20.49
+252.6
+0.456
+w/o hand-interaction costs
+88.69
+138.2
+0.390
+0.722
+4.35
+14.80
+0.01
+13.71
+7.15
+20.81
+269.2
+0.458
+w/o object-progress termination
+84.85
+247.6
+0.362
+0.675
+4.94
+14.32
+0.02
+12.80
+5.88
+18.68
+228.4
+0.425
+Held-out split (267 sequences)
+Flow-BC + FT
+90.26
+148.8
+0.361
+0.666
+4.94
+–
+0.02
+7.08
+6.75
+13.85
+256.7
+0.451
+w/o trajectory-following costs
+77.53
+160.8
+0.357
+0.686
+4.76
+–
+0.00
+8.07
+6.11
+14.18
+247.8
+0.437
+w/o motion prior
+84.64
+152.4
+0.313
+0.633
+5.10
+–
+0.03
+7.22
+6.38
+13.63
+284.4
+0.444
+w/o completion bonus
+74.91
+167.7
+0.415
+0.731
+4.22
+–
+0.03
+7.11
+6.13
+13.27
+226.4
+0.448
+w/o hand-interaction costs
+85.77
+161.3
+0.371
+0.719
+4.49
+–
+0.00
+6.72
+6.16
+12.88
+233.5
+0.454
+w/o object-progress termination
+81.65
+307.0
+0.350
+0.660
+4.98
+–
+0.00
+6.55
+5.08
+11.62
+200.5
+0.411
+Table 14. Text–motion evaluator training settings.
+Setting
+Autoencoder
+Matching
+Batch size
+128
+32
+Learning rate
+10−4
+10−4
+Maximum epochs
+270
+300
+Motion window / maximum
+length
+40 frames
+300 frames
+Text / motion BiGRU hidden
+width
+—
+512/1024
+Latent magnitude / smoothness
+weights
+10−3 / 10−3
+—
+Gradient clipping
+—
+0.5
+magnitude and adjacent-frame latent differences. The autoencoder’s
+movement encoder reduces temporal resolution by a factor of four.
+In the second stage, we freeze the movement encoder and train
+text and motion BiGRUs to bring matched pairs together and sepa-
+rate mismatched pairs with a contrastive margin of 10. The text and
+motion branches produce 512-dimensional embeddings; text inputs
+use 300-dimensional GloVe vectors and part-of-speech features.
+Table 14 lists the settings. Both stages use Adam, and the check-
+point with the lowest validation loss is selected for each stage. The
+resulting evaluator remains fixed across all comparisons.
+Scoring and rollout eligibility. We use 20 repetitions, retrieval
+batches of 32, and 300 sampled pairs for Diversity. The repetitions
+resample caption and motion windows and randomize retrieval
+groups. Rollouts shorter than 40 feature frames are excluded, and
+incomplete retrieval batches are dropped, so semantic metrics can
+use different subsets for different methods.
+D.2
+Kinematic Generation-and-Tracking Baselines
+Motion representation. The generated representation contains 9-
+dimensional root and object poses and 153 joint coordinates, totaling
+171 dimensions. Forward kinematics reconstructs the body trans-
+forms needed by the tracker. Contact labels are inferred with a
+0.05 m distance threshold, using the same rule on training motion
+and the simulated histories supplied to Replan. kin. planner.
+Training. We train the kinematic generator on retargeted mo-
+tion capture excluding subject 14 for one million flow-matching
+updates, using AdamW, learning rate 10−4, batch size 512, and EMA
+decay 0.9999. The trackers for both baselines initialize from the
+same unified teacher; their fine-tuned variants use the common
+completion-bonus weight in Table 12. The generator and tracker
+actor together contain 126.6 million parameters, compared with
+127.0 million for our planner and action generator.
+D.3
+Novel Object Shapes
+Fig. 12 shows some examples of the novel object shape meshes
+compared with the original dataset’s meshes. For each replacement
+mesh, we recompute both the collider and the surface-distance
+representation, so geometric observations use the new shape.
+E
+Human Study
+Protocol and questions. The study included 14 participants, each
+of whom completed both blocks: 10 tracking trials followed by 20
+generation trials. In total, this yields 140 tracking trials and 266
+generation trials after excluding attention-check trials. Trial order
+is randomized within each block, and the mapping from methods to
+anonymous candidate letters is randomized independently for every
+trial. Each trial asks for two separate selections, one for fidelity and
+one for naturalness. For each question, participants choose a single
+candidate or Neither/None. Fig. 13 shows the conditioning material,
+candidates, and exact questions.
+
+
+24
+•
+Han et al.
+Fig. 12. Original and novel object geometry. Original OMOMO meshes (top) and the exact Objaverse replacements used in selected successful videos
+(bottom). Each column uses the same view and scale; scale varies across categories.
+(a) Tracking study
+(b) Generation study
+Fig. 13. Human-study interfaces. (a) Participants compare tracking fidelity and naturalness given a motion-capture reference. (b) Participants compare
+instruction adherence and naturalness among four anonymous candidates given a text instruction.

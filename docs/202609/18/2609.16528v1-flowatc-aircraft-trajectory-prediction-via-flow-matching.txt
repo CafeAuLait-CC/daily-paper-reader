@@ -1,0 +1,2106 @@
+FlowATC: Aircraft Trajectory Prediction via Flow Matching
+Mathurin Petit∗
+École Polytechnique, Palaiseau, 91128, France
+Emir Torun†
+Technische Universität Berlin, Berlin, 10623, Germany
+Louis Brusset‡
+Mines Paris–PSL University, Paris, 75006, France
+Jordan Kam§
+California Institute of Technology, Pasadena, CA, 91125, USA
+Alexandre M. Bayen¶
+University of California, Berkeley, Berkeley, CA 94720, USA
+Building accurate decision-support tools for next generation air traffic control requires
+robust trajectory prediction models. We present a flow-matching architecture trained exclusively
+on historical aircraft trajectories, with no route labels or chart supervision. Trained on 1.15
+million Automatic Dependent Surveillance–Broadcast trajectory windows collected over the San
+Francisco Bay Area, the model generates aircraft trajectory distributions that closely match
+historical traffic, reproducing known airspace structure around San Francisco Airport such as
+the shape of SFO’s published NIITE FOUR departure procedure. Our model is trained directly
+on the native, irregular ADS-B sampling interval. Trajectory prediction is cast as sequence
+inpainting using a block-causal Transformer that denoises future state tokens conditioned on
+the observed history using Conditional Flow Matching or Denoising Diffusion Probabilistic
+Models. We compare our architecture against constant-velocity, deterministic-Long Short
+Term Memory, and Conditional Variational Autoencoders baselines. At matched parameter
+count, CFM outperforms DDPM by 11–26% in minADE@20, and both generative objectives
+surpass the CVAE baseline by 31–41%. We further show that the error degrades gracefully
+with prediction horizon, and the architecture remains effective when retrained on temporally
+decimated feeds. Lastly, we sample 𝐾independent completions, yielding spatial probabilistic
+occupancy estimates that can serve as input to downstream conflict-risk estimation.
+∗Graduate Student, École Polytechnique; e-mail: mathurin.petit.23@polytechnique.org (corresponding author).
+†Undergraduate Student, Technische Universität Berlin, Berlin, Germany.
+‡Graduate Student, Graduate Mines Paris, PSL University
+§Ph.D. Student, Department of Aerospace Engineering, California Institute of Technology, AIAA Student Member.
+¶Professor, Department of Electrical Engineering and Computer Sciences, University of California, Berkeley.
+arXiv:2609.16528v1  [cs.LG]  15 Sep 2026
+
+
+Nomenclature
+X
+=
+trajectory window, 𝑇× 𝐹array of ADS-B samples
+Xobs
+=
+observation prefix, first 𝑇obs steps
+Xfut
+=
+future suffix, next 𝑇fut steps to predict
+𝑇
+=
+total sequence length
+𝐹
+=
+features per timestep
+𝜙, 𝜆
+=
+geodetic latitude and longitude
+𝑑
+=
+Transformer hidden dimension
+𝑢𝜃
+=
+CFM velocity field network
+𝑝𝑖= (𝑥𝑖, 𝑦𝑖)
+=
+Lateral position at trajectory timestep 𝑖
+𝐾
+=
+number of samples in best-of-𝐾evaluation
+minADE@𝐾
+=
+min-over-𝐾average displacement error, m
+minFDE@𝐾
+=
+min-over-𝐾final displacement error, m
+NLL@𝑛
+=
+KDE negative log-likelihood at future step 𝑛
+I. Introduction
+Low altitude air traffic control (ATC) relies on accurate short-horizon aircraft trajectory prediction to maintain
+safe separation. Automatic Dependent Surveillance–Broadcast (ADS-B) data provides continuous position updates
+across the National Airspace System (NAS), yet forecasting where an aircraft will be in the next two minutes remains
+hard. A flight on a standard San Francisco (SFO) arrival may turn left or continue straight depending on runway
+assignment and traffic sequencing, both invisible from position data alone. Prediction is therefore inherently multimodal,
+meaning a single observed history is consistent with several physically plausible futures (or modes) [1–3]. The quantity
+that matters operationally is not only where an aircraft will be, but how probable a conflict is at that location, which
+calls for a predictor that returns a full distribution over futures rather than a single point estimate [4–6].
+The generative-modelling toolkit powering recent advances in image synthesis and robot motion planning transfers
+naturally to continuous trajectory data. Denoising Diffusion Probabilistic Models (DDPM) [7] learn to reverse a Markov
+noising chain and, with the Denoising Diffusion Implicit Models (DDIM) sampler [8], generate high-quality samples in
+a handful of steps. Conditional Flow Matching (CFM) [9] is a more direct alternative regressing a velocity field that
+transports Gaussian noise to data along straight-line paths, giving a simpler training objective and fewer integration
+steps. Both families produce samples rather than point estimates. Generating 𝐾independent samples at inference
+yields a distribution over future positions that covers the inherently multimodal space of plausible aircraft states even
+2
+
+
+when the model is conditioned on a single input modality. The Transformer architecture [10] represents data as a
+set of tokens coupled by self-attention. This tokenized view is attractive for trajectory prediction for two reasons:
+it is flexible (heterogeneous inputs, i.e., positions, time deltas, and, in the future, ATC voice or weather fields, are
+simply additional tokens) and fast on modern hardware. Crucially, the Diffusion Transformer (DiT) [11] shows that a
+Transformer backbone, with the generation step injected through Adaptive Layer Normalization (AdaLN), is an excellent
+denoiser for diffusion. Specifically, we exploit exactly this synergy: a DiT style backbone hooks up cleanly with both
+DDPM and CFM, letting us frame trajectory prediction as token-level inpainting.
+Related work
+Classical predictors fall into at least four families. Kinematic models (e.g. constant velocity / constant turn)
+propagate the last observed state forward under a motion assumption; they are interpretable and fast but produce a single
+deterministic forecast which does not take into account surrounding airspace information. We use constant velocity as a
+lower bound as it provides a good estimate of the order of magnitude of the error for such prediction tasks. Deterministic
+neural models, typically an LSTM/Gated Recurrent Unit (GRU) encoder–decoder or a Transformer regressor [12–14],
+learn data driven dynamics but still emit one trajectory per query, suppressing the uncertainty that matters for safety.
+Direct multimodal predictors instead decode a fixed set of plausible trajectory hypotheses. ASCENT [2], for example,
+uses a Transformer encoder with learnable mode queries to predict multiple 3D future trajectories together with
+associated mode scores in non-towered terminal airspace, achieving strong best-of-𝐾performance on the TrajAir
+benchmark. Unlike stochastic generative models, however, such approaches represent multimodality through a finite set
+of explicitly decoded hypotheses rather than by sampling from a continuous conditional distribution. Probabilistic
+generative models output a distribution: Conditional Variational Autoencoders (CVAE) such as Trajectron++ [4]
+are widely used probabilistic baselines for multimodal trajectory forecasting, sampling a latent variable to produce
+diverse futures. In autonomous driving, diffusion-based predictors have recently emerged as a strong alternative to
+CVAEs. By iteratively denoising noise samples to in distribution data, this technique offers a probabilistic approach to
+prediction tasks. MotionDiffuser [5] applies DDPM to multi-agent road-traffic forecasting and shows that diffusion
+captures multimodal distributions without trajectory anchors. Diffusion has also been applied directly to aircraft
+trajectory prediction: Yin et al. [15] combine the aircraft’s history with contextual information representing intent and
+environmental conditions in a diffusion-based decoder, evaluated at Singapore Changi Airport, and GooDFlight [3]
+first estimates goal positions, then generates diverse trajectories with a goal-guided diffusion decoder. In the aerospace
+domain, Briden et al. [16] apply diffusion to spacecraft descent planning, framing trajectory solutions as composable
+probability density functions; our setting is complementary, targeting probabilistic prediction of civil aircraft from
+surveillance observations, where maneuver structure is governed by ATC procedures rather than road geometry. More
+recently, diffusion models have also been widely adopted for robot motion planning: Janner et al. [17] showed that full
+3
+
+
+action trajectories can be generated by iterative denoising guided by reward functions.
+Closest to the present work in generative formulation, Figuet et al. [6] apply Conditional Flow Matching to short-term
+aircraft trajectory prediction, using a Transformer encoder–decoder pair. Their study targets en-route traffic above FL195
+in Swiss Free Route Airspace, in an aircraft-centric frame normalized to the last observed state, with absolute position
+provided as an explicit 8-dimensional context vector rather than encoded in the trajectory features directly. ADS-B is
+resampled to a uniform 1 Hz grid. Our study is complementary along four axes. First, we target low-altitude terminal
+airspace, where published procedures dictate maneuver structure and traffic mixes commercial and general aviation; we
+retain absolute Cartesian coordinates so this structure can be learned without chart supervision (Section VII). Second,
+we predict a ≈128 s horizon at the native, irregular ADS-B sampling rate, rather than on a resampled grid. Third, we
+replace the encoder–decoder pair with a single DiT that ingests clean and noisy tokens by concatenation, casting the task
+as sequence inpainting. Fourth, we benchmark CFM against CVAE and DDPM at matched capacity across three model
+scales, isolating the contribution of the objective itself.
+Our novel contributions include the following:
+(i) A sequence-inpainting architecture concatenating observed and noisy tokens, block-causal self-attention,
+AdaLN time conditioning allowing a DiT to address trajectory completion without an intermediate encoder.
+(ii) Benchmarking constant-velocity, deterministic LSTM, and CVAE (Trajectron++) baselines against DDPM
+and CFM variants of the same backbone, and showing that CFM is substantially more accurate at equal
+parameter count.
+(iii) Characterizing operational flexibility: graceful degradation over the horizon, retraining on lower-rate streams,
+extrapolation beyond the training horizon, and inference cost.
+(iv) Showing that FlowATC recovers Bay Area airspace structure without chart supervision and that its output
+distribution is accurate: at airspace branch points it reproduces the distribution of maneuvers actually flown
+and gives each aircraft a close to calibrated distribution over its next maneuver.
+II. Methodology
+A. Aircraft Trajectory Data
+ADS-B is a cooperative surveillance technology in which an aircraft periodically broadcasts its own state: identity,
+position, altitude, velocity, and vertical rate, derived primarily from onboard Global Navigation Satellite System (GNSS).
+The broadcasts are received by a dense network of ground stations and can be aggregated by public feeds, making
+ADS-B a high-coverage, low-cost source of trajectory data over busy terminal airspace. We collect ADS-B continuously
+from the ADS-B LOL live feed (adsb.lol) using the native API that queries aircraft states every 2 𝑠over a circular
+geofence of 60 nautical miles radius centered at 37.75◦N, 122.25◦W (San Francisco Bay). The scraper records, for each
+4
+
+
+Fig. 1
+Geographic coverage of the ADS-B collection used for the present work. The dashed circle shows the
+60 nautical-mile radius geofence centered on San Francisco Bay (37.75◦N, 122.25◦W, red dot). Black dots mark
+the airports referenced in this study. The Cartesian coordinate frame used for trajectory representation (Eq. (13))
+is centered on SFO (37.6213◦N,122.3790◦W).
+aircraft, the ICAO24 transponder code, callsign, Unix timestamp, longitude, latitude, barometric altitude, ground speed,
+true track, and vertical rate. Collection ran for 12 days, 10–22 April 2026, yielding 21,515,794 raw state vectors. The
+geofence and the airports referenced in this study are shown in Fig. 1; dataset statistics are summarized in Table 1.
+The collection spans a broad mix of Bay Area traffic (shares below by unique aircraft): large commercial aircraft
+(ICAO category A3, 41.8%), light general aviation (A1, 32.1%), heavy aircraft such as B747/A380 (A5, 10.8%), and
+lighter traffic (remaining 15.3%).
+B. Trajectory processing
+Raw ADS-B state vectors are segmented into continuous flight segments and windowed into 86-point sequences.
+Each window is split into a 43-point observed prefix and a 43-point future suffix to predict. The choice of a two-minute
+history and forecast horizon follows from discussions with pilots, who identified a 2-minute lookahead as the operationally
+relevant horizon. For maneuver prediction, each 43-point half spans roughly 128 s on average.
+We project geodetic coordinates onto a local tangent-plane Cartesian frame centered on SFO, yielding a 6-dimensional
+feature vector (𝑥, 𝑦, 𝑧, 𝑣𝑥, 𝑣𝑦, 𝑣𝑧) entirely in meters or meters per second. Because absolute Cartesian coordinates
+encode geographic position, the model implicitly learns location-specific structure (e.g. that a south-westbound aircraft
+at 𝑦≈−15 km is on SFO final approach). Each feature is independently z-score normalized using training-split statistics.
+5
+
+
+Table 1
+Bay Area ADS-B dataset statistics.
+Variable
+Value
+Collection period
+10 Apr–22 Apr 2026 (12 days)
+Raw ADS-B state vectors
+21,515,794
+Geographic coverage
+60 nm radius circle, centre 37.75°N, 122.25°W
+Cartesian reference (SFO)
+37.6213°N, 122.3790°W
+Segmentation cut
+Gap > 120 s or callsign change
+Features
+𝑥, 𝑦, 𝑧, 𝑣𝑥, 𝑣𝑦, 𝑣𝑧
+Sequence length / stride
+86 pts / 10 pts
+Total 86-point windows
+1,349,388
+Training windows
+1,149,245
+Validation windows
+137,127
+Test windows
+63,016
+Intra-segment Δ𝑡: mean / median / std
+3.00 s / 2.60 s / 2.36 s
+Rather than resampling to a fixed grid, we expose the native, irregular ADS-B timing to the network directly via a
+learned time-delta embedding; full preprocessing details are given in Appendix B.
+III. Evaluation
+Predicting distributions over aircraft trajectories has until recently received moderate attention in the ATM
+literature [14], though generative formulations are now emerging [6]. To account for the inherently multi-modal aspect
+of trajectories, encompassing the different acceptable maneuvers at some given point, this distributional point of view is
+necessary and is hard to measure in practice. Building upon Salzmann et al.’s Trajectron++[4], we chose to evaluate our
+models on best of 𝐾for Average/Final Displacement Error (ADE/FDE) and Kernel Density Estimation Negative Log
+Likelihood (KDE-NLL).
+A. Average and Final Displacement Error
+Let p𝑛= (𝑥𝑛, 𝑦𝑛) ∈R2 denote the horizontal Cartesian position at future step 𝑛, extracted from Xfut. Because
+the variance on the vertical axis is secondary to horizontal variations, we chose to compute 𝑧𝑛separately. Average
+displacement error accounts for how close the sampled trajectory is from the ground truth.
+ADE =
+1
+𝑇fut
+∑︁
+𝑛
+∥ˆp𝑛−p𝑛∥2
+(1)
+Note that this definition requires both predicted and ground-truth trajectories to share the same timestamps at each
+step 𝑛. In decimation experiments where the input sequence is downsampled, timestamp correspondence is preserved
+naturally. However, when predictions are requested at timestamps absent from the ground truth, the ground-truth
+positions p𝑛are obtained by linear interpolation to the desired evaluation points. To assess how far predictions drift at a
+6
+
+
+fixed horizon, we report the Final Displacement Error, defined as the Euclidean distance between the predicted and
+ground-truth positions at the last future step 𝑇fut:
+FDE = ∥ˆp𝑇fut −p𝑇fut∥2
+(2)
+Because of the irregular ADS-B sampling, the final token is on average 128 s in the future, with the central 80% of
+windows spanning [95 s, 165 s], which equates to approximately one and a half to three minutes ahead.
+B. Best of K
+ADE and FDE alone are well suited for deterministic trajectory forecasting, where a single predicted trajectory is
+compared against the ground truth. In our setting, however, the future is genuinely multimodal: given the same observed
+prefix, an aircraft may initiate a left or right turn, continue en route, or enter a holding pattern, all equally valid outcomes
+invisible from position data alone. A deterministic metric would penalize any model that hedges across modes, even
+if one of its samples matches the ground truth closely. We therefore adopt the best-of-𝐾variants, minADE@𝐾and
+minFDE@𝐾, standard in the multimodal forecasting literature [4, 5]:
+minADE@𝐾= min
+𝑘
+1
+𝑇fut
+∑︁
+𝑛
+∥ˆp(𝑘)
+𝑛
+−p𝑛∥2,
+minFDE@𝐾= min
+𝑘
+∥ˆp(𝑘)
+𝑇fut −p𝑇fut ∥2.
+(3)
+These metrics reward sample coverage: a model with good coverage places at least one sample close to the ground
+truth, and needs fewer samples to do so. We report 𝐾∈{1, 5, 20}, which quantifies how quickly additional samples
+improve coverage.
+C. Density Calibration
+Best-of-𝐾displacement errors reward coverage, whether at least one sample lands near the ground truth, but say
+nothing about how the remaining probability mass is distributed [18]. A model that places one sample on target and
+scatters the other 𝐾−1 arbitrarily attains the same minADE@𝐾as one whose entire sample cloud tightly brackets the
+truth, yet only the latter yields a density usable for conflict detection (Fig. 2). To assess the quality of the full predicted
+distribution, we adopt the kernel-density negative log-likelihood (KDE-NLL), a widely used distributional evaluation
+metric in multimodal trajectory forecasting [4].
+At a future step 𝑛we draw 𝐾= 50 independent completions and retain their horizontal positions {ˆp(𝑘)
+𝑛}𝐾
+𝑘=1 ⊂R2.
+We fit a Gaussian kernel density estimate with Scott’s-rule bandwidth,
+ˆ𝑓𝑛(p) = 1
+𝐾
+𝐾
+∑︁
+𝑘=1
+N p; ˆp(𝑘)
+𝑛, ℎ2
+𝑛ˆ𝚺𝑛
+,
+ℎ𝑛= 𝐾−1/(𝑑+4) = 𝐾−1/6,
+(4)
+7
+
+
+Fig. 2
+Four synthetic 𝐾=20 sample-cloud scenarios, with the actual minFDE@20 and KDE NLL computed
+via Eq. (4). (a) Sharp and calibrated: both metrics agree. (b) Multimodal and calibrated: two equally
+plausible maneuvers; the bimodal density scores well against either outcome (NLL𝐴=15.5, NLL𝐵=14.9 nats),
+(c) Sharp but displaced: over-confidence makes the NLL diverge even though the samples are tightly clustered.
+(d) Hyper-diffuse: spreading the samples widely keeps minFDE@20 comparable to (b), yet the likelihood assigned
+to the true outcome is markedly lower everywhere.
+where 𝑑= 2, ˆ𝚺𝑛is the empirical covariance of the 𝐾samples, and ℎ𝑛is the Scott factor.∗We then report the
+negative log-likelihood of the ground-truth position under this density,
+NLL@𝑛= −log ˆ𝑓𝑛(p𝑛),
+(5)
+∗A minimum bandwidth floor of 50 m per dimension is applied so that a degenerate (collapsed) sample cloud does not drive the NLL to −∞.
+8
+
+
+averaged over the test set (lower is better).
+The log score is strictly proper [19]. The finite-𝐾kernel estimate used here approximates it, with a Scott bandwidth
+and a floor, so we treat it as an approximate log-density score that jointly reflects sharpness and calibration rather than
+as an exactly proper rule. It rewards sharpness (concentrating mass), but penalizes over-confidence, since a tight cluster
+that excludes the ground truth drives ˆ𝑓𝑛(p𝑛) →0 and the score diverges. It thus captures exactly what best-of-𝐾misses:
+whether the model assigns calibrated probability to where the aircraft actually goes. We evaluate NLL at the 10th, 20th,
+and 43rd future steps to track calibration as uncertainty accumulates over the horizon; as with the displacement metrics,
+the vertical axis is handled separately and the density is estimated in the horizontal plane.
+IV. Baseline Architectures
+We compare against three baselines spanning the kinematic, deterministic-neural, and probabilistic-generative
+families. All baselines consume the same 43-point observed prefix and predict the same 43-point future suffix, enabling
+a like-for-like comparison.
+A. Constant Velocity
+The constant-velocity (CV) model propagates the last observed state forward at constant velocity. Let 𝑡𝑛denote the
+(irregular) timestamp of the sample at sequence index 𝑛, and let 𝑇obs index the last observed sample. The predicted
+position at sequence index 𝑇obs + 𝑘is
+ˆp𝑇obs+𝑘= p𝑇obs +  𝑡𝑇obs+𝑘−𝑡𝑇obs
+ v𝑇obs,
+𝑘= 1, . . . ,𝑇fut,
+(6)
+where p𝑇obs and v𝑇obs are the last observed position and velocity. The elapsed time 𝑡𝑇obs+𝑘−𝑡𝑇obs is read from the target
+timestamps and therefore accounts for the irregular ADS-B sampling, while the position index 𝑇obs + 𝑘remains a discrete
+sequence index. CV requires no training, is interpretable, and is the natural lower bound that any structure-aware model
+must beat. Being deterministic, its best-of-𝐾metrics are constant in 𝐾.
+B. Deterministic LSTM Encoder–GRU Decoder
+The deterministic neural baseline is a recurrent encoder–decoder. An LSTM encoder ingests the 43 observed tokens
+and produces a context vector; a GRU decoder then autoregressively rolls out the 43 future states. At each decoder step,
+the elapsed time since the start of the observation window is concatenated to the decoder input, letting the network
+condition its rollout on the irregular ADS-B sampling rather than assuming a fixed step. The model is trained with
+mean-squared error on the future per-step displacements (deltas), integrated at inference to recover absolute Cartesian
+positions. Because the output is a single trajectory, the model is deterministic and its @𝐾metrics again collapse to the
+𝐾= 1 values.
+9
+
+
+C. Conditional Variational Autoencoder (Trajectron++)
+The strongest non-diffusion baseline is a Conditional Variational Autoencoder in the style of Trajectron++ [4], a
+widely used probabilistic approach to multimodal trajectory forecasting. A recurrent encoder summarizes the observed
+past into a conditioning vector; a latent variable captures the discrete and continuous modes of the future (e.g. turn
+vs. straight); and a recurrent decoder generates a future trajectory conditioned jointly on the past and a latent sample.
+Drawing 𝐾independent latent samples yields 𝐾diverse trajectories, so, unlike CV and the deterministic LSTM, the
+CVAE supports genuine best-of-𝐾evaluation and density estimation, and serves as our probabilistic non-diffusion
+reference.
+V. FlowATC: Generative Inpainting with Flow Matching
+A. Problem Formulation
+Let (Xobs, Xfut) ∼𝑝data denote a pair of observed prefix and future suffix drawn from the (unknown) joint distribution
+of Bay Area traffic, with Xobs ∈R𝑇obs×𝐹and Xfut ∈R𝑇fut×𝐹. Because runway assignment, controller instructions, and
+traffic sequencing are not observable in Xobs, the conditional law 𝑝(Xfut | Xobs) is in general multimodal: several
+distinct futures carry non-negligible probability mass. The object we seek is therefore not a point estimate but a sampler
+for this conditional distribution, that is, a mechanism producing ˆXfut ∼𝑝(· | Xobs), from which any downstream quantity
+(conflict probability, occupancy density, best of 𝐾forecasts) can be estimated by Monte Carlo.
+This requirement is not merely a preference: any deterministic predictor 𝑓𝜃trained with mean squared error
+converges, at the population optimum, to the conditional mean,
+arg min
+𝑓
+E(Xobs,Xfut)
+ 𝑓(Xobs) −Xfut2
+2 = E
+
+Xfut | Xobs
+,
+(7)
+by the standard 𝐿2 projection property of conditional expectation. When 𝑝(Xfut | Xobs) has two modes, say a left turn
+and a continued straight leg, their average is a trajectory that belongs to neither mode and may be physically implausible.
+The deterministic baselines of Section IV are thus limited by construction, independently of their capacity: they solve a
+different (and, under multimodality, ill-suited) problem.
+Conditional Flow Matching sidesteps this by regressing a velocity field 𝑢𝜃rather than a trajectory. Fix Xobs, draw
+x0 ∼N (0, I) and x1 = Xfut ∼𝑝(· | Xobs), and define the linear interpolant x𝑡= (1 −𝑡) x0 + 𝑡x1. The population CFM
+objective regresses 𝑢𝜃(x𝑡, 𝑡| Xobs) onto the pair conditional velocity (x1 −x0). Because the squared loss is minimized
+pointwise by a conditional expectation, its unique population minimizer is the marginal velocity field
+𝑢★(x, 𝑡| Xobs) = E
+
+x1 −x0
+ x𝑡= x, Xobs
+,
+(8)
+10
+
+
+and it is a standard result of the flow matching literature [9, 20] that the probability flow of this field, namely the solution
+of ¤x = 𝑢★(x, 𝑡| Xobs) initialized at x(0) ∼N (0, I), has marginal law exactly 𝑝(· | Xobs) at 𝑡= 1. In other words, exactly
+minimizing the CFM loss and exactly integrating the learned field is equivalent to sampling from the true conditional
+distribution of futures. Multimodality is preserved automatically: distinct noise draws x0 are transported to distinct
+modes, and no averaging across modes ever occurs.
+B. The DiT Backbone
+Following the Diffusion Transformer (DiT) framework [11], the denoiser is a stack of Transformer blocks with the
+generation step (flow time 𝑡∈[0, 1]) injected into every block through Adaptive Layer Normalization (AdaLN). Let
+h ∈R𝑑denote a token’s hidden representation entering a sub-layer, with 𝜇(h) and 𝜎(h) its mean and standard deviation
+taken over the feature dimension 𝑑(per-token normalization). A small MLP maps 𝑡to scale and shift parameters
+𝛾(𝑡), 𝛽(𝑡) ∈R𝑑, applied via the same AdaLN mechanism at each of the two sub-layers (self-attention and feed-forward)
+through independently learned MLP heads:
+AdaLN(h, 𝑡) = 𝛾(𝑡) · h −𝜇(h)
+𝜎(h)
++ 𝛽(𝑡).
+(9)
+The core block operation is multi-head self-attention; for tokens Z ∈R𝑇×𝑑, split into 𝐻heads of dimension 𝑑𝑘= 𝑑/𝐻,
+Attn(Z) = softmax
+QK⊤
+√𝑑𝑘
+
+V,
+Q, K, V = Z𝑊𝑄, Z𝑊𝐾, Z𝑊𝑉,
+(10)
+Attention is block-causal: observed tokens are prevented from attending to the noisy future tokens, while future
+tokens attend freely to the observed prefix and to one another. Writing A ∈{0, −∞}𝑇×𝑇for the additive mask applied to
+the attention logits before the softmax, 𝐴𝑖𝑗= −∞iff 𝑖< 𝑇obs and 𝑗≥𝑇obs, and 0 otherwise. The observed representation
+is therefore independent of the noise realisation, while the future block keeps the full bidirectional attention motivated
+above, since all its tokens share the same noise level. The future timestamps supplied through 𝑡rel are query times: they
+state when a prediction is requested and carry no information about the aircraft’s future state.
+Figure 3 shows the full architecture.
+C. Trajectory as an Image: Inpainting the Future
+We represent each 86-step window as a 6 × 86 feature-time matrix, in effect a one-channel “image” of the trajectory.
+The first 𝑇obs = 43 tokens carry the observed (clean) state vectors; the last 𝑇fut = 43 tokens are initialized with Gaussian
+noise and treated as the masked region to be inpainted (Fig. 4).
+Both the 𝑇obs clean observation tokens and the 𝑇fut noisy future tokens are embedded by a shared linear projection
+11
+
+
+Fig. 3
+FlowATC DiT[11] architecture overview.
+and concatenated into a single sequence of length 𝑇= 86:
+Z =
+
+𝑊in Xobs ∥𝑊in ˜Xfut
+∈R𝑇×𝑑.
+(11)
+The observed past is thus injected purely by concatenation: no separate encoder is needed. Because the past enters only
+as additional tokens, the architecture is a natural substrate for further conditioning: any extra signal (ATC voice, weather
+fields, charts) can be appended as context tokens without changing the loss or the inpainting mechanism. Because all
+future tokens are denoised at the same noise level 𝑡, there is no temporal ordering to preserve within the future block, so
+Fig. 4
+Trajectory represented as a 6 × 86 feature-time matrix. The observed prefix (solid, left of dashed line)
+provides context tokens; the noisy future suffix (light, right) is the region to be inpainted by the flow-matching
+model.
+12
+
+
+attending freely helps the model produce spatially consistent trajectories. Only the 𝑇fut future positions are read off for
+the loss or the next integration step.
+In addition to the AdaLN diffusion-time conditioning, each token receives a sinusoidal time embedding of its
+prediction date: the time offset of that token within the window which is added to the token representation. This lets the
+model distinguish near-future from far future positions even though all future tokens are denoised simultaneously.
+The velocity field 𝑢𝜃(x, 𝑡) is trained on the straight-line interpolation between Gaussian noise and the target future:
+LCFM = E𝑡, x0, Xfut
+𝑢𝜃
+ (1 −𝑡)x0 + 𝑡Xfut, 𝑡| Xobs −(Xfut −x0)
+
+2
+2,
+(12)
+with x0 ∼N (0, I) and 𝑡∼LogitNormal(1.0, 1.0). At inference, Euler integration from 𝑡= 0 to 𝑡= 1 in 20 steps
+produces one trajectory sample; repeating with independent noise draws yields 𝐾diverse completions. We refer to
+this flow-matching-trained model as FlowATC. The same backbone is also trained with a DDPM objective [7] (1000
+forward steps, cosine schedule, DDIM sampling) as a baseline.
+All CFM and DDPM variants share a Transformer backbone (multi-head self-attention, feed-forward factor 4,
+dropout 0.1) with the layer/head/width counts of Table 2. Training uses AdamW (𝛽1 = 0.9, 𝛽2 = 0.999, weight decay
+10−2, learning rate 10−4) with a 1000-step linear warm-up, batch size 512, for up to 200 epochs on a single GPU.
+Exponential Moving Average weights (decay 0.9999) are used at inference.
+Latency is the wall-clock time to answer one request: a single input sequence (batch size 1) for which 𝐾=20 samples
+are drawn in parallel, using 20 Euler steps for flow models and 100 DDIM steps for diffusion models. It is measured in
+float32 on a single NVIDIA RTX 4000 Ada, averaged over at least 30 requests after 10 warm-up requests.
+Table 2
+Flow model architecture configurations.
+Model
+Layers
+Heads
+𝑑
+Parameters
+flow_tiny
+5
+4
+128
+1.5 M
+flow_small
+6
+8
+256
+7.1 M
+flow_large
+8
+8
+384
+20.7 M
+VI. Results
+Drawing 𝐾completions and coloring each by its final-point KDE density yields a fan of plausible futures (Fig. 5);
+the corresponding final-point density forms spatial probabilistic occupancy estimates that can serve as an input to
+downstream conflict-risk estimation (Fig. 6). For straight en-route segments the density is narrow and elongated
+along the track; for aircraft entering an approach turn it broadens laterally, capturing genuine uncertainty about the
+turn-initiation point. In all cases the high-density region brackets the ground-truth final position.
+13
+
+
+Fig. 5
+Predicted trajectory fan (𝐾= 20 samples). Blue: observed past; Green: ground-truth future; purple–
+yellow: predicted final-point density (purple = low, yellow = high).
+(a) Straight en-route
+(b) Turn
+(c) Holding entry
+Fig. 6
+Final-position probability density maps (𝐾= 20 samples, Gaussian KDE, Scott bandwidth). Dashed
+blue: observed past; dashed green: ground-truth future; solid heatmap: sampled trajectories; green star:
+ground-truth final position; yellow–red: predicted final-point density (light = low, dark = high). Density width
+correlates with the complexity of the anticipated maneuver.
+A. Model Comparison
+Table 3 compares all five model variants at matched capacity (1.5 M parameters) on the held-out test set. LSTM-Det
+improves over CV mainly on FDE (2748.5 m vs. 3480.2 m, −21%), reflecting that a learned decoder curves its rollout
+toward typical approach geometry rather than extrapolating a straight line; the ADE gain is comparatively modest
+(1305.3 m vs. 1343.6 m), since most of the 43-step horizon is still well approximated by locally linear motion. At 𝐾= 1,
+the generative models do not outperform the deterministic baselines outright: Diffusion Tiny (1370.6/3183.3) is in fact
+14
+
+
+the worst model in the table on minADE@1, and Flow Tiny (1313.5/3147.7) is comparable to CV. Panel (a) of Fig. 7
+shows this is a genuine crossover in horizon, not just an artefact of the final step: CV, LSTM, Diffusion, and Flow all
+start near zero displacement and grow with 𝑛, while CVAE starts at ∼500 m even at 𝑛=1 and grows far more slowly,
+overtaking the other four models only around 𝑛≈15–20. This is expected rather than a failure mode: a single diffusion
+or flow draw is one stochastic sample from the predicted distribution, not a mean or mode estimate, so it inherits the full
+spread of the multimodal posterior from the very first future step. CVAE’s early offset has a different origin, isolated in
+Appendix D: it is decoder output variance rather than a mispredicted mean, and the model cannot shed this noise for
+free as doing so collapses minADE@20 instead, since its discrete latent supplies little diversity conditional on a single
+observed history. The generative models only become competitive once they are allowed to hedge across samples.
+Table 3
+Model comparison at equal capacity (1.5 M parameters). 43 obs →43 fut steps (≈128 s horizon),
+𝑁= 63,016 test trajectories. Distances in metres ± SEM. KDE NLL in nats (lower is better for all columns).
+Bold = best value per column.
+Model
+Type
+Params
+ms/pred
+𝐾= 1
+𝐾= 5
+𝐾= 20
+KDE NLL@𝑛
+minADE
+minFDE
+minADE
+minFDE
+minADE
+minFDE
+𝑛=10
+𝑛=20
+𝑛=43
+CV
+—
+—
+0.0
+1343.6±8.1
+3480.2±19.3
+1343.6±8.1
+3480.2±19.3
+1343.6±8.1
+3480.2±19.3
+—
+—
+—
+LSTM-Det (+𝑡rel)
+—
+1.5 M
+1.15
+1305.3±5.7
+2748.5±12.6
+1305.3±5.7
+2748.5±12.6
+1305.3±5.7
+2748.5±12.6
+—
+—
+—
+CVAE (Trajectron++ style)
+CVAE
+1.5 M
+4.06
+1219.7±6.0
+2316.2±12.8
+828.5±4.3
+1608.8±10.2
+662.9±3.8
+1240.9±9.1
+14.6±0.0
+16.9±0.1
+31.7±0.3
+Diffusion Tiny
+DDPM
+1.5 M
+119.7
+1370.6±7.5
+3183.3±17.6
+697.1±4.2
+1467.5±9.3
+459.9±2.9
+828.1±6.1
+13.7±0.0
+16.2±0.1
+18.9±0.1
+Flow Tiny
+CFM
+1.5 M
+23.8
+1313.5±7.5
+3147.7±18.2
+614.5±3.8
+1302.7±8.7
+390.5±2.4
+686.1±5.0
+13.4±0.1
+15.7±0.1
+18.1±0.2
+The picture reverses sharply by 𝐾= 20: Flow Tiny (390.5/686.1) and Diffusion Tiny (459.9/828.1) both surpass
+CVAE (662.9/1240.9) by a wide margin, 41% and 31% lower minADE@20 respectively. Panel (b) of Fig. 7 shows
+this advantage holds across the full horizon, not just at 𝑛=43: flow and diffusion separate from CVAE as early as 𝐾=5
+(Appendix E), and the gap widens monotonically with 𝑛through 𝐾=20. This indicates that the diffusion/flow sample
+cloud covers the true multimodal distribution more efficiently than the CVAE’s discrete-latent mixture; fewer samples
+are wasted on implausible modes, so additional draws pay off faster at every horizon, not only at the end of the window.
+The NLL@𝑛columns tell a complementary story about distributional quality rather than best-case coverage. All
+three generative models are similar at the 10-step horizon (13.4–14.6 nats), but diverge sharply by the 43-step horizon,
+as panel (c) of Fig. 7 makes clear: CVAE’s calibration curve bends upward steeply after 𝑛≈20, while Diffusion Tiny
+and Flow Tiny remain nearly flat over the same range. CVAE’s NLL@43 (31.7) corresponds to a kernel density at the
+realized endpoint roughly 𝑒13.6 ≈8 × 105 times smaller than Flow Tiny’s (18.1), meaning that even though CVAE’s
+best-of-20 samples can land close to the ground truth, its full predicted density is comparatively poorly calibrated at
+long horizons.
+Comparing the two generative objectives directly, CFM (Flow Tiny) beats DDPM (Diffusion Tiny) on every column:
+15% lower minADE@20 (390.5 vs. 459.9), 17% lower minFDE@20, and consistently lower NLL at all three horizons.
+In this matched-capacity comparison CFM consistently outperforms DDPM; since capacity is held fixed, the gap points
+15
+
+
+Table 4
+Vertical error at matched capacity (1.5 M parameters) on the held-out test set, in metres, mean ±
+SEM over 63,016 windows. The altitude axis is evaluated separately from the horizontal metrics of Table 3; the
+deterministic baselines are constant in 𝐾.
+Model
+minADE𝑧
+minFDE𝑧
+𝐾=1
+𝐾=20
+𝐾=1
+𝐾=20
+CV
+109.7±0.7
+109.7±0.7
+248.7±1.5
+248.7±1.5
+LSTM-Det
+78.4±0.4
+78.4±0.4
+151.9±0.9
+151.9±0.9
+CVAE
+94.6±0.6
+43.8±0.3
+168.6±1.2
+62.0±0.7
+Diffusion Tiny
+102.6±0.5
+28.3±0.2
+198.9±1.1
+29.9±0.4
+Flow Tiny
+94.2±0.5
+25.0±0.2
+186.8±1.1
+24.3±0.3
+Fig. 7
+Prediction error and calibration across sample budget and future horizon. (a)–(b) Minimum displacement
+error at 𝐾∈{1, 20}. (c) Density calibration for the two stochastic generative models (CV and the deterministic
+LSTM are excluded: their point estimate has no associated density). The full 𝐾∈1, 5, 20 sweep is given in
+Appendix E, Fig. 17.
+to the training objective rather than to model size, though we report single runs and do not quantify seed variance, a
+point we revisit at scale in Section VI.B.
+Table 4 reports the vertical axis, evaluated separately. It reproduces the horizontal narrative rather than adding a new
+one. At 𝐾=1 the deterministic LSTM is the most accurate model (78.4±0.4 m against 94.2±0.5 m for Flow Tiny), since a
+single stochastic draw again inherits the spread of the predicted distribution rather than estimating its mean. By 𝐾=20
+the ordering reverses: Flow Tiny reaches 25.0±0.2 m against 28.3±0.2 m for Diffusion Tiny and 43.8±0.3 m for the CVAE,
+a 43% reduction over the latter, close to the 41% measured horizontally. Altitude at a two-minute horizon is dominated
+by the discrete choice to level off, climb or descend, precisely the kind of branching a single point estimate cannot
+represent.
+B. Scaling
+Table 5 reports both CFM and DDPM across three model sizes. FlowATC’s minADE@20 improves sharply
+from Tiny to Small (390.5 →306.1 m, −21.6%) but plateaus from Small to Large (306.1 →307.4 m, +0.4%), and
+16
+
+
+Table 5
+Flow Matching vs. Diffusion scaling. 43 obs →43 fut steps (≈128 s horizon), 𝑁= 63,016 test trajectories.
+Distances in metres ± SEM. KDE NLL in nats. Bold = best within each architecture family.
+Model
+Type
+Params
+𝐾= 1
+𝐾= 5
+𝐾= 20
+KDE NLL@𝑛
+minADE
+minFDE
+minADE
+minFDE
+minADE
+minFDE
+𝑛=10
+𝑛=20
+𝑛=43
+Flow Matching (CFM, 20 inference steps)
+Flow Tiny
+CFM
+1.5 M
+1313.5±7.5
+3147.7±18.2
+614.5±3.8
+1302.7±8.7
+390.5±2.4
+686.1±5.0
+13.4±0.1
+15.7±0.1
+18.1±0.2
+Flow Small
+CFM
+7.1 M
+996.0±6.5
+2419.7±15.8
+479.5±3.4
+1050.6±7.9
+306.1±2.2
+568.7±4.7
+13.3±0.1
+17.4±0.6
+20.2±0.5
+Flow Large
+CFM
+20.7 M
+903.4±5.9
+2156.8±14.2
+467.3±3.4
+1013.2±7.8
+307.4±2.4
+576.8±5.3
+13.3±0.1
+17.5±0.5
+20.2±0.4
+Diffusion (DDPM, 100 inference steps)
+Diffusion Tiny
+DDPM
+1.5 M
+1370.6±7.5
+3183.3±17.6
+697.1±4.2
+1467.5±9.3
+459.9±2.9
+828.1±6.1
+13.7±0.0
+16.2±0.1
+18.9±0.1
+Diffusion Small
+DDPM
+7.1 M
+1173.8±6.9
+2835.5±16.5
+620.2±4.0
+1385.8±9.3
+412.7±2.8
+805.9±6.3
+14.2±0.1
+19.1±0.3
+22.6±0.4
+Diffusion Large
+DDPM
+20.7 M
+1051.6±6.3
+2478.6±15.3
+529.8±3.5
+1150.3±8.2
+344.0±2.4
+650.3±5.5
+13.2±0.1
+16.8±0.3
+20.9±0.6
+minFDE@20 shows the same pattern (568.7 →576.8 m). This suggests CFM saturates the information available in the
+12-day dataset by around 7 M parameters, approaching a data-limited rather than capacity-limited regime. The saturation
+has an operational corollary: Flow Small reaches the same minADE@20 as Flow Large (306.1 vs 307.4 m) at 2.3×
+lower latency (67.0 vs 157.1 ms per request, Table 6), so capacity beyond 7.1 M buys nothing but cost on this dataset.
+DDPM shows the opposite trend: minADE@20 improves steadily at every step (459.9 →412.7 →344.0 m,
+−10.3% then −16.6%), with its largest single gain occurring exactly where flow stalls. Because DDPM has a harder
+denoising objective, this is consistent with DDPM still being capacity-limited at 20.7 M parameters where CFM is not.
+Consequently, the relative advantage of CFM over DDPM on minADE@20 is not monotonic in model size: 15% at
+Tiny, widening to 26% at Small, then narrowing to 11% at Large as DDPM catches up (each measured as the reduction
+in minADE@20 relative to DDPM at matched capacity). At the sizes tested here, CFM remains strictly better at every
+scale, but DDPM’s steeper scaling curve suggests the gap would continue to narrow, or close, at larger capacity than we
+evaluate.
+The KDE NLL columns decouple from minADE/minFDE in an interesting way: FlowATC’s NLL@43 is best at
+Tiny (18.1 nats) and degrades with scale (20.2 nats at both Small and Large), even as displacement error improves.
+Larger FlowATC models thus produce sample clouds that are more accurate on average but slightly less well calibrated
+at long horizons, a reminder that best-of-𝐾accuracy and distributional calibration are related but distinct properties, and
+that scaling helps one without guaranteeing the other.
+C. Extrapolation to Future Timesteps
+Because the prediction-date embedding conditions each future token on its time offset within the window rather than
+on a fixed step count, the model can be queried at prediction dates beyond the 𝑇fut = 43 horizon seen during training,
+simply by resampling the embedding at longer offsets without retraining or architectural changes. We probe this by
+overwriting the 𝑡rel timing channel with virtual timestamps spanning target horizons up to 360 s (roughly three times the
+17
+
+
+native ≈128 s horizon), stitching three shards (𝐻max ∈{90, 180, 360} s) to keep good temporal resolution across the full
+range. Ground truth beyond the observation window is obtained by cubic-spline interpolation of the continuing raw
+ADS-B trajectory: a window contributes at a given horizon only if its flight actually extends that far, and horizons where
+fewer than half the windows qualify are dropped, a filter that does not bind here since 85% of windows still have a
+continuing track at 360 s. Appendix G gives the full protocol, including a visible estimator-seam artefact at the shard
+boundaries that reflects a change of estimator, not of model behavior.
+Fig. 8
+Portion of test windows reaching a given future horizon.
+Figure 9 reports minADE@𝐾(panels a–b) and KDE NLL (panel c) as a function of elapsed time since the last
+observation, from 0 to 360 s, for CVAE, Diffusion Tiny, and Flow Tiny (all 1.5 M parameters). The gray shading reports
+a distinct quantity: the fraction of test windows whose native 43-token future span alone reaches that horizon, 96%
+at 90 s but 16% at 150 s and under 1% at 360 s (Fig. 8). Beyond roughly 150 s the comparison therefore rests on the
+interpolated continuation of each flight rather than on tokens the observation window itself contains.
+The diffusion-based models degrade faster than CVAE at long horizons when only a single sample is drawn (𝐾=1,
+panel a); once 𝐾≥5 (panel b shows 𝐾=20, the full 𝐾=5 curve is in Appendix G) Flow remains the most accurate model
+across the full horizon, and only CVAE’s 𝐾=1 curve overtakes it beyond ≈200 s. This is an artefact of the models
+being queried at time offsets never seen during training: the future block still contains 43 tokens, but the prediction
+dates attached to them lie beyond the training horizon, whereas CVAE’s autoregressive decoder rolls out to arbitrary
+length by construction.
+Panel (c) shows why this apparent CVAE advantage is misleading. KDE-NLL, which tests whether a model’s
+uncertainty keeps pace with its actual error independent of its size, plateaus at ≈20 nats for Diffusion and Flow from
+𝑡≈150 s onward. Their sample clouds widen in step with the true uncertainty even as displacement error keeps growing
+(panel b) while CVAE’s NLL diverges to ≈60 nats by 𝑡= 360 s. CVAE’s lower displacement error beyond ≈200 s
+therefore reflects a single sampled trajectory landing closer to the truth on average, not a predicted distribution that
+18
+
+
+Fig. 9
+Extrapolation error and calibration beyond the training horizon. (a)–(b) minDisp@𝐾for 𝐾∈{1, 20}.
+(c) KDE NLL. Gray shading (right axis): fraction of test windows with native ground-truth coverage. The full
+𝐾∈{1, 5, 20} sweep is given in Appendix G.
+knows how uncertain it should be: exactly the failure mode best-of-𝐾metrics cannot detect and KDE-NLL is designed
+to catch.
+D. Operational Robustness
+Real ADS-B receivers report at rates that vary with receiver quality and congestion. To test whether the architecture
+remains effective at coarser temporal resolution, we retrain the flow model at strides of 2, 4, and 8 (effective intervals
+≈5, 10, 20 s): a dedicated model per stride, not one fixed model queried at variable resolution, since obs_len and
+fut_len must change with the token count. Stride-2 costs +4.9% in minADE@20 while roughly halving inference time;
+stride-8 costs +44.4% but runs 5.0× faster. Near-term calibration (NLL@10) is essentially unaffected across strides;
+long-horizon calibration degrades more than the displacement numbers alone suggest, since NLL is a log-likelihood.
+The architecture thus degrades gracefully across temporal resolutions and is cheap to redeploy for a receiver’s typical
+rate (full results and discussion in Appendix F, Table 8).
+Because one request already occupies the GPU, batching several aircraft into a single forward pass barely raises
+throughput for the Transformer models: one RTX 4000 Ada serves about 50 aircraft per second with Flow Tiny (one
+20-sample forecast each), 7 with Flow Large and 1.4 with Diffusion Large (Table 6). At the 3 s mean ADS-B update
+interval, a single GPU therefore keeps the forecasts of roughly 150 aircraft current with Flow Tiny, or 20 with Flow
+Large, and independent requests can be spread over further GPUs as traffic grows.
+The observed prefix can also be shortened at inference without retraining, by freezing the oldest tokens (repeated
+from the earliest retained observation) rather than truncating the fixed-length input. Figure 10 reports minFDE@5 as the
+retained history 𝑛keep shrinks from 43 to 2 points (𝑁=2000 windows per level, ≈1.4 million forward passes in total):
+error stays essentially flat down to 𝑛keep ≈21 (half the window, under 5% cost) and rises sharply below 𝑛keep ≈15,
+reaching 2.6× the full-history error at 𝑛keep = 2. Because the frozen prefix is also mildly out-of-distribution relative to
+training data, this should be read as a conservative upper bound on the true cost of a genuinely shorter history.
+19
+
+
+Table 6
+Inference cost and monitoring capacity on one NVIDIA RTX 4000 Ada (float32). Latency: one request
+(a single input sequence, batch size 1), 𝐾samples drawn in parallel, 20 Euler steps (CFM) or 100 DDIM steps
+(DDPM). Throughput: best over concurrent requests, at 𝐾=20. Aircraft per GPU: throughput × 3 s, the mean
+ADS-B update interval, i.e. aircraft whose forecast can be refreshed at every update. ≥: the card was not
+saturated at the largest concurrency tested (1024).
+Model
+Type
+Params
+Latency (ms)
+Throughput
+Aircraft
+𝐾=20
+𝐾=50
+(aircraft/s)
+per GPU
+LSTM-Det
+—
+1.5 M
+1.15
+1.15
+≥100,379
+≥301,137
+CVAE
+CVAE
+1.5 M
+4.06
+4.10
+16,388
+49,164
+Diffusion Tiny
+DDPM
+1.5 M
+119.68
+229.50
+10.3
+30
+Flow Tiny
+CFM
+1.5 M
+23.76
+47.25
+51.3
+153
+Flow Small
+CFM
+7.1 M
+66.95
+160.80
+15.8
+47
+Diffusion Large
+DDPM
+20.7 M
+773.16
+1870.65
+1.4
+4
+Flow Large
+CFM
+20.7 M
+157.07
+375.82
+6.8
+20
+Flow Large, stride 2
+CFM
+20.7 M
+83.57
+205.27
+13.6
+40
+Flow Large, stride 4
+CFM
+20.7 M
+49.85
+107.80
+25.9
+77
+Flow Large, stride 8
+CFM
+20.7 M
+31.55
+54.68
+54.7
+164
+Fig. 10
+Displacement error as a function of retained observation history. minFDE@5 (mean ± SEM, 𝑁=2000)
+as the observed prefix is shrunk from 43 points (𝑛keep) to progressively shorter spans; the earliest 43 −𝑛keep
+tokens are frozen (repeated from the earliest retained sample) since the backbone’s positional embeddings fix the
+input length at 43. Error is essentially flat down to 𝑛keep ≈21 and rises sharply below 𝑛keep ≈15.
+VII. Spatial Bias
+Without any chart or procedure supervision, FlowATC reproduces known Bay Area airspace structure such as
+approach turns, holding patterns, and descent profiles. This can be done by understanding the latent structures from the
+absolute Cartesian coordinates which encode geographic position. We examine this in three complementary ways: a
+catalogue of recurring turn geometries and their geographic relationship to published airspace procedures (A), qualitative
+evidence that the model’s sampled trajectories reproduce them (B), and a quantitative comparison, at branch points
+where traffic divides, of the maneuvers FlowATC samples against those actually flown, including by aircraft that do not
+20
+
+
+turn (C).
+A. Identifying Recurring Turn Patterns From ADS-B Trajectories
+To evaluate whether the model reproduces location-specific maneuver structure, we use an independent catalogue
+of recurring turns built from ADS-B trajectories; all counts and evaluations below use its events from the collection
+of Section II. A turn is defined as the transition between two locally stable ground-track segments. The catalogue is
+derived directly from observed trajectories and is not used during model training; the full detection, classification, and
+grouping protocol is given in Appendix H. Each turn is then associated geographically with published FAA navigation
+references using its detected start point. A turn with exactly one nearby reference within 1 nautical mile is assigned to the
+isolated-fix population, whereas a turn with multiple nearby references is assigned to the clustered/regional population.
+This association should be interpreted as spatial proximity rather than evidence that a particular fix, controller instruction,
+or published procedure caused the maneuver.
+(a) Turn pattern associated
+with the fix HLHRS.
+(b) Full trajectory context of the recurring pattern.
+(c) NIITE FOUR departure
+chart.
+Fig. 11
+Recurring departure geometry recovered from ADS-B trajectories near SFO. (a) Turn pattern associated
+with the fix HLHRS. (b) Wider trajectory context of the recurring pattern. (c) The broad corridor and branching
+structure of the NIITE FOUR departure are visible in the extracted ADS-B pattern visualisations. Chart source:
+Federal Aviation Administration [21]
+The resulting catalog contains 433 recurring patterns and 32,765 non-overlapping turn events: 229 isolated-fix
+patterns comprising 12,076 events, and 204 clustered/regional patterns comprising 20,689 events. Each pattern is
+annotated with a pattern identifier, an associated fix or regional fix set, turn direction, central turn angle, empirical
+angular tolerance, qualitative compactness label, and event count. Compactness is reported as sharp, moderate, or
+broad. Beyond cataloguing frequent turns, grouping trajectories by recurring local geometry provides an empirical
+representation of the maneuver modes available at specific locations in the airspace. These modes often align with
+published procedure corridors, although geometry and fix proximity alone do not uniquely identify the procedure
+assigned to an individual flight.
+Figure 11 illustrates this relationship for one recurring SFO departure pattern. The pattern is named HLHRS_l1
+21
+
+
+because HLHRS is the only eligible navigation reference within the association radius of its detected turn start location.
+This name denotes geographic proximity and does not imply that HLHRS caused the maneuver or is part of the
+corresponding published procedure. Nevertheless, the observed trajectory corridor is broadly consistent with the NIITE
+FOUR departure shown alongside it.
+The catalogue is designed to record recurring turns, so it contains only aircraft that turned. Evaluating a predictor
+requires the complementary view: every aircraft arriving at a decision point, whatever it does next. We therefore build
+on the catalogue to define branch points and collect all passages through them, recording the heading change actually
+flown, which is zero for aircraft that continue straight. At the 28 branch points retained for evaluation, a third of the
+2,329 test passages fly a catalogued turn of that point and a third continue straight; the others fly maneuvers that the
+catalogue, restricted by design to recurring turns near navigation references, does not retain there.
+B. Qualitative Evidence of Learned Spatial Bias
+The turn-pattern catalogue of Section VII.A provides a reference set of geographically recurring maneuvers against
+which model behavior can be inspected qualitatively. In this subsection, we compare extracted turn patterns with
+sampled futures from FlowATC in order to assess whether the model reproduces not only plausible trajectories, but also
+the spatially structured branching behavior observed in the ADS-B data.
+(a) Recurring SFO departure patterns CA0048 and
+HLHRS_l1.
+(b) Flow model samples for HLHRS_l1 test and validation
+events.
+Fig. 12
+Multimodal departure structure near SFO. (a) The recurring patterns CA0048 (𝑛=1,408) and HLHRS_l1
+(𝑛=375) share a similar initial right turn departure geometry before diverging. Lowercase 𝑛denotes the total
+number of occurrences in the turn pattern catalogue. The CA0048 trajectories continue the turn toward an
+eastbound continuation, whereas HLHRS_l1 cuts the initial turn shorter, continues farther north, and subsequently
+forms the identified left turn pattern. (b) Predictions for 𝑁=40 distinct HLHRS_l1 turn events (15 test + 25
+validation), with validation added because only 15 test aircraft yielded eligible prediction cases for this pattern.
+𝐾=20 sampled futures per event. Blue shows the last 12 of the 43 observed points displayed for clarity, green the
+ground truth future, and red the model samples.
+22
+
+
+Figure 12 shows a representative two-mode example near San Francisco International Airport (SFO). The reference
+catalogue contains two departure patterns with similar initial geometry: clustered pattern CA0048 (𝑛= 1,408) and
+HLHRS_l1 (𝑛= 375). Both depart SFO and initially execute a similar right turn, but their later geometries diverge. The
+CA0048 trajectories maintain the turn for longer and continue predominantly eastward, whereas HLHRS_l1 cuts the
+initial turn shorter, continues farther north, and subsequently forms a left-turn pattern. The corresponding predictions are
+constructed from test and validation cases belonging only to HLHRS_l1. Even in this setting, FlowATC samples populate
+both the northbound and eastbound continuations before the trajectories become fully distinguishable, indicating that
+FlowATC preserves multimodal uncertainty when the observed history is still compatible with more than one learned
+continuation. At the same time, the ground-truth future remains covered by a substantial subset of the samples.
+A more complex example is shown in Fig. 13, where six recurring turn patterns and a derived No Turn cohort
+share a similar inbound segment and then diverge into a fan-shaped set of continuations near Daly City. The catalogue
+identifies the following turn patterns in this region: CA0012 (𝑛= 1,125), CA0011 (𝑛= 274), CA0005 (𝑛= 168),
+CA0004 (𝑛= 105), CA0003 (𝑛= 127), and CA0017 (𝑛= 861). In addition, the visualization includes a No Turn cohort
+(𝑛= 322), comprising historical flights that share the same incoming corridor and continue through the branching region
+without entering one of the detected turn patterns. The associated prediction panels show two separate test subsets,
+built from 𝑁= 40 (CA0012) and 𝑁= 29 (CA0017) distinct turn events with 𝐾= 20 sampled futures per event. In both
+cases, conditioned on the shared incoming geometry, FlowATC samples across several plausible outgoing branches
+while still covering the ground-truth continuation. However, not all branches are populated equally. The predictions
+concentrate most strongly on the historically dominant continuations, which are the patterns CA0012, CA0017 and
+straight continuation. This suggests that the observed prefix does not fully disambiguate the downstream branch, so
+FlowATC spreads probability mass over the modes roughly in proportion to how often each is flown (Section VII.C).
+Supporting this interpretation, the branches overlap substantially in turn-start altitude and speed, indicating that the
+preference for some continuations over others is not cleanly explained by simple kinematic separation. Overall, this
+behavior suggests that FlowATC has learned that the relevant uncertainty is not purely pointwise, but is organized
+around a discrete set of geographically recurring maneuver modes.
+Taken together, these examples provide qualitative evidence that FlowATC learns location-specific airspace structure
+from trajectory data alone. Rather than collapsing toward an average future, it places samples across multiple historically
+observed maneuver modes when the observed history remains ambiguous. These qualitative observations motivate the
+quantitative evaluation at branch points of Section VII.C.
+C. Probabilistic Reproduction of maneuvers at Branch Points
+Displacement error and KDE-NLL measure where probability mass lands in space, but neither asks whether the
+model reproduces the maneuver actually flown: at a given decision point, how often aircraft turn, how sharply, and with
+23
+
+
+(a) Six recurring catalogue patterns.
+(b) Flow-model samples for CA0012 test
+events.
+(c) Flow-model samples for CA0017 test
+events.
+Fig. 13
+A fan-shaped multimodal branching region near Daly City. (a) Six recurring catalogue patterns and a
+derived No Turn cohort share a similar incoming trajectory before diverging into distinct continuations: CA0012
+(𝑛= 1,125), CA0011 (𝑛= 274), CA0005 (𝑛= 168), CA0004 (𝑛= 105), CA0003 (𝑛= 127), CA0017 (𝑛= 861), and No
+Turn (𝑛= 322). Lowercase 𝑛denotes the total number of occurrences in the turn pattern catalogue. The No
+Turn group is a visualization-only cohort of historical flights that traverse the shared incoming corridor and
+continue through the branching region without entering one of the detected turn patterns. (b)–(c) Flow-model
+predictions for two separate test-only subsets. Panel (b) shows 𝑁= 40 distinct CA0012 turn events, and panel (c)
+shows 𝑁= 29 distinct CA0017 turn events, with 𝐾= 20 sampled futures per event. Blue shows the last 12 of the
+43 observed points displayed for clarity, green the ground-truth future, and red the model samples.
+what spread. The branch passages of Section VII.A provide the reference needed to ask this directly, and, unlike the
+cataloged events, they include the aircraft that do not turn.
+A branch point merges cataloged patterns lying within 1.5 NM of each other whose incoming headings differ by at
+most 30◦. A passage is selected from the observed history only: at the last observed point, the aircraft heads within 30◦
+of the branch point’s incoming heading, points at it, would reach it within 15 to 90 s at its current speed, and flies within
+the altitude band of the aircraft that fly its cataloged turns. One window is kept per passage. The altitude condition
+removes cruise overflights far above the procedure, which would otherwise inflate the share of straight flight. The
+outcome 𝜃is the net heading change, unwrapped along the path, from the end of the observation until the path leaves
+a 4 NM disc around the branch point. The same function is applied to the observed future and to each of the 𝐾=50
+completions drawn by FlowATC, so the model and its reference are measured on the same footing. On passages that fly
+a cataloged turn, 𝜃recovers the cataloged angle to a median error of 1.0◦without using the catalog’s turn timing. We
+evaluate the 28 branch points that have at least 40 such passages in the held-out test split, 2,329 passages in total; the full
+protocol is given in Appendix I.
+We first ask whether FlowATC reproduces the distribution of maneuvers flown at each branch point, pooled over
+all aircraft that reach it. Figure 14 overlays the observed and sampled distributions of 𝜃at the six branch points with
+the most test passages; all 28 are shown in Appendix I, Fig. 20. FlowATC places its mass on the same modes, at the
+same angles and with comparable weights, including the three-branch fan near Daly City, and its share of straight flight
+matches the observed one within a few percentage points in every panel. Across the 28 branch points, 𝑊1 between
+24
+
+
+60
+40
+20
+0
+20
+0.0
+0.2
+0.4
+0.6
+0.8
+share of passages
+VPBET  (n = 280)
+W 0.7°, ideal blind sampler 0.8°
+straight: 85% observed, 85% predicted
+150
+100
+50
+0
+50
+100
+0.00
+0.05
+0.10
+0.15
+GNNRR+JULOS area  (n = 199)
+W 5.6°, ideal blind sampler 6.4°
+straight: 9% observed, 6% predicted
+50
+0
+50
+100
+150
+0.00
+0.05
+0.10
+0.15
+0.20
+CEPIN+GOYBE area  (n = 145)
+W 0.9°, ideal blind sampler 3.2°
+straight: 22% observed, 20% predicted
+100
+50
+0
+50
+100
+net heading change (°), left < 0 < right
+0.00
+0.05
+0.10
+0.15
+0.20
+share of passages
+EDOYE+JOVNI area  (n = 118)
+W 2.2°, ideal blind sampler 4.5°
+straight: 1% observed, 1% predicted
+60
+40
+20
+0
+20
+40
+net heading change (°), left < 0 < right
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+HAF+VPSHB area  (n = 92)
+W 1.6°, ideal blind sampler 2.1°
+straight: 8% observed, 11% predicted
+50
+25
+0
+25
+50
+net heading change (°), left < 0 < right
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+CEDES  (n = 91)
+W 3.9°, ideal blind sampler 2.4°
+straight: 66% observed, 65% predicted
+observed
+FlowATC (Flow Large)
+Fig. 14
+Observed and sampled maneuver distributions at the six branch points with the most test passages.
+Gray bars: share of observed test passages per bin of net heading change 𝜃(left turns negative, right turns
+positive, straight flight near zero). Green line: share of FlowATC samples (Flow Large, 𝐾=50 per passage) in the
+same bins. Titles give the number of passages 𝑛, the 1-Wasserstein distance 𝑊1 between the two distributions,
+the value an ideal history-blind sampler would reach on this test set, and the observed and predicted shares
+of straight flight (|𝜃| < 10◦). The horizontal range covers the 1st to 99th percentiles of both distributions. No
+catalogue information enters the figure.
+the pooled sampled and observed outcomes averages 3.3◦, weighted by passages. This distance cannot vanish on a
+finite test set: an ideal sampler drawing from the true distribution of each branch point would itself score about 3.8◦.
+FlowATC reaches that level at 16 of the 28 branch points, and predicts a straight-through share of 32.2% against 32.9%
+observed, with a correlation of 0.99 across branch points.
+Reproducing the pooled distribution does not require using the history: a sampler that ignored each aircraft and
+drew from the distribution of its branch point would do so as well. We therefore score each passage individually with
+the fair ensemble continuous ranked probability score (CRPS) [22], a fair finite-ensemble score that compares the 𝐾
+sampled outcomes of one passage with the outcome actually flown, rewarding both accuracy and appropriate spread;
+for a single deterministic prediction it reduces to the absolute error. The reference is a history-blind sampler that, for
+each passage, draws from the observed outcomes of all other passages at the same branch point: it knows the exact test
+distribution but nothing about the aircraft. FlowATC reduces its CRPS by 47% (95% bootstrap interval over branch
+points: 36 to 62%), is better on 82% of passages, and improves on it at all 28 branch points (Table 7). Its sampled
+25
+
+
+intervals are close to calibrated: the central 80% interval contains the observed outcome for 81% of passages and the
+central 95% interval for 92%, so its tails are slightly too narrow. FlowATC thus reproduces maneuvers at two levels:
+marginally, as the distribution of what all aircraft reaching a branch point do, and conditionally, as a close to calibrated
+distributionfor each aircraft given its observed history.
+Table 7
+maneuver fidelity at the 28 branch points (𝑁=2,329 test passages, 𝐾=50 samples each). 𝑊1: 1-
+Wasserstein distance between pooled sampled and observed outcomes, averaged over branch points weighted by
+passages. Straight: share of outcomes with |𝜃| < 10◦(observed: 32.9%). CRPS skill: relative CRPS reduction
+against the history-blind sampler, with 95% bootstrap interval over branch points. Coverage: share of observed
+outcomes inside the central 80% and 95% sample intervals.
+Model
+Params
+𝑊1 (deg)
+Straight (%)
+CRPS skill
+Cov. 80%
+Cov. 95%
+Flow Large
+20.7 M
+3.3
+32.2
+0.47 [0.36, 0.62]
+81.2
+91.9
+Flow Small
+7.1 M
+3.7
+33.1
+0.41 [0.30, 0.58]
+80.9
+93.3
+Flow Tiny
+1.5 M
+9.6
+37.3
+0.25 [0.12, 0.44]
+84.4
+96.0
+CVAE
+1.5 M
+10.4
+31.4
+0.25 [0.13, 0.44]
+74.0
+83.6
+History-blind sampler
+—
+3.8
+32.9
+0
+—
+—
+Catalogued angles only
+—
+27.2
+0.0
+−0.92 [−1.81, −0.35]
+—
+—
+Always straight
+—
+37.1
+100
+−1.35
+—
+—
+Table 7 mirrors the ordering of Section VI. Flow Small is almost as good as Flow Large, with a CRPS skill of 41%
+against 47%, consistent with the saturation observed in Section VI.B, whereas Flow Tiny and the CVAE reach only 25%
+and roughly triple the marginal distance. The CVAE is also the only model whose intervals are clearly too narrow:
+its central 95% interval covers 84% of outcomes. Drawing from the cataloged turn angles alone does worse than the
+history-blind sampler, because, by design, it describes only the aircraft that turn.
+VIII. Conclusion
+We presented FlowATC, a flow-matching architecture for aircraft trajectory prediction that frames the task as
+sequence inpainting. By concatenating observed and noisy tokens in a single DiT conditioned through AdaLN, FlowATC
+samples from the conditional distribution of future trajectories given the observed past. Four findings stand out. First,
+best-of-𝐾accuracy and distributional calibration are related but distinct properties, and generative models dominate
+deterministic and kinematic baselines primarily on the former: at matched capacity, CFM and DDPM both surpass the
+CVAE baseline by 31–41% on minADE@20, while a single sample from either is no better, and sometimes worse,
+than a deterministic point estimate. 𝐾independent samples are what turn this single-sample weakness into a calibrated
+spatial density over future positions that can serve as an input to downstream conflict-risk estimation. Second, CFM is
+consistently the strongest objective at matched parameter count, outperforming DDPM by 11–26% in minADE@20
+across the model sizes we test, though the gap narrows as both objectives scale, with DDPM’s steeper scaling curve
+suggesting it may close entirely beyond the capacities evaluated here. Third, FlowATC is operationally flexible along
+26
+
+
+several axes: error degrades gracefully within the training horizon, temporal decimation to stride 2 costs under 5% in
+minADE@20 while roughly halving inference time, and stride 8 gives a 5× speedup at a 44% accuracy cost. Queried
+beyond the training horizon, FlowATC remains the most accurate model up to 360 s once several samples are drawn,
+and its calibration stays stable where the CVAE’s diverges.
+Lastly, FlowATC learns airspace structure without chart or procedure supervision: approach turns, holding patterns,
+and descent profiles emerge from data alone. At 28 branch points where traffic divides, it reproduces the distribution
+of maneuvers actually flown, including the third of aircraft that continue straight, and gives each aircraft a close to
+calibrated distribution that improves on a history-blind sampler by 47% in CRPS.
+Future Work
+FlowATC, in its current single-modality form, is designed as the first stage of a multi-modal predictor. Because the
+past enters only as additional context tokens, three conditioning streams can be appended without changing the loss or
+the inpainting mechanism:
+1) ATC voice instructions: radio transcripts from Bay Area towers carry controller intent at maneuver initiation
+points; aligning voice embeddings with the trajectory space [23] should sharpen the posterior at turn points.
+2) Weather fields: wind forecasts and SIGMET polygons tokenized as additional context;
+3) FAA airspace structure: the named fixes and directed procedure edges (STARs, SIDs, airways, holding patterns)
+of the Bay Area encoded as a graph conditioning signal.
+Each modality is expected to reduce density variance precisely at decision points where a single observed history is
+consistent with multiple controller instructions. A further stream is the flight plan itself: planned trajectories could be
+inserted conditionally into the future tokens as additional information.
+Funding Sources
+This work was funded by École Polytechnique. Mathurin Petit was hosted at CITRIS and the Banatao Institute,
+University of California, Berkeley, under the Visiting Scholar Researcher program.
+Acknowledgments
+We thank Professor Trevor Darrell and Jiahui Lei from the Berkeley Artificial Intelligence Research Lab (BAIR)
+for their advice regarding trajectory-applied flow motion. We would also like to thank Tom Davis and John Robinson
+from Crown Innovations LLC, Parimal Kopardekar and James Murphy of NASA Ames Research Center, and Dragos
+Margineantu from Boeing for their insightful discussions regarding next-generation airspace decision support tools. We
+also thank Professor Hans-Ludger Dienel from Technische Universität Berlin for coordinating with UC Berkeley.
+27
+
+
+References
+[1] Ivanovic, B., Schmerling, E., Leung, K., and Pavone, M., “Generative Modeling of Multimodal Multi-Human Behavior,” 2018
+IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS), 2018, pp. 3088–3095. https://doi.org/10.1109/
+IROS.2018.8594393.
+[2] Prutsch, A., Schinagl, D., and Possegger, H., “ASCENT: Transformer-Based Aircraft Trajectory Prediction in Non-Towered
+Terminal Airspace,” Proceedings of the IEEE International Conference on Robotics and Automation (ICRA), 2026.
+[3] Yang, S., Liu, L., Chen, B., Cheng, S., Shi, Z., and Zou, Z., “GooDFlight: Goal-Oriented Diffusion Model for Flight
+Trajectory Prediction,” IEEE Transactions on Aerospace and Electronic Systems, Vol. 61, No. 3, 2025, pp. 7447–7465.
+https://doi.org/10.1109/TAES.2025.3536436.
+[4] Salzmann, T., Ivanovic, B., Chakravarty, P., and Pavone, M., “Trajectron++: Dynamically-Feasible Trajectory Forecasting with
+Heterogeneous Data,” European Conference on Computer Vision (ECCV), 2020, pp. 683–700. https://doi.org/10.1007/978-3-
+030-58523-5_40.
+[5] Jiang, C. M., Cornman, A., Park, C., Sapp, B., Zhou, Y., and Anguelov, D., “MotionDiffuser: Controllable Multi-Agent Motion
+Prediction using Diffusion,” Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2023, pp.
+9644–9653. https://doi.org/10.1109/CVPR52729.2023.00930.
+[6] Figuet, B., Krauth, T., and Barry, S., “Generative Short-Term Aircraft Trajectory Prediction with Conditional Flow Matching,”
+Journal of Open Aviation Science, Vol. 4, No. 2, 2026. https://doi.org/10.59490/joas.2026.8468.
+[7] Ho, J., Jain, A., and Abbeel, P., “Denoising Diffusion Probabilistic Models,” Advances in Neural Information Processing
+Systems, Vol. 33, 2020, pp. 6840–6851.
+[8] Song, J., Meng, C., and Ermon, S., “Denoising Diffusion Implicit Models,” International Conference on Learning Representa-
+tions, 2021.
+[9] Lipman, Y., Chen, R. T. Q., Ben-Hamu, H., Nickel, M., and Le, M., “Flow Matching for Generative Modeling,” International
+Conference on Learning Representations, 2023.
+[10] Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., and Polosukhin, I., “Attention Is All
+You Need,” Advances in Neural Information Processing Systems, Vol. 30, 2017, pp. 5998–6008.
+[11] Peebles, W., and Xie, S., “Scalable Diffusion Models with Transformers,” Proceedings of the IEEE/CVF International
+Conference on Computer Vision, 2023, pp. 4195–4205. https://doi.org/10.1109/ICCV51070.2023.00387.
+[12] Tong, Q., Hu, J., Chen, Y., Guo, D., and Liu, X., “Long-Term Trajectory Prediction Model Based on Transformer,” IEEE Access,
+Vol. 11, 2023, pp. 143695–143703. https://doi.org/10.1109/ACCESS.2023.3343800.
+[13] Zhao, Z., Zeng, W., Quan, Z., Chen, M., and Yang, Z., “Aircraft Trajectory Prediction Using Deep Long Short-Term Memory
+Networks,” CICTP 2019, 2019, pp. 124–135. https://doi.org/10.1061/9780784482292.012.
+28
+
+
+[14] Zeng, W., Chu, X., Xu, Z., Liu, Y., and Quan, Z., “Aircraft 4D Trajectory Prediction in Civil Aviation: A Review,” Aerospace,
+Vol. 9, No. 2, 2022, p. 91. https://doi.org/10.3390/aerospace9020091.
+[15] Yin, Y., Zhang, S., Zhang, Y., Zhang, Y., and Xiang, S., “Context-aware Aircraft Trajectory Prediction with Diffusion
+Models,” 2023 IEEE 26th International Conference on Intelligent Transportation Systems (ITSC), 2023, pp. 5312–5317.
+https://doi.org/10.1109/ITSC57777.2023.10422124.
+[16] Briden, J., Johnson, B., Linares, R., and Cauligi, A., “Diffusion Policies for Generative Modeling of Spacecraft Trajectories,”
+AIAA SCITECH 2025 Forum, 2025. https://doi.org/10.2514/6.2025-2775, AIAA Paper 2025-2775.
+[17] Janner, M., Du, Y., Tenenbaum, J. B., and Levine, S., “Planning with Diffusion for Flexible Behavior Synthesis,” International
+Conference on Machine Learning (ICML), Vol. 162, PMLR, 2022, pp. 9902–9915.
+[18] Thiede, L. A., and Brahma, P. P., “Analyzing the Variety Loss in the Context of Probabilistic Trajectory Prediction,” Proceedings of
+the IEEE/CVF International Conference on Computer Vision, 2019, pp. 9954–9963. https://doi.org/10.1109/ICCV.2019.01005.
+[19] Gneiting, T., and Raftery, A. E., “Strictly Proper Scoring Rules, Prediction, and Estimation,” Journal of the American Statistical
+Association, Vol. 102, No. 477, 2007, pp. 359–378. https://doi.org/10.1198/016214506000001437.
+[20] Albergo, M. S., Boffi, N. M., and Vanden-Eijnden, E., “Stochastic Interpolants: A Unifying Framework for Flows and
+Diffusions,” Journal of Machine Learning Research, Vol. 26, No. 209, 2025, pp. 1–80.
+[21] Federal Aviation Administration, “NIITE FOUR DEPARTURE (RNAV) (NIITE4.NIITE), San Francisco International Airport
+(SFO),” https://www.faa.gov/aero_docs/dtpp/2607/00375NIITE.PDF, 2026. FAA Terminal Procedures Publication, cycle 2607,
+effective 9 July–6 August 2026; procedure dated 11 July 2024; accessed 18 July 2026.
+[22] Ferro, C. A. T., “Fair Scores for Ensemble Forecasts,” Quarterly Journal of the Royal Meteorological Society, Vol. 140, No.
+683, 2014, pp. 1917–1923. https://doi.org/10.1002/qj.2270.
+[23] Brusset, L., Petit, M., Kam, J., and Bayen, A., “V2TATC: A Joint Voice-Trajectory Embedding Framework and Dataset for Air
+Traffic Controller Situational Awareness,” arXiv preprint arXiv:2608.28981, 2026. URL https://arxiv.org/abs/2608.28981.
+29
+
+
+Appendices
+The appendices collect supporting material that complements the main article and are useful for reproduction.
+A. Random Sample of Flow-Large Predictions on the Test Set
+To complement the curated multimodal examples of Section VII, which are deliberately selected to illustrate
+branching behavior at known decision points, Figure 15 shows an uncurated sample: 40 test windows drawn uniformly
+at random (fixed seed, no cherry-picking), predicted by Flow Large (20.7 M parameters) at 𝐾=20 with the same 20-step
+Euler integration used throughout the paper. For each panel, blue marks the observed history (open circle: last observed
+point); the dashed green line and star mark the ground-truth future and its final position; the 𝐾=20 sampled trajectories
+are drawn as thin rays, coloured by the Gaussian KDE density (Scott’s-rule bandwidth, Eq. (4)) of their endpoint, with
+the same density shown as filled contours.
+The large majority of panels show the predicted density tightly bracketing the ground truth, on both straight segments
+and turns, including one holding pattern reproduced almost exactly. A small minority (2 of the 40 panels shown) instead
+show the sampled density missing the realized outcome entirely. This is not hidden or excluded: an honest sample from
+a genuinely uncertain predictor occasionally misses, and this is precisely the behavior that KDE-NLL penalizes and that
+a best-of-𝐾figure alone would let a model hide.
+B. Data Preprocessing details
+Raw CSV files are ingested per aircraft, deduplicated on timestamp, and segmented into continuous flight segments:
+a new segment begins whenever the callsign changes or the inter-sample gap exceeds 120 s. Raw geodetic coordinates
+present three difficulties for neural processing: longitude is non-linear (one degree covers different physical distances
+at different latitudes), true track is a circular variable (359◦→0◦), and position and velocity live at incompatible
+scales. We resolve these by projecting onto a local tangent-plane Cartesian frame centered on SFO (𝜙0 = 37.6213◦N,
+𝜆0 = 122.3790◦W):
+𝑥= (𝑅+ ℎ) cos 𝜙(𝜆−𝜆0),
+𝑦= 𝑅(𝜙−𝜙0),
+𝑧= ℎ,
+(13)
+with velocity components 𝑣𝑥= 𝑣sin 𝜃, 𝑣𝑦= 𝑣cos 𝜃, 𝑣𝑧= ¤ℎ. † Segments are windowed into 86-point sequences with a
+stride of 10.
+To expose the true timing to the network, we compute, for each sample, the elapsed time since the start of its window,
+apply a sinusoidal embedding [10] to it, and pass the result through a small MLP before adding it to the corresponding
+input token. Flight segments and windows that are entirely on the ground (ADS-B on_ground flag) are discarded
+during preprocessing, together with a small number of windows containing corrupted altitude readings (< −50 m);
+†The altitude term (𝑅+ ℎ) appears in the east component 𝑥but not in the north component 𝑦, where it would contribute a < 0.2% correction
+(ℎ≪𝑅); this asymmetry has no practical effect on the meter-scale features, which are z-score normalized regardless.
+30
+
+
+Fig. 15
+Uncurated random sample of 40 test-set predictions
+31
+
+
+x0 ∼N
+x1 ∼𝑝data
+Flow Matching (straight paths)
+x𝑇∼N
+x0 ∼𝑝data
+DDPM (curved / multi-step)
+Fig. 16
+Conceptual comparison of Flow Matching and DDPM generation. Flow Matching transports samples
+along straight conditional paths, requiring fewer integration steps and yielding a simpler training objective.
+DDPM reverses a Markov noising chain along curved trajectories.
+every retained window contains at least one airborne sample. The train/validation/test split is drawn at the level of
+individual aircraft: the set of unique ICAO24 transponder codes is shuffled once with a fixed seed (42) and partitioned
+85%/10%/5%, and every window belonging to a given aircraft is assigned entirely to a single split, preventing correlated
+windows from leaking across splits.
+C. Flow matching and DDPM
+Diffusion models and flow matching are two families of generative models that learn to sample from a data
+distribution 𝑝(x) by reversing a noise corruption process; both can be made conditional by holding a context signal
+fixed while the target is denoised. Denoising Diffusion Probabilistic Models [7] define a Markov chain that gradually
+adds Gaussian noise to a data sample over 𝑇diff steps until it is indistinguishable from pure noise. A network 𝜺𝜃is
+trained to predict the added noise, enabling step-by-step denoising from a pure-noise sample at inference. The number
+of inference steps can be reduced (e.g. from 1000 to 100) with the DDIM sampler [8] without significant quality loss.
+Conditional Flow Matching [9] learns a velocity field 𝑢𝜃(x, 𝑡) that transports samples along straight-line paths from a
+Gaussian base distribution (𝑡= 0) to the data distribution (𝑡= 1). The objective is simple and deterministic: at any
+interpolation x𝑡= (1 −𝑡)x0 + 𝑡x1, the target velocity is the constant (x1 −x0). At inference, integrating the learned field
+with a few Euler steps produces a clean sample. Compared to DDPM, CFM has a simpler loss, requires fewer steps, and
+yields straighter sampling trajectories in data space (Fig. 16).
+D. CVAE Decoder Variance at the First Prediction Step
+The CVAE’s near-flat error curve at short horizon (Fig. 7a) and its NLL divergence at long horizon share a common
+cause. Decomposing the step-1 prediction on the held-out test set: the true one-step displacement averages 311 m, the
+decoder’s conditional-mean error is 111 m (about twice the 56 m of constant velocity), but the sampled Gaussian noise
+adds a further 𝜎0 ≈605 m horizontally. This 𝜎sits at its trained floor (≈50 m) for every subsequent step, so the excess
+variance at 𝑛=1 is a boundary effect rather than a genuine displacement error. Deterministic sampling (only latent
+32
+
+
+draw, no decoder noise) confirms this: step-1 minADE@1 drops from 542.6 m to 118.1 m. The noise cannot simply be
+removed, however: because the prior places ≈95% of its mass on a single category for a given observed history (12 of
+25 categories carry non-negligible mass in aggregate, but conditionally the latent is nearly one-hot), disabling decoder
+noise collapses minADE@20 back toward minADE@1 (853.4 vs. 508.2 m) instead of the 𝐾draws exploring 𝐾distinct
+futures. The model’s cumulative time encoding contributes to this: the decoder can recover the local inter-step gap for
+𝑛≥1 by differencing two elapsed-time values it received itself, but the very first future gap (last observation to first
+prediction) is reachable only through the compressed history encoding. That defect, however, acts on the conditional
+mean, not on the decoder variance: at 𝑛=1 the mean is already within 111 m of the truth while 𝜎0 ≈605 m, so the
+offset is five times larger than any error the mean could contribute, and a better-informed mean cannot remove it. The
+best-of-𝐾comparisons that carry our headline results are driven by 𝜎and by the latent’s conditional diversity, neither of
+which depends on this input, so we do not expect a time-corrected CVAE to change the 𝐾=20 ordering of Table 3.
+The same limitation applies architecturally to the deterministic LSTM baseline, which uses an identical no-feedback
+decoder driven solely by cumulative 𝑡rel; its own step-1 error (94.3 m) is nearly twice the steady per-step increment
+observed from step 2 onward (≈50 m), consistent with the same missing local time gap.
+E. Full 𝐾∈{1, 5, 20} Displacement Sweep
+Figure 7, in the main text, shows minDisp@1, minDisp@20 and density calibration only; 𝐾=5 is omitted there to
+keep the figure to three panels, since it sits between the 𝐾=1 and 𝐾=20 stories without adding a qualitatively new one.
+Figure 17 reports the complete sweep for completeness.
+Fig. 17
+Full 𝐾∈{1, 5, 20} displacement-error sweep, extending Fig. 7 with the intermediate 𝐾=5 panel.
+F. ADS-B Downsampling — Full Results
+Because downsampling changes the physical time each future token represents, the KDE NLL columns of Table 8 are
+evaluated at the token index whose horizon is closest to the stride-1 reference rather than at a fixed token index (see table
+caption for the resulting horizons). Under this matched-horizon comparison, NLL@43 rises from 20.2 to 22.2–23.0 nats
+across the three strides. Because NLL is a log-likelihood, this modest-looking increase in nats corresponds to the
+ground-truth density dropping by a factor of 𝑒2.0 ≈7.4× (stride-2) to 𝑒2.8 ≈16.4× (stride-4), a substantially larger
+33
+
+
+effective loss of calibration than the nat values alone suggest. NLL@10, by contrast, is essentially unchanged and
+even improves slightly at stride-8 (12.9 vs. 13.3 nats, 𝑒−0.4 ≈1.5× more likely). The architecture retrains effectively
+on lower-rate feeds, while the model’s confidence at long horizons becomes markedly less trustworthy under coarser
+sampling, even though the displacement-error degradation (Table 8) looks comparable in relative terms across horizons.
+Table 8
+Effect of temporal stride on Flow Large (20.7 M params), 𝑁= 63,016 test trajectories. Distances in
+metres ± SEM. KDE NLL in nats, reported at the token whose physical horizon is nearest the stride-1 reference
+(𝑛=10, 20, 43 ≈30, 60, 129 s); stride models thus reach {30, 60, 132} s (stride 2), {36, 60, 132} s (stride 4) and
+{24, 48, 120} s (stride 8). Bold = reference.
+Model
+Stride
+𝐾= 1
+𝐾= 5
+𝐾= 20
+KDE NLL@𝑛
+ms/pred
+minADE
+minFDE
+minADE
+minFDE
+minADE
+minFDE
+𝑛=10
+𝑛=20
+𝑛=43
+Flow Large
+1
+903.4±5.9
+2156.8±14.2
+467.3±3.4
+1013.2±7.8
+307.4±2.4
+576.8±5.3
+13.3±0.1
+17.5±0.5
+20.2±0.4
+157.07
+Flow Large
+2
+986.7±6.6
+2315.9±15.9
+494.2±3.5
+1044.4±8.1
+322.6±2.3
+585.5±5.1
+13.8±0.1
+18.2±0.4
+22.2±0.9
+83.57
+Flow Large
+4
+1031.2±6.7
+2271.0±15.1
+531.2±3.8
+1066.3±8.3
+352.5±2.7
+619.8±5.6
+15.1±0.2
+18.8±0.4
+23.0±0.7
+49.85
+Flow Large
+8
+1310.7±8.5
+2631.3±17.5
+674.7±4.8
+1239.2±9.7
+443.8±3.2
+711.3±6.3
+12.9±0.1
+16.2±0.2
+22.5±0.6
+31.55
+G. Full Extrapolation Sweep and Shard-Stitching Detail
+Figure 9 in the main text omits minDisp@5; Figure 18 reports the complete 𝐾∈{1, 5, 20} sweep. Because
+Δ𝑡virt = 𝐻max/43 is fixed once 𝐻max is chosen, a single run only gives good local temporal resolution near its own 𝐻max:
+a run with 𝐻max = 360 s has Δ𝑡virt ≈8.4 s/token, under-resolving the 0–90 s range relative to a dedicated 𝐻max = 90 s
+run (Δ𝑡virt ≈2.1 s/token). We therefore stitch three independent shards, each with its own 43-token resampling and its
+own 𝐾=50 posterior draws, keeping for each time band the shard with the finest resolution available: (0, 90] s from
+𝐻max=90, (90, 180] s from 𝐻max=180, (180, 360] s from 𝐻max=360. The visible seam at each band boundary (most
+noticeable at 𝑡≈180 s) is not a change in model behavior but a change of estimator: the two shards on either side differ
+simultaneously in token resolution, in the finite-sample statistics computed from a different draw of the 𝐾posterior
+samples, and in which subset of test windows passes the coverage filter at that instant.
+Fig. 18
+Full 𝐾∈{1, 5, 20} extrapolation sweep, extending Fig. 9 with the intermediate 𝐾=5 panel.
+34
+
+
+H. Turn Catalogue: Detection, Classification, and Grouping Protocol
+We first retain sustained airborne trajectory segments by requiring a geometric altitude of at least 150 m and a
+ground speed of at least 25 m s−1. After filtering, gaps longer than 30 s split a track into separate segments, and segments
+containing fewer than five points are discarded.
+Fig. 19
+A turn event is defined as the transition between two locally stable ground-track segments. The detected
+turn start and end delimit this transition, while the turn angle, Δ𝜓, is the wrapped angular difference between
+the mean ground-track directions of the pre-turn and post-turn stable segments.
+The detector uses the ADS-B-reported true track, smoothed with a short circular moving average to avoid
+discontinuities at 0◦/360◦. A stable segment is a sequence over which the pointwise ground-track rate remains below
+0.5◦s−1 and the cumulative drift from the initial course remains below 6◦. For two consecutive stable segments with
+circular-mean directions ¯𝜓pre and ¯𝜓post, the signed turn angle is
+Δ𝜓=
+  ¯𝜓post −¯𝜓pre + 180◦ mod 360◦
+−180◦.
+(14)
+Positive and negative values denote right and left turns, respectively, and the interval between the two stable
+segments defines the detected turn start and end. Changes of at least 20◦are retained directly as major turns; smaller
+changes between 10◦and 20◦are retained only when the observed path geometry is consistent with the reported
+ground-track change. Smaller course adjustments are excluded from the pattern catalogue. Extending the association
+rule of Section VII.A, turns without an eligible navigation reference within 1 nautical mile are left unmatched and
+excluded from both pattern populations. After detecting individual turn events, we group events that occur in the same
+local area and exhibit similar incoming and outgoing ground-track directions, together with a similar overall signed
+ground-track change, Δ𝜓. When a turn start is associated with a single navigation reference, patterns are formed at the
+fix level; in dense terminal regions with several nearby references, turns are grouped regionally. Only recurring and
+geometrically coherent groups are retained as catalogue patterns, with limited manual review used to resolve evident
+duplicates or inconsistent cases.
+35
+
+
+I. Branch Points, Passages and Scores
+Branch points.
+Catalogued patterns with at least 60 events are located at the position of their associated fix (isolated
+family) or at the median start of their turns (clustered family). Patterns lying within 1.5 NM of each other whose
+incoming headings differ by at most 30◦are merged; the branch point’s incoming heading is the event-weighted circular
+mean. This yields 80 branch points.
+Passages.
+A window is a candidate passage if, at its last observed point, the aircraft is airborne (altitude at least 150 m,
+ground speed at least 25 m s−1, as in the catalogue), heads within 30◦of the incoming heading, has the branch point
+within 25◦of its heading, and would reach it in 15 to 90 s at its current speed. Candidate windows of the same aircraft
+separated by less than 900 s form one passage, represented by the window whose time to the branch point is closest to
+25 s. The altitude band of a branch point spans the 5th to 95th percentile, widened by 500 m, of the altitudes of training
+and validation passages that fly one of its catalogued turns; branch points with fewer than 10 such passages have no
+band. Test passages outside the band are discarded. The evaluation uses the 28 branch points with at least 40 remaining
+test passages.
+Outcome.
+Headings are computed over four-step segments and unwrapped along the path, starting from the last
+observed heading. The outcome 𝜃is the accumulated heading change at the first point, after the closest approach, where
+the path is more than 4 NM from the branch point. When the path is still within the disc at the end of the window
+(26.9% of test passages) or never enters it (0.6%), 𝜃is taken at the end of the window; the same rule applies to every
+sample. On the 771 test passages that fly a catalogued turn of their branch point, 𝜃matches the catalogued angle to a
+median of 1.0◦, and to within 15◦for 86% of them.
+Scores.
+𝑊1 compares the 𝐾𝑛pooled sampled outcomes of a branch point with its 𝑛observed outcomes. The level of
+an ideal history-blind sampler is estimated as half the mean 𝑊1 between two random halves of the observed outcomes,
+since 𝑊1 between 𝑛empirical values and their law scales as 𝑛−1/2; simulations on mixtures shaped like branch points
+agree within 4%. For a passage with samples 𝜃(1), . . . , 𝜃(𝐾) and observed outcome 𝜃, the ensemble CRPS is
+CRPS = 1
+𝐾
+∑︁
+𝑘
+𝜃(𝑘) −𝜃
+ −
+1
+2𝐾(𝐾−1)
+∑︁
+𝑘≠𝑙
+𝜃(𝑘) −𝜃(𝑙).
+(15)
+The history-blind sampler uses as ensemble the observed outcomes of all other test passages at the same branch point.
+Bootstrap intervals resample branch points 1000 times.
+36
+
+
+60
+50
+40
+30
+20
+10
+0
+10
+20
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+VPBET (n = 280)
+W 0.7° (blind 0.8°), straight 85%/85%
+150
+100
+50
+0
+50
+100
+0.000
+0.025
+0.050
+0.075
+0.100
+0.125
+0.150
+0.175
+GNNRR+JULOS area (n = 199)
+W 5.6° (blind 6.4°), straight 9%/6%
+50
+0
+50
+100
+150
+0.000
+0.025
+0.050
+0.075
+0.100
+0.125
+0.150
+0.175
+0.200
+CEPIN+GOYBE area (n = 145)
+W 0.9° (blind 3.2°), straight 22%/20%
+100
+50
+0
+50
+100
+0.000
+0.025
+0.050
+0.075
+0.100
+0.125
+0.150
+0.175
+0.200
+EDOYE+JOVNI area (n = 118)
+W 2.2° (blind 4.5°), straight 1%/1%
+60
+40
+20
+0
+20
+40
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+HAF+VPSHB area (n = 92)
+W 1.6° (blind 2.1°), straight 8%/11%
+60
+40
+20
+0
+20
+40
+60
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+CEDES (n = 91)
+W 3.9° (blind 2.4°), straight 66%/65%
+80
+60
+40
+20
+0
+20
+40
+60
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+NORCL (n = 87)
+W 4.5° (blind 3.2°), straight 66%/71%
+20
+0
+20
+40
+60
+80
+100
+120
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+MITOE+YICPU (n = 84)
+W 2.8° (blind 2.2°), straight 63%/63%
+20
+10
+0
+10
+20
+30
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+BRIXX+GEEGY area (n = 81)
+W 1.7° (blind 1.3°), straight 2%/2%
+50
+0
+50
+100
+150
+0.00
+0.02
+0.04
+0.06
+0.08
+0.10
+0.12
+0.14
+DUMBA+NIRYI area (n = 79)
+W 1.8° (blind 4.3°), straight 14%/17%
+50
+0
+50
+100
+150
+200
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+MLPTS+STCLR (n = 77)
+W 7.8° (blind 7.7°), straight 0%/1%
+50
+0
+50
+100
+150
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+LOUPE (n = 77)
+W 5.1° (blind 6.5°), straight 66%/64%
+50
+25
+0
+25
+50
+75
+100
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+LOZIT+VPSTB (n = 74)
+W 3.2° (blind 3.0°), straight 1%/2%
+20
+0
+20
+40
+60
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+DIVEC+GRRIF (n = 73)
+W 1.3° (blind 1.6°), straight 7%/7%
+50
+40
+30
+20
+10
+0
+10
+20
+0.0
+0.2
+0.4
+0.6
+0.8
+CORKK+VPSLM (n = 72)
+W 0.8° (blind 0.8°), straight 92%/91%
+20
+0
+20
+40
+60
+0.000
+0.025
+0.050
+0.075
+0.100
+0.125
+0.150
+0.175
+ALVAR+WUVON (n = 70)
+W 1.2° (blind 2.2°), straight 34%/34%
+150
+100
+50
+0
+50
+100
+0.00
+0.02
+0.04
+0.06
+0.08
+0.10
+0.12
+0.14
+GALOO+HUSSH (n = 68)
+W 9.9° (blind 8.5°), straight 16%/12%
+20
+10
+0
+10
+20
+30
+40
+50
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+ARCHI+MISON (n = 67)
+W 2.0° (blind 1.2°), straight 16%/10%
+100
+50
+0
+50
+100
+0.000
+0.025
+0.050
+0.075
+0.100
+0.125
+0.150
+0.175
+0.200
+VPSLA (n = 62)
+W 6.1° (blind 7.6°), straight 23%/22%
+80
+60
+40
+20
+0
+20
+40
+60
+0.00
+0.02
+0.04
+0.06
+0.08
+0.10
+0.12
+0.14
+HLHRS (n = 59)
+W 5.1° (blind 6.8°), straight 15%/13%
+80
+60
+40
+20
+0
+20
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+OAK+TRUKN (n = 58)
+W 2.9° (blind 3.2°), straight 31%/22%
+100
+50
+0
+50
+100
+0.0
+0.1
+0.2
+0.3
+0.4
+KIKRR+NIITE (n = 57)
+W 4.9° (blind 8.5°), straight 5%/6%
+100
+50
+0
+50
+100
+0.000
+0.025
+0.050
+0.075
+0.100
+0.125
+0.150
+0.175
+0.200
+CHERA+MAAYS area (n = 50)
+W 3.0° (blind 6.5°), straight 0%/1%
+20
+0
+20
+40
+60
+80
+100
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+SEITZ (n = 46)
+W 4.2° (blind 5.3°), straight 15%/19%
+25
+0
+25
+50
+75
+100
+125
+150
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+AMEBY+JINES area (n = 42)
+W 14.7° (blind 8.7°), straight 50%/36%
+40
+30
+20
+10
+0
+10
+20
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+DMYUJ+KLIDE area (n = 41)
+W 0.5° (blind 1.3°), straight 12%/12%
+20
+0
+20
+40
+60
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+FRNNY+GINJU (n = 40)
+W 2.5° (blind 3.1°), straight 28%/29%
+20
+10
+0
+10
+20
+30
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+TAMMM (n = 40)
+W 1.5° (blind 1.2°), straight 80%/83%
+net heading change (°), left < 0 < right
+share of passages
+observed
+FlowATC (Flow Large)
+37

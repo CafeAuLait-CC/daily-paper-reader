@@ -1,0 +1,2096 @@
+FlowSGS: Improving Flow Matching Priors for
+Inverse Imaging with Stochastic Interpolants
+Tianao Li1,3, Xinhui Qian2, Emma Alexander1,3
+1Department of Computer Science, 2Department of Statistics and Data Science, Northwestern University
+3 NSF-Simons AI Institute for the Sky (SkAI)
+ealexander@u.northwestern.edu
+Abstract
+Flow matching has emerged as the state-of-the-art generative model and has been
+used for plug-and-play (PnP) priors to solve inverse problems in computational
+imaging. However, existing flow-based inverse solvers assume linear forward mod-
+els and/or make simplifying approximations in posterior sampling. To circumvent
+these problems, we introduce FlowSGS, a flow-based posterior sampling method
+using Split Gibbs Sampling (SGS) to decompose the posterior into a likelihood step
+and a prior step. Specifically, we sample from the likelihood step using Langevin
+dynamics and leverage the Stochastic Interpolants (SI) framework to integrate a
+pretrained flow model into the prior step. We provide a form for the prior step
+that uses SI’s reverse-time SDE, and show connections to previous PnP methods.
+Moreover, with the aid of the flow prior’s straight probability paths and a novel
+timestep correction technique for the reverse-time SDE, FlowSGS requires fewer
+network evaluations in its prior step than plug-and-play diffusion samplers. Our
+experiments show state-of-the-art performance on a range of inverse problems. For
+the first time, we provide an experiment on a nonlinear inverse problem (Fourier
+phase retrieval) for flow-based inverse solvers.
+1
+Introduction
+Computational imaging systems aim to reconstruct an image x ∈Rn encoded in incomplete and
+noisy measurements y = A(x) + n ∈Rm, where A(·) is the forward model and n represents noise.
+These inverse problems are often ill-posed due to information loss, leading to uncertainty in the
+reconstructed image ˆx. To fully explore the solution space, it is often desired to sample from the
+Bayesian posterior
+ˆx ∼p(x|y) ∝p(y|x)p(x),
+(1)
+where p(y|x) is the data likelihood and p(x) is the prior. This is particularly important for scientific
+and medical imaging, where high-stakes decisions are being made in downstream applications.
+Deep generative models have significantly improved posterior sampling methods by implicitly
+capturing complex priors. Score-based diffusion models [50, 27, 52] learn the score function of the
+target distribution and transform samples of a base distribution (often a standard normal distribution) to
+samples of the target distribution by solving the reverse-time SDE of the diffusion process. Diffusion
+models are capable of learning complex data distributions of images and videos, and have been widely
+used to learn prior distributions p(x) as plug-and-play (PnP) priors. Most diffusion samplers draw
+posterior samples by conditional sampling on the measurements y, either by taking gradient steps
+towards higher data likelihood (e.g., DPS [14] and many others [29, 33, 26, 41]), or projection onto
+the measurement space (e.g., [51, 16, 15]). PnP-DM [58] and several other works [68, 59, 17, 13]
+leverage variable splitting to split the sampling into a likelihood step and a prior step, where a
+pretrained diffusion model is incorporated as a plug-and-play prior. Inversebench [67] provides a
+Preprint.
+arXiv:2609.20769v1  [cs.CV]  17 Sep 2026
+
+
+Figure 1: A high-level overview of FlowSGS, a principled posterior sampler using flow matching
+as a plug-and-play prior. Our method iterates between a likelihood step and a prior step, where the
+former uses Langevin dynamics and the latter involves solving a reverse-time SDE using a pretrained
+flow prior (left). We show sampling trajectories of FlowSGS on motion deblurring (right).
+comprehensive benchmark of plug-and-play diffusion samplers on a variety of real-world inverse
+problems, where PnP-DM [58] and DAPS [62] stand out as the state-of-the-art diffusion samplers.
+Flow matching is an emerging generative technique that improves upon diffusion models by construct-
+ing straighter probability paths, which provide more efficient sampling, easier training, and higher
+quality data generation [37, 38]. Although there already exist a number of flow-based inverse solvers,
+they rely on mathematical approximations [47, 6, 64, 60, 42, 45, 34, 5] or assume a linear forward
+model [47, 64, 60, 42, 5]. Specifically, PnP-Flow [42] iterates between a data-fidelity gradient step,
+an interpolation step, and a denoising step that uses a flow network as a time-dependent denoiser.
+FlowChef [45] uses gradient-free vector-field steering to push the probability-flow ODE trajectory
+toward measurement-consistent points. FlowDPS [34] derives the flow version of Tweedie’s formula,
+and estimates both the clean image and noise component to simultaneously maintain data-consistency
+and generative quality. Other work [18] turns flow networks into a principled prior and learns the
+posterior via variational inference. Importantly, none of these models has been demonstrated on a
+nonlinear inverse problem.
+Stochastic Interpolants (SI) provide a recent unifying framework that reveals the deep connection
+between diffusion sampling and flow matching [2]. We leverage their connection between score
+functions and velocity fields to present FlowSGS, a more principled posterior sampler using flow
+matching as a plug-and-play prior. Specifically, our variable splitting technique avoids the major
+simplifying assumptions and approximations of previous flow matching samplers. We split the
+posterior sampling into a likelihood step and a prior step via split Gibbs sampling (SGS), and solve
+the two steps iteratively with Langevin dynamics and a pretrained flow network. In contrast to prior
+flow-based methods that rely on likelihood gradients [34], gradient-free trajectory steering [45],
+or variational approximation of the posterior [18], our SGS-based splitting provides a principled
+sampling method that targets the actual Bayesian posterior. With the aid of a novel timestep correction
+technique, our integration of flow priors provides faster sampling with fewer steps needed in the prior
+step than PnP-DM [58], which aligns with the theory that straighter probability paths used in flow
+priors lead to better sampling. A high-level overview of FlowSGS is shown in Figure 1.
+Our experiments in Section 4 show state-of-the-art image reconstruction compared to both diffusion-
+and flow-based methods. We demonstrate accurate posterior sampling for a toy example with
+known posterior, show high image quality on linear (motion deblurring, Gaussian deblurring, super-
+resolution, compressed-sensing MRI) and nonlinear (Fourier phase retrieval) tasks.
+2
+Preliminaries
+We present existing work that provides foundations for our method and theory.
+2
+
+
+2.1
+Stochastic interpolants
+Stochastic interpolants (SI) [3, 2] provide a unified framework for diffusion models and flow matching,
+which both consider the process of interpolating data distribution p(x∗) and noise (usually a standard
+normal distribution N(0, I)) for generative modeling. Such interpolation processes have the form
+xt = αtx∗+ σtϵ,
+ϵ ∼N(0, I),
+(2)
+where (αt, σt) are a pair of smooth functions defined in t ∈[0, 1], satisfying: (i) α2
+t + σ2
+t > 0
+for
+all t ∈[0, 1]; (ii) αt and σt are differentiable on [0, 1]; and (iii) α0 = σ1 = 1, α1 = σ0 = 0. Under
+these conditions, the stochastic process in (2) interpolates without bias between clean data p(x0) at
+t = 0 and isotropic Gaussian noise N(0, I) at t = 1. To draw samples from the data distribution
+using the interpolant process, one can solve the reverse-time SDE [4, 2] given by
+dxt =
+
+v(xt, t) −1
+2wts(xt, t)
+
+dt + √wt d ¯
+wt
+(3)
+where v(x, t) = E [ ˙xt|xt = x] is the velocity field, s(x, t) = ∇xt log pt(x) is the score function,
+and wt ≥0 is a diffusion coefficient picked at sampling time, and ¯
+wt is the reverse-time Wiener
+process. Different choices of the interpolant schedule (αt, σt) have been used in diffusion models and
+flow matching (e.g., the VP-SDE used in score-based diffusion models [27, 52], the linear interpolant
+used in Rectified flow [38]). We summarize common choices of the interpolant schedules (αt, σt) and
+diffusion coefficients wt in Section A.1. While sampling with (3) requires training both a flow model
+for the velocity field v(x, t) and a diffusion model for the score function s(x, t), prior work [2, 40]
+has shown that the velocity and the score convert from one to the other:
+s(xt, t) = αtv(xt, t) −˙αtx
+σtγt
+,
+(4)
+where γt ≜˙αtσt −αt ˙σt < 0. (4) allows sampling with the reverse-time SDE in (3) using a single
+pretrained score or velocity model. For instance, replacing s(·, ·) with v(·, ·) in (3) yields
+dxt =
+
+1 −wtαt
+2σtγt
+
+v(xt, t) + wt ˙αt
+2σtγt
+xt
+
+dt + √wt d ¯wt.
+(5)
+When the diffusion coefficient wt = 0, (5) reduces to the probability-flow ODE:
+dxt = v(xt, t)dt,
+(6)
+which has been widely used in the sampling process of flow matching.
+2.2
+Split Gibbs sampling
+Variable splitting has been widely applied to inverse problem solving, even before the era of deep
+generative priors. Algorithms such as Half-Quadratic Splitting (HQS) [11, 24], and the Alternating
+Direction Method of Multipliers (ADMM) [9, 44] split the regularized MAP optimization into a
+likelihood step and a denoising step, where a pretrained denoiser can be plugged in [56, 10, 63, 30].
+Unrolled methods further turn these plug-and-play solvers into a neural network, and allow task-
+specific training of the plugin denoisers [43]. However, these methods only produce a point estimate,
+rather than drawing random samples from the Bayesian posterior.
+Split Gibbs Sampling (SGS) [57] provides a solution for this and has already seen applications in
+posterior sampling with classic priors [46], pretrained denoisers [7, 20], or diffusion priors [59, 58, 13].
+SGS decomposes Bayesian posterior sampling in (1) into a likelihood step and a prior step, and
+alternates between sampling from these two steps until convergence. Specifically, in the k-th iteration,
+SGS has updates
+zk+1 ∼π(z|xk) ∝exp
+
+−f(z; y) −∥xk −z∥2
+2ρ2
+k
+
+,
+▷Likelihood step
+(7)
+xk+1 ∼π(x|zk+1) ∝exp
+
+−g(x) −∥x −zk+1∥2
+2ρ2
+k
+
+,
+▷Prior step
+(8)
+where f(z; y) = −log p(y|z) is the negative log data likelihood, g(x) = −log p(x) is the negative
+log prior, and {ρk}K−1
+k=0 are augmented Lagrangian variables, optionally with an annealing sched-
+ule [58]. By introducing a modular structure in the sampling process, SGS solves the likelihood step
+and prior step independently, and simplifies the complexity of each subproblem.
+3
+
+
+3
+Method
+FlowSGS uses Split Gibbs Sampling (SGS) to alternate between a likelihood step and a prior step
+coupled by augmented Lagrangian parameters {ρk}. We use Langevin dynamics to sample from the
+likelihood step because it applies to both linear and nonlinear forward models, and use an exponential
+decay annealing strategy for the coupling parameter ρk = max(ρ0αk, ρmin). Among existing
+methods, this is most similar to PnP-DM [58], which leverages the same problem decomposition but
+uses a diffusion model in its prior step.
+Prior step
+We present four significant interventions in the prior step, expressed as lines 4-7
+in Algorithm 1, which accommodate the replacement of diffusion models with more efficient and
+accurate sampling via flow matching. Line 4 computes the correct starting timestep tk for the prior
+step in the k-th iteration, adapted to the current noise level ρk and the interpolant schedule of any
+pretrained flow model, see Theorem 1. Line 5 scales the output of the likelihood step zk such that
+its noise level matches the noise σtk in the interpolant at tk. Line 6 samples from the prior step
+by solving the reverse-time SDE with the Euler-Maruyama method [35]. Line 7 shows the SI’s
+reverse-time SDE using only the velocity field, to our knowledge, used here for the first time in
+posterior sampling for inverse problems. Corollary 1 specifies how our general framework can
+be reduced to PnP-DM with a specific choice of diffusion coefficient. See more implementation
+details of our method in Section C and analysis of convergence in Corollary 2. Our theory-driven
+improvements are shown to be empirically effective in our benchmark experiments in Section 4.3.
+Our ablation studies in Section 4.5 confirm that each of our four interventions is necessary.
+Timestep correction
+At a high level, these interventions lead to improvements over diffusion-based
+methods, both in image quality and in the number of discretization steps needed in the prior step SDE
+solver. As expected, FlowSGS’s flow priors can use fewer sampling steps and generate better results
+than PnP-DM’s diffusion priors (see Section 4.5). Note that this makes the SDE discretization error
+much more significant for flow matching than diffusion models. To mitigate the SDE’s discretization
+error, we propose a timestep correction strategy to be applied before solving the SDE in Line 6
+of Algorithm 1, illustrated in Figure 5a. We empirically validated that our timestep correction
+significantly boosts FlowSGS’s reconstruction quality when the number of discretization steps is
+smaller than 16.
+Likelihood step
+The likelihood step is also significant compared to existing flow-based poste-
+rior samplers. We are the first flow-based method to incorporate measurement likelihood via SGS.
+This change enables key applications in inverse imaging: more accurate posterior estimation (Sec-
+tion 4.2) and nonlinear inverse problems (Section 4.4) with bimodal posteriors. Many methods
+rely on simplifying approximations: some use linear projections between measurement and re-
+covery space [47, 64, 60, 42, 5], while others incorporate the likelihood gradient as guidance for
+the reverse-time SDE/ODE [34] or use gradient-free vector-field steering to enforce measurement
+consistency [45]. In contrast, our method is a sampling method that directly targets the actual
+Bayesian posterior. By avoiding simplifying assumptions, our likelihood step requires more computa-
+tion (Langevin sampling rather than a single gradient step), but provides a more accurate posterior
+Algorithm 1 Posterior sampling with FlowSGS.
+Require: measurement y, forward model A, velocity network vθ(·, ·) pretrained with interpolant
+schedule (αt, σt), diffusion coefficient wt, number of iterations K, coupling parameters {ρk}K−1
+k=0
+1: x0 ∼N(0, I)
+▷Initialization.
+2: for k = 0, 1, . . . , K −1 do
+3:
+zk+1 ∼π(z|xk) ∝exp
+h
+−f(z; y) −∥xk−z∥2
+2ρ2
+k
+i
+▷Sample with Langevin dynamics.
+4:
+tk ←
+
+σt
+αt
+−1
+(ρk)
+▷Compute time tk corresponding to noise level ρk.
+5:
+xtk ←αtk zk+1
+▷Scale zk+1 to match noise level at tk.
+6:
+xk+1 ←Euler–Maruyama(SDE, xtk, tk, 0)
+▷Solve SDE with timestep correction.
+7:
+where the SDE is defined by dxt =
+h
+1 −wtαt
+2σtγt
+
+v(xt, t) + wt ˙αt
+2σtγt xt
+i
+dt + √wt d ¯wt.
+8: end for
+9: return xK
+4
+
+
+estimate in a more principled and widely-applicable way. See more discussions on guidance and
+sampling methods in [58]. In incorporating the general likelihood step, we present the first SGS-based
+sampling method using flow priors.
+3.1
+Prior step with flow matching
+The key observation that drives the design of FlowSGS’s prior step is the fact that sampling from the
+SGS prior step (8) is equivalent to running SI’s reverse-time SDE (3) at the specific starting point
+related to the coupling parameter ρk, which we summarize below in Theorem 1.
+Theorem 1 (Prior step equivalence to SI reverse-time SDE). Suppose (αt, σt) defines an interpolant
+process with gaussian probability path in (2), and αt∗> 0 and t∗satisfies σt∗/αt∗= ρk, running
+the reverse-time SDE in (3) from xt∗= αt∗zk+1 to t = 0 produces samples from the SGS prior step
+π(x|zk+1) in (8).
+See proof of Theorem 1 in Section A.2. While PnP-DM [58] shows a similar equivalence between
+its prior step and the diffusion’s reverse-time SDE, our Theorem 1 generalizes to any Gaussian
+probability path defined by (2) under the SI framework. In fact, we later show in Section 3.2 that
+PnP-DM’s prior step is a special case of our prior step. The insights drawn from Theorem 1 directly
+lead to the timestep conversion, scaling, and reverse-SDE solving in Lines 4-7 of Algorithm 1, which
+we will show to be effective in our ablation studies.
+3.2
+Relation to Existing PnP Methods
+While in this paper we assume a flow prior, another way of using the score–velocity conversion in (4)
+into the reverse-time SDE in (3) is to replace the velocity field v(·; ·) with the score function s(·; ·),
+leading to a FlowSGS prior step using a diffusion model. We show in the following theorem that
+FlowSGS’s diffusion-based prior step with a specific choice of the diffusion coefficient wt results
+in the prior step of PnP-DM [58]. In other words, FlowSGS provides a general framework that can
+incorporate either a diffusion or flow prior, with arbitrary choices of using a score or velocity model,
+the interpolant process, and diffusion coefficients, and PnP-DM is a special case of FlowSGS under
+specific design choices.
+Corollary 1 (PnP-DM as a special case of FlowSGS). Define λt ≜−γt/αt = (αt ˙σt −˙αtσt)/αt. At
+the sampling stage, FlowSGS’s timestep conversion and reverse-time SDE (3) reduce to PnP-DM (see
+(7) in [58]) under specific conditions: the EDM diffusion coefficients αt = sE(t), σt = sE(t)σE(t),
+the score–velocity conversion, and the KL-optimal diffusion coefficient wt = 2λtσt.
+See proof of Corollary 1 in Section A.3. In fact, such a connection is no surprise, since the
+stochastic interpolant framework also includes diffusion models in its mathematical formulations.
+Our contribution lies in specifying the exact form of this relationship.
+FlowSGS’s structural similarity to PnP-DM allows us to extend its convergence guarantee to FlowSGS
+under the SI parameterization, which we summarize in the following corollary.
+Corollary 2 (Convergence analysis). Suppose the interpolant schedule (αt, σt) satisfies that σt/αt
+is strictly increasing on (0, 1], and the diffusion coefficient wt is bounded away from zero on the
+interval used by the prior step. Then, under the L2-accurate condition on the pretrained flow
+network, Algorithm 1 with constant coupling ρk ≡ρ enjoys the same non-asymptotic convergence
+guarantee as PnP-DM [58, Theorem 3.1]: the average Fisher information between the non-stationary
+process driven by the velocity network and the stationary process driven by the true velocity field
+decays at a rate of O(1/K) in the number of SGS iterations K, up to a floor set by the velocity
+network approximation error.
+See detailed proof of Corollary 2 in Section A.4. Compared to PnP-DM, the assumptions become
+more flexible: PnP-DM inherits its diffusion-coefficient floor from the EDM forward process (which
+can vanish at the endpoints for iDDPM/EDM, requiring the workaround in [58, Appendix A.3]),
+whereas in FlowSGS, the diffusion coefficient wt is a free sampling-time choice, so the floor condition
+is a constraint on the user’s choice rather than on the model. The monotonicity condition on σt/αt is
+the SI analog of PnP-DM’s Assumption A.1 and is satisfied by all standard schedules we consider.
+Note that the KL-optimal coefficient is not regular at the origin (Table 3): wKL
+t
+= 2t/(1 −t) for
+the linear interpolant and wKL
+t
+= π tan(πt/2) for GVP, both of which vanish as t →0. Following
+5
+
+
+Figure 2: Results on a toy compressed-sensing problem with analytically available Gaussian
+posterior. We show the mean image (row 1) and pixel-wise standard deviations (row 2) for the
+Gaussian posteriors. Our method estimates an accurate posterior with the best mean image quality
+and the lowest KL-divergence compared to the true posterior.
+standard practice for diffusion-based samplers [67], we avoid this irregularity by truncating the
+interpolant at t ∈[ϵ, 1 −ϵ] with ϵ = 1 × 10−5 and terminating the reverse SDE at t = ϵ rather than
+t = 0, returning xk+1 = xϵ. The prior step therefore runs on [ϵ, tk] with tk = (σt/αt)−1(ρk), and
+inf[ϵ,tk] wt = wϵ > 0 for every stochastic schedule in Table 3, so Corollary 2 applies with δ2 = wϵ.
+Another solution for such irregularity is to add regularization [40], which we leave for future work.
+Finally, Corollary 2 is stated for a constant coupling ρk ≡ρ, whereas FlowSGS anneals ρk =
+max(ρ0αk, ρmin) (Table 4). The guarantee thus describes the fixed-ρ chain that the annealed schedule
+approaches once ρk saturates at ρmin. The early, large-ρ iterations act as an initialization heuristic
+that we find accelerates convergence in practice but which the analysis does not cover.
+4
+Experiments
+4.1
+Baselines
+We compare our method with three diffusion-based samplers: DPS [14], PnP-DM [58], DAPS [62],
+as well as three flow-based samplers: PnP-Flow [42], FlowChef [45], and FlowDPS [34]. We pretrain
+diffusion/flow models using the same NCSN++ [52] architecture for fair comparisons (see details
+in Section C.1). All flow-based methods use the linear interpolant schedule [38] by default. For each
+task, we tune the hyperparameters of all methods for the best performance.
+4.2
+Toy problem
+To validate that FlowSGS can accurately sample from the Bayesian posterior, we create a toy
+compressed sensing problem with a Gaussian likelihood and a Gaussian prior, such that the posterior
+is an analytically available Gaussian distribution. See problem setups in Section B.1. We draw 128
+posterior samples and compute the mean and pixel-wise standard deviation of the Gaussian posterior,
+and compute the PSNR and SSIM of the mean image with respect to the ground truth image, the
+KL-divergence of the Gaussian posterior with respect to the true posterior, shown in Figure 2. We
+show that FlowSGS and PnP-DM (both being sampling methods) produce the most accurate posterior
+in terms of both mean image quality and KL-divergence. Note that PnP-Flow, although not claimed
+as a posterior sampler [42], also produces an accurate posterior. In contrast, DPS, FlowChef, and
+FlowDPS significantly overestimate the uncertainty.
+4.3
+Linear inverse problems
+We benchmark the baselines and FlowSGS (with different interpolant schedules) over a variety of
+linear inverse problems (motion/Gaussian deblurring, super-resolution, and compressed sensing MRI)
+using the FFHQ dataset [32] and the fastMRI knee dataset [61] resized to 256×256. See problem
+setups in Section B.2. We pretrain diffusion/flow models on these datasets (checkpoints available).
+In Tables 1 and 5, we report metrics averaged over 100 test samples not used during training. We draw
+8 samples for each method and report the mean image. Visual samples are shown in Figure 3. We
+show that FlowSGS is outperforming the baselines across a variety of inverse problems. Among the
+interpolant schedules, the linear schedule provides the best overall results, while VP-SDE provides
+the worst results. This aligns with the fact that the linear and GVP schedule used in flow matching
+6
+
+
+Figure 3: Visual results on linear inverse problems. We draw 8 posterior samples for each method
+and report the mean image.
+has straighter probability paths than the VP-SDE used in diffusion models, leading to more accurate
+sampling. See more results in Section D.1.
+Using latent space models
+We note that, in addition to nonlinear inverse problems, the generality
+of our method allows latent-space flow priors, which we consider briefly here. Figure 10 shows
+example comparisons on the motion deblurring and super-resolution problems to PnP-Flow [42],
+FlowChef [45], and FlowDPS [34], using the off-the-shelf Stable Diffusion 3.5 [19] medium model.
+See Section B.3 for experimental details. Our method is slower due to repeatedly taking the gradient
+through the decoder in the Langevin steps (see Section C.2). This suggests future work using a hybrid
+pixel/latent space Langevin sampling scheme (running in pixel space initially and then moving to
+latent space in later iterations), as mentioned as a possibility in [62].
+4.4
+Nonlinear Fourier phase retrieval
+Fourier phase retrieval (FPR) [23, 22, 49] is an ill-posed inverse problem that widely exists in real-
+world imaging systems (e.g., microscopy [65, 66], black hole imaging with interferometry [8, 53,
+58, 21, 1]), where a bimodal posterior could exist due to the loss of Fourier phase information. For
+the first time among flow-based samplers, we provide a benchmark on nonlinear FPR (see Table 1
+and Figure 4) also using the FFHQ dataset and pretrained pixel-space models in Section 4.3. Since
+FPR is very ill-posed and relies on good initialization, we characterize image reconstruction quality
+by reporting the single best sample among 8 posterior samples we draw, similar to prior work [14, 58]
+(see visual examples in Figure 9). For uncertainty quantification, we draw 512 samples from each
+7
+
+
+Table 1: Quantitative results averaged over 100 test images. We draw 8 posterior samples for
+each method and report the mean image for linear inverse problems. For phase retrieval, we use the
+best among 8 posterior samples rather than the mean. See errors and runtimes in Tables 5 and 6.
+Method
+Motion deblurring
+Gaussian deblurring
+Super-resolution (4×)
+PSNR (↑) SSIM (↑) LPIPS (↓) PSNR (↑) SSIM (↑) LPIPS (↓) PSNR (↑) SSIM (↑) LPIPS (↓)
+DPS [14]
+28.14
+0.803
+0.198
+29.55
+0.829
+0.167
+28.97
+0.822
+0.155
+PnP-DM [58]
+28.53
+0.819
+0.220
+29.44
+0.836
+0.197
+28.71
+0.823
+0.179
+DAPS [62]
+28.00
+0.801
+0.230
+29.48
+0.829
+0.199
+28.99
+0.824
+0.172
+PnP-Flow [42]
+27.15
+0.787
+0.254
+29.42
+0.832
+0.208
+26.35
+0.776
+0.221
+FlowChef [45]
+25.26
+0.587
+0.388
+28.66
+0.800
+0.209
+27.14
+0.711
+0.234
+FlowDPS [34]
+28.42
+0.816
+0.229
+29.78
+0.840
+0.202
+28.62
+0.819
+0.192
+FlowSGS (VP)
+27.69
+0.709
+0.209
+28.65
+0.723
+0.190
+27.35
+0.708
+0.206
+FlowSGS (GVP)
+29.16
+0.825
+0.162
+29.97
+0.837
+0.147
+29.02
+0.824
+0.160
+FlowSGS (Linear)
+29.22
+0.836
+0.154
+30.09
+0.847
+0.141
+29.49
+0.844
+0.149
+Method
+CS-MRI (Cartesian, 8×)
+CS-MRI (radial, 8×)
+Fourier phase retrieval
+PSNR (↑) SSIM (↑) Data-fit (↓) PSNR (↑) SSIM (↑) Data-fit (↓) PSNR (↑) SSIM (↑) LPIPS (↓)
+DPS [14]
+31.93
+0.819
+48.189
+34.57
+0.858
+50.347
+18.17
+0.513
+0.413
+PnP-DM [58]
+32.27
+0.824
+56.407
+33.36
+0.837
+58.001
+35.48
+0.931
+0.084
+DAPS [62]
+31.49
+0.815
+54.992
+33.28
+0.838
+55.169
+35.77
+0.926
+0.054
+PnP-Flow [42]
+32.22
+0.837
+50.053
+34.60
+0.864
+49.892
+30.76
+0.844
+0.128
+FlowChef [45]
+30.76
+0.766
+47.317
+33.32
+0.817
+48.894
+20.80
+0.501
+0.380
+FlowDPS [34]
+30.73
+0.811
+56.048
+34.05
+0.854
+54.165
+27.99
+0.818
+0.187
+FlowSGS (VP)
+30.36
+0.690
+60.096
+34.65
+0.861
+49.437
+31.09
+0.850
+0.132
+FlowSGS (GVP)
+32.58
+0.825
+54.592
+34.92
+0.870
+50.577
+38.45
+0.950
+0.056
+FlowSGS (Linear)
+32.84
+0.839
+53.764
+34.77
+0.869
+50.420
+37.52
+0.940
+0.076
+Figure 4: Bimodal posterior for nonlinear Fourier phase retrieval. With each method, we draw
+512 samples and classify them into two modes. We compute the mean image using the top 25%
+images for each mode, and show the histograms for a pixel in the red channel (marked by red dots).
+method and classify the samples into modes using the PSNR with respect to each mode (samples
+with PSNR<15 dB for both modes are considered discarded). Using the best 25% of the samples,
+we show the mean image of each mode in Figure 4a, and the histogram of a pixel in the red channel
+in Figure 4b. While most methods reconstruct a bimodal posterior, we point out that our method
+reconstructs the best mean image for both modes (see metrics). FlowSGS, PnP-DM, and DAPS are
+sampling methods that produce clear bimodal distributions centered at the true pixel value (vertical
+dashed lines in the histogram), while DPS, FlowChef, and FlowDPS, which rely on guidance or
+trajectory-steering rather than direct posterior sampling, recover corrupted rotated modes. This
+demonstrates a strong advantage of principled posterior sampling over approximate methods in
+capturing multi-modal posteriors.
+8
+
+
+Figure 5:
+Timestep conversion in prior step. (a) Illustration of FlowSGS’s robust timestep
+correction to reduce discretization error. (b) Visual samples of FlowSGS ablations on motion
+deblurring. (c) Comparison of FlowSGS (with and without timestep correction) and PnP-DM [58]
+with different numbers of discretization steps on motion deblurring.
+4.5
+Ablation studies
+We perform ablation studies on the key design choices in our flow-based prior step (Lines 4-7
+in Algorithm 1) as well as the interpolant schedules (αt, σt) and diffusion coefficients wt.
+Timestep conversion, scaling, and timestep correction
+In Figure 5a, we illustrate the robust
+timestep correction strategy we designed to reduce discretization error in the prior step SDE solver
+(Line 6 in Algorithm 1). Specifically, instead of starting at the closest discrete timestep to tk as in
+PnP-DM [58], we use an adaptive stepsize in the first Euler step and start from the correct time tk.
+In Figure 5b and Table 7, we show FlowSGS results on motion deblurring with missing components
+in Algorithm 1: correct timestep conversion (Line 4), scaling (Line 5), time step correction (Line
+6), and verify that they collectively contribute to our method. In Figure 5c, we observe that as the
+discretization step decreases, PnP-DM (blue) is significantly affected by discretization error, while
+our timestep correction allows FlowSGS to maintain a more stable performance (purple). This aligns
+with the theory that the linear interpolant has straighter probability paths and is more robust to
+discretization errors [36, 38, 40] than diffusion models. See visual samples in Figure 11. As a result,
+we use a 32-step discretization (marked by a star) in the prior step, while PnP-DM needs 100 steps.
+Interpolant schedules and diffusion coefficients
+In Table 8, we compare FlowSGS results gener-
+ated using three schedules (VP-SDE, linear, and GVP) and four diffusion coefficients (see summary
+in Section A.1) on motion deblurring and Fourier phase retrieval. We find that the linear interpolant
+combined with the KL-optimal diffusion coefficient wKL gives the best results. This is in accordance
+with the fact that wKL minimizes the upper bound on the KL divergence between the true and learned
+data distribution [40, 2], leading to more accurate sampling. Despite wKL’s empirical success, it is
+worth mentioning that wKL is not regular at t = 0 and t = 1 [40], therefore in practice we solve the
+SDE in [ϵ, 1 −ϵ] with ϵ = 1 × 10−5.
+5
+Conclusion
+We present modifications to SGS that accommodate SI-based generative models, including potential
+future approaches. In doing so, we improve existing flow-based methods with better integration of
+measurement likelihood and more efficient prior-step sampling than similar diffusion-based methods.
+We characterize our relationship to a previous method in both theory (comparing FlowSGS to
+PnP-DM in Corollaries 1 and 2) and empirical results. Despite our SOTA performance, we note
+current limitations: sampling cost is elevated compared to other flow methods, though this could be
+improved with one-step flow models, e.g., Mean Flow [25] and Meta Flow Maps [48]. We currently
+only consider non-blind inverse problems, and could extend into semi-blind or blind settings by
+incorporating our flow-based prior step into EM frameworks, e.g., PRISM [28]. Finally, Langevin
+dynamics are not efficient with latent space models, which suggests potential for hybrid sampling.
+9
+
+
+Acknowledgments and Disclosure of Funding
+We gratefully acknowledge the support of the NSF-Simons AI Institute for the Sky (SkAI) via grants
+NSF AST-2421845 and Simons Foundation MPS-AI-00010513. This material is based upon work
+supported by the U.S. National Science Foundation under Award No. 2542022. The authors would
+like to thank Yu Sun, Deliang Wei, Rebecca Willett, and Tjitske Starkenburg for helpful discussions.
+References
+[1] Kazunori Akiyama, Antxon Alberdi, Walter Alef, Keiichi Asada, Rebecca Azulay, Anne-Kathrin Baczko,
+David Ball, Mislav Balokovi´c, John Barrett, Dan Bintley, et al. First m87 event horizon telescope results.
+iv. imaging the central supermassive black hole. The Astrophysical Journal Letters, 875(1):L4, 2019.
+[2] Michael Albergo, Nicholas M Boffi, and Eric Vanden-Eijnden. Stochastic interpolants: A unifying
+framework for flows and diffusions. Journal of Machine Learning Research, 26(209):1–80, 2025.
+[3] Michael Samuel Albergo and Eric Vanden-Eijnden. Building normalizing flows with stochastic interpolants.
+In The Eleventh International Conference on Learning Representations, 2023.
+[4] Brian DO Anderson. Reverse-time diffusion equation models. Stochastic Processes and their Applications,
+12(3):313–326, 1982.
+[5] Hossein Askari, Yadan Luo, Hongfu Sun, and Fred Roosta. Latent refinement via flow matching for
+training-free linear inverse problem solving. In The Thirty-ninth Annual Conference on Neural Information
+Processing Systems, 2025.
+[6] Heli Ben-Hamu, Omri Puny, Itai Gat, Brian Karrer, Uriel Singer, and Yaron Lipman. D-flow: Differentiating
+through flows for controlled generation. In International Conference on Machine Learning, pages 3462–
+3483. PMLR, 2024.
+[7] Charles A Bouman and Gregery T Buzzard. Generative plug and play: Posterior sampling for inverse
+problems. In 2023 59th annual Allerton conference on communication, control, and computing (Allerton),
+pages 1–7. IEEE, 2023.
+[8] Katherine L Bouman, Michael D Johnson, Daniel Zoran, Vincent L Fish, Sheperd S Doeleman, and
+William T Freeman. Computational imaging for vlbi image reconstruction. In Proceedings of the IEEE
+Conference on Computer Vision and Pattern Recognition, pages 913–922, 2016.
+[9] Stephen Boyd and Lieven Vandenberghe. Convex optimization. Cambridge university press, 2004.
+[10] Stanley H Chan, Xiran Wang, and Omar A Elgendy. Plug-and-play admm for image restoration: Fixed-point
+convergence and applications. IEEE Transactions on Computational Imaging, 3(1):84–98, 2016.
+[11] Pierre Charbonnier, Laure Blanc-Feraud, Gilles Aubert, and Michel Barlaud. Two deterministic half-
+quadratic regularization algorithms for computed imaging. In Proceedings of 1st international conference
+on image processing, volume 2, pages 168–172. IEEE, 1994.
+[12] Yunjey Choi, Youngjung Uh, Jaejun Yoo, and Jung-Woo Ha. Stargan v2: Diverse image synthesis for
+multiple domains. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pages 8188–8197, 2020.
+[13] Wenda Chu, Zihui Wu, Yifan Chen, Yang Song, and Yisong Yue. Split gibbs discrete diffusion posterior
+sampling. In The Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025.
+[14] Hyungjin Chung, Jeongsol Kim, Michael Thompson Mccann, Marc Louis Klasky, and Jong Chul Ye.
+Diffusion posterior sampling for general noisy inverse problems. In The Eleventh International Conference
+on Learning Representations, 2023.
+[15] Hyungjin Chung, Byeongsu Sim, Dohoon Ryu, and Jong Chul Ye. Improving diffusion models for inverse
+problems using manifold constraints. Advances in Neural Information Processing Systems, 35:25683–
+25696, 2022.
+[16] Hyungjin Chung and Jong Chul Ye. Score-based diffusion models for accelerated mri. Medical image
+analysis, 80:102479, 2022.
+[17] Florentin Coeurdoux, Nicolas Dobigeon, and Pierre Chainais. Plug-and-play split gibbs sampler: embed-
+ding deep generative priors in bayesian inference. IEEE Transactions on Image Processing, 33:3496–3507,
+2024.
+[18] Julius Erbach, Dominik Narnhofer, Andreas Robert Dombos, Bernt Schiele, Jan Eric Lenssen, and Konrad
+Schindler. Solving inverse problems with FLAIR. In The Thirty-ninth Annual Conference on Neural
+Information Processing Systems, 2025.
+10
+
+
+[19] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi,
+Dominik Lorenz, Axel Sauer, Frederic Boesel, et al. Scaling rectified flow transformers for high-resolution
+image synthesis. In Forty-first international conference on machine learning, 2024.
+[20] Elhadji C Faye, Mame Diarra Fall, and Nicolas Dobigeon. Regularization by denoising: Bayesian model
+and langevin-within-split gibbs sampling. IEEE Transactions on Image Processing, 34:221–234, 2024.
+[21] Berthy T Feng, Katherine L Bouman, and William T Freeman. Event-horizon-scale imaging of m87* under
+different assumptions via deep generative image priors. The Astrophysical Journal, 975(2):201, 2024.
+[22] James Fienup. Understanding the twin-image problem in phase retrieval. Journal of the Optical Society of
+America A, 2012.
+[23] James R Fienup and CC Wackerman. Phase-retrieval stagnation problems and solutions. Journal of the
+Optical Society of America A, 3(11):1897–1907, 1986.
+[24] Donald Geman and Chengda Yang. Nonlinear image recovery with half-quadratic regularization. IEEE
+transactions on Image Processing, 4(7):932–946, 1995.
+[25] Zhengyang Geng, Mingyang Deng, Xingjian Bai, J Zico Kolter, and Kaiming He. Mean flows for one-step
+generative modeling. In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+2025.
+[26] Alexandros Graikos, Nikolay Malkin, Nebojsa Jojic, and Dimitris Samaras. Diffusion models as plug-and-
+play priors. Advances in Neural Information Processing Systems, 35:14715–14728, 2022.
+[27] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Advances in neural
+information processing systems, 33:6840–6851, 2020.
+[28] Yuanyun Hu, Evan Bell, Guijin Wang, and Yu Sun. Prism: Probabilistic and robust inverse solver
+with measurement-conditioned diffusion prior for blind inverse problems. In ICASSP 2026-2026 IEEE
+International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages 11432–11436.
+IEEE, 2026.
+[29] Ajil Jalal, Marius Arvinte, Giannis Daras, Eric Price, Alexandros G Dimakis, and Jon Tamir. Robust
+compressed sensing mri with deep generative priors. Advances in Neural Information Processing Systems,
+34:14938–14954, 2021.
+[30] Ulugbek S Kamilov, Charles A Bouman, Gregery T Buzzard, and Brendt Wohlberg. Plug-and-play
+methods for integrating physical and learned models in computational imaging: Theory, algorithms, and
+applications. IEEE Signal Processing Magazine, 40(1):85–97, 2023.
+[31] Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine. Elucidating the design space of diffusion-based
+generative models. Advances in neural information processing systems, 35:26565–26577, 2022.
+[32] Tero Karras, Samuli Laine, and Timo Aila. A style-based generator architecture for generative adversarial
+networks. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages
+4401–4410, 2019.
+[33] Bahjat Kawar, Michael Elad, Stefano Ermon, and Jiaming Song. Denoising diffusion restoration models.
+Advances in Neural Information Processing Systems, 35:23593–23606, 2022.
+[34] Jeongsol Kim, Bryan Sangwoo Kim, and Jong Chul Ye. Flowdps: Flow-driven posterior sampling for
+inverse problems. In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages
+12328–12337, 2025.
+[35] Peter E Kloeden and RA Pearson. The numerical solution of stochastic differential equations. The ANZIAM
+Journal, 20(1):8–12, 1977.
+[36] Sangyun Lee, Beomsu Kim, and Jong Chul Ye. Minimizing trajectory curvature of ode-based generative
+models. In International Conference on Machine Learning, pages 18957–18973. PMLR, 2023.
+[37] Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow matching
+for generative modeling. In The Eleventh International Conference on Learning Representations, 2023.
+[38] Xingchao Liu, Chengyue Gong, and qiang liu. Flow straight and fast: Learning to generate and transfer
+data with rectified flow. In The Eleventh International Conference on Learning Representations, 2023.
+[39] Ziwei Liu, Ping Luo, Xiaogang Wang, and Xiaoou Tang. Deep learning face attributes in the wild. In
+Proceedings of International Conference on Computer Vision (ICCV), December 2015.
+[40] Nanye Ma, Mark Goldstein, Michael S Albergo, Nicholas M Boffi, Eric Vanden-Eijnden, and Saining
+Xie. Sit: Exploring flow and diffusion-based generative models with scalable interpolant transformers. In
+European Conference on Computer Vision, pages 23–40. Springer, 2024.
+[41] Morteza Mardani, Jiaming Song, Jan Kautz, and Arash Vahdat. A variational perspective on solving inverse
+problems with diffusion models. In The Twelfth International Conference on Learning Representations,
+2024.
+11
+
+
+[42] Ségolène Tiffany Martin, Anne Gagneux, Paul Hagemann, and Gabriele Steidl. Pnp-flow: Plug-and-
+play image restoration with flow matching. In The Thirteenth International Conference on Learning
+Representations, 2025.
+[43] Vishal Monga, Yuelong Li, and Yonina C Eldar. Algorithm unrolling: Interpretable, efficient deep learning
+for signal and image processing. IEEE Signal Processing Magazine, 38(2):18–44, 2021.
+[44] Parikh Neal, Chu Eric, Peleato Borja, and Eckstein Jonathan. Distributed optimization and statistical
+learning via the alternating direction method of multipliers. Foundations and Trends® in Machine learning,
+3(1):1–122, 2011.
+[45] Maitreya Patel, Song Wen, Dimitris N Metaxas, and Yezhou Yang. Flowchef: Steering of rectified flow
+models for controlled generations. In Proceedings of the IEEE/CVF International Conference on Computer
+Vision, pages 15308–15318, 2025.
+[46] Marcelo Pereyra, Luis A Vargas-Mieles, and Konstantinos C Zygalakis. The split gibbs sampler revisited:
+improvements to its algorithmic structure and augmented target distribution. SIAM Journal on Imaging
+Sciences, 16(4):2040–2071, 2023.
+[47] Ashwini Pokle, Matthew J. Muckley, Ricky T. Q. Chen, and Brian Karrer. Training-free linear image
+inverses via flows. Transactions on Machine Learning Research, 2024.
+[48] Peter Potaptchik, Adhi Saravanan, Abbas Mammadov, Alvaro Prat, Michael Samuel Albergo, and
+Yee Whye Teh. Meta flow maps enable scalable reward alignment. In Forty-third International Conference
+on Machine Learning, 2026.
+[49] Yoav Shechtman, Yonina C Eldar, Oren Cohen, Henry Nicholas Chapman, Jianwei Miao, and Mordechai
+Segev. Phase retrieval with application to optical imaging: a contemporary overview. IEEE signal
+processing magazine, 32(3):87–109, 2015.
+[50] Yang Song and Stefano Ermon. Generative modeling by estimating gradients of the data distribution.
+Advances in neural information processing systems, 32, 2019.
+[51] Yang Song, Liyue Shen, Lei Xing, and Stefano Ermon. Solving inverse problems in medical imaging with
+score-based generative models. In International Conference on Learning Representations, 2022.
+[52] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+Score-based generative modeling through stochastic differential equations. In International Conference on
+Learning Representations, 2021.
+[53] He Sun and Katherine L Bouman. Deep probabilistic imaging: Uncertainty quantification and multi-modal
+solution characterization for computational imaging. In Proceedings of the AAAI conference on artificial
+intelligence, volume 35, pages 2628–2637, 2021.
+[54] George E Uhlenbeck and Leonard S Ornstein. On the theory of the brownian motion. Physical review,
+36(5):823, 1930.
+[55] Santosh Vempala and Andre Wibisono. Rapid convergence of the unadjusted langevin algorithm: Isoperime-
+try suffices. Advances in neural information processing systems, 32, 2019.
+[56] Singanallur V Venkatakrishnan, Charles A Bouman, and Brendt Wohlberg. Plug-and-play priors for
+model based reconstruction. In 2013 IEEE global conference on signal and information processing, pages
+945–948. IEEE, 2013.
+[57] Maxime Vono, Nicolas Dobigeon, and Pierre Chainais. Split-and-augmented gibbs sampler—application
+to large-scale inference problems. IEEE Transactions on Signal Processing, 67(6):1648–1661, 2019.
+[58] Zihui Wu, Yu Sun, Yifan Chen, Bingliang Zhang, Yisong Yue, and Katherine L Bouman. Principled
+probabilistic imaging using diffusion models as plug-and-play priors. Advances in Neural Information
+Processing Systems, 37:118389–118427, 2024.
+[59] Xingyu Xu and Yuejie Chi. Provably robust score-based diffusion posterior sampling for plug-and-play
+image reconstruction. Advances in Neural Information Processing Systems, 37:36148–36184, 2024.
+[60] Yici Yan, Yichi Zhang, Xiangming Meng, and Zhizhen Zhao. FIG: Flow with interpolant guidance for
+linear inverse problems. In The Thirteenth International Conference on Learning Representations, 2025.
+[61] Jure Zbontar, Florian Knoll, Anuroop Sriram, Tullie Murrell, Zhengnan Huang, Matthew J Muckley, Aaron
+Defazio, Ruben Stern, Patricia Johnson, Mary Bruno, et al. fastmri: An open dataset and benchmarks for
+accelerated mri. arXiv preprint arXiv:1811.08839, 2018.
+[62] Bingliang Zhang, Wenda Chu, Julius Berner, Chenlin Meng, Anima Anandkumar, and Yang Song.
+Improving diffusion inverse problem solving with decoupled noise annealing. In Proceedings of the
+Computer Vision and Pattern Recognition Conference, pages 20895–20905, 2025.
+[63] Kai Zhang, Yawei Li, Wangmeng Zuo, Lei Zhang, Luc Van Gool, and Radu Timofte. Plug-and-play image
+restoration with deep denoiser prior. IEEE Transactions on Pattern Analysis and Machine Intelligence,
+44(10):6360–6376, 2021.
+12
+
+
+[64] Yasi Zhang, Peiyu Yu, Yaxuan Zhu, Yingshan Chang, Feng Gao, Ying N Wu, and Oscar Leong. Flow priors
+for linear inverse problems via iterative corrupted trajectory matching. Advances in Neural Information
+Processing Systems, 37:57389–57417, 2024.
+[65] Guoan Zheng, Roarke Horstmeyer, and Changhuei Yang. Wide-field, high-resolution fourier ptychographic
+microscopy. Nature photonics, 7(9):739–745, 2013.
+[66] Guoan Zheng, Cheng Shen, Shaowei Jiang, Pengming Song, and Changhuei Yang. Concept, implementa-
+tions and applications of fourier ptychography. Nature Reviews Physics, 3(3):207–223, 2021.
+[67] Hongkai Zheng, Wenda Chu, Bingliang Zhang, Zihui Wu, Austin Wang, Berthy Feng, Caifeng Zou, Yu Sun,
+Nikola Kovachki, Zachary Ross, et al. Inversebench: Benchmarking plug-and-play diffusion priors for
+inverse problems in physical sciences. In International Conference on Learning Representations, volume
+2025, pages 90912–90940, 2025.
+[68] Yuanzhi Zhu, Kai Zhang, Jingyun Liang, Jiezhang Cao, Bihan Wen, Radu Timofte, and Luc Van Gool.
+Denoising diffusion models for plug-and-play image restoration.
+In Proceedings of the IEEE/CVF
+conference on computer vision and pattern recognition, pages 1219–1229, 2023.
+13
+
+
+A
+Theory
+A.1
+Interpolant schedules and diffusion coefficients
+In Table 2, we summarize three common interpolant schedules we experimented with FlowSGS, as
+well as their score–velocity conversion (4) functions and time inversion functions. In Table 3, we
+summarize common choices of diffusion coefficients wt. Note that wKL
+t
+is not regular at t = 1 for
+Linear and GVP interpolants because αt →0; see [40] for details.
+Table 2: Summary of interpolant schedules, score–velocity conversion (4), and time inversion.
+Property
+VP-SDE
+Linear
+GVP
+Signal scale
+αt = e−1
+2
+R t
+0 βsds
+αt = 1 −t
+αt = cos
+  π
+2 t
+
+Noise scale
+σt =
+p
+1 −α2
+t
+σt = t
+σt = sin
+  π
+2 t
+
+Score from velocity
+s = −2
+βt v −xt
+s = −(1 −t)v + xt
+t
+s = −2
+π cot( πt
+2 )v −xt
+Time inversion
+t = B−1 log(1 + ρ2)
+∗
+t =
+ρ
+1 + ρ
+t = 2
+π arctan(ρ)
+Representative models
+DDPM [27],
+Score-SDE [52]
+Flow Matching [37],
+Rectified Flow [38]
+SiT [40]
+∗For VP-SDE, βt > 0 is the variance-preserving noise-rate schedule and B(t) =
+R t
+0 βs ds is its cumulative noise
+level. Therefore B(t) = log(1 + ρ2).
+Table 3: Diffusion coefficients wt for the reverse-time SDE, all chosen post-training without
+affecting vθ. “Regular” means finite and non-negative at the endpoint.
+ODE
+Sigma
+Sine
+KL-optimal
+Expression
+0
+σt
+sin2(πt)
+2
+
+˙σtσt −˙αtσ2
+t
+αt
+
+Regular at t = 0
+✓
+✓
+✓
+×
+Regular at t = 1
+✓
+✓
+✓
+×
+A.2
+Proof of Theorem 1
+Proof of Theorem 1. The SGS prior step targets
+π(x0|z) ∝exp[−g(x0)] exp
+
+−∥x0 −z∥2
+2ρ2
+k
+
+,
+(9)
+which has the form of a Bayesian denoising posterior with prior p(x0) ∝exp[−g(x0)] and Gaussian
+likelihood π(z|x0) = N(z; x0, ρ2
+kI). This implies that z|x0 ∼N(z; x0, ρ2
+kI).
+Suppose t∗satisfies σt∗/αt∗= ρk and αt∗> 0. Solving reverse-time SDE in (3) from t∗to 0 follows
+the conditional probability
+π(x0|xt∗) ∝π(xt∗|x0)p(x0)
+= N(xt∗; αt∗x0, σ2
+t∗I)p(x0)
+∝exp
+
+−∥xt∗−αt∗x0∥2
+2σ2
+t∗
+
+exp[−g(x0)]
+= exp
+
+−∥xt∗/αt∗−x0∥2
+2(σt∗/αt∗)2
+
+exp[−g(x0)]
+= exp
+
+−∥xt∗/αt∗−x0∥2
+2ρ2
+k
+
+exp[−g(x0)],
+(10)
+where the first line uses Bayes’ rule, and the third line uses the definition of the Gaussian probability
+path in (2). (10) indicates that the conditional probability π(x0|xt∗) is equal to the prior step
+14
+
+
+π(x0|z) when xt∗= αt∗z. Therefore, running the SI’s reverse-time SDE with initialization at t∗and
+xt∗= αt∗z, the distribution we get at x0 is exact the distribution of the SGS prior step π(x0|z). This
+provides the foundation of our prior step in Lines 4-7 in Algorithm 1, where the time conversion
+(Line 4) follows
+t∗(ρ) =
+ σt∗
+αt∗
+−1
+(ρ),
+(11)
+the scaling (Line 5) of the output of the likelihood step z follows
+xt∗= αt∗z.
+(12)
+These two steps are essential preparation steps in service for the prior step for exact noise level
+matching. Note that with common choices of interpolants,
+
+σt∗
+αt∗
+
+is monotonic such that there always
+exists a unique solution t∗∈[0, 1] for any coupling parameter ρ > 0.
+A.3
+Proof of Corollary 1
+PnP-DM [58] uses EDM diffusion [31] to formulate the diffusion process:
+xt = sE(t)
+ x0 + σE(t)ϵ
+
+.
+(13)
+While under the stochastic-interpolant parameterization, we have
+xt = αtx0 + σtϵ.
+(14)
+These two parameterizations have the relation
+sE(t) = αt,
+σE(t) = σt
+αt
+.
+(15)
+Define
+γt = ˙αtσt −αt ˙σt,
+λt = −γt
+αt
+= αt ˙σt −˙αtσt
+αt
+.
+(16)
+Lemma 2. Under the parameter correspondence in (15), we have
+˙σE(t) = λt
+αt
+.
+(17)
+Proof. Since σE(t) = σt/αt,
+˙σE(t) = ˙σtαt −σt ˙αt
+α2
+t
+= −˙αtσt −αt ˙σt
+α2
+t
+= −γt
+α2
+t
+= λt
+αt
+.
+(18)
+Now, we can prove that the PnP-DM reverse-time SDE under the EDM parameterization [58, 31]
+dxt =
+ ˙sE(t)
+sE(t)xt −2sE(t)2 ˙σE(t)σE(t)∇xt log p
+ xt
+sE(t); σE(t)
+
+dt + sE(t)
+p
+2 ˙σE(t)σE(t) dwt,
+(19)
+is a special case of the FlowSGS reverse-time SDE.
+Proof of Corollary 1. First, by replacing the EDM diffusion coefficients using (15), we have
+˙sE(t)
+sE(t) = ˙αt
+αt
+,
+(20)
+2sE(t)2 ˙σE(t)σE(t) = 2α2
+t
+λt
+αt
+  σt
+αt
+
+= 2λtσt,
+(21)
+sE(t)22 ˙σE(t)σE(t) = α2
+t2
+λt
+αt
+  σt
+αt
+
+= 2λtσt.
+(22)
+15
+
+
+This shows that the PnP-DM reverse-time SDE has drift coefficient ˙αt/αt, score coefficient 2λtσt,
+and diffusion coefficient squared 2λtσt.
+The velocity-score relation can be written as
+v(xt, t) = ˙αt
+αt
+xt −λtσts(xt, t).
+(23)
+Substituting this into the SI reverse-time SDE in (3) gives
+dxt =
+ ˙αt
+αt
+xt −λtσts(xt, t) −wt
+2 s(xt, t)
+
+dt + √wt d ¯wt
+=
+ ˙αt
+αt
+xt −
+
+λtσt + wt
+2
+
+s(xt, t)
+
+dt + √wt d ¯wt.
+(24)
+Choosing wt = 2λtσt yields
+dxt =
+ ˙αt
+αt
+xt −2λtσts(xt, t)
+
+dt +
+p
+2λtσt d ¯wt.
+(25)
+This matches the PnP-DM’s prior step reverse-time SDE. In FlowSGS, the initialization at t∗
+follows xt∗= αt∗zk, which directly translates to PnP-DM’s initialization since αt∗= sE(t∗). In
+summary, PnP-DM is recovered as the special case of FlowSGS with equivalent reverse-time SDE
+and initializations, when wt = 2λtσt.
+For VP-SDE, λtσt = βt/2, so this diffusion coefficient aligns with and recovers the reverse process
+in VP-SDE.
+wKL
+t
+= 2λtσt = βt.
+(26)
+Remark 1. EDM fixes the reverse-SDE diffusion coefficient to the value implied by the forward
+diffusion process wt = sE(t)
+p
+2 ˙σE(t)σE(t). In contrast, the SI framework allows any wt ≥0 at
+sampling time: wt = 0 gives the probability-flow ODE, wt = 2λtσt recovers PnP-DM, and other
+choices can be tuned without retraining.
+A.4
+Proof of Corollary 2
+Rather than reproduce the full Fokker–Planck calculation, we show that FlowSGS satisfies all the
+structural conditions used in PnP-DM’s [58] Theorem 3.1, so that the same proof applies after a
+parameter substitution. We highlight three aspects and then describe the substitution.
+Identical SGS skeleton.
+The likelihood step of FlowSGS (Algorithm 1, line 3) is identical to
+PnP-DM’s: both target the same conditional distribution π(z|x) ∝exp[−f(z; y) −∥x −z∥2/2ρ2]
+via Langevin dynamics. PnP-DM’s Brownian-bridge interpretation ([58, Proposition A.2]) and the
+resulting KL/Fisher contraction (their Lemma 2 of [55]) therefore carry over to FlowSGS.
+Prior step has the canonical drift–diffusion form.
+PnP-DM’s key technical lemma ([58,
+Lemma A.4]) is a generic Fokker–Planck argument that bounds the time-derivative of the KL
+divergence between any pair of diffusion processes that share the same diffusion coefficient c(t) and
+differ only in their drifts. It makes no assumption about how the drift is constructed.
+The FlowSGS prior-step SDE (5) is exactly such a process: its drift is an affine combination of the
+velocity v(x, t) and the state x, and its diffusion coefficient is √wt. The non-stationary process
+(driven by the pretrained vθ) and the stationary process (driven by the true v) share the same
+c(t) = √wt, which is the only structural requirement of the lemma. Hence PnP-DM’s lemma applies
+to FlowSGS’s prior step verbatim, with the squared drift gap proportional to ∥vθ −v∥2
+2 instead of
+∥sθ −s∥2
+2.
+SI-equivalent assumptions.
+PnP-DM’s Theorem 3.1 relies on two assumptions:
+• (Assumption A.1) σE(t) is strictly increasing, so there is a unique t⋆with σE(t⋆) = ρ.
+Under the SI parameter correspondence σE(t) = σt/αt (Corollary 1), this becomes the
+requirement that the noise-to-signal ratio σt/αt is strictly increasing – precisely the well-
+posedness condition of our Theorem 1, and satisfied by all schedules in Table 2.
+16
+
+
+• (Diffusion-coefficient floor) The infimum δ := inf[0,t⋆] sE(t)√2 ˙σEσE of PnP-DM’s reverse-
+SDE diffusion coefficient is strictly positive. Under the same correspondence this infimum
+becomes inf[0,t⋆]
+√wt, where wt is FlowSGS’s sampling-time diffusion coefficient. This is
+where the assumptions become looser: PnP-DM’s δ is fixed by the EDM forward process
+and can vanish at the endpoints (e.g. for VP/iDDPM), forcing the workaround in [58,
+Appendix A.3]; FlowSGS lets the user pick wt freely at sampling time, so the floor is a
+constraint on the user’s choice rather than on the model.
+The score-accuracy assumption of PnP-DM translates to an L2-accuracy condition on the velocity
+field under πτ, which is equivalent to the score condition via the velocity–score relation ((4) in the
+main paper) up to bounded scalar factors.
+Reduction.
+Combining the three remarks, every step of the proof of Theorem 3.1 in [58, Ap-
+pendix A.2] goes through: the likelihood-step contraction is unchanged; the prior-step contraction
+follows from [58, Lemma A.4] applied to the canonical-form SDE described in Remark 2, with PnP-
+DM’s v(t) replaced by √wt and the score-error term replaced by the corresponding velocity-error
+term; the telescoping over K outer iterations is identical. The resulting non-asymptotic bound has the
+same shape as PnP-DM’s: an O(1/K) contraction from initialization governed by min(ρ, δ)2, plus a
+velocity-approximation floor governed by δ2.
+B
+Inverse problem setups
+B.1
+Toy problem
+In our toy problem, we used images from the CelebA dataset [39]1. All images are converted to
+grayscale, resized to 64×64, and normalized to [-1, 1] before any calculations. We generate a
+Random Gaussian matrix A ∈R1024×4096 as the compressed sensing matrix. The forward model
+is y = Ax + ϵ, where ϵ ∼N(0, σ2
+nI) and σn = 0.01. For the prior, we sample 50,000 male face
+images from the CelebA dataset and fit a multivariate Gaussian distribution N(µ0, Σ0) to it. Along
+with the Gaussian likelihood, this gives us a Gaussian posterior
+p(x|y) = N(µ, Σ),
+µ = Σ
+
+Σ−1
+0 µ0 + 1
+σ2n
+AT y
+
+,
+Σ =
+
+Σ−1
+0
++ 1
+σ2n
+AT A
+−1
+(27)
+In Figure 6, we illustrate the measurement, prior, and analytical posterior used in the toy problem.
+Figure 6: Setup of the toy compressed sensing problem.
+B.2
+Pixel-space model experiments
+In our experiments with pixel-space models (Section 4.3), we use the FFHQ dataset [32]2 and fastMRI
+single-coil knee dataset [61]. All images are resized to 256×256 and normalized to [0, 1] as ground
+truths, which are then used to generate degraded measurements for different tasks.
+1License unknown.
+2Creative Commons BY-NC-SA 4.0 license.
+17
+
+
+Motion deblurring and Gaussian deblurring
+The forward model y = Hx + ϵ, where H is a
+convolution operator with a blur kernel and ϵ ∼N(0, σ2
+nI) with σn = 0.05. For motion deblurring,
+we generate 64×64 motion blur kernels using this code3 with trajectory intensity 0.5 and then pad
+them to 256×256. For Gaussian deblurring, we directly generate 256×256 blur kernels with standard
+deviation σk = 3.0 pixels. All kernels are normalized to have a sum of 1.0.
+Super-resolution
+The degradation process is modeled as y = Sx + ϵ, where S is a 4× average
+pooling downsampling operator, and ϵ ∼N(0, σ2
+nI) with σn = 0.05.
+Compressed sensing MRI
+The forward model is y = MF(x) + ϵ, where M is the masking
+operator, F(·) is the 2D Fourier transform, and ϵ ∼N(0, σ2
+nI) with σn = 0.02. We generate both
+Cartesian and radial sampling masks with an acceleration rate of 8.0. The center 8% components
+are fully sampled with the Cartesian mask, while the other lines are randomly sampled. Lines in the
+radial mask are uniformly sampled.
+Fourier phase retrieval
+The forward model is y = |F(Px)| + ϵ, where P is the padding operator
+with an oversampling rate of 8.0 (padding the 256×256 images to 512×512), F(·) is the 2D Fourier
+transform, and ϵ ∼N(0, σ2
+nI) with σn = 0.01. The oversampling operation is used to increase the
+number of measurements to reduce the ill-posedness of the problem [58].
+B.3
+Latent-space model experiments
+In our experiments with latent-space models (Section 4.3), we use cat images from the AFHQ
+dataset [12]4, which are resized to 512×512 and normalized to [0,1]. The problem setups are
+the same as motion deblurring and super-resolution in Section B.2, except that super-resolution’s
+downsample factor is 8.0.
+C
+Implementation details
+C.1
+Network architectures
+In our toy problem and benchmarking experiments with pixel-space models ( Sections 4.2 and 4.3),
+we pretrain our own diffusion and flow models using the NCSN++ architecture [52] implemented
+by Inversebench [67]. All models are trained for 500 epochs with the Adam optimizer on each
+dataset, and use an exponential moving average (EMA) for better performance. For the diffusion
+models, we use the VP-SDE as the diffusion schedule, while for the flow models, we train with the
+VP-SDE, linear, and GVP schedules (see summary in Table 2) and compare them in our ablation
+studies (see Tables 1 and 8). Within every task, all diffusion/flow models are trained on the same
+training set and share the same architecture and optimization parameters for fair comparisons. Our
+model checkpoints trained on CelebA, FFHQ, and fastMRI knee are available on our project page.
+We use the off-the-shelf Stable Diffusion 3.5 Medium [19] as our latent-space flow prior.
+C.2
+Likelihood step with Langevin dynamics
+We assume a Gaussian noise model n ∼N(0, τ 2I), and the likelihood step in (7) follows the form:
+z ∼π(z|xk, y) ∝exp
+
+−∥A(z) −y∥2
+2τ 2
+−∥z −xk∥2
+2ρ2
+k
+
+,
+(28)
+where τ represents the standard deviation for the noise model. Note that when the forward model A
+is linear, there exists an analytical solution to [58]:
+z ∼N(m(xk), Λ−1)
+(29)
+where Λ := A⊤Σ−1A+ 1
+ρ2
+k I
+and
+m(x) := Λ−1 
+A⊤Σ−1y +
+1
+ρ2
+k x
+
+. Despite the analytical form,
+we sample from (28) using Langevin dynamics [54] for both linear and non-linear problems. This
+3https://github.com/LeviBorodenko/motionblur (license unknown).
+4Creative Commons BY-NC 4.0 license.
+18
+
+
+choice provides a unified sampling framework, eliminates the need for task-specific derivations,
+and ensures robust performance for the forward model without a closed-form inverse. We use the
+implementation of Langevin dynamics from Inversebench [67]. For each Langevin step, we compute
+the gradient:
+∇E(z) =
+1
+2τ 2 ∇z∥A(z) −y∥2 + z −xk
+ρ2
+k
+,
+(30)
+and update z via:
+z(ℓ+1) = z(ℓ) −η ∇E
+
+z(ℓ)
++
+p
+2η ϵ,
+ϵ ∼N(0, I),
+(31)
+where η denotes the Langevin step size. For each task, we tune τ and η for the best reconstruction
+quality. We observed that both PnP-DM [58] and FlowSGS achieve optimal performance when τ is
+set to the true noise level in the measurements. We use 100 steps in the Langevin sampling in our
+main experiments.
+When sampling with a latent-space model with a decoder Dθ(·), the gradient has the form
+∇E(z) =
+1
+2τ 2 ∇z∥A(Dθ(z)) −y∥2 + z −xk
+ρ2
+k
+,
+(32)
+which requires differentiating through the decoder. Note that this will significantly increase the
+computational cost of the likelihood step, so we only use 32 steps when sampling with latent-space
+models.
+C.3
+Annealing schedule
+We use 100 iterations in SGS and summarize the annealing hyperparameters used in each task for
+FlowSGS in Table 4. We discovered that the sampling quality is most sensitive to ρmin, which
+determines the stationary coupling of the likelihood and prior step, as well as the starting point of the
+ending prior step that refines the final outputs. A reasonably large starting level ρ0 and an annealing
+rate α > 0.9 lead to similar performance.
+Table 4: Hyperparameters of the annealing schedule for different tasks.
+Inverse problem
+Starting level (ρ0)
+Minimum level (ρmin)
+Decay rate (α)
+Toy problem
+10
+0.1
+0.9
+Motion deblurring
+10
+0.1
+0.9
+Gaussian deblurring
+10
+0.1
+0.9
+Super-resolution (4×)
+10
+0.1
+0.9
+CS-MRI (Cartesian, 8×)
+10
+0.1
+0.9
+CS-MRI (radial, 8×)
+10
+0.02
+0.9
+Fourier phase retrieval
+10
+0.01
+0.9
+D
+Additional results
+D.1
+Main experiments
+In this section, we provide additional results in our main experiments using pixel-space models
+in Sections 4.3 and 4.4. In Table 5, we show the standard deviation of the mean for each metric
+provided in Table 1. We also show the runtime for each method when drawing 8 posterior samples
+in a batch in Table 6. All timing is averaged over 100 runs on a single NVIDIA H100 GPU. Note
+that FlowSGS’s runtime differs across different interpolant schedules, because different schedules
+convert to different starting time points for the prior step SDE, leading to different NFEs (881 for
+linear, 828 for GVP, and 481 for VP-SDE). With all considered interpolant schedules, FlowSGS is
+faster than existing diffusion-based samplers. In Figures 7 to 9, we show additional visual samples
+for the 6 inverse problems in our main experiments in Sections 4.3 and 4.4.
+D.2
+Experiments using latent-space models
+In Figure 10, we show results on motion deblurring and 8× super-resolution using a latent-space flow
+prior (Stable Diffusion 3.5 Medium [19]). Problem setups are provided in Section B.3.
+19
+
+
+Figure 7:
+Additional visual samples on motion deblurring, Gaussian deblurring, and 4×
+super-resolution. We draw 8 posterior samples for each method and show the mean image.
+20
+
+
+Figure 8: Additional visual samples on compressed sensing MRI. We draw 8 posterior samples
+for each method and show the mean image.
+Figure 9: Additional visual samples on Fourier phase retrieval. We draw 8 posterior samples
+from each method and report the best one.
+21
+
+
+Table 5: Quantitative results averaged over 100 test images with errors. On each of 100 test
+images, we take the mean across 8 samples for each method and score the mean reconstruction. We
+report the mean ± standard deviation of the mean image score for several metrics. For Fourier phase
+retrieval, performance is computed on the best of each batch of 8 samples rather than their mean.
+Method
+Motion deblurring
+Gaussian deblurring
+PSNR (↑)
+SSIM (↑)
+LPIPS (↓)
+PSNR (↑)
+SSIM (↑)
+LPIPS (↓)
+DPS [14]
+28.14 ± 0.31 0.803 ± 0.007 0.198 ± 0.005 29.55 ± 0.23 0.829 ± 0.005 0.167 ± 0.004
+PnP-DM [58]
+28.53 ± 0.30 0.819 ± 0.007 0.220 ± 0.006 29.44 ± 0.22 0.836 ± 0.005 0.197 ± 0.004
+DAPS [62]
+28.00 ± 0.31 0.801 ± 0.007 0.230 ± 0.006 29.48 ± 0.23 0.829 ± 0.005 0.199 ± 0.004
+PnP-Flow [42]
+27.15 ± 0.34 0.787 ± 0.007 0.254 ± 0.005 29.42 ± 0.23 0.832 ± 0.005 0.208 ± 0.004
+FlowChef [45]
+25.26 ± 0.16 0.587 ± 0.005 0.388 ± 0.004 28.66 ± 0.21 0.800 ± 0.005 0.209 ± 0.003
+FlowDPS [34]
+28.42 ± 0.32 0.816 ± 0.007 0.229 ± 0.006 29.78 ± 0.22 0.840 ± 0.005 0.202 ± 0.004
+FlowSGS (VP)
+27.69 ± 0.23 0.709 ± 0.005 0.209 ± 0.006 28.65 ± 0.17 0.723 ± 0.003 0.190 ± 0.005
+FlowSGS (GVP)
+29.16 ± 0.29 0.825 ± 0.006 0.162 ± 0.005 29.97 ± 0.22 0.837 ± 0.005 0.147 ± 0.004
+FlowSGS (Linear) 29.22 ± 0.31 0.836 ± 0.006 0.154 ± 0.005 30.09 ± 0.22 0.847 ± 0.005 0.141 ± 0.004
+Method
+CS-MRI (Cartesian, 8×)
+CS-MRI (radial, 8×)
+PSNR (↑)
+SSIM (↑)
+Data-fit (↓)
+PSNR (↑)
+SSIM (↑)
+Data-fit (↓)
+DPS [14]
+31.93 ± 0.29 0.819 ± 0.007 48.189 ± 0.041 34.57 ± 0.21 0.858 ± 0.006 50.347 ± 0.035
+PnP-DM [58]
+32.27 ± 0.19 0.824 ± 0.008 56.407 ± 0.171 33.36 ± 0.19 0.837 ± 0.007 58.001 ± 0.215
+DAPS [62]
+31.49 ± 0.18 0.815 ± 0.007 54.992 ± 0.134 33.28 ± 0.19 0.838 ± 0.007 55.169 ± 0.142
+PnP-Flow [42]
+32.22 ± 0.19 0.837 ± 0.006 50.053 ± 0.047 34.60 ± 0.21 0.864 ± 0.006 49.892 ± 0.038
+FlowChef [45]
+30.76 ± 0.17 0.766 ± 0.005 47.317 ± 0.019 33.32 ± 0.19 0.817 ± 0.006 48.894 ± 0.018
+FlowDPS [34]
+30.73 ± 0.22 0.811 ± 0.007 56.048 ± 0.220 34.05 ± 0.20 0.854 ± 0.007 54.165 ± 0.073
+FlowSGS (VP)
+30.36 ± 0.13 0.690 ± 0.006 60.096 ± 0.152 34.65 ± 0.21 0.861 ± 0.006 49.437 ± 0.022
+FlowSGS (GVP)
+32.58 ± 0.19 0.825 ± 0.007 54.592 ± 0.102 34.92 ± 0.22 0.870 ± 0.007 50.577 ± 0.028
+FlowSGS (Linear) 32.84 ± 0.20 0.839 ± 0.007 53.764 ± 0.063 34.77 ± 0.22 0.869 ± 0.007 50.420 ± 0.030
+Method
+Super-resolution (4×)
+Fourier phase retrieval
+PSNR (↑)
+SSIM (↑)
+LPIPS (↓)
+PSNR (↑)
+SSIM (↑)
+LPIPS (↓)
+DPS [14]
+28.97 ± 0.21
+0.822 ± 0.005 0.155 ± 0.004 18.17 ± 0.79 0.513 ± 0.023 0.413 ± 0.022
+PnP-DM [58]
+28.71 ± 0.19
+0.823 ± 0.005 0.179 ± 0.004 35.48 ± 0.92 0.931 ± 0.010 0.084 ± 0.014
+DAPS [62]
+28.99 ± 0.19
+0.824 ± 0.005 0.172 ± 0.004 35.77 ± 0.16 0.926 ± 0.001 0.054 ± 0.003
+PnP-Flow [42]
+26.35 ± 0.19
+0.776 ± 0.007 0.221 ± 0.005 30.76 ± 0.71 0.844 ± 0.017 0.128 ± 0.012
+FlowChef [45]
+27.14 ± 0.13
+0.711 ± 0.003 0.234 ± 0.005 20.80 ± 0.47 0.501 ± 0.018 0.380 ± 0.013
+FlowDPS [34]
+28.62 ± 0.19
+0.819 ± 0.005 0.192 ± 0.004 27.99 ± 0.63 0.818 ± 0.013 0.187 ± 0.012
+FlowSGS (VP)
+27.35 ± 0.13
+0.708 ± 0.004 0.206 ± 0.005 31.09 ± 0.83 0.850 ± 0.014 0.132 ± 0.015
+FlowSGS (GVP)
+29.02 ± 0.18
+0.824 ± 0.005 0.160 ± 0.004 38.45 ± 0.91 0.950 ± 0.011 0.056 ± 0.012
+FlowSGS (Linear)
+29.49 ± 0.19
+0.844 ± 0.004 0.149 ± 0.004 37.52 ± 1.05 0.940 ± 0.012 0.076 ± 0.014
+Table 6: Average sampling runtimes when drawing 8 posterior samples in parallel. All timing is
+done on a single NVIDIA H100 GPU.
+Method
+Runtime (s)
+DPS [14]
+103.1 ± 0.001
+PnP-DM [58]
+139.5 ± 0.006
+DAPS [62]
+63.9 ± 0.011
+PnP-Flow [42]
+5.5 ± 0.001
+FlowChef [45]
+5.5 ± 0.001
+FlowDPS [34]
+5.5 ± 0.000
+FlowSGS (Linear)
+52.9 ± 0.003
+FlowSGS (GVP)
+49.5 ± 0.001
+FlowSGS (VP-SDE)
+31.2 ± 0.000
+22
+
+
+Figure 10: Visual results using a latent-space flow model (Stable Diffusion 3.5). We show one
+sample generated by each method on motion deblurring and 8× super-resolution.
+Table 7: Ablation study on key components in the prior step of FlowSGS for motion deblurring.
+We use the linear interpolant schedule, 16 discretization steps in the prior step SDE.
+Method
+Motion deblurring
+PSNR (↑)
+SSIM (↑)
+LPIPS (↓)
+FlowSGS (incorrect conversion)
+23.69 ± 0.28
+0.491 ± 0.014
+0.311 ± 0.022
+FlowSGS (no scaling)
+7.04 ± 0.18
+0.129 ± 0.017
+0.694 ± 0.018
+FlowSGS (no timestep correction)
+24.57 ± 0.84
+0.741 ± 0.023
+0.219 ± 0.026
+FlowSGS (complete)
+27.13 ± 0.64
+0.771 ± 0.016
+0.190 ± 0.018
+D.3
+Ablation study
+Key components in FlowSGS
+In Table 7, we test the effectiveness of the key components in
+FlowSGS by removing them individually. We test on motion deblurring using only 16 SDE discretiza-
+tion steps. We show that timestep conversion, scaling, and timestep correction all lead to improved
+accuracy.
+Interpolant schedules and diffusion coefficients
+In Table 8, we provide a quantitative comparison
+of different interpolant coefficients and diffusion coefficients on motion deblurring and Fourier phase
+retrieval. Results are averaged over all 100 test images, with errors (standard deviation of the mean)
+provided. We observe that the linear schedule and the KL-optimal coefficient together provide the
+best results. Fourier phase retrieval is especially sensitive to interpolant schedules, where the linear
+interpolant significantly outperforms the others.
+Number of SDE discretization steps
+In Figure 11, we show visual samples from the ablation
+study on the SDE discretization steps in Figure 5c for motion deblurring. We see that FlowSGS with
+timestep correction is more robust under a small discretization step setting, while PnP-DM drastically
+fails due to high discretization error from the diffusion model.
+D.4
+Hyperparameter sensitivity
+FlowSGS exposes several interdependent hyperparameters: the annealing schedule (ρ0, ρmin, α) and
+the likelihood-step parameters (noise model τ, Langevin step size η). We report a one-factor-at-a-time
+sweep around the default configuration of Table 4, varying each parameter while holding the others
+fixed, on motion deblurring over 20 held-out test images. Results are given in Table 9; the default
+setting is marked † and yields LPIPS = 0.188 in every block, as expected. Sensitivity to the number
+of prior-step discretization steps N is reported separately in Figure 5c and Section D.3.
+23
+
+
+Table 8: Ablation results on interpolant schedules (αt, σt) and diffusion coefficients wt, averaged
+over 100 test images with errors. We report the mean ± standard deviation of the mean image score
+for several metrics. For motion deblurring, we take the mean across 8 samples for each method and
+score the mean reconstruction. For Fourier phase retrieval, performance is computed on the best of
+each batch of 8 samples rather than their mean.
+Interpolant
+schedule
+Diffusion
+Coefficient
+Motion deblurring
+Fourier phase retrieval
+PSNR (↑)
+SSIM (↑)
+LPIPS (↓)
+PSNR (↑)
+SSIM (↑)
+LPIPS (↓)
+VP-SDE
+wt = 0 (ODE)
+23.27 ± 0.39 0.692 ± 0.012 0.305 ± 0.015 13.57 ± 0.21 0.474 ± 0.017 0.655 ± 0.008
+wt = σt
+28.71 ± 0.30 0.824 ± 0.006 0.161 ± 0.005 17.17 ± 0.59 0.640 ± 0.016 0.508 ± 0.018
+wt = sin2(πt) 28.35 ± 0.30 0.819 ± 0.006 0.168 ± 0.007 16.55 ± 0.66 0.621 ± 0.017 0.554 ± 0.016
+wt = wKL
+t
+27.69 ± 0.23 0.709 ± 0.005 0.209 ± 0.006 31.09 ± 0.83 0.850 ± 0.014 0.132 ± 0.015
+Linear
+wt = 0 (ODE)
+25.89 ± 0.20 0.719 ± 0.006 0.250 ± 0.006 14.47 ± 0.22 0.416 ± 0.014 0.653 ± 0.007
+wt = σt
+28.28 ± 0.27 0.822 ± 0.006 0.163 ± 0.005 16.88 ± 0.60 0.650 ± 0.020 0.501 ± 0.017
+wt = sin2(πt) 28.73 ± 0.29 0.830 ± 0.006 0.158 ± 0.005 15.63 ± 0.40 0.614 ± 0.020 0.560 ± 0.011
+wt = wKL
+t
+29.22 ± 0.31 0.836 ± 0.006 0.154 ± 0.005 37.52 ± 1.05 0.940 ± 0.012 0.076 ± 0.014
+GVP
+wt = 0 (ODE)
+25.43 ± 0.31 0.714 ± 0.008 0.273 ± 0.009 14.30 ± 0.21 0.437 ± 0.014 0.655 ± 0.007
+wt = σt
+28.16 ± 0.31 0.819 ± 0.006 0.180 ± 0.007 15.45 ± 0.28 0.603 ± 0.018 0.559 ± 0.011
+wt = sin2(πt) 27.81 ± 0.29 0.811 ± 0.006 0.195 ± 0.008 14.75 ± 0.25 0.567 ± 0.017 0.601 ± 0.009
+wt = wKL
+t
+29.16 ± 0.29 0.825 ± 0.006 0.162 ± 0.005 38.45 ± 0.91 0.950 ± 0.011 0.056 ± 0.012
+Figure 11: Visual samples of the ablation study on the SDE discretization steps for motion
+deblurring. We draw 8 posterior samples for each method and show the mean image.
+Only two hyperparameters materially affect reconstruction quality. The first is ρmin, which sets
+the stationary coupling between the likelihood and prior steps and hence the starting time tk of the
+final prior step that refines the output; LPIPS degrades from 0.188 to 0.259 as ρmin grows to 1.0,
+since a large terminal coupling leaves the prior step starting too far up the interpolant to commit to
+a measurement-consistent solution. The second is τ, the assumed measurement noise level, which
+plays the same role as the measurement weight in DPS [14], FlowChef [45], FlowDPS [34], and
+PnP-Flow [42]; performance peaks when τ matches the true noise level in the measurements and
+degrades on both sides. By contrast, FlowSGS is robust to the starting level ρ0 and the decay rate α,
+each of which varies LPIPS by less than 0.008 across more than an order of magnitude. We note that
+the Langevin step size η improves monotonically over the range tested, indicating that our default is
+conservative rather than tuned to an interior optimum. For context on the parameter count, principled
+posterior samplers such as PnP-DM [58] and DAPS [62] carry a comparable number; several of
+ours arise in the Langevin likelihood step and could be eliminated for linear forward models by a
+proximal likelihood sampler [58], which we retain Langevin in place of for generality across linear
+and nonlinear operators.
+24
+
+
+Table 9: Hyperparameter sensitivity on motion deblurring averaged over 20 test images. †
+marks the default used in the main experiments. Sensitivity to the number of prior-step discretization
+steps is reported in Figure 5c.
+Parameter
+Value
+Minimum level ρmin
+Value
+0.02
+0.05
+0.1†
+0.2
+0.5
+1.0
+LPIPS (↓)
+0.219
+0.206
+0.188
+0.193
+0.232
+0.259
+Starting level ρ0
+Value
+2.0
+5.0
+10.0†
+20.0
+50.0
+LPIPS (↓)
+0.186
+0.188
+0.188
+0.190
+0.193
+Decay rate α
+Value
+0.80
+0.85
+0.90†
+0.93
+0.95
+LPIPS (↓)
+0.192
+0.192
+0.188
+0.190
+0.193
+Noise level τ
+Value
+0.01
+0.02
+0.05†
+0.1
+0.2
+LPIPS (↓)
+0.573
+0.357
+0.188
+0.248
+0.335
+Langevin step size η
+Value
+1e-4
+2e-4
+5e-4†
+1e-3
+2e-3
+5e-3
+LPIPS (↓)
+0.237
+0.209
+0.188
+0.175
+0.169
+0.158
+E
+Broader Impacts
+We demonstrate that this method is effective in a medical imaging application (accelerated single-coil
+MRI) and believe it could broadly impact scientific and medical imaging in a positive way. However,
+inverse imaging enables reconstruction of scenes that may have been considered private before such
+methods existed. While we do not directly test on such applications, we do show reconstructions
+of faces, which suggests that this method might be used to identify people in situations that would
+previously have been anonymous. Additionally, we use 2 NVIDIA H100 GPUs for pretraining, and a
+single H100 GPU for sampling.
+25
+
+
+NeurIPS Paper Checklist
+1. Claims
+Question: Do the main claims made in the abstract and introduction accurately reflect the
+paper’s contributions and scope?
+Answer: [Yes]
+Justification: The claims in the abstract are supported by theory (one theorem and two
+corollaries, with proofs) and empirical demonstrations.
+Guidelines:
+• The answer [N/A] means that the abstract and introduction do not include the claims
+made in the paper.
+• The abstract and/or introduction should clearly state the claims made, including the
+contributions made in the paper and important assumptions and limitations. A [No] or
+[N/A] answer to this question will not be perceived well by the reviewers.
+• The claims made should match theoretical and experimental results, and reflect how
+much the results can be expected to generalize to other settings.
+• It is fine to include aspirational goals as motivation as long as it is clear that these goals
+are not attained by the paper.
+2. Limitations
+Question: Does the paper discuss the limitations of the work performed by the authors?
+Answer: [Yes]
+Justification: Our conclusion lists three major limitations and approaches for possible
+mitigation in the future.
+Guidelines:
+• The answer [N/A] means that the paper has no limitation while the answer [No] means
+that the paper has limitations, but those are not discussed in the paper.
+• The authors are encouraged to create a separate “Limitations” section in their paper.
+• The paper should point out any strong assumptions and how robust the results are to
+violations of these assumptions (e.g., independence assumptions, noiseless settings,
+model well-specification, asymptotic approximations only holding locally). The authors
+should reflect on how these assumptions might be violated in practice and what the
+implications would be.
+• The authors should reflect on the scope of the claims made, e.g., if the approach was
+only tested on a few datasets or with a few runs. In general, empirical results often
+depend on implicit assumptions, which should be articulated.
+• The authors should reflect on the factors that influence the performance of the approach.
+For example, a facial recognition algorithm may perform poorly when image resolution
+is low or images are taken in low lighting. Or a speech-to-text system might not be
+used reliably to provide closed captions for online lectures because it fails to handle
+technical jargon.
+• The authors should discuss the computational efficiency of the proposed algorithms
+and how they scale with dataset size.
+• If applicable, the authors should discuss possible limitations of their approach to
+address problems of privacy and fairness.
+• While the authors might fear that complete honesty about limitations might be used by
+reviewers as grounds for rejection, a worse outcome might be that reviewers discover
+limitations that aren’t acknowledged in the paper. The authors should use their best
+judgment and recognize that individual actions in favor of transparency play an impor-
+tant role in developing norms that preserve the integrity of the community. Reviewers
+will be specifically instructed to not penalize honesty concerning limitations.
+3. Theory assumptions and proofs
+Question: For each theoretical result, does the paper provide the full set of assumptions and
+a complete (and correct) proof?
+26
+
+
+Answer: [Yes]
+Justification: Detailed proofs, with full lists of assumptions, are provided in the supplement
+for our theorem and two corollaries.
+Guidelines:
+• The answer [N/A] means that the paper does not include theoretical results.
+• All the theorems, formulas, and proofs in the paper should be numbered and cross-
+referenced.
+• All assumptions should be clearly stated or referenced in the statement of any theorems.
+• The proofs can either appear in the main paper or the supplemental material, but if
+they appear in the supplemental material, the authors are encouraged to provide a short
+proof sketch to provide intuition.
+• Inversely, any informal proof provided in the core of the paper should be complemented
+by formal proofs provided in appendix or supplemental material.
+• Theorems and Lemmas that the proof relies upon should be properly referenced.
+4. Experimental result reproducibility
+Question: Does the paper fully disclose all the information needed to reproduce the main ex-
+perimental results of the paper to the extent that it affects the main claims and/or conclusions
+of the paper (regardless of whether the code and data are provided or not)?
+Answer: [Yes]
+Justification: We provide detailed problem setup, dataset, training details, and model
+architecture in the appendix. We will also release our code for reproducibility if accepted.
+Guidelines:
+• The answer [N/A] means that the paper does not include experiments.
+• If the paper includes experiments, a [No] answer to this question will not be perceived
+well by the reviewers: Making the paper reproducible is important, regardless of
+whether the code and data are provided or not.
+• If the contribution is a dataset and/or model, the authors should describe the steps taken
+to make their results reproducible or verifiable.
+• Depending on the contribution, reproducibility can be accomplished in various ways.
+For example, if the contribution is a novel architecture, describing the architecture fully
+might suffice, or if the contribution is a specific model and empirical evaluation, it may
+be necessary to either make it possible for others to replicate the model with the same
+dataset, or provide access to the model. In general. releasing code and data is often
+one good way to accomplish this, but reproducibility can also be provided via detailed
+instructions for how to replicate the results, access to a hosted model (e.g., in the case
+of a large language model), releasing of a model checkpoint, or other means that are
+appropriate to the research performed.
+• While NeurIPS does not require releasing code, the conference does require all submis-
+sions to provide some reasonable avenue for reproducibility, which may depend on the
+nature of the contribution. For example
+(a) If the contribution is primarily a new algorithm, the paper should make it clear how
+to reproduce that algorithm.
+(b) If the contribution is primarily a new model architecture, the paper should describe
+the architecture clearly and fully.
+(c) If the contribution is a new model (e.g., a large language model), then there should
+either be a way to access this model for reproducing the results or a way to reproduce
+the model (e.g., with an open-source dataset or instructions for how to construct
+the dataset).
+(d) We recognize that reproducibility may be tricky in some cases, in which case
+authors are welcome to describe the particular way they provide for reproducibility.
+In the case of closed-source models, it may be that access to the model is limited in
+some way (e.g., to registered users), but it should be possible for other researchers
+to have some path to reproducing or verifying the results.
+5. Open access to data and code
+27
+
+
+Question: Does the paper provide open access to the data and code, with sufficient instruc-
+tions to faithfully reproduce the main experimental results, as described in supplemental
+material?
+Answer: [No]
+Justification: If accepted, we will provide open access to data and code. We do not currently
+have a suitably anonymized code base and dataset.
+Guidelines:
+• The answer [N/A] means that paper does not include experiments requiring code.
+• Please see the NeurIPS code and data submission guidelines (https://neurips.cc/
+public/guides/CodeSubmissionPolicy) for more details.
+• While we encourage the release of code and data, we understand that this might not
+be possible, so [No] is an acceptable answer. Papers cannot be rejected simply for not
+including code, unless this is central to the contribution (e.g., for a new open-source
+benchmark).
+• The instructions should contain the exact command and environment needed to run to
+reproduce the results. See the NeurIPS code and data submission guidelines (https:
+//neurips.cc/public/guides/CodeSubmissionPolicy) for more details.
+• The authors should provide instructions on data access and preparation, including how
+to access the raw data, preprocessed data, intermediate data, and generated data, etc.
+• The authors should provide scripts to reproduce all experimental results for the new
+proposed method and baselines. If only a subset of experiments are reproducible, they
+should state which ones are omitted from the script and why.
+• At submission time, to preserve anonymity, the authors should release anonymized
+versions (if applicable).
+• Providing as much information as possible in supplemental material (appended to the
+paper) is recommended, but including URLs to data and code is permitted.
+6. Experimental setting/details
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperpa-
+rameters, how they were chosen, type of optimizer) necessary to understand the results?
+Answer: [Yes]
+Justification: We provide major training and sampling details in the paper and supplement.
+We will provide more configuration files in our code base if accepted.
+Guidelines:
+• The answer [N/A] means that the paper does not include experiments.
+• The experimental setting should be presented in the core of the paper to a level of detail
+that is necessary to appreciate the results and make sense of them.
+• The full details can be provided either with the code, in appendix, or as supplemental
+material.
+7. Experiment statistical significance
+Question: Does the paper report error bars suitably and correctly defined or other appropriate
+information about the statistical significance of the experiments?
+Answer: [Yes]
+Justification: We report standard deviations of our quantitative comparison between our and
+other methods in Table 5.
+Guidelines:
+• The answer [N/A] means that the paper does not include experiments.
+• The authors should answer [Yes] if the results are accompanied by error bars, confidence
+intervals, or statistical significance tests, at least for the experiments that support the
+main claims of the paper.
+• The factors of variability that the error bars are capturing should be clearly stated (for
+example, train/test split, initialization, random drawing of some parameter, or overall
+run with given experimental conditions).
+28
+
+
+• The method for calculating the error bars should be explained (closed form formula,
+call to a library function, bootstrap, etc.)
+• The assumptions made should be given (e.g., Normally distributed errors).
+• It should be clear whether the error bar is the standard deviation or the standard error
+of the mean.
+• It is OK to report 1-sigma error bars, but one should state it. The authors should
+preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis
+of Normality of errors is not verified.
+• For asymmetric distributions, the authors should be careful not to show in tables or
+figures symmetric error bars that would yield results that are out of range (e.g., negative
+error rates).
+• If error bars are reported in tables or plots, the authors should explain in the text how
+they were calculated and reference the corresponding figures or tables in the text.
+8. Experiments compute resources
+Question: For each experiment, does the paper provide sufficient information on the com-
+puter resources (type of compute workers, memory, time of execution) needed to reproduce
+the experiments?
+Answer: [Yes]
+Justification: Our training is done on 2 NVIDIA H100 GPUs, and our testing is done on a
+single H100 GPU, as mentioned in the paper.
+Guidelines:
+• The answer [N/A] means that the paper does not include experiments.
+• The paper should indicate the type of compute workers CPU or GPU, internal cluster,
+or cloud provider, including relevant memory and storage.
+• The paper should provide the amount of compute required for each of the individual
+experimental runs as well as estimate the total compute.
+• The paper should disclose whether the full research project required more compute
+than the experiments reported in the paper (e.g., preliminary or failed experiments that
+didn’t make it into the paper).
+9. Code of ethics
+Question: Does the research conducted in the paper conform, in every respect, with the
+NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines?
+Answer: [Yes]
+Justification: The work proposes a general-purpose posterior sampling algorithm for
+Bayesian inverse problems and evaluates it on standard public image datasets (FFHQ)
+and synthetic measurements, with one experiment using the publicly released Stable Diffu-
+sion 3.5 latent prior. We do not collect new human-subject data, do not release new datasets,
+and do not deploy the method in any high-stakes setting. We have read the NeurIPS Code of
+Ethics and confirm that our research conforms with it in every respect.
+Guidelines:
+• The answer [N/A] means that the authors have not reviewed the NeurIPS Code of
+Ethics.
+• If the authors answer [No], they should explain the special circumstances that require a
+deviation from the Code of Ethics.
+• The authors should make sure to preserve anonymity (e.g., if there is a special consid-
+eration due to laws or regulations in their jurisdiction).
+10. Broader impacts
+Question: Does the paper discuss both potential positive societal impacts and negative
+societal impacts of the work performed?
+Answer: [Yes]
+Justification: We discuss broader impacts in the supplement.
+Guidelines:
+29
+
+
+• The answer [N/A] means that there is no societal impact of the work performed.
+• If the authors answer [N/A] or [No], they should explain why their work has no societal
+impact or why the paper does not address societal impact.
+• Examples of negative societal impacts include potential malicious or unintended uses
+(e.g., disinformation, generating fake profiles, surveillance), fairness considerations
+(e.g., deployment of technologies that could make decisions that unfairly impact specific
+groups), privacy considerations, and security considerations.
+• The conference expects that many papers will be foundational research and not tied
+to particular applications, let alone deployments. However, if there is a direct path to
+any negative applications, the authors should point it out. For example, it is legitimate
+to point out that an improvement in the quality of generative models could be used to
+generate Deepfakes for disinformation. On the other hand, it is not needed to point out
+that a generic algorithm for optimizing neural networks could enable people to train
+models that generate Deepfakes faster.
+• The authors should consider possible harms that could arise when the technology is
+being used as intended and functioning correctly, harms that could arise when the
+technology is being used as intended but gives incorrect results, and harms following
+from (intentional or unintentional) misuse of the technology.
+• If there are negative societal impacts, the authors could also discuss possible mitigation
+strategies (e.g., gated release of models, providing defenses in addition to attacks,
+mechanisms for monitoring misuse, mechanisms to monitor how a system learns from
+feedback over time, improving the efficiency and accessibility of ML).
+11. Safeguards
+Question: Does the paper describe safeguards that have been put in place for responsible
+release of data or models that have a high risk for misuse (e.g., pre-trained language models,
+image generators, or scraped datasets)?
+Answer: [N/A]
+Justification: Our paper leverages pre-trained generative models for inverse imaging prob-
+lems, but does not itself develop high-risk components.
+Guidelines:
+• The answer [N/A] means that the paper poses no such risks.
+• Released models that have a high risk for misuse or dual-use should be released with
+necessary safeguards to allow for controlled use of the model, for example by requiring
+that users adhere to usage guidelines or restrictions to access the model or implementing
+safety filters.
+• Datasets that have been scraped from the Internet could pose safety risks. The authors
+should describe how they avoided releasing unsafe images.
+• We recognize that providing effective safeguards is challenging, and many papers do
+not require this, but we encourage authors to take this into account and make a best
+faith effort.
+12. Licenses for existing assets
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in
+the paper, properly credited and are the license and terms of use explicitly mentioned and
+properly respected?
+Answer: [Yes]
+Justification: We cite all datasets and packages appropriately. We were unable to identify a
+license for the motionblur library that we use, so we only provide a link in this case.
+Guidelines:
+• The answer [N/A] means that the paper does not use existing assets.
+• The authors should cite the original paper that produced the code package or dataset.
+• The authors should state which version of the asset is used and, if possible, include a
+URL.
+• The name of the license (e.g., CC-BY 4.0) should be included for each asset.
+30
+
+
+• For scraped data from a particular source (e.g., website), the copyright and terms of
+service of that source should be provided.
+• If assets are released, the license, copyright information, and terms of use in the
+package should be provided. For popular datasets, paperswithcode.com/datasets
+has curated licenses for some datasets. Their licensing guide can help determine the
+license of a dataset.
+• For existing datasets that are re-packaged, both the original license and the license of
+the derived asset (if it has changed) should be provided.
+• If this information is not available online, the authors are encouraged to reach out to
+the asset’s creators.
+13. New assets
+Question: Are new assets introduced in the paper well documented and is the documentation
+provided alongside the assets?
+Answer: [No]
+Justification: If accepted, we will provide open access to well-documented code. We do not
+currently have a suitably anonymized codebase to submit.
+Guidelines:
+• The answer [N/A] means that the paper does not release new assets.
+• Researchers should communicate the details of the dataset/code/model as part of their
+submissions via structured templates. This includes details about training, license,
+limitations, etc.
+• The paper should discuss whether and how consent was obtained from people whose
+asset is used.
+• At submission time, remember to anonymize your assets (if applicable). You can either
+create an anonymized URL or include an anonymized zip file.
+14. Crowdsourcing and research with human subjects
+Question: For crowdsourcing experiments and research with human subjects, does the paper
+include the full text of instructions given to participants and screenshots, if applicable, as
+well as details about compensation (if any)?
+Answer: [N/A]
+Justification: The paper does not involve crowdsourcing nor research with human subjects.
+Guidelines:
+• The answer [N/A] means that the paper does not involve crowdsourcing nor research
+with human subjects.
+• Including this information in the supplemental material is fine, but if the main contribu-
+tion of the paper involves human subjects, then as much detail as possible should be
+included in the main paper.
+• According to the NeurIPS Code of Ethics, workers involved in data collection, curation,
+or other labor should be paid at least the minimum wage in the country of the data
+collector.
+15. Institutional review board (IRB) approvals or equivalent for research with human
+subjects
+Question: Does the paper describe potential risks incurred by study participants, whether
+such risks were disclosed to the subjects, and whether Institutional Review Board (IRB)
+approvals (or an equivalent approval/review based on the requirements of your country or
+institution) were obtained?
+Answer: [N/A]
+Justification: The paper does not involve crowd-sourcing nor research with human subjects.
+Guidelines:
+• The answer [N/A] means that the paper does not involve crowdsourcing nor research
+with human subjects.
+31
+
+
+• Depending on the country in which research is conducted, IRB approval (or equivalent)
+may be required for any human subjects research. If you obtained IRB approval, you
+should clearly state this in the paper.
+• We recognize that the procedures for this may vary significantly between institutions
+and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the
+guidelines for their institution.
+• For initial submissions, do not include any information that would break anonymity (if
+applicable), such as the institution conducting the review.
+16. Declaration of LLM usage
+Question: Does the paper describe the usage of LLMs if it is an important, original, or
+non-standard component of the core methods in this research? Note that if the LLM is used
+only for writing, editing, or formatting purposes and does not impact the core methodology,
+scientific rigor, or originality of the research, declaration is not required.
+Answer: [N/A]
+Justification: This work does not involve LLMs as any important, original, or non-standard
+components.
+Guidelines:
+• The answer [N/A] means that the core method development in this research does not
+involve LLMs as any important, original, or non-standard components.
+• Please refer to our LLM policy in the NeurIPS handbook for what should or should not
+be described.
+32
