@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-20</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-21</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-20 22:00:42 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-21 22:30:53 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天速读 5 篇论文、无精读，已列出的三篇均为 6.0/10：《GeomVLA》统一 3D 场景-运动-动作，《SlotDiT》做扩散 Transformer 的对象中心表征，另一篇用时空隐扩散概率模型做参数化动力系统降阶建模。</p>
-<p>最值得关注的是&quot;3D 场景与动作统一建模&quot;和&quot;对象中心表征 + 扩散生成&quot;两条线，前者偏机器人/具身智能，后者偏生成与表征学习，都属中等评分、可作思路参考。</p>
-<p>普通读者建议先挑与自己任务最贴近的一篇，重点看它的方法框架图与实验对比，再决定是否深读原文或找同方向更高分工作。</p>
+<p>今日速读1篇：GestureFAR 用流自回归实现流式语音手势生成，得分7.0。亮点在把生成从离线搬到流式场景，适合关注虚拟人、实时动画与多模态交互的读者。下一步可先看它的流式生成与延迟表现，再判断是否值得深入。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -93,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GeomVLA: Unifying Scene, Motion, and Action in 3D">GeomVLA: Unifying Scene, Motion, and Action in 3D</span></li><li><span class="dpr-home-dashboard-paper-title" title="SlotDiT: Object-Centric Representations for Diffusion Transformers">SlotDiT: Object-Centric Representations for Diffusion Transformers</span></li><li><span class="dpr-home-dashboard-paper-title" title="Spatio-temporal Latent Denoising Diffusion Probabilistic Models for Reduced-order Modeling of Parametrized Dynamical Systems">Spatio-temporal Latent Denoising Diffusion Probabilistic Models for Reduced-order Modeling of Parametrized Dynamical Systems</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GestureFAR: Streaming Co-Speech Gesture Generation with Flow Autoregression">GestureFAR: Streaming Co-Speech Gesture Generation with Flow Autoregression</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
 </div>
 
