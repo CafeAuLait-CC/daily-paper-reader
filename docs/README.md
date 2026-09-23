@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-22</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-23</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-22 21:46:46 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-23 22:00:50 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,10 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 8 篇推荐（精读 3 篇，速读 5 篇）</p>
-<p>精读：《MixiMotion: One-Step Text-to-Motion Generation via Asymmetric Set Distillation》（9.0/10）, 《MoSAT: Human Motion Generation from Spatial Audio and Textual Description》（9.0/10）</p>
-<p>速读：《Classifier-Free Guidance in Flow Matching: Non-Autonomous Potentials, Overshoot, and Posterior-Mean Control》（7.0/10）, 《PredActor: Predictive Action Diffusion for Steerable Onboard Humanoid Control》（7.0/10）, 《The Choreographic Genome: Amplifying the Silent Structure of Text into Dance》（6.0/10）</p>
-<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
+<p>今天速读了 4 篇生成模型方向论文（可见条目 3 篇），无一篇进入精读，整体以快速扫面为主。</p>
+<p>其中流匹配与扩散动力学最值得看：把 Riemann 流与 Wasserstein 结合、做流形上概率分布生成的《When Riemann flows with Wasserstein》（7.0），以及重思扩散生成动力学的《Mean Velocity Matching》（6.0）。</p>
+<p>普通读者可先只读 7.0 那篇的摘要与配图，判断&quot;流形上生成&quot;是否能迁移到自己手头的数据或任务，再决定要不要回头补扩散基础。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MixiMotion: One-Step Text-to-Motion Generation via Asymmetric Set Distillation">MixiMotion: One-Step Text-to-Motion Generation via Asymmetric Set Distillation</span></li><li><span class="dpr-home-dashboard-paper-title" title="MoSAT: Human Motion Generation from Spatial Audio and Textual Description">MoSAT: Human Motion Generation from Spatial Audio and Textual Description</span></li><li><span class="dpr-home-dashboard-paper-title" title="VISTA: Video-Injected Stylized Text-to-Animation">VISTA: Video-Injected Stylized Text-to-Animation</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -94,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Classifier-Free Guidance in Flow Matching: Non-Autonomous Potentials, Overshoot, and Posterior-Mean Control">Classifier-Free Guidance in Flow Matching: Non-Autonomous Potentials, Overshoot, and Posterior-Mean Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="PredActor: Predictive Action Diffusion for Steerable Onboard Humanoid Control">PredActor: Predictive Action Diffusion for Steerable Onboard Humanoid Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="The Choreographic Genome: Amplifying the Silent Structure of Text into Dance">The Choreographic Genome: Amplifying the Silent Structure of Text into Dance</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="When Riemann flows with Wasserstein: Generative Modeling of Probability Distributions on Manifolds">When Riemann flows with Wasserstein: Generative Modeling of Probability Distributions on Manifolds</span></li><li><span class="dpr-home-dashboard-paper-title" title="CPR: Combining global composing, local performing and full-sequence refining in piano rendering with continuous autoregressive modelling">CPR: Combining global composing, local performing and full-sequence refining in piano rendering with continuous autoregressive modelling</span></li><li><span class="dpr-home-dashboard-paper-title" title="Mean Velocity Matching: Rethinking Generative Dynamics in Diffusion Models">Mean Velocity Matching: Rethinking Generative Dynamics in Diffusion Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>4</strong></span></div>
 </section>
 </div>
 
