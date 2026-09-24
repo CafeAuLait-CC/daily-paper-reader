@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-23</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-24</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 3 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-23 22:00:50 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-24 22:07:58 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天速读了 4 篇生成模型方向论文（可见条目 3 篇），无一篇进入精读，整体以快速扫面为主。</p>
-<p>其中流匹配与扩散动力学最值得看：把 Riemann 流与 Wasserstein 结合、做流形上概率分布生成的《When Riemann flows with Wasserstein》（7.0），以及重思扩散生成动力学的《Mean Velocity Matching》（6.0）。</p>
-<p>普通读者可先只读 7.0 那篇的摘要与配图，判断&quot;流形上生成&quot;是否能迁移到自己手头的数据或任务，再决定要不要回头补扩散基础。</p>
+<p>今日速读3篇，聚焦流匹配与扩散模型在机器人操作和滤波中的新应用。最值得关注的是双臂操作方向JAMB与视觉运动流匹配的条件化改进，两篇均探索用扩散/流匹配提升动作生成精度。普通读者可优先了解流匹配如何让机器人动作更连贯，后续可追踪这类方法在真实机械臂上的验证。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -93,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="When Riemann flows with Wasserstein: Generative Modeling of Probability Distributions on Manifolds">When Riemann flows with Wasserstein: Generative Modeling of Probability Distributions on Manifolds</span></li><li><span class="dpr-home-dashboard-paper-title" title="CPR: Combining global composing, local performing and full-sequence refining in piano rendering with continuous autoregressive modelling">CPR: Combining global composing, local performing and full-sequence refining in piano rendering with continuous autoregressive modelling</span></li><li><span class="dpr-home-dashboard-paper-title" title="Mean Velocity Matching: Rethinking Generative Dynamics in Diffusion Models">Mean Velocity Matching: Rethinking Generative Dynamics in Diffusion Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Object-Centric Conditioning for Visuomotor Flow Matching">Object-Centric Conditioning for Visuomotor Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="JAMB: Joint Action-Motion Diffusion for Bimanual Manipulation">JAMB: Joint Action-Motion Diffusion for Bimanual Manipulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Improving Ensemble Filters with Flow Matching">Improving Ensemble Filters with Flow Matching</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
 </section>
 </div>
 
