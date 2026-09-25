@@ -48,7 +48,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-24</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-25</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 3 篇</strong>
@@ -58,7 +58,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-24 22:07:58 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-25 22:22:02 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日速读3篇，聚焦流匹配与扩散模型在机器人操作和滤波中的新应用。最值得关注的是双臂操作方向JAMB与视觉运动流匹配的条件化改进，两篇均探索用扩散/流匹配提升动作生成精度。普通读者可优先了解流匹配如何让机器人动作更连贯，后续可追踪这类方法在真实机械臂上的验证。</p>
+<p>今日</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -94,7 +94,7 @@
     <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Object-Centric Conditioning for Visuomotor Flow Matching">Object-Centric Conditioning for Visuomotor Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="JAMB: Joint Action-Motion Diffusion for Bimanual Manipulation">JAMB: Joint Action-Motion Diffusion for Bimanual Manipulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Improving Ensemble Filters with Flow Matching">Improving Ensemble Filters with Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Distillation for Efficient Multitask Manipulation Policies via Conditional Flow Matching">Distillation for Efficient Multitask Manipulation Policies via Conditional Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="ReaFlow-TTS: Realization-Conditioned Flow Matching for High-Quality and Controllable Speech Synthesis">ReaFlow-TTS: Realization-Conditioned Flow Matching for High-Quality and Controllable Speech Synthesis</span></li><li><span class="dpr-home-dashboard-paper-title" title="Faster Visuomotor Policy Learning on Action Manifolds via Riemannian MeanFlow">Faster Visuomotor Policy Learning on Action Manifolds via Riemannian MeanFlow</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
 </section>
