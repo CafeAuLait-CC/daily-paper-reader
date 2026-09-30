@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-29</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-30</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-29 22:52:03 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-30 23:24:55 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,10 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 18 篇推荐（精读 6 篇，速读 12 篇）</p>
-<p>精读：《Timo: $\textbf{T}$aming Mult$\textbf{i}$modal Diffusion Transformer for Human $\textbf{Mo}$tion Generation》（10.0/10）, 《MotionSpaceFlow: Representation-Aware Flow Matching in Direct Motion Space》（10.0/10）</p>
-<p>速读：《Triangular Resampling for Long-Horizon Motion Generation》（8.0/10）, 《BiMoGen: Bidirectional Motion-Text Generation via Unified Masked Discrete Diffusion》（8.0/10）, 《Manifold-Stable Flow Matching》（8.0/10）</p>
-<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
+<p>2026-09-30 日报精选8篇：1篇精读聚焦强化学习微调动作生成器，实现感知型多技能人形机器人运动。最值得看的是这篇8.0分的人形机器人运动工作，以及速读中流匹配模型的物理一致性锚定与重建生成统一两条6.0分线索。普通读者可先读精读论文了解机器人如何&quot;生成—跟踪—改进&quot;动作，再按兴趣选流速读方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Timo: $\textbf{T}$aming Mult$\textbf{i}$modal Diffusion Transformer for Human $\textbf{Mo}$tion Generation">Timo: $\textbf{T}$aming Mult$\textbf{i}$modal Diffusion Transformer for Human $\textbf{Mo}$tion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="MotionSpaceFlow: Representation-Aware Flow Matching in Direct Motion Space">MotionSpaceFlow: Representation-Aware Flow Matching in Direct Motion Space</span></li><li><span class="dpr-home-dashboard-paper-title" title="Motion Style Slider: Endpoint-Supervised Continuous Style Control for Human Motion Diffusion">Motion Style Slider: Endpoint-Supervised Continuous Style Control for Human Motion Diffusion</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Generate, Track, Improve: Perceptive Multi-Skill Humanoid Locomotion with RL-Fine-Tuned Motion Generators">Generate, Track, Improve: Perceptive Multi-Skill Humanoid Locomotion with RL-Fine-Tuned Motion Generators</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -94,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">12 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Triangular Resampling for Long-Horizon Motion Generation">Triangular Resampling for Long-Horizon Motion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="BiMoGen: Bidirectional Motion-Text Generation via Unified Masked Discrete Diffusion">BiMoGen: Bidirectional Motion-Text Generation via Unified Masked Discrete Diffusion</span></li><li><span class="dpr-home-dashboard-paper-title" title="Manifold-Stable Flow Matching">Manifold-Stable Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Where and When to Force: Routed Forcing for Streaming Avatars">Where and When to Force: Routed Forcing for Streaming Avatars</span></li><li><span class="dpr-home-dashboard-paper-title" title="From Feed-Forward to Flow: Unifying Reconstruction and Generation Is Easier Than You Think">From Feed-Forward to Flow: Unifying Reconstruction and Generation Is Easier Than You Think</span></li><li><span class="dpr-home-dashboard-paper-title" title="Source Anchoring for Physical Consistency in Flow Matching Models">Source Anchoring for Physical Consistency in Flow Matching Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>12</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>7</strong></span></div>
 </section>
 </div>
 
