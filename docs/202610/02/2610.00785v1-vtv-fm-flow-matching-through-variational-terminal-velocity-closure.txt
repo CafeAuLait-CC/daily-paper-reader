@@ -1,0 +1,1983 @@
+VTV-FM: Flow Matching through Variational
+Terminal-Velocity Closure
+Haoyang Jiang∗
+Yuheng Li∗
+Di Yang∗
+Yanhai Xiong
+Haipeng Chen†
+Yi He†
+Department of Data Science, William & Mary
+Williamsburg, VA 23185, USA
+{hjiang16,yli95,dyang06,yxiong05,hchen23,yihe}@wm.edu
+∗Equal contribution.
+†Corresponding authors.
+Abstract
+Flow matching (FM) learns generative transport by fitting continuous-time motion
+from a simple source distribution to the data distribution. Most existing methods
+use first-order bridges: once a source and a target sample are paired, the path is a
+straight motion with constant velocity. FM with optimal transport (OT) improves
+the pairing, but the bridge itself remains linear, limiting its ability to model curved
+motion, acceleration, and changing directions. A natural remedy is to use second-
+order phase-space dynamics; however, learning the bridge requires target-side
+terminal-velocity information that static datasets do not provide. We propose
+Variational Terminal-Velocity Flow Matching (VTV-FM), a second-order FM
+framework that derives the missing velocity by minimizing acceleration energy,
+yielding a closed-form closure for static data. The same minimum-acceleration
+variational construction also defines the OT pairing cost and the acceleration
+targets used for training. Experiments on low-dimensional datasets, PDE-governed
+physical fields, and CIFAR-10 show that VTV-FM improves transport geometry
+and generation quality over first-order and high-order FM baselines. Our code is
+available at https://github.com/HaoyangJiang-WM/VTV-FM.
+1
+Introduction
+Flow Matching (FM) has emerged as a flexible generative model by learning continuous-time vector
+fields along prescribed probability paths [1, 2]. A common choice is the first-order linear bridge: given
+a paired source sample and target sample, the model learns a straight path from x0 to x1, corresponding
+to constant-velocity transport [1]. OT-based Flow Matching further improves this framework by
+replacing independent source–target pairing with an optimal coupling, thereby reducing transport
+cost and vector-field conflicts [3, 4]. However, even after the pairing is improved, the conditional
+bridge itself remains a first-order linear interpolant. For data distributions with curvature, branching
+structures, or separated modes, straight paths may pass through low-density regions and require
+the model to learn vector fields in poorly supported intermediate regions. Meanwhile, trajectory
+intersections can induce conflicting velocity supervision, forcing the learned vector field to average
+incompatible directions [5]. This motivates a second-order phase-space formulation, where transport
+can exhibit nonuniform speed and curved position paths with time-varying tangent directions, rather
+than being restricted to constant-velocity linear interpolation.
+Constructing a second-order bridge is fundamentally more challenging than constructing a first-order
+path. A first-order bridge only requires endpoint positions, whereas a second-order phase-space
+bridge also requires endpoint velocities, since these boundary velocities determine the intermediate
+trajectory and the induced acceleration supervision. The initial velocity v0 can be sampled from a
+source phase-space prior, but static datasets typically provide only the terminal position x1, leaving
+40th Conference on Neural Information Processing Systems (NeurIPS 2026).
+arXiv:2610.00785v1  [cs.CV]  30 Sep 2026
+
+
+Figure 1: Effect of terminal-velocity choices on second-order bridge supervision. All curves in
+(a,b) use the same observable boundary information (x0, v0, x1), but different terminal velocities v1.
+In (a,b), the horizontal axis is normalized time t/T, and colors denote the same terminal-velocity
+choices: v⋆
+1, v1 = 0, chord velocity (x1 −x0)/T, random velocity, and v1 = v0. (a) The position
+bridges show the evolution of x(t) under different terminal-velocity choices. (b) The velocity bridges
+show the corresponding evolution of v(t). (c) The bars show the acceleration-energy cost for each
+terminal-velocity choice. Lower cost corresponds to smoother supervision, while externally specified
+terminal velocities may induce biased supervision.
+the terminal velocity v1 unspecified. Related high-order and acceleration-aware FM methods enrich
+path geometry through higher-order supervision, learned path constructions, boundary constraints, or
+acceleration-based refinement mechanisms [6–11].
+VTV-FM instead formulates the static-data case by treating v1 as a latent boundary variable and
+eliminating it variationally, tying the terminal-velocity completion to the bridge geometry and
+pairing cost. This issue is critical because v1 controls the full phase-space bridge. Externally
+specified terminal velocities can therefore introduce unnecessary curvature or acceleration, biasing
+the regression targets. Figure 1 illustrates this sensitivity: under the same observable boundary
+information (x0, v0, x1), different choices of v1 induce different position trajectories, velocity profiles,
+and acceleration-energy costs. Since deterministic FM sampling relies on numerical integration of
+the learned dynamics at inference time, such trajectory distortions can make discretization errors
+accumulate more easily and increase sensitivity to solver choice and time discretization [5, 12].
+To address these structural limitations, we propose Variational Terminal-Velocity Flow Matching
+(VTV-FM). Its core is a minimum-acceleration variational principle: the same variational problem
+simultaneously induces the second-order bridge, the terminal-velocity closure, and the OT pairing
+cost. For a complete boundary state (x0, v0, x1, v1), the minimum-acceleration problem yields a cubic
+Hermite bridge, together with the corresponding intermediate velocity and acceleration supervision.
+The optimal action value of this trajectory further defines a full-boundary second-order transport cost.
+In static-data regimes where the terminal velocity is missing, VTV-FM does not introduce an auxiliary
+estimator or artificial constraint. Instead, it treats v1 as a latent boundary variable and directly
+minimizes the same full-boundary cost with respect to v1. This optimization has a closed-form
+solution, yielding the variational terminal-velocity closure v⋆
+1. Substituting v⋆
+1 back into the original
+cost gives a projected OT cost that depends only on the observable boundary variables (x0, v0, x1). In
+this way, the missing v1 in static data is determined intrinsically by the same minimum-acceleration
+principle, rather than being specified by an external mechanism. When the terminal velocity is
+observed or derivable, as in PDE data or temporal sequences, VTV-FM directly uses the full-boundary
+bridge without applying the closure. Thus, the terminal-velocity closure, the OT pairing cost, and
+the acceleration supervision induced by the second-order bridge are all determined by the same
+minimum-acceleration variational principle, rather than being specified separately by external rules.
+Our contributions include: (1) a phase-space formulation of FM that identifies missing terminal
+velocity as the key obstacle for second-order bridges on static data; (2) together with the proposed
+VTV-FM framework, a closed-form terminal-velocity closure derived from a minimum-acceleration
+principle, which also defines the bridge and projected OT pairing cost; and (3) empirical validation
+on low-dimensional transport, PDE-governed fields, and CIFAR-10, where VTV-FM improves over
+first-order, OT-based, and high-order FM baselines.
+2
+
+
+2
+Preliminaries
+First-order FM and OT pairing. Let ρ0 and ρ1 denote the source and target distributions in
+position space. Given x0 ∼ρ0 and x1 ∼ρ1, standard FM constructs the linear bridge xτ =
+(1 −τ)x0 + τx1, τ ∈[0, 1], with conditional velocity uτ = x1 −x0. The velocity field is trained
+by LFM(θ) = E∥vθ(xτ, τ) −uτ∥2
+2. OT-CFM [3] replaces the independent source–target pairing
+with an OT coupling. Given minibatch samples, it constructs a cost matrix using the quadratic
+cost cOT(x0, x1) = ∥x1 −x0∥2
+2, and approximately solves the coupling by entropic OT / Sinkhorn
+iterations [13, 3]. From a variational view, this cost corresponds to the minimum value of the first-
+order kinetic action
+R 1
+0 ∥˙xt∥2
+2dt between fixed endpoints, whose minimizer is a constant-velocity
+straight line. Thus, OT-CFM improves endpoint pairing, but the bridge remains linear and first-order.
+Second-order phase-space dynamics. To construct second-order transport, we lift the state to phase
+space, zt = (xt, vt) ∈Z := X × V, where X = Rd and V = Rd are the state and velocity space,
+respectively. We consider second-order dynamics vt = ˙xt, at = ˙vt = ¨xt. Unlike a first-order
+bridge, which only requires endpoint positions (x0, x1), a second-order bridge typically requires
+the full phase-space boundary state (x0, v0, x1, v1). This phase-space formulation can be viewed
+as a second-order analogue of first-order OT: we use the acceleration action AT [x] =
+R T
+0 ∥¨xt∥2
+2dt
+to induce a second-order bridge and the corresponding endpoint cost. Given this cost, the pairing
+step remains a discrete OT problem and can be solved with minibatch Sinkhorn as in OT-CFM.
+The key difference is that static datasets usually provide only the terminal position x1, but not the
+terminal velocity v1. Therefore, determining the missing v1 is the central obstacle in extending FM
+to second-order phase-space bridges. The next section shows how the acceleration action yields the
+bridge, terminal-velocity closure, and OT pairing cost.
+3
+Proposed Method: VTV-FM
+We present VTV-FM, a second-order Flow Matching framework in phase space. Its central idea is to
+derive the transport bridge, terminal-velocity closure, and OT pairing cost from a single minimum-
+acceleration variational principle, rather than specifying them as separate design choices. This
+unified construction allows VTV-FM to use the full-boundary bridge when terminal velocities are
+available, and to close the missing terminal velocity variationally when they are not. We first derive
+the closed-form full-boundary bridge and cost for (x0, v0, x1, v1) (Section 3.1). We then project this
+cost onto (x0, v0, x1), obtaining a closed-form terminal-velocity closure and projected OT cost for
+the latent-v1 regime (Section 3.2). Finally, we use these quantities for minibatch pairing, trajectory
+supervision, acceleration matching, and sampling (Sections 3.3–3.4).
+3.1
+Full-Boundary Minimum-Acceleration Bridge
+We consider the idealized full-boundary setting, where a complete boundary state (x0, v0, x1, v1) and
+a transport horizon T > 0 are given. Let the set of admissible trajectories be
+ΓT (x0, v0, x1, v1) =
+
+γ ∈H2([0, T]; Rd) : γ(0) = x0, ˙γ(0) = v0, γ(T) = x1, ˙γ(T) = v1
+	
+,
+which satisfy the full phase-space boundary conditions. Following the second-order OT viewpoint,
+each trajectory is measured by the squared-acceleration action AT [γ] =
+R T
+0 ∥¨γ(t)∥2
+2 dt. The full-
+boundary transport cost is the minimum action value, and the corresponding variational bridge is any
+action minimizer, which are defined as follows:
+CT (x0, v0, x1, v1) =
+inf
+γ∈ΓT (x0,v0,x1,v1) AT [γ],
+(1a)
+γ⋆
+T (x0, v0, x1, v1) ∈arg
+min
+γ∈ΓT (x0,v0,x1,v1) AT [γ].
+(1b)
+The bridge induces the phase-space trajectory and acceleration target:
+x⋆
+t = γ⋆
+T (t),
+v⋆
+t = ˙γ⋆
+T (t),
+a⋆
+t = ¨γ⋆
+T (t).
+Equations (1a) and (1b) establish the basic variational objective used by VTV-FM. For a complete
+boundary state, the endpoint cost, intermediate trajectory, and acceleration target are all induced
+by the same minimum-acceleration principle. While these two equations specify the bridge and
+3
+
+
+cost implicitly, Proposition 3.1 provides their closed-form solutions as functions of the boundary
+states (x0, v0, x1, v1) and shows that the cubic Hermite bridge is not an additional path assumption,
+but the unique solution of the full-boundary minimum-acceleration problem. This cubic Hermite
+construction is classical in spline theory [14].
+Proposition 3.1 (Full-boundary minimum-acceleration bridge). For any T > 0 and complete
+boundary state (x0, v0, x1, v1), the variational bridge in Eq. (1b) exists and is unique. Let τ = t/T.
+The unique minimizer is characterized by the cubic Hermite curve
+x⋆
+t = h00(τ)x0 + h10(τ)Tv0 + h01(τ)x1 + h11(τ)Tv1,
+(2)
+where
+h00(τ) = 2τ 3 −3τ 2 + 1,
+h10(τ) = τ 3 −2τ 2 + τ,
+h01(τ) = −2τ 3 + 3τ 2,
+h11(τ) = τ 3 −τ 2.
+The induced velocity and acceleration are
+v⋆
+t = 1
+T [h′
+00(τ)x0 + h′
+10(τ)Tv0 + h′
+01(τ)x1 + h′
+11(τ)Tv1] ,
+a⋆
+t = 1
+T 2 [h′′
+00(τ)x0 + h′′
+10(τ)Tv0 + h′′
+01(τ)x1 + h′′
+11(τ)Tv1] .
+(3)
+Moreover, the full-boundary cost in Eq. (1a) admits the closed form
+CT (x0, v0, x1, v1) = 1
+T
+"
+12
+
+x1 −x0
+T
+−v0 + v1
+2
+
+2
+2
++ ∥v1 −v0∥2
+2
+#
+.
+(4)
+The proof is given in Appendix C.1. Proposition 3.1 implies that, once the complete boundary state
+is specified, VTV-FM obtains both the second-order trajectory and the endpoint cost from a single
+variational principle. In the observed-v1 regime, this full-boundary bridge can be used directly for
+pairing and acceleration supervision. In the latent-v1 regime, the same cost CT provides the starting
+point for eliminating the unobserved terminal velocity.
+3.2
+Terminal-Velocity Closure as Variational Projection
+In settings where only the observable boundary tuple (x0, v0, x1) is observed, the full-boundary
+bridge in Proposition 3.1 cannot be instantiated directly, since it depends on the terminal velocity
+v1. We determine this unobserved terminal velocity by projecting the full-boundary cost onto the
+observable state space. Rather than relying on a heuristic, we minimize CT (x0, v0, x1, v1) with
+respect to v1. The following theorem shows that minimizing CT over the latent terminal velocity
+yields a closed-form terminal-velocity closure v⋆
+1, and the associated projected cost C⋆
+T .
+Theorem 3.2 (Variational terminal-velocity projection). For any T > 0 and observable boundary
+tuple (x0, v0, x1), the minimizer of the full-boundary cost over the latent terminal velocity is
+v⋆
+1(x0, v0, x1) = arg min
+v1∈V CT (x0, v0, x1, v1) = 3
+2T (x1 −x0) −1
+2v0,
+(5)
+and the corresponding projected transport cost is
+C⋆
+T (x0, v0, x1) = inf
+v1∈V CT (x0, v0, x1, v1) = 3
+T
+
+x1 −x0
+T
+−v0
+
+2
+2
+.
+(6)
+Moreover, this projection is exact: minimizing the projected cost over observable couplings is
+equivalent to minimizing the full-boundary cost over all lifted couplings with latent terminal velocities.
+The proof is given in Appendix C.2. Theorem 3.2 provides the variational projection of the full-
+boundary cost onto the observable boundary variables. In this construction, the missing terminal
+velocity is not supplied by an auxiliary model or an external heuristic; instead, it is the analytic
+optimizer of the same minimum-acceleration principle that defines the bridge and the endpoint cost. In
+the latent-v1 regime, VTV-FM therefore uses the completed boundary state (x0, v0, x1, v⋆
+1(x0, v0, x1))
+to instantiate the full-boundary bridge in Proposition 3.1, yielding the trajectory x⋆
+t , velocity v⋆
+t , and
+acceleration target a⋆
+t .
+4
+
+
+Consequently, both regimes use the same full-boundary bridge construction. When v1 is observed,
+VTV-FM uses the full-boundary cost CT for pairing and the observed v1 for bridge instantiation.
+When v1 is latent, it uses the projected cost C⋆
+T for pairing and the variational closure v⋆
+1 for bridge
+instantiation. The next section describes how CT and C⋆
+T are used to construct the minibatch OT cost
+matrix and generate trajectory-level supervision.
+3.3
+Mini-batch Pairing and Trajectory Supervision
+Theorem 3.2 justifies using C⋆
+T in Eq. (6) for latent-v1 pairing: it gives the observable OT problem
+equivalent to the full-boundary formulation after optimizing out v1. We now compute the variational
+costs on mini-batches to compute source–target pairings and trajectory-level supervision.
+Given a source mini-batch B0 = {(x(i)
+0 , v(i)
+0 )}m
+i=1 ∼µ0 and a target mini-batch B1 = {x(j)
+1 }n
+j=1 ∼
+ρ1, we can construct a pairing cost matrix C ∈Rm×n by
+Cij =
+(
+CT (x(i)
+0 , v(i)
+0 , x(j)
+1 , v(j)
+1 ),
+observed v1,
+C⋆
+T (x(i)
+0 , v(i)
+0 , x(j)
+1 ),
+latent v1.
+(7)
+Here v(j)
+1
+denotes the terminal velocity estimated from temporal differences, simulator derivatives,
+or physical derivative information when available. We then solve the entropic OT problem with
+Sinkhorn iterations and use the resulting minibatch OT plan to select matched pairs (i, j). Details of
+the OT solver are provided in Appendix C.3.
+To compute the bridge trajectory and acceleration target for each selected pair (i, j), we first complete
+its terminal velocity:
+ev(i,j)
+1
+=
+(
+v(j)
+1 ,
+observed v1,
+v⋆
+1(x(i)
+0 , v(i)
+0 , x(j)
+1 ),
+latent v1.
+(8)
+Thus, both regimes produce a complete boundary tuple ζ(i,j) =
+ x(i)
+0 , v(i)
+0 , x(j)
+1 , ev(i,j)
+1
+
+. For t ∼
+Unif(0, T), we instantiate the full-boundary bridge in Proposition 3.1 as
+x⋆
+t = γ⋆
+T (t; ζ(i,j)),
+v⋆
+t = ˙γ⋆
+T (t; ζ(i,j)),
+a⋆
+t = ¨γ⋆
+T (t; ζ(i,j)).
+The tuple (x⋆
+t , v⋆
+t , t/T, a⋆
+t ) provides the trajectory supervision to train the acceleration field. This
+construction unifies pairing and supervision: both the matching cost and the acceleration target are
+induced by the same minimum-acceleration bridge, with the latent-v1 closure given by Theorem 3.2.
+3.4
+Acceleration Matching and Sampling
+Given the trajectory supervision (x⋆
+t , v⋆
+t , τ, a⋆
+t ), with τ = t/T, we train a neural acceleration field
+aθ : X × V × [0, 1] →V. The primary objective is acceleration matching, which regresses the
+acceleration target induced by the variational bridge:
+Lacc(θ) = E
+h
+∥aθ(x⋆
+t , v⋆
+t , τ) −a⋆
+t ∥2
+2
+i
+,
+(9)
+where the expectation is over source samples, mini-batch OT pairings, and sampled times.
+We optionally add local phase-space consistency to encourage the learned dynamics to reproduce the
+short-time evolution of the same variational bridge. For a small step ∆t, we use
+Lva = E
+hv⋆
+t+∆t −v⋆
+t −∆t aθ(x⋆
+t , v⋆
+t , τ)
+2
+2
+i
+,
+(10a)
+Lxv = E
+"x⋆
+t+∆t −x⋆
+t −∆t v⋆
+t −1
+2∆t2aθ(x⋆
+t , v⋆
+t , τ)
+
+2
+2
+#
+.
+(10b)
+Here Lva enforces local velocity consistency, while Lxv enforces the corresponding second-order
+position consistency.
+Besides, inspired by flow-divergence matching [15], we introduce acceleration-divergence match-
+ing (ADM), a second-order phase-space analogue that regularizes the divergence of the learned
+5
+
+
+acceleration dynamics. We match the bridge-induced divergence target through
+LADM = E
+"T −t
+d
+∇v· aθ(x⋆
+t , v⋆
+t , τ) + 3
+2#
+.
+(11)
+Here, +3 corresponds to the latent-v1 regime; for fixed observed v1, it becomes +4 (Appendix C.5).
+This term encourages the learned phase-space dynamics to match the local contraction or expansion
+structure of the variational bridge. Detailed derivations and implementation details are provided in
+Appendices C.4 and C.5. The total objective is
+Ltotal = Lacc + λvaLva + λxvLxv + λADMLADM.
+Sampling. After training, samples are generated by integrating the learned second-order dynamics
+˙xt = vt,
+˙vt = aθ(xt, vt, t/T)
+from an initial phase-space sample (x0, v0) ∼µ0. The generated sample is the terminal position
+xT . In practice, rather than first-order Euler discretization, we use fixed-step solvers better aligned
+with second-order phase-space dynamics, including Heun, Taylor2, and Velocity Verlet [16–18].
+For Velocity Verlet, with ∆t = T/N and ak = aθ(xk, vk, tk/T), we first update the position as
+xk+1 = xk +∆t vk + 1
+2∆t2ak. We then evaluate ak+1 = aθ(xk+1, vk +∆t ak, tk+1/T) and correct
+the velocity by vk+1 = vk + ∆t
+2 (ak + ak+1). Complete update rules for Heun, Taylor2, and Velocity
+Verlet are provided in Appendix C.6. Algorithm 1 summarizes the training and sampling procedure:
+Algorithm 1 VTV-FM: Variational Terminal-Velocity Flow Matching
+Require: Source batch B0 = {(xi
+0, vi
+0)}m
+i=1, and target batch B1 = {xj
+1}n
+j=1, horizon T, accelera-
+tion model aθ
+1: for each training iteration do
+2:
+For the latent-v1 regime, compute v⋆
+1 by Eq. (5) and obtain C⋆
+T by Eq. (6).
+3:
+Construct the mini-batch OT cost matrix Cij by Eq. (7).
+4:
+Solve mini-batch OT by Sinkhorn and obtain matched pairs (i, j).
+5:
+Complete the terminal velocity ev(i,j)
+1
+by Eq. (8).
+6:
+Sample t ∼Unif(0, T) and set τ = t/T.
+7:
+Compute trajectory supervision (x⋆
+t , v⋆
+t , a⋆
+t ) using the full-boundary bridge in Eqs. (2), (3).
+8:
+Update aθ by minimizing Eq. (9), optionally with the regularizers in Eqs. (10a), (10b), (11).
+9: end for
+10: Sampling: draw (x0, v0) ∼µ0, integrate the learned second-order dynamics, and return xT .
+4
+Experiments
+We quantitatively evaluate VTV-FM on low-dimensional datasets, PDE-governed physical fields
+[19], and CIFAR-10 [20], and additionally provide qualitative proof-of-concept temporal examples
+on BAIR robot pushing [21] and KTH [22]. The low-dimensional datasets and CIFAR-10 evaluate
+the missing-v1 regime, where terminal velocity is unobserved and must be inferred by the proposed
+closure. The low-dimensional setting further enables direct visualization of sample quality and
+transport trajectories. In contrast, the PDE and temporal examples evaluate the observed/derivable-v1
+regime, where terminal derivative information is available from governing dynamics, simulators, or
+adjacent frames. Additional qualitative temporal visualizations are provided in Appendix E.4.
+4.1
+Low-Dimensional Case Studies
+We evaluate VTV-FM on low-dimensional datasets, where generated samples and transport trajectories
+can be directly visualized. This setting compares sample quality and transport geometry on complex
+two-dimensional structures. Loss and solver analyses are provided in Appendix F.1.
+Datasets. We use seven two-dimensional datasets: Dinosaur, Swiss Roll, Checkerboard, Two
+Moons, Parallel Lines, Tree, and Star. These datasets cover curved manifolds, multimodal structures,
+branching patterns, and sharp local direction changes, making them suitable for testing how different
+flow constructions model low-dimensional geometry.
+6
+
+
+Table 1: Low-dimensional results measured by sample-based
+W2. Lower is better. The right radar plot visualizes the same
+results using the relative score sd,m, where higher is better.
+Dataset
+CFM
+OT-CFM OAT-FM HOFM CurveFlow VTV-FM
+Dinosaur
+0.1336
+0.1302
+0.1237
+0.1064
+0.1088
+0.1109
+Swiss Roll
+0.1083
+0.1037
+0.1064
+0.1209
+0.1176
+0.1081
+Checkerboard 0.1229
+0.1207
+0.1148
+0.1137
+0.1126
+0.1092
+Two Moons
+0.0978
+0.0956
+0.0884
+0.0857
+0.0842
+0.0790
+Parallel Lines 0.1441
+0.1381
+0.1374
+0.1391
+0.1370
+0.1362
+Tree
+0.0760
+0.0744
+0.0737
+0.0724
+0.0727
+0.0730
+Star
+0.0902
+0.0915
+0.0885
+0.0893
+0.0877
+0.0862
+Avg.
+0.1104
+0.1077
+0.1047
+0.1039
+0.1029
+0.1004
+Baselines. We compare VTV-FM with CFM [1], OT-CFM [3], OAT-FM [11], HOFM [8], and
+CurveFlow [9]. CFM and OT-CFM are first-order baselines, where OT-CFM improves source–target
+pairing through minibatch OT while retaining a first-order linear conditional bridge. OAT-FM, HOFM,
+and CurveFlow are stronger acceleration-based or curve-based baselines, allowing us to compare
+whether high-order path modeling improves low-dimensional generation quality.
+Metric. We evaluate generation quality using sample-based W2. For each dataset, we denote
+the generated samples by {ˆxi}n
+i=1 and the target samples by {yi}n
+i=1. The corresponding empir-
+ical distributions are bρgen = P
+i δˆxi/n and bρdata = P
+i δyi/n. We report W2(bρgen, bρdata) =
+
+minπ∈Π
+P
+i,j πij∥ˆxi −yj∥2
+2
+1/2
+, where Π denotes the set of couplings between the two uniform
+empirical distributions. Lower values indicate better agreement between generated and target samples.
+For the radar plot, we convert the raw W2 values into a per-dataset relative score. Given dataset d and
+method m, we define sd,m = minm′ W2(d, m′)/W2(d, m). Thus, the best method on each dataset
+has score 1, and higher radar scores indicate better relative performance.
+Results and findings. Table 1 reports the main results on seven low-dimensional datasets. VTV-
+FM achieves the best average sample-based W2, reaching 0.1004 and outperforming all baselines.
+Compared with CFM, OT-CFM, OAT-FM, HOFM, and CurveFlow, VTV-FM reduces the average
+W2 by approximately 9.1%, 6.8%, 4.1%, 3.4%, and 2.4%, respectively. The radar relative score
+shows the same trend: VTV-FM obtains the highest average score of 0.987, compared with 0.963 for
+CurveFlow and 0.955 for HOFM, indicating more stable relative performance across datasets.
+At the dataset level, VTV-FM achieves the best result on 4/7 datasets: Checkerboard, Two Moons,
+Parallel Lines, and Star. Compared with the strongest competing baseline on these datasets, VTV-
+FM reduces W2 by approximately 3.0%, 6.2%, 0.6%, and 1.7%, respectively. Checkerboard, Two
+Moons, and Star involve multimodality, separated modes, or sharp local direction changes, suggesting
+that second-order phase-space dynamics are particularly beneficial for complex low-dimensional
+structures. On another three datasets, VTV-FM is not the best method but remains competitive.
+On Tree, it is only about 0.8% worse than the best HOFM result. This suggests that high-order
+or OT-based path modeling can still be effective for certain geometries. However, in terms of
+average performance, VTV-FM shows the most robust behavior across low-dimensional structures.
+Additional controlled analyses of the source phase-space prior, terminal-velocity completion, pairing–
+bridge consistency, and computational efficiency on the low-dimensional benchmarks are provided in
+Appendices F.2–F.5.
+4.2
+PDE Case Studies in the Observed-v1 Regime
+We evaluate VTV-FM on PDE-governed generation tasks. Unlike two-dimensional datasets and
+CIFAR-10, PDE data provide explicit temporal evolution, so the terminal derivative can be obtained
+from the governing equation or numerical simulator. This corresponds to the observed-v1 regime,
+where VTV-FM can use the full-boundary second-order bridge without terminal-velocity closure.
+Datasets. We consider two two-dimensional PDE datasets: Navier–Stokes vorticity generation
+(NS2D) and Kuramoto–Sivashinsky generation (KS2D). For NS2D, the state variable is the vorticity
+field ω, governed by ∂tω + u · ∇ω = ν∆ω + f. For KS2D, the state variable is a scalar field u,
+7
+
+
+governed by ∂tu+ 1
+2|∇u|2 +∆u+∆2u = 0. In both datasets, the terminal derivative can be obtained
+from the PDE right-hand side or simulator outputs.
+Baselines. We compare VTV-FM with OT-CFM and HOFM. OT-CFM is the stronger first-order OT-
+based baseline, while HOFM is a competitive high-order baseline. This comparison evaluates whether
+terminal derivative information and the full-boundary bridge improve second-order generation.
+Metrics. We evaluate PDE generation quality using MMD, PSD log-L2, and a derivative-sensitive
+gap. MMD [23] measures global distributional discrepancy, PSD log-L2 measures multiscale spectral
+fidelity, and the derivative-sensitive gap compares the distributions of per-sample L2 norms of
+PDE-related quantities. For NS2D, we use ν∆ω; for KS2D, we use the PDE right-hand side.
+Table 2: PDE generation results.
+Dataset Method
+MMD PSD log-L2
+Deriv. gap
+NS2D
+OT-CFM
+0.017
+5.08
+6.93×10−3
+HOFM
+0.015
+4.22
+1.06×10−3
+VTV-FM
+0.014
+3.48
+2.80×10−4
+KS2D
+OT-CFM
+0.035
+9.00
+5.50×10−1
+HOFM
+0.015
+8.13
+9.17×10−2
+VTV-FM
+0.010
+7.52
+1.30×10−2
+Results and findings.
+Table 2 reports the
+PDE generation results on NS2D and KS2D.
+VTV-FM achieves the best result on both PDE
+datasets across all metrics, improving global dis-
+tributional matching, spectral fidelity, and PDE-
+related derivative structure.
+On NS2D, VTV-FM reduces MMD from 0.017
+(OT-CFM) and 0.015 (HOFM) to 0.014, cor-
+responding to relative reductions of approxi-
+mately 17.6% and 6.7%, respectively. For spec-
+tral structure, it reduces PSD log-L2 from 5.08 and 4.22 to 3.48, giving reductions of approximately
+31.5% over OT-CFM and 17.5% over HOFM. The largest gain appears in the derivative-sensitive gap,
+VTV-FM reduces it from 6.93×10−3 and 1.06×10−3 to 2.80×10−4, corresponding to reductions
+of approximately 96.0% and 73.6%. This indicates that VTV-FM better preserves diffusion-related
+derivative structure.
+On KS2D, VTV-FM also consistently improves over both baselines. It reduces MMD from 0.035 (OT-
+CFM) and 0.015 (HOFM) to 0.010, yielding relative reductions of approximately 71.4% and 33.3%,
+respectively. For PSD log-L2, VTV-FM reduces the value from 9.00 and 8.13 to 7.52, corresponding
+to reductions of approximately 16.4% and 7.5%. For the derivative-sensitive gap, it reduces the
+value from 5.50×10−1 and 9.17×10−2 to 1.30×10−2, giving reductions of approximately 97.6%
+and 85.8%. This suggests that VTV-FM improves not only overall distribution matching, but also the
+PDE-related dynamical structure of the KS system.
+Overall, the most pronounced improvements appear in the derivative-sensitive gap on both PDE
+systems. These results show that VTV-FM can directly exploit terminal derivative information and
+unify it with the full-boundary bridge geometry and trajectory supervision.
+4.3
+CIFAR-10 Case Study in the Missing-v1 Regime
+We next evaluate VTV-FM on CIFAR-10, a standard image-generation benchmark where target-side
+terminal derivatives are unavailable. This corresponds to the missing-v1 regime: only target samples
+are observed, and the second-order bridge must be instantiated using the terminal-velocity closure
+derived in Section 3. This experiment tests whether the proposed construction remains effective in
+high-dimensional image generation.
+Baselines and evaluation. We compare VTV-FM with representative Flow Matching baselines,
+including FM, I-CFM, OT-CFM, OAT-FM, HOFM, and CurveFlow. FM and I-CFM use independent
+source–target coupling, while OT-CFM uses minibatch OT pairing. OAT-FM further refines first-order
+couplings through acceleration transport, whereas HOFM and CurveFlow provide high-order or curve-
+based path-modeling baselines. Because these methods use different dynamical orders and native
+sampling procedures, we report both solver-controlled comparisons and method-specific inference
+protocols. For the controlled cross-method comparison, VTV-FM uses acceleration matching only,
+without the local consistency or ADM regularizers.
+Solver-controlled comparison. Table 3 separates method design from solver choice. Under the
+shared Heun-100 protocol with 200 NFE, FM, OT-CFM, and VTV-FM obtain FIDs of 3.62, 3.48,
+and 3.17, respectively. Under the same adaptive Dopri5 tolerance, VTV-FM reaches an FID of 3.23
+with 81 NFE, compared with 3.73 with 147 NFE for FM and 3.60 with 134 NFE for OT-CFM. These
+8
+
+
+Table 3: CIFAR-10 FID under controlled inference protocols. For adaptive Dopri5, the measured
+number of function evaluations (NFE) is shown in parentheses.
+Method
+Euler-100
+Dopri5
+Heun-100
+Taylor2-100
+Verlet-100
+FM
+4.58
+3.73 (147)
+3.62
+–
+–
+I-CFM
+4.48
+3.68 (146)
+3.59
+–
+–
+OT-CFM
+4.46
+3.60 (134)
+3.48
+–
+–
+FM + OAT-FM
+3.91
+3.56 (135)
+3.51
+–
+–
+I-CFM + OAT-FM
+3.77
+3.50 (138)
+3.45
+–
+–
+OT-CFM + OAT-FM
+3.72
+3.47 (126)
+3.42
+–
+–
+CurveFlow
+3.47
+3.41 (130)
+3.40
+–
+–
+HOFM
+–
+–
+–
+3.45
+–
+VTV-FM (Acc. only)
+3.28
+3.23 (81)
+3.17
+3.25
+3.10
+results show that the improvement persists under shared general-purpose solvers and therefore cannot
+be attributed solely to Velocity Verlet, auxiliary regularization, or a larger sampling budget.
+Role of the auxiliary objectives. We next evaluate the effect of local consistency and acceleration-
+divergence matching (ADM) within VTV-FM. Table 4 reports the results under three fixed-step
+phase-space solvers. Acceleration matching alone already achieves FIDs of 3.10, 3.17, and 3.25 with
+Velocity Verlet, Heun, and Taylor2, respectively. Adding local consistency improves these values
+to 3.06, 3.16, and 3.23. Adding ADM alone gives 3.05, 3.14, and 3.19, showing a larger individual
+improvement than local consistency under all three solvers. Combining both auxiliary terms gives
+the best overall results, including an FID of 2.99 with 100-step Velocity Verlet sampling.
+Table 4: VTV-FM objective ablation.
+Objective
+Verlet Heun Taylor2
+Acc.
+3.10
+3.17
+3.25
+Acc. + Cons.
+3.06
+3.16
+3.23
+Acc. + ADM
+3.05
+3.14
+3.19
+Acc. + Cons. + ADM
+2.99
+3.13
+3.18
+Here, Cons. = Lva + Lxv. The ablation indicates
+that the main gain is already present with bridge-
+induced acceleration supervision, while local con-
+sistency and ADM provide complementary refine-
+ments. ADM yields the larger individual gain, and
+combining both auxiliary terms gives the strongest
+overall performance. Accordingly, we treat accelera-
+tion matching as the core learning objective and the
+consistency and ADM terms as optional refinements.
+Results and findings. The controlled comparisons show that VTV-FM improves over first-order FM
+and OT-based FM even when solver choice is held fixed. In particular, under Heun-100, VTV-FM
+reduces FID from 3.62 for FM and 3.48 for OT-CFM to 3.17. Under adaptive Dopri5, VTV-FM also
+achieves a lower FID with fewer function evaluations. Within VTV-FM, the full objective further
+improves the best fixed-step result from 3.10 with acceleration matching alone to 2.99 when both
+consistency and ADM are included.
+These results support two complementary conclusions. First, the improvement of VTV-FM is not
+a solver-specific effect: it persists under shared Heun and Dopri5 inference protocols. Second, the
+auxiliary regularizers refine an already strong acceleration-matching model rather than accounting for
+the primary gain. Together, the results show that the variationally induced phase-space construction
+remains effective in the high-dimensional missing-v1 regime. Qualitative CIFAR-10 samples are
+provided in Appendix E.3. Additional ImageNet-256 scaling results are reported in Appendix F.5.
+5
+Related Work
+Flow Matching and OT-based coupling. Flow Matching learns generative transport by regressing
+time-dependent vector fields along prescribed probability paths, with stochastic interpolants and
+rectified flows providing related formulations [1, 2, 5]. Minibatch optimal transport improves
+source–target coupling and simplifies transport paths and regression targets [3, 4]. In OT-CFM with
+linear conditional bridges, optimal transport improves sample pairing, but each conditional trajectory
+remains a straight line between the paired endpoints.
+Higher-order dynamics and path design. Beyond improving sample coupling, existing methods
+enrich generative dynamics through higher-order supervision and alternative dynamical construc-
+9
+
+
+tions. HOMO introduces acceleration and higher-order derivative supervision into one-step shortcut
+models [6], and NRFlow jointly learns velocity and acceleration fields to improve noise robustness
+and trajectory stability [7]. HOFM develops a unified framework incorporating arbitrary-order
+trajectory derivatives, with conditional regression formulations, derivative consistency constraints,
+and statistical convergence rates [8]. Related theory also studies estimation errors in higher-order
+trajectory refinement [24]. In terms of dynamical structure and path geometry, HRF models velocity,
+acceleration, and higher-order variables through hierarchically coupled rectified flows [25], and
+CurveFlow explores curvature-guided path objectives [9]. For few-step generation, Terminal Velocity
+Matching matches the derivative of a two-time displacement model with respect to its terminal
+time [26]; this derivative target is distinct from the data-side endpoint velocity considered here.
+Minimum-acceleration transport and boundary conditions. A closely related variational approach
+uses squared-acceleration action to construct trajectories and transport costs. Classical spline theory
+shows that minimizing this action with fixed endpoint positions and velocities yields a cubic Hermite
+curve [14]. At the distribution level, second-order optimal transport studies acceleration-minimizing
+paths and cubic Wasserstein splines [27]. OAT-FM applies optimal acceleration transport to flow
+matching [11], and OTIKIN studies second-order discrepancies between distributions induced by
+acceleration costs [28]. Endpoint information also plays an important role: boundary-constrained
+flow matching imposes prescribed endpoint behavior on learned first-order velocity fields [10].
+Our setting concerns second-order phase-space bridges whose terminal velocity is not provided by
+static data. VTV-FM treats this unspecified velocity as an optimization variable in the minimum-
+acceleration problem and eliminates it analytically, jointly determining the terminal-velocity closure,
+bridge, corresponding OT pairing cost, and acceleration supervision.
+6
+Conclusion
+We introduced VTV-FM, a second-order FM framework for generative transport in phase space. The
+central challenge is that second-order bridges require a target-side terminal velocity, which is often
+unavailable for static data. VTV-FM addresses this issue with a minimum-acceleration variational
+principle: when the terminal velocity is missing, the principle yields an analytic terminal-velocity
+closure and a projected OT cost; when the terminal velocity is observed or derivable, the same
+full-boundary bridge directly incorporates it. This construction unifies terminal-velocity closure,
+source–target pairing, and acceleration supervision under a single variational framework. Experiments
+on low-dimensional datasets, PDE-governed fields, and CIFAR-10 show that VTV-FM improves
+generation quality over first-order, OT-based, and higher-order FM baselines, while producing more
+reliable second-order transport trajectories. Future work includes developing richer kinetic priors,
+extending the framework to conditional and controlled generation, and scaling second-order transport
+constructions to larger generative modeling tasks.
+Acknowledgements and Disclosures
+Funding. The work done by H. Jiang and Y. He was supported in part by the National Science
+Foundation (NSF) under Grant Nos. IIS-2544353 (CAREER), IIS-2505719, IIS-2441449, and IOS-
+2446522, and in part by the Commonwealth Cyber Initiative (CCI). The work done by Y. Li and H.
+Chen was supported by the NSF under IIS-2348405, the Coastal Virginia Center for Cyber Innovation
+(COVA CCI), CCI, the William & Mary Faculty Research Grant, and generous gifts from NVIDIA
+and Amazon. And the work done by D. Yang and Y. Xiong was supported by the COVA CCI and the
+CCI.
+Competing interests. The authors declare no financial relationships or competing interests outside
+the submitted work that could reasonably be perceived as influencing this work.
+References
+[1] Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow
+Matching for Generative Modeling. In ICLR, 2023.
+[2] Michael S. Albergo, Nicholas M. Boffi, and Eric Vanden-Eijnden. Stochastic Interpolants: A
+Unifying Framework for Flows and Diffusions. Journal of Machine Learning Research, 26
+(209):1–80, 2025.
+10
+
+
+[3] Alexander Tong, Kilian Fatras, Nikolay Malkin, Guillaume Huguet, Yanlei Zhang, Jarrid Rector-
+Brooks, Guy Wolf, and Yoshua Bengio. Improving and Generalizing Flow-Based Generative
+Models with Minibatch Optimal Transport. Transactions on Machine Learning Research, March
+2024.
+[4] Aram-Alexandre Pooladian, Heli Ben-Hamu, Carles Domingo-Enrich, Brandon Amos, Yaron
+Lipman, and Ricky T. Q. Chen. Multisample Flow Matching: Straightening Flows with
+Minibatch Couplings. In ICML, volume 202, pages 28100–28127, 2023.
+[5] Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow Straight and Fast: Learning to Generate
+and Transfer Data with Rectified Flow. In ICLR, 2023.
+[6] Bo Chen, Chengyue Gong, Xiaoyu Li, Yingyu Liang, Zhizhou Sha, Zhenmei Shi, Zhao Song,
+and Mingda Wan. High-Order Matching for One-Step Shortcut Diffusion Models. In ICLRW,
+2025. DeLTa Workshop.
+[7] Bo Chen, Chengyue Gong, Xiaoyu Li, Yingyu Liang, Zhizhou Sha, Zhenmei Shi, Zhao Song,
+Mingda Wan, and Xugang Ye. NRFlow: Towards noise-robust generative modeling via high-
+order mechanism. In UAI, volume 286, pages 673–704, 2025.
+[8] Maojiang Su, Jerry Yao-Chieh Hu, Yi-Chen Lee, Ning Zhu, Jui-Hui Chung, Shang Wu, Zhao
+Song, Minshuo Chen, and Han Liu. High-Order Flow Matching: Unified Framework and Sharp
+Statistical Rates. In NeurIPS, volume 38, pages 51192–51304, 2025.
+[9] Yan Luo, Drake Du, Hao Huang, Yi Fang, and Mengyu Wang. CurveFlow: Curvature-guided
+flow matching for image generation. In CVPRW, pages 9020–9029, 2026.
+[10] Xixi Hu, Runlong Liao, Keyang Xu, Bo Liu, Yeqing Li, Eugene Ie, Hongliang Fei, and Qiang
+Liu. Improving Rectified Flow with Boundary Conditions. In ICCV, pages 18177–18186, 2025.
+[11] Angxiao Yue, Anqi Dong, and Hongteng Xu. OAT-FM: Optimal acceleration transport for
+improved flow matching. arXiv preprint arXiv:2509.24936, 2025.
+[12] Neta Shaul, Juan C. Pérez, Ricky T. Q. Chen, Ali K. Thabet, Albert Pumarola, and Yaron
+Lipman. Bespoke Solvers for Generative Flow Models. In ICLR, 2024.
+[13] Marco Cuturi. Sinkhorn Distances: Lightspeed Computation of Optimal Transport. In NeurIPS,
+volume 26, pages 2292–2300, 2013.
+[14] Carl de Boor. A Practical Guide to Splines, volume 27 of Applied Mathematical Sciences.
+Springer-Verlag, New York, 1978.
+[15] Yuhao Huang, Taos Transue, Shih-Hsin Wang, William M. Feldman, Hong Zhang, and Bao
+Wang. Improving Flow Matching by Aligning Flow Divergence. In ICML, volume 267, pages
+25813–25834, 2025.
+[16] Ernst Hairer, Syvert P. Nørsett, and Gerhard Wanner. Solving Ordinary Differential Equations
+I: Nonstiff Problems, volume 8 of Springer Series in Computational Mathematics. Springer,
+Berlin, second edition, 1993.
+[17] John Charles Butcher. Numerical Methods for Ordinary Differential Equations. John Wiley &
+Sons, third edition, 2016.
+[18] William C. Swope, Hans C. Andersen, Peter H. Berens, and Kent R. Wilson. A Computer
+Simulation Method for the Calculation of Equilibrium Constants for the Formation of Physical
+Clusters of Molecules: Application to Small Water Clusters. The Journal of Chemical Physics,
+76(1):637–649, 1982.
+[19] Phillip Lippe, Bastiaan S. Veeling, Paris Perdikaris, Richard E. Turner, and Johannes Brand-
+stetter. PDE-Refiner: Achieving accurate long rollouts with neural PDE solvers. In NeurIPS,
+volume 36, pages 67398–67433, 2023.
+[20] Alex Krizhevsky. Learning Multiple Layers of Features from Tiny Images. Technical report,
+University of Toronto, 2009.
+11
+
+
+[21] Frederik Ebert, Chelsea Finn, Alex X. Lee, and Sergey Levine. Self-Supervised Visual Planning
+with Temporal Skip Connections. In CoRL, volume 78, pages 344–356, 2017.
+[22] Christian Schuldt, Ivan Laptev, and Barbara Caputo. Recognizing Human Actions: A Local
+SVM Approach. In ICPR, volume 3, pages 32–36, 2004.
+[23] Arthur Gretton, Karsten M. Borgwardt, Malte J. Rasch, Bernhard Schölkopf, and Alexander
+Smola. A kernel two-sample test. Journal of Machine Learning Research, 13(25):723–773,
+2012.
+[24] Chengyue Gong, Xiaoyu Li, Yingyu Liang, Jiangxuan Long, Zhenmei Shi, Zhao Song, and
+Yu Tian. Theoretical Guarantees for High Order Trajectory Refinement in Generative Flows.
+arXiv preprint arXiv:2503.09069, 2025.
+[25] Yichi Zhang, Yici Yan, Alex Schwing, and Zhizhen Zhao. Towards Hierarchical Rectified Flow.
+In ICLR, 2025.
+[26] Linqi Zhou, Mathias Parger, Ayaan Haque, and Jiaming Song. Terminal velocity matching. In
+ICLR, 2026.
+[27] Jean-David Benamou, Thomas O. Gallouët, and François-Xavier Vialard. Second-order models
+for optimal transport and cubic splines on the Wasserstein space. Foundations of Computational
+Mathematics, 19(5):1113–1143, 2019.
+[28] Giovanni Brigati, Jan Maas, and Filippo Quattrocchi. Kinetic Optimal Transport (OTIKIN)
+– Part 1:
+Second-Order Discrepancies Between Probability Measures.
+arXiv preprint
+arXiv:2502.15665, 2025.
+[29] Nanye Ma, Mark Goldstein, Michael S. Albergo, Nicholas M. Boffi, Eric Vanden-Eijnden,
+and Saining Xie. SiT: Exploring flow and diffusion-based generative models with scalable
+interpolant transformers. In ECCV, pages 23–40, 2024.
+[30] Jean-David Benamou and Yann Brenier. A computational fluid mechanics solution to the
+Monge–Kantorovich mass transfer problem. Numerische Mathematik, 84(3):375–393, 2000.
+12
+
+
+Technical Appendices and Supplementary Material
+A Limitations.
+14
+B
+Broader impacts.
+14
+C Core Derivations and Algorithm Details
+14
+C.1
+Proof of Proposition 3.1 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+14
+C.2
+Proof of Theorem 3.2: Variational Terminal-Velocity Projection
+. . . . . . . . . .
+14
+C.3
+Mini-batch Pairing and Supervision Details
+. . . . . . . . . . . . . . . . . . . . .
+15
+C.4
+Local Integral Consistency . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+15
+C.5
+Acceleration Divergence Matching . . . . . . . . . . . . . . . . . . . . . . . . . .
+16
+C.6
+Numerical Solvers
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+17
+D Implementation Details
+17
+D.1
+Low-Dimensional Experiments . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+17
+D.2
+Shared Source Phase-Space and Training Setup . . . . . . . . . . . . . . . . . . .
+17
+D.3
+PDE-Governed Field Experiments . . . . . . . . . . . . . . . . . . . . . . . . . .
+18
+D.4
+CIFAR-10 Experiments . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+18
+E Additional Qualitative Visualizations
+18
+E.1
+Low-Dimensional Trajectory Visualizations . . . . . . . . . . . . . . . . . . . . .
+18
+E.2
+Additional PDE Visualization . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+20
+E.3
+Additional CIFAR-10 Samples . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+20
+E.4
+Additional Video Visualization . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+20
+F
+Additional Controlled Experiments
+20
+F.1
+Loss and Solver Analysis on Low-Dimensional Datasets
+. . . . . . . . . . . . . .
+20
+F.2
+Source Phase-Space Prior and Sensitivity Analysis
+. . . . . . . . . . . . . . . . .
+21
+F.3
+Terminal-Velocity Ablation Study
+. . . . . . . . . . . . . . . . . . . . . . . . . .
+21
+F.4
+Pairing–Bridge Cross-Ablation Study
+. . . . . . . . . . . . . . . . . . . . . . . .
+22
+F.5
+Computational Efficiency and ImageNet-256 Scaling . . . . . . . . . . . . . . . .
+22
+G VTV-FM as an Extension of OT-CFM
+23
+G.1
+OT-CFM as First-Order Variational Flow Matching . . . . . . . . . . . . . . . . .
+23
+G.2
+Second-Order Lift to Phase Space
+. . . . . . . . . . . . . . . . . . . . . . . . . .
+23
+G.3
+Projection under Missing Terminal Velocity . . . . . . . . . . . . . . . . . . . . .
+23
+G.4
+Bridge-Shape Ablation: Minimum Acceleration versus Minimum Jerk . . . . . . .
+24
+13
+
+
+A
+Limitations.
+VTV-FM relies on a minimum-acceleration principle to close the missing terminal velocity in static-
+data regimes. Although this gives an analytic and internally consistent bridge, richer kinetic structures
+or multimodal terminal velocities may require more flexible closures. Our experiments include
+low-dimensional datasets, PDE-governed fields, CIFAR-10, an ImageNet-256 scaling study, and
+qualitative video examples. Broader evaluation on higher-resolution image generation, quantitative
+video generation, and conditional generation remains future work.
+B
+Broader impacts.
+This work is primarily methodological and may benefit scientific generation, physical simulation,
+and data-driven modeling by improving transport geometry and derivative-aware generation. As
+with other generative modeling methods, improved sample quality may also be misused for synthetic
+image or video generation. The paper does not propose a deployed system or use private personal
+data, and our experiments are limited to standard benchmarks and simulated physical fields.
+C
+Core Derivations and Algorithm Details
+We prove the full-boundary bridge and terminal-velocity projection (subsections C.1 and C.2), then
+provide minibatch pairing, auxiliary-loss, and sampling details (subsections C.3, C.4, C.5, and C.6)
+for Section 3.
+C.1
+Proof of Proposition 3.1
+Proof. Let ∆x = x1 −x0 and define
+γ⋆(t) = x0 + v0t + βt2 + αt3,
+α = −2∆x + T(v0 + v1)
+T 3
+,
+β = 3∆x −T(2v0 + v1)
+T 2
+.
+This polynomial satisfies all four boundary conditions and is equivalent to the Hermite representation
+in Eq. (2). Its derivatives give Eq. (3).
+For any other admissible γ ∈ΓT (x0, v0, x1, v1), write r = γ −γ⋆. Then r(0) = r(T) = ˙r(0) =
+˙r(T) = 0. Since (γ⋆)(4) = 0, integration by parts gives
+Z T
+0
+⟨¨γ⋆, ¨r⟩dt = 0.
+Consequently,
+AT [γ] = AT [γ⋆] +
+Z T
+0
+∥¨r(t)∥2
+2 dt ≥AT [γ⋆].
+Equality requires ¨r = 0 almost everywhere; the homogeneous boundary conditions then imply r = 0.
+Thus γ⋆is the unique global minimizer in the admissible Sobolev class.
+Finally, ¨γ⋆(t) = 6αt + 2β yields
+AT [γ⋆] = 12T 3∥α∥2
+2 + 12T 2⟨α, β⟩+ 4T∥β∥2
+2.
+Substituting α, β and completing the square gives Eq. (4).
+C.2
+Proof of Theorem 3.2: Variational Terminal-Velocity Projection
+Proof. Completing the square in Eq. (4) gives
+CT (x0, v0, x1, v1) = 3
+T 3 ∥x1 −x0 −Tv0∥2
+2
++ 4
+T
+v1 −
+ 3
+2T (x1 −x0) −1
+2v0
+
+2
+2
+.
+Since T > 0, the second term has a unique minimizer in v1. This proves the closure and projected
+cost in Eqs. (5)–(6).
+14
+
+
+To establish the coupling-level statement, write s = (x0, v0, x1) and let η ∈Π(µ0, ρ1) be an
+observable coupling. Define its full-boundary lifts by
+L(η) = {π ∈P(X × V × X × V) : p#π = η},
+p(s, v1) = s.
+For any π ∈L(η), the completed-square identity yields
+Z
+CT (s, v1) dπ =
+Z
+C⋆
+T (s) dη + 4
+T
+Z
+∥v1 −v⋆
+1(s)∥2
+2 dπ ≥
+Z
+C⋆
+T (s) dη.
+Equality is attained by the deterministic lift π⋆= (id, v⋆
+1)#η, which assigns v1 = v⋆
+1(s) to each
+observable tuple. Hence
+inf
+π∈L(η)
+Z
+CT dπ =
+Z
+C⋆
+T dη.
+Taking the infimum over observable couplings gives
+inf
+η∈Π(µ0,ρ1)
+Z
+C⋆
+T dη =
+inf
+η∈Π(µ0,ρ1)
+inf
+π∈L(η)
+Z
+CT dπ,
+which proves the exact variational projection.
+C.3
+Mini-batch Pairing and Supervision Details
+For the cost matrix C in Eq. (7), we use uniform minibatch weights ai = 1/m and bj = 1/n. The
+entropic coupling solves
+min
+P ≥0
+P 1=a, P ⊤1=b
+X
+i,j
+PijCij + ε
+X
+i,j
+Pij(log Pij −1).
+With Kij = exp(−Cij/ε), Sinkhorn iterations give
+u ←
+a
+Kw,
+w ←
+b
+K⊤u,
+P ⋆= diag(u)K diag(w),
+where divisions are elementwise. These updates may equivalently be performed in the log domain for
+numerical stability.
+Matched pairs are drawn jointly from P ⋆, or by sampling i ∼a followed by
+j ∼q(· | i),
+q(j | i) = P ⋆
+ij
+ai
+= mP ⋆
+ij.
+For each pair, Eq. (8) supplies the terminal velocity. Sampling t ∼Unif(0, T) and evaluating Eqs. (2)
+and (3) then gives (x⋆
+t , v⋆
+t , t/T, a⋆
+t ) for acceleration matching. The complete training procedure is
+given in Algorithm 1.
+C.4
+Local Integral Consistency
+For a variational bridge and 0 ≤t ≤T −∆t, its exact increments satisfy
+v⋆
+t+∆t −v⋆
+t =
+Z t+∆t
+t
+a⋆
+s ds,
+x⋆
+t+∆t −x⋆
+t −∆t v⋆
+t =
+Z t+∆t
+t
+(t + ∆t −s)a⋆
+s ds.
+Approximating each integral using the learned acceleration at its left endpoint gives
+v⋆
+t+∆t −v⋆
+t ≈∆t aθ(x⋆
+t , v⋆
+t , t/T),
+x⋆
+t+∆t −x⋆
+t −∆t v⋆
+t ≈1
+2∆t2aθ(x⋆
+t , v⋆
+t , t/T).
+The expected squared residuals are precisely Lva and Lxv in Eqs. (10a)–(10b). They supplement
+instantaneous acceleration matching with finite-step increment supervision. Because the acceleration
+varies along a cubic bridge, these are local approximations rather than exact integration constraints.
+We use ∆t = T/N, as specified in Appendix D.
+15
+
+
+C.5
+Acceleration Divergence Matching
+The phase-space drift is bθ(x, v, t) = (v, aθ(x, v, t/T)). Since v is an independent phase-space
+coordinate, ∇x · v = 0, and therefore
+∇(x,v) · bθ = ∇v · aθ.
+This identifies the velocity divergence of acceleration as the compressibility term for the learned
+dynamics.
+Path-error motivation.
+Let F ⋆
+t (x, v) = E[a⋆
+t | x⋆
+t = x, v⋆
+t = v] be the marginal reference
+acceleration field. Under sufficient regularity, the reference and learned densities µ⋆
+t , µθ
+t satisfy their
+phase-space continuity equations. For ηt = µθ
+t −µ⋆
+t , subtraction gives
+∂tηt + ∇(x,v) · (bθηt) = ∇v ·
+
+(F ⋆
+t −aθ)µ⋆
+t
+
+.
+The forcing term expands as
+(F ⋆
+t −aθ) · ∇vµ⋆
+t + µ⋆
+t
+ ∇v · F ⋆
+t −∇v · aθ
+
+.
+Thus, both acceleration and divergence mismatch contribute to the path error, motivating divergence
+regularization alongside acceleration matching [15].
+Conditional continuation targets.
+Let ∆= T −t > 0. Applying Proposition 3.1 and Theorem 3.2
+to the remaining interval gives the current acceleration for a bridge from (x, v) to position y:
+F ⋆
+free(x, v, t; y) = 3
+∆2 (y −x −∆v),
+when the terminal velocity is free. If the terminal velocity is fixed at w, the corresponding acceleration
+is
+F ⋆
+fix(x, v, t; y, w) = 6
+∆2 (y −x −∆v) −2
+∆(w −v).
+Taking the velocity divergence with the terminal data held fixed gives
+∇v · F ⋆
+free = −3d
+∆,
+∇v · F ⋆
+fix = −4d
+∆.
+Normalizing by ∆/d yields the auxiliary objective
+LADM = E
+"T −t
+d
+∇v · aθ(x⋆
+t , v⋆
+t , t/T) + c
+2#
+,
+c =
+3,
+latent v1,
+4,
+observed v1.
+The latent-v1 case is Eq. (11).
+Conditional and marginal divergence.
+The constants above are exact for conditional continuation
+fields. The marginal reference field averages over terminal data conditioned on the current state. For
+example, in the latent-v1 case, let mt(x, v) = E[x1 | x⋆
+t = x, v⋆
+t = v]. Then
+F ⋆
+t (x, v) = 3
+∆2
+ mt(x, v) −x −∆v
+
+,
+and, wherever differentiable,
+∇v · F ⋆
+t = −3d
+∆+ 3
+∆2 ∇v · mt(x, v).
+Accordingly, ADM regularizes the learned field toward the contraction of the conditional bridge.
+Exact marginal-divergence matching would also require the state dependence of the conditional
+terminal mean. The same conditional–marginal distinction applies when terminal velocities are
+observed.
+Trace estimation.
+For low-dimensional data, we compute ∇v · aθ = Tr(∂aθ/∂v) directly by
+automatic differentiation. For high-dimensional data, we use a Hutchinson estimator
+∇v · aθ ≈ϵ⊤∂aθ
+∂v ϵ,
+E[ϵϵ⊤] = I,
+with a standard Gaussian or Rademacher vector ϵ. The quadratic form is evaluated using a vector–
+Jacobian product without materializing the full Jacobian.
+16
+
+
+C.6
+Numerical Solvers
+Sampling integrates
+˙z(t) = Fθ(z(t), t),
+z = (x, v),
+Fθ(z, t) =
+
+v
+aθ(x, v, t/T)
+
+.
+Let h = T/N, tk = kh, and ak = aθ(xk, vk, tk/T).
+Heun solver.
+The predictor and corrected update are
+ezk+1 = zk + hFθ(zk, tk),
+zk+1 = zk + h
+2 [Fθ(zk, tk) + Fθ(ezk+1, tk+1)] .
+Taylor2 update.
+The update used in our comparisons is
+xk+1 = xk + hvk + 1
+2h2ak,
+vk+1 = vk + hak.
+Here Taylor2 denotes the second-order expansion of the position update combined with an Euler
+velocity update. For a general learned acceleration field, this scheme is not second-order accurate for
+the full phase-space state.
+Velocity Verlet update.
+We first predict the position and velocity:
+xk+1 = xk + hvk + 1
+2h2ak,
+vk+1 = vk + hak.
+We then evaluate the acceleration at the predicted state and correct the velocity:
+bak+1 = aθ(xk+1, vk+1, tk+1/T),
+vk+1 = vk + h
+2 (ak + bak+1).
+For velocity-dependent acceleration, this is an explicit predictor–corrector variant of the Verlet update.
+At the next step, ak+1 is evaluated at the corrected state (xk+1, vk+1).
+D
+Implementation Details
+This appendix summarizes the implementation and evaluation settings for the low-dimensional,
+PDE, and CIFAR-10 experiments. We report both method-specific and solver-controlled inference
+protocols, with solver choices and sampling budgets specified for each experiment.
+D.1
+Low-Dimensional Experiments
+For the low-dimensional datasets, all methods are evaluated with the same sampling budget of 100
+steps and EMA weights. For each dataset, we use n = 2000 target samples and n = 2000 generated
+samples to compute the sample-based W2 metric. CFM, OT-CFM, OAT-FM, and CurveFlow are
+evaluated with Euler sampling, following their standard first-order sampling protocol. HOFM is
+evaluated with the Taylor2 solver, following its original high-order setting. For VTV-FM, we evaluate
+Heun, Taylor2, and Velocity Verlet, and report the best validation result in the main table. The
+solver-specific results are reported separately in the ablation table.
+D.2
+Shared Source Phase-Space and Training Setup
+Source phase-space prior.
+For the low-dimensional and CIFAR-10 experiments, we sample
+v0 ∼N(0, σ2I),
+independently of the source position x0. Unless otherwise stated, we use σ = 1. For static data, v0 is
+a modeling prior used to provide a non-degenerate lifting from position space to phase space; it is not
+interpreted as an observed or physical velocity. The variational terminal-velocity closure itself does
+not depend on the Gaussian assumption.
+17
+
+
+The resulting projected cost is
+C⋆
+T (x0, v0, x1) = 3
+T 3 ∥x1 −x0 −Tv0∥2
+2 .
+When v0 = 0, this cost is proportional to the standard quadratic OT cost, so their unregularized
+optimal couplings coincide. The induced position trajectory follows a cubic time parameterization
+rather than a constant-velocity linear bridge. The exact constant-velocity trajectory is recovered only
+when v0 = (x1 −x0)/T, for which the residual x1 −x0 −Tv0 and the required acceleration vanish.
+Loss coefficients and local consistency window.
+The full training objective is
+Ltotal = Lacc + λvaLva + λxvLxv + λADMLADM.
+Unless otherwise stated, we use
+λva = λxv = λADM = 0.1,
+with coefficient 1 on Lacc. For the two local consistency losses, the local time window is matched to
+the actual fixed sampling step,
+∆t = T
+N ,
+and is not tuned as an additional hyperparameter.
+D.3
+PDE-Governed Field Experiments
+For PDE-governed field generation, all methods are evaluated with 100 sampling steps. Unlike static
+image data, PDE data provide terminal derivative information through the PDE right-hand side or
+simulator outputs. Therefore, VTV-FM directly uses the observed or derivable terminal velocity and
+does not apply terminal-velocity closure in this setting. This corresponds to the observed/derivable-v1
+regime described in the main text.
+The baseline solver choices follow the same principle as in the low-dimensional experiments. First-
+order FM variants use their standard first-order samplers, HOFM uses the Taylor2 solver, and
+VTV-FM is evaluated with phase-space solvers such as Heun, Taylor2, and Velocity Verlet. Other
+evaluation settings, including sample size and metric computation, follow the low-dimensional
+experiment protocol unless otherwise specified.
+D.4
+CIFAR-10 Experiments
+CIFAR-10 represents the high-dimensional missing-v1 regime, where only terminal images are
+observed and target-side terminal derivatives are unavailable. Therefore, VTV-FM uses the variational
+terminal-velocity closure derived in Section 3 to instantiate the second-order bridge.
+For the controlled cross-method comparison in Table 3, we evaluate FM, I-CFM, OT-CFM, OAT-
+FM, CurveFlow, and VTV-FM under the applicable shared inference protocols. VTV-FM uses
+acceleration matching only in this comparison, without the local consistency or ADM regularizers.
+Heun-100 provides the primary fixed-step solver-controlled comparison, while Dopri5 provides a
+shared adaptive-solver comparison with measured NFE.
+Table 4 separately evaluates the effect of the auxiliary objectives within VTV-FM under Velocity
+Verlet, Heun, and Taylor2. This separates the cross-method comparison from the contribution of local
+consistency and acceleration-divergence matching.
+E
+Additional Qualitative Visualizations
+This appendix complements the quantitative results in Section 4 with transport trajectories and
+generated samples.
+E.1
+Low-Dimensional Trajectory Visualizations
+Figure 2 compares transport geometry on six representative datasets, complementing the sample-based
+W2 results in Section 4.1.
+18
+
+
+(a)
+CFM
+OT-CFM
+HOFM
+VTVFM
+Dinosaur
+(b)
+CFM
+OT-CFM
+HOFM
+Swiss Roll
+(c)
+CFM
+OT-CFM
+HOFM
+Checkerboard
+(d)
+CFM
+OT-CFM
+HOFM
+Two Moons
+(e)
+CFM
+OT-CFM
+HOFM
+Tree
+(f)
+CFM
+OT-CFM
+HOFM
+Star
+VTVFM
+VTVFM
+VTVFM
+VTVFM
+VTVFM
+Figure 2: Transport trajectories on six low-dimensional datasets. Each panel compares CFM, OT-
+CFM, HOFM, and VTV-FM.
+NS2D sample 1
+NS2D sample 2
+KS2D sample 1
+KS2D sample 2
+Figure 3: NS2D and KS2D generation examples. Within each example, the top, middle, and bottom
+rows show real, VTV-FM, and OT-CFM samples, respectively.
+19
+
+
+E.2
+Additional PDE Visualization
+Figure 3 compares real and generated fields for the NS2D and KS2D experiments in Section 4.2.
+E.3
+Additional CIFAR-10 Samples
+Figure 4 uses the best VTV-FM configuration in Table 4: the full objective, variational terminal-
+velocity closure, and 100-step Velocity Verlet sampling.
+Figure 4: Qualitative CIFAR-10 samples generated by VTV-FM.
+E.4
+Additional Video Visualization
+Figure 5 provides qualitative examples on KTH, BAIR, and Navier–Stokes temporal sequences.
+Terminal velocities are approximated by finite differences between adjacent frames and used in the
+full-boundary bridge. These examples illustrate the observed/derivable-v1 construction on temporal
+data; they do not constitute a quantitative video-generation benchmark.
+KTH sample 1
+KTH sample 2
+BAIR sample 1
+BAIR sample 2
+Navier–Stokes sample 1
+Navier–Stokes sample 2
+Figure 5: Qualitative temporal examples from KTH, BAIR, and Navier–Stokes sequences.
+F
+Additional Controlled Experiments
+This appendix provides additional controlled experiments that complement the main results. We
+examine loss and solver analysis on low-dimensional datasets, the source phase-space prior, terminal-
+velocity completion, the consistency between endpoint pairing and bridge construction, and compu-
+tational efficiency and scalability. We do not repeat the solver-controlled CIFAR-10 comparisons
+already reported in Section 4.3.
+F.1
+Loss and Solver Analysis on Low-Dimensional Datasets
+We provide additional ablation and solver analysis for VTV-FM on the low-dimensional datasets.
+Table 5 summarizes two studies. First, we compare different training objectives: acceleration-only
+20
+
+
+training, acceleration with local consistency, acceleration with acceleration-divergence matching
+(ADM), and a velocity–acceleration joint variant. Second, we compare three fixed-step solvers: Heun,
+Taylor2, and Velocity Verlet, using the best-performing loss setting for each dataset.
+The acceleration-only objective is already competitive, achieving an average sample-based W2 of
+0.1018. Adding local consistency gives the best average among the loss variants, reducing the mean
+W2 to 0.1012, while ADM gives a similar average of 0.1013. This suggests that the main gain comes
+from the bridge-induced acceleration supervision, with auxiliary terms providing modest refinements.
+For solver choice, all three fixed-step solvers perform similarly under the same sampling budget.
+Heun obtains the best average W2 of 0.1007, while Taylor2 and Velocity Verlet remain close at
+0.1011 and 0.1013, respectively. These results indicate that VTV-FM is not tied to a particular solver;
+its gains mainly come from the second-order phase-space transport construction.
+Table 5: Ablation and fixed-step solver analysis for VTV-FM on low-dimensional datasets. Left: loss
+variants. Right: solver comparison under the best-performing loss setting for each dataset.
+Loss ablation
+Solver comparison
+Dataset
+Acc.
++Cons. +ADM Vel.+Acc.
+Heun
+Taylor2
+Verlet
+Dinosaur 0.1119
+0.1114
+0.1112
+0.1109
+0.1113
+0.1121
+0.1109
+Swiss
+0.1112
+0.1081
+0.1105
+0.1127
+0.1081
+0.1092
+0.1105
+Checker
+0.1092
+0.1094
+0.1098
+0.1092
+0.1092
+0.1096
+0.1099
+Moons
+0.0835
+0.0826
+0.0807
+0.0790
+0.0790
+0.0803
+0.0808
+Lines
+0.1362
+0.1366
+0.1380
+0.1387
+0.1370
+0.1362
+0.1376
+Tree
+0.0741
+0.0739
+0.0730
+0.0752
+0.0736
+0.0734
+0.0730
+Star
+0.0868
+0.0866
+0.0862
+0.0877
+0.0869
+0.0867
+0.0862
+Avg.
+0.1018
+0.1012
+0.1013
+0.1019
+0.1007
+0.1011
+0.1013
+F.2
+Source Phase-Space Prior and Sensitivity Analysis
+For static datasets, we introduce a source velocity
+v0 ∼N(0, σ2I),
+sampled independently of the source position x0. Unless otherwise stated, we use σ = 1.
+The role of v0 is to define the source phase-space state required by the second-order formulation. For
+static data, it is a modeling variable rather than an observed physical velocity, and its scale is not
+intended to be a finely tuned performance parameter.
+To evaluate sensitivity to this choice, we vary σ while keeping the remaining training and evaluation
+settings fixed. Table 6 reports the resulting average W2 over the seven low-dimensional datasets.
+Table 6: Sensitivity to the source-velocity scale, averaged over the seven low-dimensional datasets.
+σ
+0
+0.5
+1.0
+1.5
+2.0
+Avg. W2
+0.1283
+0.1002
+0.1004
+0.1011
+0.1056
+As shown in Table 6, performance remains similar over the moderate nonzero range σ ∈[0.5, 1.5],
+indicating limited sensitivity to the precise source-velocity scale. In contrast, σ = 0 collapses the
+velocity variation in the source phase-space distribution and gives substantially worse performance.
+Thus, v0 primarily provides the source phase-space representation, while the precise choice of a
+reasonable nonzero scale has only a modest effect on performance.
+F.3
+Terminal-Velocity Ablation Study
+We directly compare the proposed variational terminal-velocity closure
+v⋆
+1 = 3
+2T (x1 −x0) −1
+2v0
+with five alternative completion rules: Zero, v1 = 0; Chord, v1 = (x1 −x0)/T; Random, which uses
+a random direction with the same norm as v⋆
+1; Copy-v0, v1 = v0; and Tangent, which sets v1 along
+21
+
+
+the local target-data tangent estimated by one-dimensional PCA around x1, with its sign aligned to
+v⋆
+1 and its norm matched to ∥v⋆
+1∥2.
+We consider two settings. In the fixed-pairing setting, the projected-2OT source–target pairs are held
+fixed and only the terminal-velocity rule is changed. This isolates the effect of terminal-velocity
+completion and the resulting bridge supervision. In the end-to-end setting, each alternative terminal-
+velocity rule is substituted into the full-boundary cost, after which pairing and training are recomputed;
+VTV-FM uses its projected cost and the corresponding variational bridge. Table 7 summarizes both
+settings, averaged over the seven low-dimensional datasets. As shown in Table 7, with pairing fixed,
+Table 7: Terminal-velocity ablation averaged over the seven low-dimensional datasets.
+Setting
+v⋆
+1
+Zero
+Chord
+Random
+Copy-v0
+Tangent
+Fixed pairing
+0.1004
+0.1050
+0.1020
+0.1094
+0.1062
+0.1013
+End-to-end
+0.1004
+0.1041
+0.1008
+0.1087
+0.1054
+0.1005
+the proposed closure gives the lowest average error among all terminal-velocity rules. The advantage
+remains in the end-to-end setting, where pairing and training are recomputed for each completion
+rule. These results show that the variational terminal-velocity completion provides a robust bridge
+construction beyond simply changing the endpoint pairing.
+F.4
+Pairing–Bridge Cross-Ablation Study
+We further separate the effects of endpoint pairing and bridge construction by crossing standard
+and projected OT pairing with first- and second-order bridges. Table 8 reports the four resulting
+combinations.
+Table 8: Pairing–bridge cross-ablation on the low-dimensional datasets.
+Method
+Bridge
+Pairing
+Avg. W2
+OT-CFM
+Linear
+Standard OT
+0.1077
+2OT-CFM
+Linear
+Projected 2OT
+0.1109
+OT-VTV-FM
+Second-order
+Standard OT
+0.1283
+2OT-VTV-FM
+Second-order
+Projected 2OT
+0.1004
+As shown in Table 8, neither mismatched cross-combination improves performance. Projected 2OT
+does not improve the linear bridge, while combining the second-order bridge with standard OT
+also degrades performance. The strongest result is obtained when the projected pairing cost and
+second-order bridge are used together. This supports the interpretation that the improvement is
+associated with the variational consistency among terminal-velocity closure, pairing cost, and bridge
+construction, rather than with replacing any single component in isolation.
+F.5
+Computational Efficiency and ImageNet-256 Scaling
+Computational efficiency on low-dimensional benchmarks.
+We measure wall-clock inference
+time and peak allocated GPU memory using the same hardware, evaluation batch size, and solver
+configuration. VTV-FM uses acceleration matching only in this comparison. Table 9 reports the
+average W2, number of function evaluations, wall-clock inference time, and peak GPU memory on
+the seven low-dimensional benchmarks.
+As shown in Table 9, under Heun-100, VTV-FM improves average W2 with essentially unchanged
+wall-clock time and peak memory relative to the first-order baselines. Under Dopri5, it also achieves
+the lowest error with fewer function evaluations and lower inference time. Although VTV-FM
+augments the dynamical state from x to (x, v), the measured increase in peak memory remains small.
+ImageNet-256 scaling.
+We additionally evaluate VTV-FM on ImageNet-256 to test scalability
+beyond CIFAR-10. We fine-tune the official SiT checkpoint [29] and otherwise follow the OAT-FM
+evaluation setting [11], including CFG = 1.5, SDE sampling, and the official SiT FID evaluation
+protocol. VTV-FM obtains an FID of 1.97, compared with 2.06 for SiT and 2.00 for OAT-FM. We
+primarily interpret this experiment as evidence that the proposed construction scales beyond CIFAR-
+10, rather than as evidence that minimum acceleration is universally superior to other high-order
+objectives.
+22
+
+
+Table 9: Compute-matched comparison on the low-dimensional benchmarks.
+Solver
+Method
+Avg. W2
+NFE
+Time (ms)
+Peak memory (MB)
+Heun-100
+CFM
+0.1085
+200
+858
+62.30
+OT-CFM
+0.1079
+200
+861
+62.30
+VTV-FM
+0.1020
+200
+859
+62.37
+Dopri5
+CFM
+0.1069
+72.8
+486
+62.58
+OT-CFM
+0.1066
+42.2
+306
+62.59
+VTV-FM
+0.1018
+38.0
+242
+63.66
+Verlet-100
+VTV-FM
+0.1009
+200
+687
+62.96
+G
+VTV-FM as an Extension of OT-CFM
+We relate the construction in Section 3 to first-order and kinetic optimal transport, then compare the
+minimum-acceleration bridge with a minimum-jerk alternative.
+G.1
+OT-CFM as First-Order Variational Flow Matching
+For fixed endpoints, the least kinetic action is
+inf
+γ(0)=x0
+γ(T )=x1
+Z T
+0
+∥˙γ(t)∥2
+2 dt = 1
+T ∥x1 −x0∥2
+2,
+attained by the linear bridge in Section 2. At the distribution level, the Benamou–Brenier formula-
+tion [30] gives
+1
+T W 2
+2 (ρ0, ρ1) = inf
+ρt,ut
+Z T
+0
+Z
+∥ut(x)∥2
+2 dρt(x) dt,
+subject to
+∂tρt + ∇x · (ρtut) = 0,
+ρt=0 = ρ0,
+ρt=T = ρ1.
+Thus, the quadratic pairing cost and constant conditional velocity target arise from the same first-order
+action.
+G.2
+Second-Order Lift to Phase Space
+For phase-space laws µ, ν ∈P2(Rd × Rd), the analogous kinetic transport problem minimizes
+acceleration energy:
+d2
+T (µ, ν) = T inf
+µt,Ft
+Z T
+0
+Z
+∥Ft(x, v)∥2
+2 dµt(x, v) dt,
+subject to
+∂tµt + v · ∇xµt + ∇v · (Ftµt) = 0,
+µt=0 = µ,
+µt=T = ν.
+Its static formulation [28] is
+d2
+T (µ, ν) =
+inf
+π∈Π(µ,ν)
+Z
+cT (x, v, y, w) dπ,
+cT = T CT .
+Here CT is the full-boundary cost in Eq. (4); the factor T accounts for the normalization used
+above. The minimizing bridge and its derivatives are given in Eqs. (2)–(3); Appendix C.1 proves
+Proposition 3.1.
+G.3
+Projection under Missing Terminal Velocity
+When only the target position law ρ1 is prescribed, the target velocity is optimized out. Theorem 3.2
+and Appendix C.2 show that the resulting observable transport problem is
+inf
+η∈Π(µ0,ρ1)
+Z
+C⋆
+T (x0, v0, x1) dη.
+23
+
+
+The minimizing lift assigns v1 = v⋆
+1(x0, v0, x1), with the closure and projected cost given in Eqs. (5)–
+(6). Their use in pairing and supervision is described in Section 3.3 and Appendix C.3. This gives the
+following correspondence:
+Method
+Action
+Endpoint cost
+Conditional bridge
+OT-CFM
+R T
+0 ∥˙γ∥2
+2 dt
+∥x1 −x0∥2
+2/T
+Linear
+VTV-FM
+R T
+0 ∥¨γ∥2
+2 dt
+C⋆
+T (x0, v0, x1)
+Projected cubic
+Both constructions derive the pairing cost and supervision from one action; the second-order con-
+struction additionally determines the unobserved terminal velocity.
+G.4
+Bridge-Shape Ablation: Minimum Acceleration versus Minimum Jerk
+To assess the role of the cubic bridge, we replace the acceleration action by
+JT [γ] =
+Z T
+0
+∥γ(3)(t)∥2
+2 dt.
+The alternative fixes γ(0) = x0, ˙γ(0) = v0, and γ(T) = x1, imposes ¨γ(0) = ¨γ(T) = 0, and leaves
+the terminal velocity free. We call it VTV-FM-JERK-ZA. The Euler–Lagrange equation γ(6) = 0,
+together with the natural condition γ(4)(T) = 0, gives the projected quintic bridge below.
+Let τ = t/T and δ = x1 −x0 −Tv0. Both bridges have the form
+xq(τ) = x0 + Tτv0 + q(τ)δ,
+vq(τ) = v0 + q′(τ)
+T
+δ,
+aq(τ) = q′′(τ)
+T 2 δ,
+with
+qacc(τ) = 3
+2τ 2 −1
+2τ 3,
+qjerk(τ) = 5
+2τ 3 −15
+8 τ 4 + 3
+8τ 5.
+Here qacc follows by substituting Eq. (5) into Eq. (2). The jerk bridge has terminal velocity and
+projected cost
+v⋆
+1,jerk = 15
+8T (x1 −x0) −7
+8v0,
+J⋆
+T = 45
+T 5 ∥δ∥2
+2 = 15
+T 2 C⋆
+T .
+For fixed T, these proportional costs have the same unregularized optimal couplings. This equivalence
+extends to entropic OT if the entropy coefficient is scaled with the cost: εjerk = (15/T 2)εacc.
+Proportional costs alone do not ensure identical Sinkhorn couplings at fixed ε.
+Table 10 compares the two variants using acceleration matching only and the same acceleration-
+network architecture. Their average W2 values are nearly identical, with no consistent advantage
+across datasets. We retain the minimum-acceleration bridge because it matches the second-order
+variational formulation without imposing zero endpoint accelerations.
+Table 10: Bridge-shape ablation using acceleration matching only. VTV-FM-JERK-ZA uses a
+minimum-jerk bridge with zero endpoint accelerations.
+Dataset
+VTV-FM
+VTV-FM-JERK-ZA
+Dinosaur
+0.1119
+0.1113
+Swiss
+0.1112
+0.1120
+Checker
+0.1092
+0.1096
+Moons
+0.0835
+0.0829
+Lines
+0.1362
+0.1356
+Tree
+0.0741
+0.0745
+Star
+0.0868
+0.0863
+Average
+0.1018
+0.1017
+24

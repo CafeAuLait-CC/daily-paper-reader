@@ -1,0 +1,3784 @@
+Improving Function Space Flow Matching with Kernel
+Optimal Transport
+Fred Xu
+University of California, Los Angeles
+fredxu@cs.ucla.edu
+Thomas Markovich
+Block, Inc.
+tmarkovich@squareup.com
+Barbora Barancikova
+Imperial College London
+b.barancikova23@imperial.ac.uk
+Yizhou Sun
+University of California, Los Angeles
+yzsun@cs.ucla.edu
+Abstract
+Generative models for function-valued data, such as time series and solutions of
+partial differential equations, must learn distributions over infinite-dimensional
+spaces. Functional Flow Matching (FFM) extends Flow Matching to this set-
+ting, learning a velocity field whose flow transports a Gaussian prior to the data
+distribution, but it inherits the independent endpoint pairing of standard Flow
+Matching: in each batch, prior and data samples are matched arbitrarily, so the
+conditional bridge must traverse both the shared global structure of the dataset and
+instance-specific residuals. In function space this limitation is harder to fix than in
+finite dimensions, since optimal transport (OT) on function spaces is delicate to
+formulate and a flat Euclidean surrogate ignores the geometry that distinguishes
+function-valued data. We propose kernel Functional Flow Matching (kFFM), which
+replaces the independent pairing by entropic OT under a kernel-induced cost, the
+coupling underlying the Hilbert Sinkhorn Divergence (HSD), while leaving the
+FFM neural-operator architecture unchanged. Theoretically, we prove that the ker-
+nel cost and the HSD objective are uniformly bounded and well-posed on Banach
+ambient spaces, derive an explicit error decomposition against quadratic-cost OT
+on compact metric spaces that isolates an irreducible kernel-cost mismatch term,
+and prove a discretization-invariance bound whose rate is governed by Sobolev
+regularity. Empirically, kFFM improves distributional matching over FFM, dif-
+fusion, adversarial, and finite-dimensional OT baselines on time-series and PDE
+benchmarks, with statistically significant paired-seed gains over FFM and improve-
+ments that persist under non-kernel and physics-based diagnostics, including a
+turbulent Navier–Stokes benchmark. Bounded kernel costs already outperform
+raw L2 Sinkhorn, and function-space-aware kernels (signature, Sobolev RBF) give
+further gains on rough or path-valued data.
+1
+Introduction
+Flow matching [35] is a powerful framework for generative modeling that learns the velocity field
+of a probability path between a reference and a data distribution. Time series and PDE snapshots
+are naturally represented as functions, motivating Kerrigan et al. [25] to extend this framework
+to function space through Functional Flow Matching (FFM), which defines a path of Gaussian
+measures in a Hilbert space and parameterizes the velocity field with a neural operator. FFM enjoys
+resolution-invariance and competitive performance on sequence and PDE datasets, but inherits the
+independent endpoint coupling of base FM. Under this coupling, each Gaussian prior sample is
+paired with an arbitrary data function in a minibatch, and the conditional bridge must traverse both
+40th Conference on Neural Information Processing Systems (NeurIPS 2026).
+arXiv:2609.38049v1  [cs.LG]  29 Sep 2026
+
+
+the shared global structure of the dataset and instance-specific residuals; the velocity field is then
+forced to discover the global structure and match each particular instance simultaneously. A natural
+fix is geometry-aware coupling: pairing each prior sample with a data sample that is already close
+in a meaningful geometry, so the bridge primarily transports the residual. This idea has improved
+finite-dimensional flow matching [48], but transferring it to function space is non-trivial: direct
+optimal transport (OT) on function spaces is delicate to formulate and compute [8, 9, 22, 37], and
+a flat L2 surrogate ignores the function-space geometry (Sobolev structure, path roughness) that
+distinguishes one function-valued sample from another.
+We resolve this through a kernel-induced Hilbert space surrogate. Working in a Reproducing Kernel
+Hilbert Space [46], the entropic coupling underlying the Hilbert Sinkhorn Divergence [31] provides a
+tractable pairing rule whose kernel encodes prior knowledge about function-space geometry: Sobolev
+structure for PDE snapshots via the RBF kernel on Hk, and p-variation roughness for time series
+via the signature kernel [5, 6]. Our theory certifies this surrogate coupling (well-posedness with
+uniform bounds, an error decomposition with an irreducible kernel-mismatch term, and discretization
+invariance); it makes no straightness or sampling-efficiency claim in function space (Section 4,
+Appendix C.14), and the sample-quality gains are an empirical claim that we test with paired-seed
+statistics, non-kernel metrics, physics diagnostics, and a turbulent Navier–Stokes stress test. The
+kernel-induced surrogate also outperforms raw L2 Sinkhorn: relative to a flat-L2 minibatch-OT
+baseline (CFM-OT(L2)) with the same Sinkhorn solver and neural-operator backbone, kFFM lowers
+the distributional error by 75% on Gene Expression and 66% on Economy. Function-space-aware
+kernels (Sobolev RBF, signature) add further gains on rough or path-valued data. Code for every
+experiment is publicly available.1 Our main contributions are the following:
+1. We propose kernel Functional Flow Matching (kFFM), to our knowledge the first method
+to perform OT endpoint coupling in function-space flow matching: a kernel-induced cost
+couples prior and data samples before flow matching, while the FFM neural-operator
+architecture is unchanged.
+2. We establish three theoretical results for the function-space setting: uniform boundedness
+and well-posedness of the kernel cost and HSD on Banach ambient spaces; an explicit
+error decomposition against quadratic-cost OT on compact metric spaces (kernel mismatch,
+entropic bias, covering); and a discretization-invariance theorem with an N −2(α−k)/d rate
+that ties the function-space objective to the truncated grid representation the model actually
+computes.
+3. We show empirically that kFFM improves population-level distributional quality on time
+series and PDE snapshots over functional generative baselines and a finite-dimensional OT
+coupling baseline, with paired-seed significance, gains that survive non-kernel and physics-
+based metrics including a turbulent Navier–Stokes benchmark, and a training overhead of
+only 5–7% at the largest resolution we train. The coupling geometry matters differently
+across data classes: signature kernels for paths, RBF-type costs for fields.
+2
+Background
+For the FFM construction we follow Kerrigan et al. [25] and work in a separable Hilbert space F of
+functions f : Ω→R, with Ω⊂Rd compact, equipped with its Borel σ-algebra B(F); ν ∈P(F)
+denotes the data measure. Section 2.1 works directly with F, while later subsections and Section 3
+use X for the metric sample space on which the OT coupling is defined. Additional background is
+deferred to Appendix A.
+2.1
+Flow Matching in Function Space
+Flow Matching [35] learns the velocity field whose flow transports a prior distribution to the data
+distribution along a given probability path. In the Gaussian-measure formulation of FFM, a vector field
+v : [0, 1] × F →F induces the flow ∂tψt(g) = vt(ψt(g)), ψ0(g) = g, and the path µt = [ψt]#µ0
+from µ0 ∈P(F). FFM constructs this path by averaging endpoint-conditioned Gaussian bridges
+over f ∼ν: if µf
+0 = µ0 and µf
+1 is concentrated around f, then µt(A) =
+R
+µf
+t (A) dν(f) satisfies
+µ1 = ν. For Gaussian bridges with µ0 = N(0, C0) and µf
+t = N(mf
+t , (σf
+t )2C0), the conditional
+1https://github.com/heraclixus/KFFM
+2
+
+
+velocity is
+vf
+t (g) = (σf
+t )′
+σf
+t
+(g −mf
+t ) + d
+dtmf
+t ,
+g ∼µf
+t ,
+and the standard FFM parametrization mf
+t = tf, σf
+t = 1 −(1 −σmin)t corresponds to Gaussian OT
+between the bridge marginals, while the endpoint pairing itself remains independent [48]. A neural
+operator vθ(g, t), here a Fourier Neural Operator (FNO) [32], is trained with the Conditional Flow
+Matching (CFM) loss
+LCF M(θ) := Et∼U[0,1],f∼ν,g∼µf
+t
+h
+∥vf
+t (g) −vθ(g, t)∥2
+F
+i
+,
+(1)
+which under suitable regularity conditions [25, 35] has the same minimizers as the unconditional
+loss LF M(θ) := Et∼U[0,1],g∼µt[∥vt(g) −vθ(g, t)∥2
+F]; the absolute-continuity assumption behind
+this equivalence is spelled out in Appendix B.2. In Section 3 we keep the same probability path but
+replace the independent pairing of its endpoints by an OT-coupled pairing.
+2.2
+Optimal Transport and Kernel-based Optimal Transport
+For (X, d) a Polish space, µ, ν ∈P(X), and a cost c, the static OT problem is W(µ, ν) :=
+infπ∈Π(µ,ν)
+R
+c dπ [49], and its entropic regularization [38]
+Wϵ(µ, ν) :=
+inf
+π∈Π(µ,ν)
+Z
+c(x, y) dπ(x, y) + ϵ KL(π ∥µ ⊗ν)
+(2)
+underlies Sinkhorn methods; the debiased Sinkhorn divergence subtracts the corresponding self-costs
+[16, 17, 47]. OT-based couplings improve finite-dimensional flow matching by computing a static
+coupling between reference and data samples before interpolation [28, 48]. Adapting this idea to
+function-valued data is non-trivial: no Lebesgue-like reference measure exists on function space
+[11, 37], so densities are ill-posed, and Gaussian-measure and Cameron–Martin assumptions [8]
+are limiting when data are non-Gaussian (PDE states, rough paths). This motivates embedding the
+measures into a Reproducing Kernel Hilbert Space (RKHS) [46], where the coupling is computed
+under a kernel-induced cost.
+Definition 1 (Hilbert Sinkhorn Divergence [31]). Let (X, d) be a metric space, µ, ν ∈P(X), and
+κ : X × X →R a measurable symmetric positive-definite kernel with RKHS Hκ and canonical
+feature map ϕ : X →Hκ. The entropic OT functional on the embedded space is
+OTHκ
+ϵ
+(ϕ#µ, ϕ#ν) :=
+inf
+πϕ∈Π(ϕ#µ,ϕ#ν)
+h Z
+∥u −v∥2
+Hκ dπϕ(u, v) + ϵ KL(πϕ ∥ϕ#µ ⊗ϕ#ν)
+i
+, (3)
+and the Hilbert Sinkhorn divergence is the debiased quantity Sϵ(ϕ#µ, ϕ#ν) := OTHκ
+ϵ
+(ϕ#µ, ϕ#ν)−
+1
+2OTHκ
+ϵ
+(ϕ#µ, ϕ#µ) −1
+2OTHκ
+ϵ
+(ϕ#ν, ϕ#ν).
+By the kernel trick, the functional in Equation (3) can be written directly on X with the RKHS-induced
+cost cκ(x, y) := ∥ϕ(x) −ϕ(y)∥2
+Hκ = κ(x, x) + κ(y, y) −2κ(x, y) [31, restated as Proposition 3 in
+Appendix B]:
+OTκ,ϵ(µ, ν) :=
+inf
+π∈Π(µ,ν)
+h Z
+X×X
+cκ(x, y) dπ(x, y) + ϵ KL(π ∥µ ⊗ν)
+i
+,
+(4)
+with minimizers corresponding under pushforward, and Sκ,ϵ(µ, ν) := OTκ,ϵ(µ, ν)−1
+2OTκ,ϵ(µ, µ)−
+1
+2OTκ,ϵ(ν, ν) = Sϵ(ϕ#µ, ϕ#ν). Previous work takes X ⊂Rd, where common kernels apply directly,
+the divergence enjoys statistical consistency with finite-sample bounds (restated in Appendix B), and
+the discrete entropic OT problem is convex [16]. Section 3 generalizes X to function-valued sample
+spaces.
+2.3
+Path Signature and Signature Kernel
+Let Cp(Rd) = Cp([0, T], Rd) denote the continuous paths from [0, T] to Rd with finite p-variation,
+p ∈[1, 2). The signature of x ∈Cp(Rd) is the sequence of iterated Young integrals S(x) =
+(1, S(1)(x), S(2)(x), . . .) with S(m)(x) =
+R
+0<t1<···<tm<T dxt1 ⊗· · ·⊗dxtm ∈(Rd)⊗m, an element
+of the free tensor algebra T((Rd)) = Q∞
+n=0(Rd)⊗n.
+3
+
+
+Definition 2 (Signature Kernel [5]). The signature kernel κsig : Cp(Rd) × Cp(Rd) →R is
+κsig(x, y) = ⟨S(x), S(y)⟩:= P∞
+m=0⟨S(m)(x), S(m)(y)⟩(Rd)⊗m, where ⟨·, ·⟩(Rd)⊗m is the Hilbert–
+Schmidt inner product.
+The signature kernel is symmetric and positive definite and hence induces a unique RKHS Hsig; on
+compact subsets, the time-augmented signature kernel is universal and characteristic [5]. We compute
+it with pySigLib [44].
+3
+Functional Flow Matching with Kernel Optimal Transport
+Throughout this section X is a general metric space, the sample space on which data and reference
+measures live and on which the kernel OT coupling acts.
+3.1
+Coupling with Kernel Optimal Transport
+kFFM first couples prior and data samples through entropic OT under a kernel-induced cost, Equation
+(4). The kernel reflects the metric space where the data live. On the Sobolev space X = Hk(Ω)
+(functions with k weak derivatives in L2, the natural home of PDE solutions [12]), the RBF kernel
+on Hk rewards pairs close in a derivative-aware norm; on path space X ⊂Cp([0, T], Rd), p ∈[1, 2)
+(smooth and rough time series [5]), the signature kernel rewards reparametrization-invariant path
+similarity. Well-posedness for each choice is established in Section 3.2 and validated in Section 4;
+with empirical measures the minibatch problem is solved by the Sinkhorn algorithm [17].
+Given a plan π between prior draws f0 ∼µ0 and data samples f1 ∼µ1, kFFM uses the same
+probability path as FFM, with the paired prior sample in the role of the base noise:
+gf0,f1
+t
+= tf1 + σtf0,
+σt = 1 −(1 −σmin)t,
+(f0, f1) ∼π,
+vf0,f1
+t
+ gf0,f1
+t
+
+= ∂tgf0,f1
+t
+= f1 −(1 −σmin)f0 = f1 −(1 −σmin) gf0,f1
+t
+σt
+,
+so that g0 = f0 ∼µ0, g1 = f1 + σminf0, and the conditional velocity is the FFM conditional field
+of Section 2.1 evaluated with the coupled pair; the FFM path tf + σtξ is recovered exactly for the
+independent coupling π = µ0 ⊗µ1.
+What the coupling changes. Up to the σmin term, the regression target is the displacement u :=
+f1 −f0, the residual between the paired data and prior samples, which carries all the endpoint
+information. Under independent coupling this residual is the difference of two unrelated draws,
+a large and high-variance regression target; under kernel-OT coupling each f1 is paired with a
+geometrically close f0, so the network regresses smaller, structured residuals. The neural operator
+(an FNO) is unchanged relative to FFM; only the minibatch coupling, and through it the law of the
+conditional paths, is modified. Algorithm 1 summarizes training; implementation defaults and good
+practices are collected in Appendix C.8. The reference distribution µ0 is a Gaussian process (GP) or
+Gaussian random field [19], or white noise on the grid where the data are rougher than a smooth GP
+prior (the base measure is part of the selected configuration, Section 4.1); in practice both measures
+are replaced by their empirical estimators, with the coupling computed from a kernel-induced cost
+matrix [17, 31]:
+µn =
+n
+X
+i=1
+ˆµiδxi,
+νn =
+n
+X
+j=1
+ˆνjδyj,
+Cκ
+ij = κ(xi, xi) + κ(yj, yj) −2κ(xi, yj).
+(5)
+Where the kernel enters. The kernel enters at exactly one place: the cost cκ used by minibatch
+Sinkhorn to pair prior and data samples. No sample or model input is projected into the RKHS;
+the FNO acts on the original discretized functions, the paths are constructed in the original space,
+and generation happens there. The training coupling is the entropic plan induced by cκ, computed
+per minibatch with log-domain Sinkhorn on a median-normalized cost and sampled from the plan
+(Appendix C.8); the debiasing self-terms of the HSD (Definition 1) do not depend on π and cannot
+change the argmin plan, so HSD is our analysis object (what Theorems 1–2 control), not the
+training objective. Finally, at a fixed batch size b minibatch OT induces the expected minibatch plan
+¯πb = E[ˆπb] [13, 14], a valid coupling of the true marginals for every b, so the CFM consistency
+argument applies and b only changes which conditional paths are used; as b →∞, ¯πb converges to
+the population entropic kernel-OT plan.
+4
+
+
+Algorithm 1 Functional Flow Matching with Kernel Optimal Transport
+Require: Prior distribution µ0 = N(0, C0), data distribution µ1, kernel function κ, entropy regular-
+ization ϵ > 0, batch size b, initial network vθ, σmin > 0.
+1: Training loop (repeat until convergence):
+2:
+Sample batches of size b: f0 ∼µ0, f1 ∼µ1
+3:
+Solve the entropic kernel OT problem in Equation (4) with κ, ϵ (cost matrix in Equation (5))
+to get coupling π.
+4:
+(f0, f1) ∼π
+5:
+t ∼U(0, 1),
+σt ←1 −(1 −σmin)t
+6:
+g ←tf1 + σtf0
+// the paired prior sample plays the role of the base noise
+7:
+vf0,f1
+t
+(g) ←
+ f1 −(1 −σmin) g
+
+/σt = f1 −(1 −σmin)f0
+8:
+LCF M(θ) ←
+vf0,f1
+t
+(g) −vθ(g, t)
+
+2
+F
+9:
+θ ←Update(θ, ∇θLCFM(θ))
+10: Output: vθ.
+3.2
+Theoretical Results for Sobolev and Path Space
+The theory certifies the surrogate coupling; it does not by itself explain why sample quality improves,
+which Section 4 establishes empirically. It answers three questions (proofs in Appendix B): is the
+kernel-OT objective well-defined and well-conditioned on the function spaces used by kFFM; how far
+is the RKHS-induced cost from quadratic-cost OT, and which parts of the gap are reducible; and does
+the continuum formulation survive the Fourier truncation used by the FNO and the Sinkhorn solver?
+Theorem 1 (Well-posedness and uniform boundedness). Let (X, ∥· ∥X ) be a real Banach space
+and let dX (f, g) := ∥f −g∥X . Let µ, ν ∈P(X) and let κ : X × X →R be measurable,
+symmetric, and positive definite with RKHS Hκ. Assume additionally that κ is bounded: Bκ :=
+supf∈X κ(f, f) < ∞. Then the kernel cost satisfies 0 ≤cκ(f, g) ≤4Bκ for all f, g ∈X, and for
+every ε > 0 the Hilbert Sinkhorn divergence Sκ,ε(µ, ν) (Definition 1) is finite for all µ, ν ∈P(X),
+with |Sκ,ε(µ, ν)| ≤8Bκ.
+Finiteness per se is not the binding constraint: under a second-moment assumption on ν the L2 cost
+is already integrable, and for the Gaussian prior E∥f0∥2 = tr(C0) < ∞. Theorem 1 delivers more.
+(a) Uniform boundedness with no assumption on the measures, which conditions the entropic solver:
+the Gibbs kernel e−cκ/ε stays bounded away from 0 and 1 across batches, so Sinkhorn converges
+independently of outlier pairs, unlike unbounded L2 costs on heavy-tailed batches (Section 4.3
+quantifies the resulting speed-up). (b) Generality: the statement holds on Banach spaces without
+Hilbert structure, which licenses the signature kernel on path space, our strongest configuration. (c)
+Geometry injection: the kernel is the interface through which domain structure enters the coupling.
+For Sobolev data in Hk(Ω) we use κ(k)
+RBF(x, y) := exp(−∥x −y∥2
+Hk/2σ2), which is bounded
+and positive definite [7, 54]; for paths we use the signature kernel (Definition 2), universal and
+characteristic on compact sets [5], bounded there by continuity, and used for two-sample tests on
+path data [6], applied to time-augmented paths (Appendix A, Definition 14) to avoid its tree-like
+equivalence.
+The entropic OT functional transports with the cost induced by the feature map rather than the original
+metric cost. On compact subsets of the ambient space (BHα
+R
+is compact in Hk for α > k; compact
+sets of paths for the signature kernel, with truncation discussed in Appendix B), the next theorem
+separates the resulting kernel-cost mismatch from entropic and covering effects.
+Theorem 2 (Error decomposition). Let (X, d) be a compact metric space and let µ, ν ∈P(X).
+Define the target quadratic cost c(x, y) = d(x, y)2. Let κ : X × X →R be a bounded positive-
+definite kernel with RKHS-induced cost cκ(x, y) := κ(x, x) + κ(y, y) −2κ(x, y), and let ∆κ :=
+supx,y∈X |cκ(x, y) −c(x, y)|. Let OTκ,ε denote the entropic OT functional in Equation (4) with cost
+cκ, and let M := diam(X) < ∞. Then for every ε > 0 and every δ ∈(0, M]:
+|OTκ,ε(µ, ν) −W(µ, ν)| ≤∆κ + 2ε log N(X, δ; d) + 8Mδ,
+(6)
+where N(X, δ; d) is the δ-covering number of X in the metric d.
+5
+
+
+Theorem 2 is an error decomposition, not an approximation guarantee: the entropic and covering
+terms vanish as ε, δ →0, but ∆κ is irreducible and does not shrink with more samples or finer
+grids. For the RBF kernel, cRBF = 2(1 −e−∥f−g∥2/2σ2) is a rescaled L2 cost up to relative
+error O((D/σ)2), with D the batch diameter; with median-normalized costs ∆κ is small at large
+bandwidth, and on smooth Navier–Stokes fields the induced plans agree across costs (total variation
+≤0.02; Appendix C.12). For the signature kernel ∆κ is large by design: the theorem then controls
+the deviation from Wasserstein with the chosen cost, not proximity to L2 OT, and the pair rankings
+differ measurably from L2 (rank correlation 0.33–0.37 on AEMET and gene expression), which is
+where the largest gains occur. In low-regularity regimes the bound degrades on two fronts: ∆κ grows
+because a smooth kernel cost saturates on rough functions, and the covering number blows up as the
+effective smoothness approaches the embedding threshold, making the entropic term large for any
+practical ε. The benchmarks of Section 4.1 sit in the smooth regime where the bound is informative;
+Section 4.2 stress-tests the turbulent regime empirically.
+Theorems 1 and 2 are stated at the continuum level, while the model operates on a finite-rank spectral
+representation: PDE snapshots are represented in a Fourier subspace of dimension proportional to N,
+which both the FNO and the Sinkhorn solver consume. Our final theorem quantifies the resulting gap
+at a rate governed by Sobolev regularity; the path-space analogue for signature truncation is discussed
+in Appendix B.
+Theorem 3 (Discretization invariance). Let Ω⊂Rd be a bounded periodic domain and let α > k ≥0.
+Set X := BHα
+R
+:= {f ∈Hα(Ω) : ∥f∥Hα ≤R}, viewed as a compact subset of Hk(Ω), and let
+µ, ν ∈P(X). For the Fourier basis {en}n∈Zd, let VN := span{en : |n|2 ≤N 2/d} and let
+PN : Hα(Ω) →VN denote the orthogonal projection; hence dim VN ≍N. Write µN := (PN)#µ
+and νN := (PN)#ν. Define the Sobolev-RBF kernel κ(k)
+RBF(f, g) := exp(−∥f −g∥2
+Hk/2σ2) on Hk,
+and write KOT(k)
+ε
+:= OTκ(k)
+RBF,ε for the corresponding entropic kernel-OT functional from Theorem
+2. Then for every ε > 0,
+KOT(k)
+ε (µ, ν) −KOT(k)
+ε (µN, νN)
+ ≤4R2
+σ2 N −2(α−k)/d.
+Equivalently, in terms of grid spacing h = N −1/d, the discretization error decays as O(h2(α−k)).
+Combining Theorems 2 and 3 bounds the gap between the computed finite-rank kernel-OT objective
+and continuum quadratic OT in the Hk metric by four interpretable terms: kernel-cost mismatch,
+entropic regularization, covering, and discretization (Corollary 1 in Appendix B.6). Only the
+discretization term vanishes with projection rank N, at rate N −2(α−k)/d driven by the regularity
+gap α −k, the formal counterpart of the empirical resolution-invariance in Section 4; the mismatch
+term depends only on kernel design (zero for the linear kernel, finite for RBF and controlled by data
+scale and bandwidth σ). The theorem relies on compact Sobolev embedding [12]; our smooth PDE
+benchmarks sit in that regime [4].
+4
+Experiments
+Datasets. We use two classes of data. Sequence datasets: AEMET [15], gene expression [36], and the
+economics dataset [3] from Kerrigan et al. [25], plus financial time series from the Heston stochastic
+volatility model [21], treated as realizations of measures on path space Cp(R). PDE snapshots: the
+1D Korteweg–de Vries (KdV) equation, the incompressible 2D Navier–Stokes equation [33], and
+their stochastic counterparts [43], treated as measures on Sobolev space Hk(Ω); Section 4.2 adds a
+turbulent 2D Navier–Stokes benchmark.
+Baselines. Denoising Diffusion Operator (DDO) with NCSN noise scale [34], functional DDPM [24],
+Generative Adversarial Neural Operator (GANO) [40], and the original FFM [25]. We also include a
+direct finite-dimensional OT baseline, CFM-OT(L2) [48], which uses the same minibatch Sinkhorn
+solver and FNO backbone as our method but applies entropic OT to flattened grid vectors with the
+unbounded L2 cost and the white-noise base of finite-dimensional flow matching; kFFM’s Euclidean–
+RBF configuration instead uses the bounded RBF cost on Euclidean distances. kFFM variants are
+named by cost, kFFM-Sig (signature), kFFM-Sob (Sobolev-RBF), kFFM-RBF (Euclidean–RBF),
+kFFM-Euc (raw L2), and tagged by base measure, gp (GP prior) or wn (white noise). Datasets,
+architectures, and training budgets, identical across methods, are detailed in Appendix C.
+6
+
+
+Table 1: Population-level distributional quality measured by MMD-RBF (lower is better; unbiased
+estimator, so small negative values occur). “kFFM (selected)” is the per-dataset configuration chosen
+on a held-out validation split by sliced Wasserstein distance (Appendix C.5); each cell is tagged
+(cost/base) with Sig = signature kernel, RBF = Euclidean–RBF kernel, Sob-RBF = Sobolev-RBF
+kernel, gp = Gaussian-process prior, wn = white noise. The kFFM and FFM columns are the matched-
+seed runs of Table 2 (n as given there); the remaining baselines are averaged over 10 seeds. “Gain
+(%)” is relative to the strongest non-kFFM baseline in the row and is omitted (–) where that baseline
+sits at the noise floor of the unbiased estimator (non-positive MMD), where ratios are not meaningful;
+Table 2 reports paired tests instead.
+Dataset
+kFFM (selected)
+CFM-OT(L2)
+FFM
+DDPM
+DDO/NCSN
+GANO
+Gain (%)
+Heston
+kFFM (RBF/wn): −1.30 × 10−4
+−8.26 × 10−5
+3.10 × 10−4
+1.10 × 10−3
+5.53 × 10−2 3.92 × 10−2
+–
+AEMET
+kFFM (Sig/gp): −5.10 × 10−3
+−4.11 × 10−3 −3.24 × 10−3 −3.99 × 10−3 2.44 × 10−1 5.24 × 10−1
+–
+KdV
+kFFM (Sob-RBF/gp): −2.56 × 10−3 −1.32 × 10−3 −1.16 × 10−3
+4.84 × 10−2
+2.37 × 10−1 4.12 × 10−1
+–
+Economy
+kFFM (Sig/gp): 2.89 × 10−3
+8.46 × 10−3
+7.30 × 10−3
+9.97 × 10−3
+1.57 × 10−1 8.98 × 10−1
+60.4
+Gene Expr.
+kFFM (Sig/gp): 7.11 × 10−3
+2.80 × 10−2
+1.78 × 10−2
+5.32 × 10−2
+3.42 × 10−2 4.17 × 10−1
+60.1
+Stoch. KdV
+kFFM (Sob-RBF/gp): 1.00 × 10−4
+6.58 × 10−4
+8.80 × 10−4
+3.84 × 10−4
+4.48 × 10−2 2.39 × 10−2
+74.0
+Stoch. NS
+kFFM (RBF/wn): 2.80 × 10−3
+4.22 × 10−3
+9.68 × 10−2
+1.20 × 10−1
+2.95 × 10−1 2.52 × 10−1
+33.6
+Navier–Stokes
+kFFM (RBF/wn): 1.63 × 10−3
+1.78 × 10−3
+1.31 × 10−1
+3.80 × 10−1
+7.35 × 10−1 3.00 × 10−1
+8.4
+Metrics.
+The maximum mean discrepancy with an RBF kernel (MMD-RBF) is the primary
+population-level metric, computed with the unbiased estimator (so small negative values occur).
+To avoid judging an RBF-type coupling by an RBF-MMD alone, we also report non-kernel met-
+rics (sliced Wasserstein distance and marginal W1), the pointwise diagnostics of Kerrigan et al.
+[25] (autocorrelation error on sequences, log-spectral distance on PDEs, mean/variance summaries
+in Appendix C), and, on Navier–Stokes, physics diagnostics that capture non-Gaussian structure:
+enstrophy-distribution W1, vorticity-PDF W1, skewness and excess-kurtosis errors of the pooled
+vorticity, and log-spectral error. Results aggregate 10 seeds (20 where marked); all methods share
+seeds, so tests are paired by seed.
+4.1
+Distributional Quality
+Table 1 reports MMD-RBF against all baseline families. The “kFFM (selected)” column reports, per
+dataset, the configuration (OT cost and Gaussian base measure) selected on a held-out validation
+split by sliced Wasserstein distance, a non-kernel criterion (Appendix C.5); pointwise diagnostics
+by kernel variant appear in Appendix C.6. kFFM is the strongest method on every row, and the
+selected configurations follow a practitioner-usable pattern: the signature kernel with a GP base
+on path-space datasets, where function-space geometry matters most (except short-horizon Heston,
+where the top configurations are statistically indistinguishable and the rule picks the bounded RBF
+cost with a white-noise base); the Sobolev-RBF cost with a GP base on the KdV family; and the
+bounded Euclidean–RBF cost with a white-noise base on the Navier–Stokes family, whose rough
+fields are poorly matched by a smooth GP prior.
+Uncertainty and paired tests. Since unbiased MMD values can be tiny or negative, percentage gains
+are uninformative near the noise floor. Table 2 therefore reports per-seed mean±std and seed-paired
+tests against FFM at matched architecture and training budget: kFFM improves on FFM on every
+dataset at level 0.05 under both a paired t-test and a Wilcoxon signed-rank test, and wins on every
+shared seed for the four largest-gap datasets. In the GP-base rows only the coupling changes; in the
+white-noise rows (Heston, Navier–Stokes family) the base measure changes too, and at that base the
+effect of the kernel cost is isolated by the comparison against CFM-OT(L2) in Table 1.
+Non-kernel metrics. The gains survive the non-kernel metrics (Table 3): on the same runs, kFFM
+improves sliced Wasserstein distance and marginal W1 over FFM on every dataset, by 18–20% on
+Gene Expression and Economy, where each comparison is significant when paired by seed, and
+by 2.9–4.1× on Navier–Stokes and Stoch. NS; for the signature configurations the coupling and
+evaluation kernels already differ. The pointwise diagnostics also expose what MMD understates:
+CFM-OT(L2) buys its pointwise-marginal fit with 105× and 66× worse autocorrelation error than
+kFFM-Sig on Economy and Gene Expression (Table 9); function-level structure is where the kernel
+coupling is strongest.
+Bounded cost or function-space geometry? Both effects are real and dominate on different data
+classes. On smooth fields the RBF coupling is a monotone transform of the L2 cost (rank correlation
+7
+
+
+Table 2: kFFM (selected) vs. FFM with uncertainty, at matched architecture and training budget.
+MMD-RBF×103 as mean±std over n shared seeds (fixed before outcomes); p-values from a seed-
+paired t-test and a Wilcoxon signed-rank test. In the gp rows only the coupling changes at a fixed
+prior; in the wn rows the selected kFFM also uses a white-noise base whereas FFM keeps its GP prior
+(at that base, the comparison isolating the kernel cost is against CFM-OT(L2) in Table 1). Economy
+averages the population and GDP series within each seed. kFFM wins on every shared seed for the
+first four rows.
+Dataset
+n
+FFM
+kFFM (selected)
+paired t p-value
+Wilcoxon p-value
+Gene Expr.
+10
+17.8 ± 3.4
+7.11 ± 2.0 (Sig/gp)
+2.0 × 10−5
+0.002
+Economy
+10
+7.30 ± 1.8
+2.89 ± 0.97 (Sig/gp)
+2.5 × 10−5
+0.002
+Stoch. NS
+10
+96.8 ± 21
+2.80 ± 1.3 (RBF/wn)
+1.7 × 10−7
+0.002
+Navier–Stokes
+10
+131 ± 60
+1.63 ± 2.6 (RBF/wn)
+8.6 × 10−5
+0.002
+AEMET
+20
+−3.24 ± 2.1
+−5.10 ± 2.6 (Sig/gp)
+0.015
+0.014
+Heston
+20
+0.31 ± 0.80
+−0.13 ± 0.30 (RBF/wn)
+0.021
+0.011
+KdV
+20
+−1.16 ± 2.1
+−2.56 ± 1.0 (Sob-RBF/gp)
+0.039
+0.027
+Stoch. KdV
+20
+0.88 ± 1.1
+0.10 ± 0.33 (Sob-RBF/gp)
+0.037
+0.037
+Table 3: Non-kernel metrics for kFFM (selected configuration in parentheses) vs. FFM on the runs
+of Table 2; lower is better. Sequence rows: mean±std over 10 shared seeds (Economy averages
+the population and GDP series within each seed), each comparison significant when paired by seed
+(Wilcoxon p = 0.002); Navier–Stokes rows are means. Appendix Table 16 adds the autocorrelation
+and log-spectrum errors.
+Sliced-W
+Marginal-W1
+Dataset
+FFM
+kFFM
+FFM
+kFFM
+Gene Expr. (Sig/gp)
+0.106 ± 0.006
+0.087 ± 0.006
+0.074 ± 0.005
+0.059 ± 0.004
+Economy (Sig/gp)
+0.0291 ± 0.0019 0.0233 ± 0.0012 0.0171 ± 0.0016 0.0137 ± 0.0009
+Navier–Stokes (RBF/wn)
+0.315
+0.081
+0.239
+0.058
+Stoch. NS (RBF/wn)
+1.06
+0.365
+0.795
+0.249
+≈1 on training batches; Appendix C.12), so it reuses the L2 geometry while compressing outliers,
+which buys conditioning, ϵ-robustness, and faster Sinkhorn, and matches or improves the unbounded-
+L2 coupling at the same base measure (Stoch. NS: 2.80 vs. 4.22 × 10−3, Table 1). On paths, no
+Euclidean cost, raw or bounded, recovers the signature gains (matched runs, MMD×103; Gene
+Expr.: kFFM-Euc 20.0, kFFM-RBF 20.7 vs. kFFM-Sig 7.1; Economy: 7.55/7.60 vs. 2.9), and the
+signature kernel genuinely re-ranks pairs (rank correlation 0.33–0.37 with L2); a synthetic example
+in Appendix C.13 isolates both failure modes of L2 pairing. Qualitative samples and super-resolution
+results are shown in Appendix C (Figures 2 and 3).
+Kernel choice and sensitivity. Re-aggregating the one-at-a-time sweeps of Appendix C.16: results
+are indistinguishable within seed-to-seed variation for RBF bandwidths σ ∈[0.1, 2] on every dataset,
+flat across three orders of magnitude of the Sinkhorn regularization (ϵ ∈[0.001, 1]) for bounded
+costs (the raw L2 cost degrades by ≈10× at ϵ ≥0.5 on long volatility paths), and unchanged
+across the signature hyperparameters (dyadic order 0–3, static bandwidth 0.1–5); over batch sizes
+b ∈{64, . . . , 512}, kFFM tracks FFM across the 8× range (Appendix C.8). The kernel family is
+the only choice that matters, and the rule we recommend is simple and consistent with the theory:
+match the kernel to the data class (signature for path-like data; Sobolev or Euclidean RBF for smooth
+fields, where the Euclidean RBF is a reasonable default; RBF or L2 on very long paths, where
+signature-kernel memory grows with path length), set the bandwidth by the median heuristic, and
+validate with a non-kernel metric on a held-out split (Appendix C.5). The properties the theorems
+require (boundedness, characteristicness) hold for every kernel we consider, so the theory constrains
+the family only weakly and the selection rule does the rest.
+4.2
+Turbulent Regime and Physics Diagnostics
+The Navier–Stokes benchmark above (ν = 10−3) is smooth, the regime where our theory is informa-
+tive. To test the low-regularity regime where Theorem 2 is weakest, we run the canonical turbulent
+8
+
+
+Table 4: Turbulent 2D Navier–Stokes (ν = 10−5, 1200 trajectories, Re ≈2000): distributional
+and physics diagnostics, lower is better, mean±std over 5 seeds with identical FNO backbone and
+training budget. Rows marked † use the GP base measure; kFFM and CFM-OT use the white-noise
+base chosen by the validation rule (Appendix C.5). Best per column in bold (on MMD, kFFM and
+CFM-OT tie within std). Unscaled values and full configurations are in Appendix Table 17.
+Method
+MMD
+Sliced-W
+Vort-PDF W1
+Enstrophy W1
+Skew err.
+Kurt err.
+log-Spec
+(×10−3)
+(×10−2)
+(×10−2)
+(×10−2)
+(×10−2)
+kFFM (selected)
+1.48 ± 0.6
+0.193 ± 0.01
+3.8 ± 1
+0.155 ± 0.02
+0.27 ± 0.3
+7.8 ± 1
+2.0 ± 0.8
+CFM-OT(L2)
+1.47 ± 1.0
+0.194 ± 0.01
+4.1 ± 1
+0.157 ± 0.01
+0.40 ± 0.2
+7.5 ± 1
+2.2 ± 0.7
+kFFM-Sob†
+111 ± 20
+0.612 ± 0.05
+10.4 ± 3
+0.194 ± 0.05
+4.6 ± 2
+6.8 ± 5
+6.5 ± 1
+kFFM-Euc†
+109 ± 20
+0.623 ± 0.03
+10.4 ± 4
+0.197 ± 0.06
+5.0 ± 3
+7.7 ± 4
+6.7 ± 1
+FFM†
+108 ± 20
+0.601 ± 0.02
+10.7 ± 4
+0.201 ± 0.06
+4.9 ± 3
+7.2 ± 5
+6.5 ± 1
+DDO/NCSN
+569 ± 9
+1.39 ± 0.06
+122 ± 1
+1.07 ± 0.02
+0.83 ± 1
+129 ± 1
+93.7 ± 2
+DDPM
+380 ± 20
+1.18 ± 0.1
+84.8 ± 3
+0.889 ± 0.02
+7.9 ± 5
+337 ± 200
+11.7 ± 3
+Figure 1: Turbulent 2D Navier–Stokes (ν = 10−5, seed 1): pooled vorticity PDF (log scale) and
+radially averaged energy spectrum. The data PDF is bimodal and heavy-tailed; kFFM (selected)
+tracks it, DDO/NCSN collapses to a narrow near-Gaussian spike, and DDPM is unimodal with the
+wrong shape. The flow-matching spectra track the data across scales; DDO/NCSN’s is nearly flat.
+FNO benchmark [32]: 2D Navier–Stokes at ν = 10−5 (1200 trajectories, from which we take the
+spun-up snapshots at t ≥10; Re ≈2000; seven methods, five seeds, identical FNO backbone and
+training budget). Table 4 reports MMD, sliced-W, and the physics diagnostics; Figure 1 shows the
+pooled vorticity PDF and energy spectrum, and vorticity samples are in Appendix C.11. (i) kFFM
+(selected) attains the best value on five of seven metrics and ties the best on MMD; held-out sliced-W
+rejects the GP-base arms († rows; 0.19 vs. ≥0.60), and among the tied white-noise arms the rule
+keeps the Euclidean-RBF configuration selected on standard NS; CFM-OT(L2) at the same base
+overlaps kFFM within std, with means favoring kFFM on five of seven metrics. (ii) OT-coupled
+flow matching is far more robust than the score-based and diffusion alternatives: 23–32× better
+vorticity-PDF W1, 5.7–6.9× better enstrophy W1, and 17–43× better vorticity-kurtosis error (Figure
+1). (iii) Against FFM run with its GP prior, kFFM improves every metric except kurtosis (a tie),
+with seed-paired significance (MMD 73× lower, p = 3 × 10−4; sliced-W 3.1×, p = 1.3 × 10−6;
+log-spectrum 3.2×, p = 0.005; vorticity-PDF 2.9×, p = 0.007; skewness 18×, p = 0.016). This
+gain combines the base-measure change and the coupling: the three GP-base arms are indistinguish-
+able, so in this regime the white-noise base does most of the work, and at that base the kernel and
+raw-L2 costs tie, as in (i). All methods, ours included, still leave headroom on sliced-W in this regime
+(Section 6).
+4.3
+Cost, Efficiency, and Convergence
+Compute. Measured on every benchmark (Appendix C.9), the end-to-end training overhead of the
+per-minibatch Sinkhorn solve over FFM is 5–7% at the largest resolution we train (1282 Navier–
+Stokes); the O(b2) coupling cost is independent of model size and resolution, so its relative weight
+9
+
+
+shrinks as the backbone grows. Peak coupling memory is 80–151 MB (1.5–9% of the FNO’s forward-
+plus-backward peak), and per-batch coupling time is comparable to one FNO step. The bounded RBF
+cost is about 8× faster than unbounded-L2 Sinkhorn at b = 512 and trains 15–25% faster end-to-end,
+the conditioning effect of Theorem 1; giving FFM the extra budget as additional epochs does not
+close the gap.
+No straightness claim. We claim no straightness theorem: Appendix C.14 (Proposition 6, Corollary
+2) shows that kFFM changes only the endpoint coupling while the affine interpolation template is
+fixed, and Hilbert-space Gaussian geometry does not inherit the Euclidean straightness picture that
+motivates finite-dimensional OT-CFM [52]. We therefore make no efficiency claim; Appendix C.15
+reports only the training-time convergence of the target metric, where kFFM ends training at a better
+MMD-RBF than FFM on every dataset.
+5
+Related Work
+Minibatch OT coupling for flow matching was introduced by Tong et al. [48] and Pooladian et al. [39],
+with follow-ups refining the transport objective [28, 51] and analyses of minibatch plans [13, 14];
+all assume Rd sample spaces. In function space, FFM [25] lifts flow matching to Hilbert spaces
+via Gaussian measures, alongside functional diffusion [24, 34] and adversarial neural operators
+[40]. Concurrent function-space flow matching changes the objective, the task, or the prior, but not
+the coupling: Functional Rectified Flow [53] straightens flows by re-training on model-generated
+endpoint pairs across training rounds, a mechanism complementary to and composable with our
+within-batch, data-geometry coupling; Operator Flow Matching [30] and flow matching with GP
+priors [27] target conditional time-series forecasting with an independent prior-data coupling. Kernel
+embeddings of measures [20, 46] underlie MMD and two-sample testing, recently on path space
+with the signature kernel [6]; Sinkhorn divergences interpolate between OT and MMD [16], and
+the Hilbert Sinkhorn Divergence [31] kernelizes them. To our knowledge, ours is the first work to
+perform OT endpoint coupling in function-space flow matching; Appendix D gives an extended
+discussion, including MMD gradient flows.
+6
+Conclusion and Limitations
+kFFM replaces the independent endpoint pairing of FFM with a geometry-aware kernel OT coupling
+while keeping the neural-operator backbone. Theoretically, the kernel-OT surrogate is uniformly
+bounded and well-posed on Banach spaces, admits an explicit error decomposition against quadratic-
+cost OT that isolates an irreducible kernel-cost mismatch, and is discretization-invariant at rate
+N −2(α−k)/d. Empirically, kFFM improves distributional matching on time-series and PDE bench-
+marks with paired-seed significance, and the gains survive non-kernel metrics, physics diagnostics,
+and a turbulent Navier–Stokes stress test, at a training overhead of 5–7% at the largest resolution we
+train.
+Limitations. Several deserve plain statement. First, our theory concerns the surrogate coupling:
+it certifies well-posedness, an error decomposition, and discretization invariance, but says nothing
+about straightness or sampling efficiency in function space, on which we make no claim, and it
+does not by itself explain the sample-quality gains, which remain an empirical finding. Second, the
+theory is least informative in low-regularity regimes: on the turbulent benchmark the prior-data L2
+distances more than double relative to the standard one (median 91 vs. 40), pushing the RBF cost
+into saturation, where ∆κ grows and the covering term of Theorem 2 is large for any practical ϵ;
+there the empirical results carry the method. Third, turbulent small-scale statistics remain an open
+problem for function-space generative models. On current evidence the failure sits mainly with the
+score-based and diffusion baselines (vorticity-kurtosis errors of 1.3–3.4 and enstrophy W1 ≈1), but
+all methods, ours included, leave headroom on sliced-W (0.19 for the best method), and in this regime
+the white-noise base rather than the coupling does most of the work; OT-coupled flow matching is
+currently the strongest option. Finally, signature-kernel memory grows with path length (0.63 GB at
+100 time points vs. 12.5 GB at 512), so very long paths fall back to RBF or L2 costs. Future work
+includes stronger function-space OT formulations [28, 52] and base measures and costs designed for
+rough, turbulent data.
+10
+
+
+Acknowledgments and Disclosure of Funding
+Barbora Barancikova is supported by UK Research and Innovation [UKRI Centre for Doctoral
+Training in AI for Healthcare grant number EP/S023283/1]. Fred Xu is partially supported by NSF
+grant 2531008 and was supported by Block, Inc. during an internship.
+References
+[1] Michael Arbel, Anna Korba, Adil Salim, and Arthur Gretton.
+Maximum mean dis-
+crepancy gradient flow.
+In Advances in Neural Information Processing Systems, vol-
+ume 32, 2019. URL https://proceedings.neurips.cc/paper_files/paper/2019/
+hash/944a5ae3483ed5c1e10bbccb7942a279-Abstract.html.
+[2] Barbora Barancikova, Zhuoyue Huang, and Cristopher Salvi. SigDiffusions: Score-based
+diffusion models for time series via log-signature embeddings. In The Thirteenth International
+Conference on Learning Representations, 2025. URL https://openreview.net/forum?
+id=Y8KK9kjgIK.
+[3] Jutta Bolt and Jan Luiten van Zanden. Maddison style estimates of the evolution of the world
+economy. A new 2020 update. Maddison-Project Working Paper WP-15, The Maddison Project,
+October 2020. URL https://www.rug.nl/ggdc/historicaldevelopment/maddison/
+publications/wp15.pdf.
+[4] Guher Camliyurt, Igor Kukavica, and Vlad Vicol. Analyticity up to the boundary for the Stokes
+and the Navier–Stokes systems. Transactions of the American Mathematical Society, 373(5):
+3375–3422, 2020. doi: 10.1090/tran/7990. URL https://doi.org/10.1090/tran/7990.
+[5] Thomas Cass and Cristopher Salvi. Lecture notes on rough paths and applications to machine
+learning, 2024. URL https://arxiv.org/abs/2404.06583.
+[6] Ilya Chevyrev and Harald Oberhauser. Signature moments to characterize laws of stochastic
+processes. Journal of Machine Learning Research, 23(176):1–42, 2022. URL https://jmlr.
+org/papers/v23/20-1466.html.
+[7] Andreas Christmann and Ingo Steinwart.
+Universal kernels on non-standard input
+spaces.
+In J. Lafferty, C. Williams, J. Shawe-Taylor, R. Zemel, and A. Culotta, edi-
+tors, Advances in Neural Information Processing Systems, volume 23. Curran Associates,
+Inc., 2010. URL https://proceedings.neurips.cc/paper_files/paper/2010/file/
+4e0cb6fb5fb446d1c92ede2ed8780188-Paper.pdf.
+[8] Giuseppe Da Prato. An Introduction to Infinite-Dimensional Analysis. Universitext. Springer
+Berlin Heidelberg, 1st edition, 2006. ISBN 978-3-540-29020-9. doi: 10.1007/3-540-29021-4.
+URL https://link.springer.com/book/10.1007/3-540-29021-4.
+[9] Vincent Divol, Jonathan Niles-Weed, and Aram-Alexandre Pooladian. Optimal transport map
+estimation in general function spaces. The Annals of Statistics, 53(3):963–988, 2025. doi:
+10.1214/24-AOS2482. URL https://doi.org/10.1214/24-AOS2482.
+[10] R. M. Dudley.
+Real Analysis and Probability, volume 74 of Cambridge Studies
+in Advanced Mathematics.
+Cambridge University Press, Cambridge, 2nd edition,
+2002.
+ISBN 978-0-521-00754-2.
+URL https://www.cambridge.org/core/books/
+real-analysis-and-probability/26DDF2D09E526185F2347AA5658B96F6.
+[11] Nathaniel Eldredge. Analysis and probability on infinite-dimensional spaces, 2016. URL
+https://arxiv.org/abs/1607.03591.
+[12] Lawrence C. Evans. Partial Differential Equations, volume 19 of Graduate Studies in Mathe-
+matics. American Mathematical Society, 2nd edition, 2010. ISBN 978-0-8218-4974-3. URL
+https://bookstore.ams.org/gsm-19-r.
+[13] Kilian Fatras, Younes Zine, Rémi Flamary, Rémi Gribonval, and Nicolas Courty. Learning with
+minibatch Wasserstein: asymptotic and gradient properties. In International Conference on
+Artificial Intelligence and Statistics (AISTATS), 2020.
+11
+
+
+[14] Kilian Fatras, Younes Zine, Szymon Majewski, Rémi Flamary, Rémi Gribonval, and Nicolas
+Courty. Minibatch optimal transport distances; analysis and applications. arXiv preprint
+arXiv:2101.01792, 2021.
+[15] Manuel Febrero-Bande and Manuel Oviedo de la Fuente. Statistical computing in functional
+data analysis: The R package fda.usc. Journal of Statistical Software, 51(4):1–28, 2012. doi:
+10.18637/jss.v051.i04. URL https://www.jstatsoft.org/article/view/v051i04.
+[16] Jean Feydy, Thibault Séjourné, François-Xavier Vialard, Shun-ichi Amari, Alain Trouvé, and
+Gabriel Peyré. Interpolating between optimal transport and MMD using Sinkhorn divergences.
+In Kamalika Chaudhuri and Masashi Sugiyama, editors, Proceedings of the Twenty-Second
+International Conference on Artificial Intelligence and Statistics, volume 89 of Proceedings of
+Machine Learning Research, pages 2681–2690. PMLR, 2019. URL https://proceedings.
+mlr.press/v89/feydy19a.html.
+[17] Rémi Flamary, Nicolas Courty, Alexandre Gramfort, Mokhtar Z. Alaya, Aurélie Boisbunon,
+Stanislas Chambon, Laetitia Chapel, Adrien Corenflos, Kilian Fatras, Nemo Fournier, Léo
+Gautheron, Nathalie T. H. Gayraud, Hicham Janati, Alain Rakotomamonjy, Ievgen Redko,
+Antoine Rolet, Antony Schutz, Vivien Seguy, Danica J. Sutherland, Romain Tavenard, Alexander
+Tong, and Titouan Vayer. POT: Python optimal transport. Journal of Machine Learning Research,
+22(78):1–8, 2021. URL https://jmlr.org/papers/v22/20-451.html.
+[18] Alexandre Galashov, Valentin De Bortoli, and Arthur Gretton. Deep MMD gradient flow without
+adversarial training. In The Thirteenth International Conference on Learning Representations,
+2025. URL https://openreview.net/forum?id=Pf85K2wtz8.
+[19] Jacob R. Gardner,
+Geoff Pleiss,
+Kilian Q. Weinberger,
+David Bindel,
+and An-
+drew Gordon Wilson.
+GPyTorch:
+Blackbox matrix-matrix Gaussian process infer-
+ence with GPU acceleration.
+In Advances in Neural Information Processing Sys-
+tems, volume 31, 2018. URL https://proceedings.neurips.cc/paper/2018/hash/
+27e8e17134dd7083b050476733207ea1-Abstract.html.
+[20] Arthur
+Gretton,
+Karsten
+M.
+Borgwardt,
+Malte
+J.
+Rasch,
+Bernhard
+Schölkopf,
+and Alexander J. Smola.
+A kernel method for the two-sample-problem.
+In
+Advances
+in
+Neural
+Information
+Processing
+Systems
+19,
+pages
+513–520,
+2006.
+URL
+https://proceedings.neurips.cc/paper_files/paper/2006/hash/
+e9fb2eda3d9c55a0d89c98d6c54b5b3e-Abstract.html.
+[21] Steven L. Heston. A closed-form solution for options with stochastic volatility with applications
+to bond and currency options. The Review of Financial Studies, 6(2):327–343, April 1993. doi:
+10.1093/rfs/6.2.327. URL https://doi.org/10.1093/rfs/6.2.327.
+[22] Bamdad Hosseini, Alexander W. Hsu, and Amirhossein Taghvaei. Conditional optimal transport
+on function spaces. SIAM/ASA Journal on Uncertainty Quantification, 13(1):304–338, 2025.
+doi: 10.1137/23M1618922. URL https://epubs.siam.org/doi/10.1137/23M1618922.
+[23] Zacharia Issa, Blanka Horvath, Maud Lemercier, and Cristopher Salvi. Non-adversarial training
+of neural SDEs with signature kernel scores. In Advances in Neural Information Processing Sys-
+tems, volume 36, 2023. URL https://proceedings.neurips.cc/paper_files/paper/
+2023/hash/2460396f2d0d421885997dd1612ac56b-Abstract-Conference.html.
+[24] Gavin Kerrigan, Justin Ley, and Padhraic Smyth. Diffusion generative models in infinite
+dimensions. In Francisco Ruiz, Jennifer Dy, and Jan-Willem van de Meent, editors, Proceedings
+of The 26th International Conference on Artificial Intelligence and Statistics, volume 206 of
+Proceedings of Machine Learning Research, pages 9538–9563. PMLR, April 2023. URL
+https://proceedings.mlr.press/v206/kerrigan23a.html.
+[25] Gavin Kerrigan, Giosue Migliorini, and Padhraic Smyth. Functional flow matching. In Sanjoy
+Dasgupta, Stephan Mandt, and Yingzhen Li, editors, Proceedings of The 27th International
+Conference on Artificial Intelligence and Statistics, volume 238 of Proceedings of Machine
+Learning Research, pages 3934–3942. PMLR, May 2024. URL https://proceedings.mlr.
+press/v238/kerrigan24a.html.
+12
+
+
+[26] Patrick Kidger, James Morrill, James Foster, and Terry Lyons. Neural controlled differential
+equations for irregular time series. In Advances in Neural Information Processing Systems,
+volume 33, pages 6696–6707, 2020. URL https://proceedings.neurips.cc/paper/
+2020/hash/4a5876b450b45371f6cfe5047ac8cd45-Abstract.html.
+[27] Marcel Kollovieh, Marten Lienen, David Lüdke, Leo Schwinn, and Stephan Günnemann. Flow
+matching with Gaussian process priors for probabilistic time series forecasting. In International
+Conference on Learning Representations (ICLR), 2025. URL https://openreview.net/
+forum?id=UJ5WggV1xG.
+[28] Nikita Kornilov, Petr Mokrov, Alexander Gasnikov, and Alexander Korotin.
+Opti-
+mal flow matching:
+Learning straight trajectories in just one step.
+In Advances
+in Neural Information Processing Systems,
+volume 37,
+2024.
+doi:
+10.52202/
+079017-3310.
+URL https://proceedings.neurips.cc/paper_files/paper/2024/
+hash/bc8f76d9caadd48f77025b1c889d2e2d-Abstract-Conference.html.
+[29] Michel Ledoux and Michel Talagrand. Probability in Banach Spaces: Isoperimetry and
+Processes, volume 23 of Ergebnisse der Mathematik und ihrer Grenzgebiete (3). Springer-
+Verlag, Berlin, Heidelberg, 1991. URL https://link.springer.com/book/10.1007/
+978-3-642-20212-4.
+[30] Yolanne Yi Ran Lee and Kyriakos Flouris. Operator flow matching for timeseries forecasting,
+2025. URL https://arxiv.org/abs/2510.15101.
+[31] Qian
+Li,
+Zhichao
+Wang,
+Gang
+Li,
+Jun
+Pang,
+and
+Guandong
+Xu.
+Hilbert
+Sinkhorn divergence for optimal transport.
+In Proceedings of the IEEE/CVF Con-
+ference on Computer Vision and Pattern Recognition (CVPR), pages 3835–3844,
+June 2021.
+URL https://openaccess.thecvf.com/content/CVPR2021/html/Li_
+Hilbert_Sinkhorn_Divergence_for_Optimal_Transport_CVPR_2021_paper.html.
+[32] Zongyi Li, Nikola Borislavov Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhat-
+tacharya, Andrew Stuart, and Anima Anandkumar. Fourier neural operator for parametric partial
+differential equations. In The Ninth International Conference on Learning Representations,
+2021. URL https://openreview.net/forum?id=c8P9NQVtmnO.
+[33] Zongyi Li, Miguel Liu-Schiaffini, Nikola B. Kovachki, Kamyar Azizzadenesheli, Burigede Liu,
+Kaushik Bhattacharya, Andrew M. Stuart, and Anima Anandkumar. Learning chaotic dynamics
+in dissipative systems. In Advances in Neural Information Processing Systems, volume 35, pages
+16768–16781, 2022.
+URL https://proceedings.neurips.cc/paper_files/paper/
+2022/hash/6ad68277e27b42c60ac228c9859fc1a2-Abstract-Conference.html.
+[34] Jae Hyun Lim, Nikola B. Kovachki, Ricardo Baptista, Christopher Beckham, Kamyar
+Azizzadenesheli, Jean Kossaifi, Vikram Voleti, Jiaming Song, Karsten Kreis, Jan Kautz,
+Christopher Pal, Arash Vahdat, and Anima Anandkumar.
+Score-Based diffusion models
+in function space.
+Journal of Machine Learning Research, 26(158):1–62, 2025.
+URL
+https://jmlr.org/papers/v26/23-1472.html.
+[35] Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow
+matching for generative modeling. In The Eleventh International Conference on Learning
+Representations, 2023. URL https://openreview.net/forum?id=PqvMRDCJT9t.
+[36] David A. Orlando, Charles Y. Lin, Allister Bernard, Jean Y. Wang, Joshua E. S. Socolar,
+Edwin S. Iversen, Alexander J. Hartemink, and Steven B. Haase. Global control of cell-cycle
+transcription by coupled CDK and network oscillators. Nature, 453(7197):944–947, June 2008.
+doi: 10.1038/nature06955. URL https://www.nature.com/articles/nature06955.
+[37] John C. Oxtoby. Invariant measures in groups which are not locally compact. Transac-
+tions of the American Mathematical Society, 60(2):215–237, September 1946. ISSN 0002-
+9947.
+doi: 10.1090/S0002-9947-1946-0018188-5.
+URL https://doi.org/10.1090/
+S0002-9947-1946-0018188-5.
+[38] Gabriel Peyré and Marco Cuturi. Computational optimal transport with applications to data
+sciences. Foundations and Trends® in Machine Learning, 11(5–6):355–607, 2019. doi:
+10.1561/2200000073. URL https://doi.org/10.1561/2200000073.
+13
+
+
+[39] Aram-Alexandre Pooladian, Heli Ben-Hamu, Carles Domingo-Enrich, Brandon Amos, Yaron
+Lipman, and Ricky T. Q. Chen. Multisample flow matching: Straightening flows with minibatch
+couplings. In Proceedings of the 40th International Conference on Machine Learning, volume
+202 of Proceedings of Machine Learning Research, pages 28100–28127. PMLR, 2023. URL
+https://proceedings.mlr.press/v202/pooladian23a.html.
+[40] Md Ashiqur Rahman, Manuel A. Florez, Anima Anandkumar, Zachary E. Ross, and Kamyar
+Azizzadenesheli. Generative adversarial neural operators. Transactions on Machine Learning
+Research, October 2022. ISSN 2835-8856. URL https://openreview.net/forum?id=
+X1VzbBU6xZ.
+[41] Walter Rudin. Functional Analysis. McGraw-Hill Series in Higher Mathematics. McGraw-Hill,
+New York, 1973. ISBN 978-0-07-054225-9. URL https://books.google.com/books/
+about/Functional_Analysis.html?id=BB_vAAAAMAAJ.
+[42] Cristopher Salvi, Thomas Cass, James Foster, Terry Lyons, and Weixin Yang. The signature
+kernel is the solution of a Goursat PDE. SIAM Journal on Mathematics of Data Science, 3
+(3):873–899, 2021. doi: 10.1137/20M1366794. URL https://epubs.siam.org/doi/10.
+1137/20M1366794.
+[43] Cristopher
+Salvi,
+Maud Lemercier,
+and
+Andris
+Gerasimovics.
+Neural stochas-
+tic
+PDEs:
+Resolution-invariant
+learning
+of
+continuous
+spatiotemporal
+dynam-
+ics.
+In Advances in Neural Information Processing Systems,
+volume 35,
+2022.
+URL
+https://proceedings.neurips.cc/paper_files/paper/2022/hash/
+091166620a04a289c555f411d8899049-Abstract-Conference.html.
+[44] Daniil Shmelev and Cristopher Salvi. pySigLib – fast signature-based computations on CPU
+and GPU, 2025. URL https://arxiv.org/abs/2509.10613.
+[45] Yang Song, Jascha Sohl-Dickstein, Diederik P. Kingma, Abhishek Kumar, Stefano Ermon,
+and Ben Poole. Score-based generative modeling through stochastic differential equations.
+In The Ninth International Conference on Learning Representations, 2021. URL https:
+//openreview.net/forum?id=PxTIG12RRHS.
+[46] Bharath K. Sriperumbudur, Arthur Gretton, Kenji Fukumizu, Bernhard Schölkopf, and Gert
+R. G. Lanckriet. Hilbert space embeddings and metrics on probability measures. Journal of
+Machine Learning Research, 11(50):1517–1561, 2010. URL https://jmlr.org/papers/
+v11/sriperumbudur10a.html.
+[47] Thibault Séjourné, Jean Feydy, François-Xavier Vialard, Alain Trouvé, and Gabriel Peyré.
+Sinkhorn divergences for unbalanced optimal transport, 2019. URL https://arxiv.org/
+abs/1910.12958.
+[48] Alexander Tong, Kilian Fatras, Nikolay Malkin, Guillaume Huguet, Yanlei Zhang, Jarrid Rector-
+Brooks, Guy Wolf, and Yoshua Bengio. Improving and generalizing flow-based generative mod-
+els with minibatch optimal transport. Transactions on Machine Learning Research, pages 1–34,
+March 2024. ISSN 2835-8856. URL https://openreview.net/forum?id=CD9Snc73AW.
+[49] Cédric Villani. Optimal Transport: Old and New, volume 338 of Grundlehren der mathematis-
+chen Wissenschaften. Springer, Berlin, Heidelberg, 2009. doi: 10.1007/978-3-540-71050-9.
+URL https://link.springer.com/book/10.1007/978-3-540-71050-9.
+[50] Yasuo Yamasaki.
+Measures on Infinite Dimensional Spaces, volume 5 of Series in pure
+mathematics. World Scientific, 1985. ISBN 9789971978525. URL https://books.google.
+com/books?id=F243SflQYbQC.
+[51] Angxiao Yue, Anqi Dong, and Hongteng Xu. OAT-FM: Optimal acceleration transport for
+improved flow matching, 2025. URL https://arxiv.org/abs/2509.24936.
+[52] Ho Yun and Yoav Zemel. Gaussian optimal transport beyond Brenier’s theorem, 2025. URL
+https://arxiv.org/abs/2512.21464.
+[53] Jianxin Zhang and Clayton Scott. Flow straight and fast in hilbert space: Functional rectified
+flow, 2025. URL https://arxiv.org/abs/2509.10384.
+14
+
+
+[54] Johanna Ziegel, David Ginsbourger, and Lutz Dümbgen. Characteristic kernels on Hilbert spaces,
+Banach spaces, and on sets of measures, 2022. URL https://arxiv.org/abs/2206.07588.
+15
+
+
+A
+Additional Technical Background
+This appendix collects the mathematical background on which the paper relies: probability measures
+on function spaces, reproducing kernel Hilbert spaces and kernel embeddings, path signatures, and
+optimal transport.
+A.1
+Probability Measure in Function Space
+In this section we provide the definitions and necessary theoretical results for probability measure in
+function space, highlighting the analytical difficulties in general. We give high-level intuition and
+omit the proofs; for details we refer the reader to the textbooks of Rudin [41] and Da Prato [8].
+Definition 3 (Hilbert Space). A Hilbert space H is an inner-product space that is complete in the
+norm induced by its inner product, defined as ⟨·, ·⟩: H × H →F, where F = R for real Hilbert
+space.
+Importantly, the Hilbert space’s inner product structure gives it a metric space with the norm ||x|| :=
+p
+⟨x, x⟩and metric d(x, y) = ||x −y||,
+∀x, y ∈H. Let B(x, r) be the open balls defined using
+the metric d, then the Borel σ-algebra of H, denoted B(H), is generated by the open balls defined in
+this way:
+B(H) := σ({B(x, r) : x ∈H, r > 0}).
+Another desirable property of the Hilbert space is eigenfunction spectral decomposition for bounded
+linear operators:
+Theorem 4. Let T : H →H be a compact, self-adjoint, bounded linear operator. Then there exists
+an orthonormal set of eigenvectors {en}n∈I and real eigenvalues {λn}n∈I such that:
+1. Ten = λnen
+2. λn →0 if I is infinite.
+3. λi̸ = 0 has finite multiplicity.
+4. The closure of span of non-zero eigenvectors produces closure of Ran(T).
+5. The spectral decomposition of T is:
+Tx =
+X
+i∈I
+λi⟨x, ei⟩ei,
+x ∈H
+In the main text, we adopt a measure-theoretic view of probability, which is crucial for function
+spaces. This is due to the following result, known as “no Lebesgue measure in infinite dimensions.”
+The statement usually takes the form: If X is an infinite-dimensional separable normed linear space,
+then there is no nontrivial, translation-invariant, σ-additive Borel measure µ on X that is finite on
+every nonempty open ball [50]. The implication of this result is that there is no universal definition of
+probability density as in Rd, and only the more general Radon-Nikodym derivative can be defined
+between two measures that are absolutely continuous.
+Definition 4 (Singular and Absolute Continuity). For a measurable space (Ω, F), two measures µ, ν
+are mutually singular, written µ ⊥ν, if there exists A ∈F, such that µ(A) = 0 and ν(Ω\ A) = 0.
+µ is said to be absolutely continuous w.r.t ν, denoted µ ≪ν, if ν(A) = 0 =⇒µ(A) = 0. If µ ≪ν
+and ν ≪µ, then we say that µ ∼ν, or that they are equivalent.
+Definition 5 (Radon-Nikodym Derivative). If µ ≪ν and µ, ν are σ−finite, then there exists a
+measurable function f : Ω→[0, ∞] such that for all A ∈F:
+µ(A) =
+Z
+A
+fdν,
+where f is called the Radon-Nikodym derivative of µ w.r.t ν, denoted dµ
+dν . When the measure space
+is (Rd, B(Rd)) and ν is the Lebesgue measure, f is also called the probability density function of
+distribution µ.
+16
+
+
+Though there is no infinite-dimensional Lebesgue measure, and hence no universal way to define
+density, the most feasible and well-understood way to have a Lebesgue-like measure is to define
+Gaussian measures:
+Definition 6 (Gaussian Measure). Let a ∈H and Q ∈L+
+1 (H), the space of positive, symmetric, and
+trace class linear operators, then the Gaussian measure µ := Na,Q on (H, B(H)) with mean a and
+covariance operator Q is defined by the Fourier transform:
+[
+Na,Q(h) = exp{i⟨a, h⟩−1
+2⟨Qh, h⟩}
+It can be shown that for every choice of a, Q, there exists a unique Gaussian measure. In Da Prato
+[8], Chapter 1, the interesting argument for constructing this measure is by the theory of infinite
+product measure and the isomorphism between the sequence space l2 and the Hilbert space H, where
+the projection map defined using the indices of the spectral decomposition is mapped with Gaussian
+measures in R (also known as 1D Gaussian distribution).
+Still, for one Gaussian measure to be absolutely continuous with respect to another, strong conditions
+have to be imposed on their means and covariance operators: the Feldman–Hájek theorem and, for a
+shifted mean, the Cameron–Martin formula.
+Definition 7 (Cameron–Martin Space). Let H be a Hilbert space and µ = N0,Q a centered Gaussian
+measure, then the Cameron–Martin space induced by N0,Q is:
+Hµ := Ran(Q1/2),
+with inner product ⟨h1, h2⟩:= ⟨Q−1/2h1, Q−1/2h2⟩H.
+The general dichotomy for Gaussian measures is the Feldman–Hájek theorem:
+Theorem 5 (Feldman–Hájek). Let H be a separable Hilbert space and Na,P , Nb,Q be two Gaussian
+measures, then either Na,P ∼Nb,Q or Na,P ⊥Nb,Q, and Na,P ∼Nb,Q iff:
+1. P 1/2(H) = Q1/2(H) =: H0.
+2. a −b ∈H0.
+3. (P −1/2Q1/2)(P −1/2Q1/2)∗−I is Hilbert-Schmidt on H0
+Theorem 6 (Cameron–Martin Formula). Let µ = NQ, ν = Na,Q be two Gaussian measures, then:
+1. If a /∈Q1/2(H), then µ ⊥ν.
+2. If a ∈Q1/2(H), then µ ∼ν.
+3. If µ ∼ν, then with h := Q−1/2a,
+dν
+dµ(x) = exp
+
+bh(x) −1
+2∥h∥2
+H
+
+,
+where bh denotes the Cameron–Martin linear functional associated with h.
+These are the conditions enforced on the FFM model [25], which relies on the absolute continuity
+between the marginal and the conditional measure at every time t in the probability flow.
+For a general Banach space, which is a complete normed space but need not have an inner product
+structure or spectral decomposition, the analysis becomes more abstract. For instance, without a
+coordinate map, the preceding product-measure construction of Gaussian measures no longer applies
+directly. We refer readers to Ledoux and Talagrand [29] for this broader probability theory, and
+instead explore Hilbert-space embeddings of probability measures in Section A.3.
+A.2
+Reproducing Kernel Hilbert Space
+A Reproducing Kernel Hilbert Space is a Hilbert space of functions with a particular structure that
+makes each point evaluation well-behaved.
+17
+
+
+Definition 8 (Reproducing Kernel Hilbert Space). Let X be a non-empty set. A Hilbert space, H
+of functions f : X →R is called a Reproducing Kernel Hilbert Space if for every x ∈X, the point
+evaluation functional δx : H →R defined by δx(f) = f(x) is continuous and bounded.
+By the Riesz representation theorem, there exists a unique element κx ∈H such that
+f(x) = ⟨f, κx⟩H ∀f ∈H.
+This is the reproducing property that is the defining characteristic of an RKHS.
+Since κx is both a function defined on X and in H, we have that
+κx(y) = δy(κx) = ⟨κx, κy⟩H,
+where κy ∈H is the element in H associated with δy. This allows us to define the reproducing kernel,
+κ(x, y) as:
+κ(x, y) = ⟨κx, κy⟩H.
+From this, it is easy to see that κ : X × X →R is both symmetric and positive definite.
+Arguably the core reason to use kernels is that they implicitly define feature maps in high (and
+potentially infinite) dimensional spaces, which is known colloquially as the “kernel trick”. We next
+formalize this property using the properties of the RKHS:
+Definition 9 (Canonical Feature Maps). Let κ be a kernel with RKHS Hκ. The canonical feature
+map ϕ : X →Hκ is defined by
+ϕ(x) = κ(·, x),
+which satisfies the fundamental identity κ(x, y) = ⟨ϕ(x), ϕ(y)⟩, which is known as the “kernel trick”.
+This allows us to compute inner products in the feature space without explicit construction.
+In the context of our work, we can understand the cost function in Proposition 3 by making use of the
+kernel trick.
+For some of our kernel choices, it is useful to know when the RKHS is rich enough to approximate
+arbitrary continuous functions and when the induced mean embedding distinguishes probability
+distributions. Kernels with the former property are referred to as “universal”, defined as follows:
+Definition 10 (Universal Kernel). Let X be a compact metric space. A continuous kernel on X is
+called universal if its associated RKHS, Hκ is dense in C(X) with respect to the supremum norm,
+|| · ||∞. That is to say that for any f ∈C(X) and for any ϵ > 0, there exists g ∈Hκ such that
+sup
+x∈X
+|f(x) −g(x)| < ϵ.
+Universality ensures that a kernel can approximate continuous functions, while characteristicness
+ensures that its mean embedding can distinguish probability distributions. A kernel with the latter
+property is called “characteristic”:
+Definition 11 (Characteristic Kernel). Let X be a compact metric space. A kernel κ on X is
+characteristic if the mean embedding map
+µ 7→
+Z
+X
+κ(·, x) dµ(x)
+is injective on the space of probability measures P(X). Equivalently, κ is characteristic if
+Z Z
+κ(x, y)dµ(x)dµ(y) −2
+Z Z
+κ(x, y)dµ(x)dν(y) +
+Z Z
+κ(x, y)dν(x)dν(y) = 0
+implies that µ = ν.
+18
+
+
+Universal kernels on compact spaces are characteristic, but the converse does not hold in general.
+These properties are useful for interpreting kernel discrepancies: characteristicness makes the kernel
+mean embedding injective, while universality gives a stronger approximation property on compact
+sets. The main theorems in Section 3.2 only require the specific assumptions stated there, namely
+bounded positive-definite kernels, compactness for the error decomposition, and Sobolev regularity
+for discretization invariance.
+The radial basis function kernel is used in our Sobolev-space experiments. On a Sobolev space
+Hk(Ω) it is defined as
+κ(k)
+RBF(f, g) = exp
+
+−∥f −g∥2
+Hk
+2σ2
+
+,
+where σ > 0 is the bandwidth parameter. This Gaussian kernel is symmetric, positive definite, and
+characteristic on separable Hilbert spaces [54]. It is also bounded, κ(k)
+RBF(f, f) = 1, satisfying the
+boundedness condition used in Theorems 1 and 2.
+A.3
+Kernel Embedding of Probability Measure
+We next turn our attention to the concept of embedding probability measures into a RKHS, following
+the framework developed by Sriperumbudur et al. [46]. This is central to our approach because it
+gives a tractable way to define kernel-induced transport costs on function spaces. As previously
+discussed, infinite-dimensional spaces lack a Lebesgue-like reference measure, making density-based
+approaches unavailable. The key insight is that we can embed probability measures as elements
+into a RKHS, where we compute distances between distributions without requiring explicit density
+estimation.
+For this embedding to be well defined, we require an integrability condition on the kernel. The
+following proposition shows that bounded kernels ensure the embedding is valid for all probability
+measures [46]:
+Proposition 1. Let κ be a measurable kernel on X. Then,
+R
+X
+p
+κ(x, x) dP(x) < ∞∀P ∈P(X)
+if and only if κ is bounded.
+With the mean embedding in hand, we can define a natural notion of distance between probability
+measures. This construct relies on the concept of characteristic kernel (Definition 11). If the kernel is
+characteristic, then the metrics γκ can be defined such that:
+γκ(P, Q) = 0 ⇐⇒P = Q, P, Q ∈P
+The bounded condition and the characteristic condition gives the following result, which is Theorem
+1 in Sriperumbudur et al. [46]:
+Theorem 7. Let Pκ := {P ∈P :
+R
+M
+p
+κ(x, x)dP(x) < ∞}, where κ is measurable on M, then for
+any P, Q ∈Pκ:
+γκ(P, Q) =
+
+
+Z
+M
+κ(·, x)dP(x) −
+Z
+M
+κ(·, x)dQ(x)
+
+
+H
+:= ||Pκ −Qκ||H
+Below we show that the bounded RBF kernel defined on a Sobolev space Hk is characteristic, to
+provide additional support for the kernel choices in the main text. First we state a lemma proved in
+Sriperumbudur et al. [46]:
+Lemma 1. Let κ be an integrally strictly positive definite kernel on a topological space M. Then κ
+is characteristic to P.
+Definition 12. Let M(H) be the finite signed Borel measures on H. A bounded measurable kernel
+κ on H is integrally strictly positive definite (ISPD) if for every µ ∈M(H) \ {0},
+Z Z
+H×H
+κ(x, y)dµ(x)dµ(y) > 0,
+or equivalently, if mκ(µ) :=
+R
+κ(·, x)dµ(x) is the kernel mean element (KME), then:
+Z Z
+κ(x, y)dµ(x)dµ(y) = ||mκ(µ)||2
+Hκ.
+19
+
+
+One can interpret ISPD as the statement that a zero KME implies a zero measure: mκ(µ) = 0 =⇒
+µ = 0.
+We then reference Theorem 3.1 from Ziegel et al. [54], which shows that RBF / Gaussian kernel is
+ISPD on separable Hilbert space:
+Theorem 8. Let H be a separable Hilbert space, then the Gaussian kernel on H is ISPD with respect
+to M(H).
+This theorem and Lemma 1 therefore imply that the RBF kernel is characteristic on our Sobolev
+spaces of interest.
+A.4
+Path Space and Signature Kernel
+Denote by Cp the space of continuous paths x : [a, b] →V of finite p-variation (see Definition 1.1.4 in
+Cass and Salvi [5]), with p ∈[1, 2). V is a finite-dimensional Banach space. For time series datasets,
+we usually have x : [0, T] →Rd. For discrete observations, one may work with a piecewise-linear
+interpolation, which is again of finite p-variation. Let T be the tensor algebra (written T((Rd)) in
+Section 2.3, where V = Rd)
+T
+:=
+∞
+Y
+m=0
+V ⊗m.
+Definition 13 (The signature transform). The signature transform S : Cp →T maps a path x to the
+sequence of tensors
+S(x) =
+ 1, S(1)(x), S(2)(x), . . .
+
+,
+where the m-th tensor is given by the iterated integral
+S(m)(x) :=
+Z
+a≤t1<···<tm≤b
+dxt1 ⊗· · · ⊗dxtm ∈V ⊗m,
+m ∈N.
+Here ⊗denotes the standard tensor product.
+One can view S(x) as an infinite-dimensional feature representation of the path x, with higher
+signature levels S(m)(x) (the level-m term of S(x); we use this notation throughout) encoding
+increasingly high-order interactions between the d channels.
+Definition 14 (Time augmentation). The signature is invariant under continuous and non-decreasing
+time reparametrizations [5, Lemma 1.2.1]. In many machine learning settings, this invariance is not
+desirable, as we want to capture time series in a way that also depends on their time parametrisation.
+Following prior work [2, 26], we therefore use the standard time augmentation trick. For a path
+x : [a, b] →V , we define the augmented path as
+¯x : [a, b] →R × V,
+¯x(t) := (t, x(t)).
+Throughout, we apply the signature transform to ¯x rather than x. For notational simplicity, we suppress
+the bar in the definitions below. Note the signature is also invariant under constant translations of x
+(see Section 1.4 in Cass and Salvi [5]). Throughout, we either fix x(a) = 0 or treat paths modulo
+translation.
+Remark 1 (Tree-like equivalence without time augmentation). Without the additional time coordinate,
+the signature is injective only up to tree-like equivalence [5, Section 1.4]. Accordingly, statements
+such as universality and characteristicness of the signature kernel on a set K should be understood as
+holding on the corresponding quotient space of equivalence classes when time augmentation is not
+used.
+When working directly with signatures, one typically truncates S(x) at level L, defining the truncated
+signature S≤L(x) = (1, S(1)(x), . . . , S(L)(x)). However, if one is interested in comparing paths
+x, y ∈Cp and defining the corresponding kernel-induced discrepancies between distributions, the
+signature kernel provides a way to do so without truncation by working with inner products on the
+full tensor algebra. Concretely, equip V with an inner product ⟨·, ·⟩V . This induces canonical inner
+products ⟨·, ·⟩m on each tensor space V ⊗m, and hence an inner product ⟨·, ·⟩T on T by linearity
+across levels.
+20
+
+
+Definition 15 (Signature kernel). For two paths x, y ∈Cp, the signature kernel κsig : Cp × Cp →R
+is defined as the inner product of their signatures,
+κsig(x, y) := ⟨S(x), S(y)⟩T .
+It is symmetric and positive semidefinite, and thus defines an RKHS on Cp.
+Crucially, κsig can be computed without explicitly forming the signature tensors, via the signature
+kernel trick introduced in Salvi et al. [42, Theorem 2.5]. In particular, one can evaluate
+κsig(x, y) = K(b, b),
+where K
+:
+[a, b]2
+→
+R is the signature kernel between two path prefixes, K(s, t)
+:=
+⟨S(x[a,s]), S(y[a,t])⟩, which satisfies the integral equation
+K(s, t) = 1 +
+Z s
+a
+Z t
+a
+K(u, v) ⟨dxu, dyv⟩V .
+When x and y are continuously differentiable, this reduces to a linear hyperbolic Goursat-type PDE
+with boundary conditions K(a, ·) = K(·, a) = 1, for which standard finite-difference solvers apply.
+See Salvi et al. [42, Section 3.1] for one possible finite-difference scheme. We use the PYSIGLIB
+library from Shmelev and Salvi [44] for efficient signature kernel computations.
+Proposition 2 (Universality of the signature kernel [5]). Let C be a path space equipped with a
+topology such that the signature transform S : C →T is continuous into a tensor Hilbert space T
+for which the signature kernel
+κsig(x, y) := ⟨S(x), S(y)⟩T
+is well-defined. Then on compact K ⊂C, the restriction κsig|K×K is universal in the sense of
+Definition 10, and hence also characteristic to P(K).
+A precise statement of universality and its proof are given in Cass and Salvi [5, Theorem 2.2.3].
+Characteristicness on compact K follows from the relation between universality and characteristicness
+established in Cass and Salvi [5, Theorem 2.2.7].
+For a more detailed overview of signatures and signature kernels, we refer the reader to Cass and
+Salvi [5]. The compact-set universality and characteristicness statements used here can be found
+specifically in Chapter 2.2.
+A.5
+Optimal Transport and Sinkhorn Divergence
+This section introduces the static optimal transport problem and its entropy-regularized version, which
+connects to the theory of statistical divergences.
+Let X, Y be metric spaces with Borel σ-algebras B(X), B(Y ), let µ ∈P(X) and ν ∈P(Y ) be
+probability measures, and let c : X × Y →R be a measurable cost function.
+Definition 16 (Coupling). Let prX(x, y) = x and prY (x, y) = y be the coordinate projections. Then
+the set of couplings (transport plans) is:
+Π(µ, ν) :=
+n
+π ∈P(X × Y ) : (prX)#π = µ, (prY )#π = ν
+o
+.
+Definition 17 (Kantorovich Problem). The static optimal transport cost associated with c is
+OTc(µ, ν) :=
+inf
+π∈Π(µ,ν)
+Z
+X×Y
+c(x, y) π(dx, dy).
+Any minimizer π⋆∈Π(µ, ν) (if it exists) is called an optimal transport plan.
+Definition 18 (Wasserstein-p metrics). If X = Y is a metric space (X, d) and c(x, y) = d(x, y)p
+with p ≥1, define
+Wp(µ, ν) :=
+
+inf
+π∈Π(µ,ν)
+Z
+X×X
+d(x, y)p dπ(x, y)
+1/p
+,
+for µ, ν in Pp(X) :=
+
+ρ ∈P(X) :
+R
+d(x, x0)p dρ(x) < ∞
+	
+.
+21
+
+
+In the main text, W(µ, ν) denotes OTc(µ, ν) with the quadratic cost c = d2, that is, W 2
+2 (µ, ν). Next
+we present the Kantorovich dual form, which clarifies what is required of the ambient space for the
+infimum in the Kantorovich problem to be attained. First, we define Polish spaces:
+Definition 19 (Polish space). A topological space (X, τ) is called Polish if there exists a metric
+d : X × X →[0, ∞) such that:
+1. d generates the topology τ, i.e. τ = τd, where τd is the metric topology induced by d;
+2. (X, d) is complete, i.e. every d-Cauchy sequence in X converges (with respect to d) to a
+point in X;
+3. (X, d) is separable, i.e. there exists a countable dense subset D ⊂X such that D = X.
+Equivalently, a metric space (X, d) is Polish if it is complete and separable.
+Theorem 9 (Kantorovich duality on Polish spaces). Let (X, dX) and (Y, dY ) be Polish spaces, and
+let µ ∈P(X), ν ∈P(Y ). Assume c : X × Y →(−∞, +∞] is lower semicontinuous and bounded
+from below, and that there exists at least one coupling π0 ∈Π(µ, ν) with
+R
+c dπ0 < ∞. Then
+inf
+π∈Π(µ,ν)
+Z
+X×Y
+c(x, y) dπ(x, y) = sup
+Z
+X
+φ dµ +
+Z
+Y
+ψ dν : φ(x) + ψ(y) ≤c(x, y) ∀(x, y)
+
+,
+where the supremum is taken over all Borel functions φ : X →R ∪{−∞} and ψ : Y →R ∪{−∞}
+such that φ ∈L1(µ) and ψ ∈L1(ν). Moreover, the infimum is attained by some optimal plan
+π⋆∈Π(µ, ν).
+This duality theorem can be found in Villani [49], Chapter 5, and the attainment of the infimum on
+Polish spaces in Villani [49], Theorem 4.1. For Theorem 2, attainment of the infimum holds on both
+function spaces used in our experiments: a separable Hilbert space with its norm topology is Polish,
+and so is path space with its product topology [5, Lemma 1.4.13].
+The theory of entropy-regularized static OT can be found in Peyré and Cuturi [38], Chapter 4, and
+its connection with statistical divergences in Chapter 8. We state only the definitions needed for the
+Hilbert Sinkhorn Divergence of the main text.
+The entropy-regularized problem adds to the transport cost a multiple of the Kullback–Leibler (KL)
+divergence of the plan from the product of its marginals.
+Definition 20 (Kullback–Leibler (KL) divergence). Let (X, F) be a measurable space and let P, Q
+be probability measures on it. The KL divergence of P from Q is defined by
+KL(P∥Q) :=
+
+
+
+Z
+X
+log
+dP
+dQ
+
+dP,
+if P ≪Q,
++∞,
+otherwise.
+Equivalently, if P ≪Q then
+KL(P∥Q) =
+Z
+X
+dP
+dQ log
+dP
+dQ
+
+dQ,
+where dP
+dQ denotes the Radon–Nikodym derivative (defined Q-a.e.).
+Definition 21 (Entropic OT Functional).
+OTc,ε(µ, ν) :=
+inf
+π∈Π(µ,ν)
+Z
+X×Y
+c(x, y) dπ(x, y) + ε KL(π ∥µ ⊗ν)
+
+The Sinkhorn divergence is the debiased version of the entropic OT functional:
+Definition 22 (Sinkhorn-Divergence).
+Sc,ε(µ, ν) := OTc,ε(µ, ν) −1
+2 OTc,ε(µ, µ) −1
+2 OTc,ε(ν, ν).
+This is the entropic OT functional used in the proof of Theorem 2; it is well defined in this generality
+because our ambient spaces are Polish. The Hilbert Sinkhorn divergence in the main text and in Li
+et al. [31] is obtained by applying the same self-cost debiasing after restricting the ambient space to
+an RKHS with its norm-induced topology.
+22
+
+
+B
+Technical Proofs
+B.1
+Inherited Results from Li et al. (2021)
+For transparency, we separate prior results from our original proofs. Proposition 3 (the equivalence
+behind Equation (4)) and the two propositions below are all inherited from Li et al. [31]. We restate
+them here because they are standard ingredients used by our function-space analysis, but we do not
+claim them as new contributions. Their proofs are therefore referenced directly to the original source.
+Proposition 3 (Li et al. [31]). The entropic OT functional underlying Definition 1 can be equivalently
+formulated as in Equation (4), in the sense that if π∗minimizes Equation (4), then its pushforward
+(ϕ ⊗ϕ)#π∗minimizes Equation (3); applying the same self-cost subtraction on both sides yields
+Sκ,ϵ(µ, ν) = Sϵ(ϕ#µ, ϕ#ν).
+Proof:
+The proof is given as Theorem 1 in the supplementary material of Li et al. [31] 2.
+Proposition 4. Let µn, νn be the empirical estimators in Equation (5) and ϵ, η > 0. Then there exists
+N > 0 such that
+∀n ≥N,
+P (|Sϵ(µn, νn) −Sϵ(µ, ν)| ≤ϵη) = 1.
+Proof:
+The proof is given as Theorem 2 in the supplementary material of Li et al. [31], same link
+as before 2.
+Proposition 5. Let ||f||H ≤M and consider Bη = {f ∈H : ||f||H < η}. Let m be the number of
+basis spanning functions f in Bη. Then for M, η, δ, ϵ > 0,
+P
+
+|Sϵ(µn, νn) −Sϵ(µ, ν)| ≤ϵη
+
+≥1 −δ,
+whenever
+n ≥1
+η2
+
+2M 2(log(2/δ) + m log(24M/η))
+
+.
+Proof:
+The proof is given as Proposition 3 in the supplementary material of Li et al. [31], same
+link as before 2.
+B.2
+Absolute Continuity Behind the CFM/FM Equivalence
+The equivalence between the conditional and unconditional flow-matching losses in Section 2.1 rests
+on an absolute-continuity assumption that is worth making explicit in infinite dimensions. Two FFM
+conditionals N(tf, σ2
+t C0) and N(t′f ′, σ2
+t′C0) are typically mutually singular (Feldman–Hájek), so
+the relevant structure is not conditional-versus-conditional but conditional-versus-mixture at each
+fixed t: one needs µf
+t ≪µt for ν-a.e. f. A sufficient condition, used implicitly by FFM [25],
+is that the data measure ν is supported in the Cameron–Martin space H(C0) = Ran(C1/2
+0
+) of
+the prior, together with σt bounded below (σmin > 0, which Algorithm 1 enforces). Then, for
+fixed t, all conditionals {N(tf, σ2
+t C0) : f ∈supp ν} are mutually equivalent by the Cameron–
+Martin formula, hence absolutely continuous with respect to the mixture µt, and the exchange of
+marginal and conditional velocities is justified at each t. When the data are rougher than the prior
+(supp ν̸ ⊂H(C0)) the equivalence degrades, so the prior roughness should be matched to the data;
+this is one reason the white-noise base measure is selected on the Navier–Stokes family (Appendix
+C.5).
+How kFFM inherits this structure.
+At the population level, write Gt(f0, f1) := tf1 + σtf0.
+The kFFM path marginal is µπ
+t = (Gt)#π, the FFM marginal is µt = (Gt)#(µ0 ⊗ν), and
+the kFFM conditional given f1 is µf1,π
+t
+= Gt(·, f1)# π(· | f1), while the FFM conditional is
+N(tf1, σ2
+t C0) = Gt(·, f1)# µ0. For the entropic problem with a bounded cost (Theorem 1) the
+optimal plan has the Gibbs form dπ/d(µ0 ⊗ν) = exp{(φ ⊕ψ −cκ)/ε} with bounded potentials,
+so its density is bounded above and away from zero. Hence π ∼µ0 ⊗ν and π(· | f1) ∼µ0 for
+2https://openaccess.thecvf.com/content/CVPR2021/supplemental/Li_Hilbert_Sinkhorn_
+Divergence_CVPR_2021_supplemental.pdf
+23
+
+
+ν-a.e. f1; since equivalence of measures is preserved under pushforward, µf1,π
+t
+∼N(tf1, σ2
+t C0) and
+µπ
+t ∼µt, and every absolute-continuity relation that FFM relies on transfers verbatim to kFFM. Two
+remarks. First, this is exactly where entropic regularization matters: an unregularized OT plan can be
+singular with respect to the product measure, and the argument would fail. Second, the minibatch
+plans used in training are discrete surrogates of this population object (Section 3.1); the statement
+concerns the coupling they approximate.
+B.3
+Proof of Well-posedness and Uniform Boundedness (Theorem 1)
+Theorem 1 (Well-posedness and uniform boundedness). Let (X, ∥· ∥X ) be a real Banach space
+and let dX (f, g) := ∥f −g∥X . Let µ, ν ∈P(X) and let κ : X × X →R be measurable,
+symmetric, and positive definite with RKHS Hκ. Assume additionally that κ is bounded: Bκ :=
+supf∈X κ(f, f) < ∞. Then the kernel cost satisfies 0 ≤cκ(f, g) ≤4Bκ for all f, g ∈X, and for
+every ε > 0 the Hilbert Sinkhorn divergence Sκ,ε(µ, ν) (Definition 1) is finite for all µ, ν ∈P(X),
+with |Sκ,ε(µ, ν)| ≤8Bκ.
+Proof:
+The argument is elementary once one uses the boundedness of the RKHS cost induced by a
+bounded kernel. We start by writing the Hilbert Sinkhorn divergence in the general form
+Sκ,ε(µ, ν) := OTκ,ε(µ, ν) −1
+2OTκ,ε(µ, µ) −1
+2OTκ,ε(ν, ν).
+By the reproducing property, the canonical feature map ϕ of Definition 1 satisfies
+∥ϕ(f)∥2
+Hκ = ⟨κ(·, f), κ(·, f)⟩Hκ = κ(f, f) ≤Bκ
+for all f ∈X.
+Therefore, for any f, g ∈X,
+cκ(f, g) = ∥ϕ(f) −ϕ(g)∥2
+Hκ ≤2∥ϕ(f)∥2
+Hκ + 2∥ϕ(g)∥2
+Hκ ≤4Bκ.
+Fix ε > 0. Since cκ ≥0 and KL ≥0, we have OTκ,ε(µ, ν) ≥0. To upper bound OTκ,ε(µ, ν), use
+the feasible coupling π0 := µ ⊗ν ∈Π(µ, ν). Then KL(π0∥µ ⊗ν) = 0 and hence
+OTκ,ε(µ, ν) ≤
+Z
+X×X
+cκ(f, g) d(µ ⊗ν)(f, g) ≤4Bκ.
+Since µ ⊗ν is a probability measure, it follows that 0 ≤OTκ,ε(µ, ν) ≤4Bκ < ∞. The same
+argument applies to OTκ,ε(µ, µ) and OTκ,ε(ν, ν). Since each of the three terms in the definition of
+Sκ,ε(µ, ν) lies in [0, 4Bκ], the expression is finite. Moreover,
+|Sκ,ε(µ, ν)| ≤OTκ,ε(µ, ν) + 1
+2OTκ,ε(µ, µ) + 1
+2OTκ,ε(ν, ν)
+≤4Bκ + 1
+2(4Bκ) + 1
+2(4Bκ) = 8Bκ.
+Interpretation.
+Theorem 1 is the well-posedness step needed in the function-space setting: it
+guarantees that the kernel cost is uniformly bounded by 4Bκ and that the HSD objective is finite
+for all probability measures on the ambient Banach space whenever the kernel is bounded, with no
+moment assumption on the measures. The uniform bound is what conditions the entropic solver
+(Section 3.2). This is precisely the hypothesis that is left implicit in the inherited equivalence
+proposition from Li et al. [31].
+B.4
+Proof of the Error Decomposition (Theorem 2)
+Theorem 2 (Error decomposition). Let (X, d) be a compact metric space and let µ, ν ∈P(X).
+Define the target quadratic cost c(x, y) = d(x, y)2. Let κ : X × X →R be a bounded positive-
+definite kernel with RKHS-induced cost cκ(x, y) := κ(x, x) + κ(y, y) −2κ(x, y), and let ∆κ :=
+supx,y∈X |cκ(x, y) −c(x, y)|. Let OTκ,ε denote the entropic OT functional in Equation (4) with cost
+cκ, and let M := diam(X) < ∞. Then for every ε > 0 and every δ ∈(0, M]:
+|OTκ,ε(µ, ν) −W(µ, ν)| ≤∆κ + 2ε log N(X, δ; d) + 8Mδ,
+(6)
+where N(X, δ; d) is the δ-covering number of X in the metric d.
+24
+
+
+Proof.
+Let c(x, y) = d(x, y)2 and let cκ be the RKHS-induced cost in Theorem 2. By definition of
+∆κ, for every coupling π ∈Π(µ, ν),
+Z
+cκ dπ −
+Z
+c dπ
+ ≤∆κ.
+Therefore the unregularized OT values for the two costs differ by at most ∆κ.
+For the lower bound, non-negativity of the KL term gives
+OTκ,ε(µ, ν) ≥
+inf
+π∈Π(µ,ν)
+Z
+cκ dπ ≥W(µ, ν) −∆κ.
+For the upper bound, let m := N(X, δ; d) and choose centers x1, . . . , xm whose closed δ-balls
+cover X. A measurable quantization map Q : X →{x1, . . . , xm} with d(x, Q(x)) ≤δ is obtained
+by assigning each point to the first center whose ball contains it, giving a finite Borel partition
+Ci = Q−1({xi}). Since X is compact and c = d2 is continuous, an optimal coupling π⋆for W(µ, ν)
+exists.
+Set pij := π⋆(Ci × Cj), ai := µ(Ci), and bj := ν(Cj). For cells with positive mass, let µi and νj
+be the conditional restrictions of µ and ν to Ci and Cj, respectively; zero-mass cells may be assigned
+arbitrary probability measures on X, since their weights vanish. Define
+bπ :=
+X
+i,j
+pij µi ⊗νj.
+This construction preserves the marginals, so bπ ∈Π(µ, ν). On Ci × Cj with aibj > 0, the density of
+bπ with respect to µ ⊗ν is pij/(aibj), and cells with aibj = 0 have pij = 0. Hence
+KL(bπ∥µ ⊗ν) = KL(p∥a ⊗b) ≤2 log m,
+where the final inequality follows from KL(p∥a ⊗b) = H(a) + H(b) −H(p) ≤H(a) + H(b) ≤
+2 log m. Moreover, if x ∈Ci and y ∈Cj, then
+|d(x, y)2 −d(xi, xj)2| ≤(d(x, y) + d(xi, xj)) |d(x, y) −d(xi, xj)| ≤4Mδ.
+Applying this once under bπ and once under π⋆gives
+Z
+c dbπ ≤W(µ, ν) + 8Mδ.
+Using again
+R
+cκ dbπ ≤
+R
+c dbπ + ∆κ, feasibility of bπ for the entropic problem yields
+OTκ,ε(µ, ν) ≤W(µ, ν) + ∆κ + 8Mδ + 2ε log m.
+Combining the lower and upper bounds and substituting m = N(X, δ; d) proves the result.
+Euclidean covering-rate special case.
+If X ⊂Rd has bounded radius M, then its covering number
+satisfies log N(X, δ) ≤Cd log(M/δ) for a universal constant C > 0. Substituting this into Theorem
+2 gives
+|OTκ,ε(µ, ν) −W(µ, ν)| ≤∆κ + C
+ εd log(M/δ) + Mδ
+
+,
+after absorbing constants. When cκ = c, this recovers the usual entropic-regularization rate up to
+constants.
+B.5
+Proof of Discretization Invariance (Theorem 3)
+Theorem 3 (Discretization invariance). Let Ω⊂Rd be a bounded periodic domain and let α > k ≥0.
+Set X := BHα
+R
+:= {f ∈Hα(Ω) : ∥f∥Hα ≤R}, viewed as a compact subset of Hk(Ω), and let
+µ, ν ∈P(X). For the Fourier basis {en}n∈Zd, let VN := span{en : |n|2 ≤N 2/d} and let
+PN : Hα(Ω) →VN denote the orthogonal projection; hence dim VN ≍N. Write µN := (PN)#µ
+and νN := (PN)#ν. Define the Sobolev-RBF kernel κ(k)
+RBF(f, g) := exp(−∥f −g∥2
+Hk/2σ2) on Hk,
+and write KOT(k)
+ε
+:= OTκ(k)
+RBF,ε for the corresponding entropic kernel-OT functional from Theorem
+2. Then for every ε > 0,
+KOT(k)
+ε (µ, ν) −KOT(k)
+ε (µN, νN)
+ ≤4R2
+σ2 N −2(α−k)/d.
+Equivalently, in terms of grid spacing h = N −1/d, the discretization error decays as O(h2(α−k)).
+25
+
+
+Notation.
+Throughout this proof, Ω⊂Rd is the bounded periodic domain, {en}n∈Zd is the Fourier
+basis on Ω, and the Sobolev norm is
+∥f∥2
+Hs =
+X
+n∈Zd
+(1 + |n|2)s | ˆfn|2,
+s ≥0.
+PN denotes the orthogonal projection onto VN := span{en : |n|2 ≤N 2/d}, so dim VN ≍N and
+the highest retained mode has frequency ≍N 1/d. We write KOT(k)
+ε
+:= OTκ(k)
+RBF,ε and
+c(k)
+RBF(f, g) := ∥ϕ(f) −ϕ(g)∥2
+H
+κ(k)
+RBF
+= 2
+ 1 −κ(k)
+RBF(f, g)
+
+for the RKHS-induced cost associated with the RBF kernel on Hk. Since BHα
+R
+is compact in Hk
+by the compact Sobolev embedding on bounded periodic domains [12] and c(k)
+RBF is bounded and
+continuous, the entropic kernel-OT functionals below attain minimizers.
+Step 1: Sobolev approximation on the truncation tail.
+For any f ∈Hα(Ω) with ∥f∥Hα ≤R
+and any 0 ≤k < α,
+∥f −PNf∥2
+Hk =
+X
+|n|2>N2/d
+(1 + |n|2)k | ˆfn|2
+=
+X
+|n|2>N2/d
+(1 + |n|2)−(α−k) (1 + |n|2)α | ˆfn|2
+≤(1 + N 2/d)−(α−k) ∥f∥2
+Hα ≤R2 N −2(α−k)/d.
+Hence
+∥f −PNf∥Hk ≤R N −(α−k)/d
+for all f ∈BHα
+R .
+(7)
+Step 2: Stability of the squared Hk distance under simultaneous projection.
+For f, g ∈BHα
+R ,
+since PN is an orthogonal projection on Hk,
+∥f −g∥2
+Hk −∥PN(f −g)∥2
+Hk = ∥(I −PN)(f −g)∥2
+Hk
+≤∥f −g∥2
+Hα · N −2(α−k)/d
+≤4R2 N −2(α−k)/d,
+where we used ∥f −g∥Hα ≤2R and the Sobolev tail estimate from Step 1 applied to f −g.
+Step 3: Cost stability for the RBF kernel.
+Let h(s) := e−s/(2σ2) for s ≥0, so κ(k)
+RBF(f, g) =
+h(∥f −g∥2
+Hk) and |h′(s)| ≤
+1
+2σ2 . Then
+c(k)
+RBF(f, g) −c(k)
+RBF(PNf, PNg)
+ = 2
+h(∥f −g∥2
+Hk) −h(∥PN(f −g)∥2
+Hk)
+
+≤1
+σ2
+∥f −g∥2
+Hk −∥PN(f −g)∥2
+Hk
+ ≤4R2
+σ2 N −2(α−k)/d.
+The bound is uniform over (f, g) ∈BHα
+R
+× BHα
+R .
+Step 4: Upper bound.
+Let π⋆∈Π(µ, ν) be a feasible coupling for the continuum problem and
+define eπN := (PN ⊗PN)#π⋆∈Π(µN, νN). By Step 3,
+Z
+VN×VN
+c(k)
+RBF deπN =
+Z
+X×X
+c(k)
+RBF(PNf, PNg) dπ⋆(f, g) ≤
+Z
+c(k)
+RBF dπ⋆+ 4R2
+σ2 N −2(α−k)/d.
+By the data-processing inequality for KL divergence applied to the measurable map PN ⊗PN,
+KL(eπN∥µN ⊗νN) ≤KL(π⋆∥µ ⊗ν).
+Taking π⋆to be an optimizer of KOT(k)
+ε (µ, ν) and using eπN as a feasible point for KOT(k)
+ε (µN, νN)
+gives
+KOT(k)
+ε (µN, νN) ≤KOT(k)
+ε (µ, ν) + 4R2
+σ2 N −2(α−k)/d.
+(8)
+26
+
+
+Step 5: Lower bound via gluing.
+Let π⋆
+N ∈Π(µN, νN) be an optimizer for KOT(k)
+ε (µN, νN).
+Disintegrate µ along PN: since compact metric spaces are standard Borel, the standard regular
+conditional probability theorem applies [10]. Thus there exist Borel kernels µ(· | u), u ∈VN, such
+that
+µ(A) =
+Z
+VN
+µ(A | u) dµN(u),
+A ⊂X Borel,
+with µ(· | u) supported on the fibre P −1
+N (u) for µN-a.e. u, and similarly for ν(· | v). Define the lifted
+coupling
+bπ(A × B) :=
+Z
+VN×VN
+µ(A | u) ν(B | v) dπ⋆
+N(u, v),
+A, B ⊂X Borel.
+Direct verification gives bπ ∈Π(µ, ν) and (PN ⊗PN)#bπ = π⋆
+N. Since µN ⊗νN is feasible with
+finite KL, the optimizer π⋆
+N has finite KL and hence π⋆
+N ≪µN ⊗νN. On each fibre product, the
+Radon–Nikodym derivative of bπ with respect to µ ⊗ν is exactly the derivative of π⋆
+N with respect to
+µN ⊗νN evaluated at (u, v) = (PNf, PNg). Therefore, by the chain rule for KL divergence,
+KL(bπ∥µ ⊗ν) = KL(π⋆
+N∥µN ⊗νN).
+For the cost integral, Step 3 applied in reverse gives
+Z
+c(k)
+RBF dbπ ≤
+Z
+VN×VN
+c(k)
+RBF dπ⋆
+N + 4R2
+σ2 N −2(α−k)/d,
+using that (f, g) ∼bπ projects to (u, v) ∼π⋆
+N and that the cost difference is bounded uniformly.
+Hence
+KOT(k)
+ε (µ, ν) ≤KOT(k)
+ε (µN, νN) + 4R2
+σ2 N −2(α−k)/d.
+(9)
+Step 6: Conclusion.
+Combining (8) and (9) yields
+KOT(k)
+ε (µ, ν) −KOT(k)
+ε (µN, νN)
+ ≤4R2
+σ2 N −2(α−k)/d.
+B.6
+Composed End-to-End Bound
+Corollary 1 (Composed end-to-end bound). Let X = BHα
+R
+be as in Theorem 3, equipped with
+dk(f, g) := ∥f −g∥Hk, and let
+Wk(µ, ν) :=
+inf
+π∈Π(µ,ν)
+Z
+X×X
+∥f −g∥2
+Hk dπ(f, g)
+denote quadratic-cost OT in the Hk metric.
+Write Mk := diam(X; dk) and let Nk(δ) :=
+N(X, δ; dk) be the corresponding covering number. For the Sobolev-RBF kernel in Theorem 3,
+define the mismatch ∆RBF := ∆κ(k)
+RBF, i.e.,
+∆RBF := sup
+f,g∈X
+2
+
+1 −e−∥f−g∥2
+Hk /(2σ2)
+−∥f −g∥2
+Hk
+ ≤M 2
+k + 2,
+where the bound follows because the RBF-induced cost lies in [0, 2] and ∥f −g∥2
+Hk ∈[0, M 2
+k] on X.
+Then for every ε > 0, δ ∈(0, Mk] and every projection rank N ∈N,
+KOT(k)
+ε (µN, νN) −Wk(µ, ν)
+ ≤
+∆RBF
+| {z }
+kernel-cost mismatch
++
+2ε log Nk(δ)
+|
+{z
+}
+entropic regularization
++ 8Mkδ
+| {z }
+covering
++ 4R2
+σ2 N −2(α−k)/d
+|
+{z
+}
+discretization
+.
+Proof.
+By the triangle inequality, |KOT(k)
+ε (µN, νN) −Wk(µ, ν)|
+≤
+|KOT(k)
+ε (µN, νN) −
+KOT(k)
+ε (µ, ν)| + |KOT(k)
+ε (µ, ν) −Wk(µ, ν)|. The first term is bounded by Theorem 3; the sec-
+ond by Theorem 2 applied on the compact metric space (X, dk) with the Sobolev-RBF kernel, whose
+mismatch is ∆RBF.
+27
+
+
+Remark.
+Of the four terms, only the discretization term vanishes with projection rank N (rate
+N −2(α−k)/d, driven by the regularity gap α −k), the formal counterpart of the empirical resolution-
+invariance in Section 4. The corollary relies on compact Sobolev embedding [12], and our PDE
+benchmarks are used in the corresponding smooth-solution regime; such Sobolev and analytic
+regularity is standard in the PDE settings considered here, including Navier–Stokes in appropriate
+regimes [4]. The kernel-cost mismatch ∆RBF, by contrast, depends only on kernel design: zero for
+the linear kernel, finite for RBF (controlled by data scale and bandwidth σ).
+Remark (path space).
+For data on path space Cp([0, T], Rd) with p ∈[1, 2), the analogue of
+spectral truncation is signature truncation at level L, S≤L(x) := (1, S(1)(x), . . . , S(L)(x)). Known
+factorial-decay bounds for signatures of finite-p-variation paths [5, Proposition 1.4.6] imply that, on
+compact sets with uniformly bounded p-variation control, the tail P
+ℓ>L ∥S(ℓ)(x)∥2 decays faster
+than any polynomial in L. By Cauchy–Schwarz, the full and truncated signature kernels are then
+uniformly close on such compact sets. Consequently, the corresponding entropic kernel-OT objectives
+differ by at most the uniform signature-kernel cost error, since the KL term is unchanged. This gives
+the same qualitative discretization-invariance message for path space, but with a factorial tail in the
+signature truncation level rather than a Sobolev Fourier-tail rate.
+C
+Additional Experimental Details
+This appendix provides implementation details and additional experimental results that complement
+the main text.
+C.1
+Model Parameterization
+We implement Functional Flow Matching with the official implementation provided by its authors3
+without modifying any provided hyperparameter of the neural architecture, including σmin = 10−4.
+The baseline models use the following hyperparameters, also following Kerrigan et al. [25]:
+1. DDPM: the noise schedule has β0 = 10−4, βT = 0.02, and T = 1000.
+2. DDO (NCSN): the time interval is set to T = 10, and the noise schedule interpolates
+geometrically between σ10 = 10−3 and σ1 = 1 on the 1D datasets and between σ10 = 10−2
+and σ1 = 100 on the 2D datasets.
+3. GANO: the generator is trained every 5 epochs, and the gradient penalty is λ = 0.1 on the
+1D and λ = 10 on the 2D datasets.
+Training.
+The baseline models are trained with Adam, with learning rate 10−3 on 1D and 5 × 10−4
+on 2D data, except that the rate is 10−4 for GANO. This configuration also follows Kerrigan et al.
+[25]; no hyperparameter search was performed on the optimizer.
+C.2
+Baseline Description
+We describe the baseline generative models used for the empirical comparisons. All operate in
+function space, and the roster covers the diffusion, flow-matching, adversarial, and score-based
+paradigms; every baseline uses the same neural-operator backbone and data pipeline as kFFM.
+1. DDPM [24]: The DDPM used as a baseline is the functional DDPM model proposed by
+Kerrigan et al. [24], which generalizes the diffusion model in Rd using Gaussian measure
+theory in Hilbert space. Its formulation is analogous to the base DDPM but performs
+diffusion directly on Gaussian measures.
+2. FFM [25]: Functional Flow Matching is the base model that we extend. It generalizes flow
+matching in Rd to infinite dimensions by formulating a path of Gaussian measures in a
+Hilbert space, in analogy with Kerrigan et al. [24]. In the terminology of Tong et al. [48], it
+couples prior and data samples independently, which leaves room for OT-based coupling.
+3https://github.com/GavinKerrigan/functional_flow_matching
+28
+
+
+3. CFM-OT(L2) [48]: This is the direct finite-dimensional OT baseline used in the main text.
+It uses the same minibatch Sinkhorn solver and FNO backbone as our method, but applies
+OT to discretized vectors with the raw L2 cost and the white-noise (i.i.d. Gaussian) base
+measure, rather than a function-space kernel cost.
+4. GANO [40]: The Generative Adversarial Neural Operator (GANO) is a generative adversar-
+ial network in function space whose generator maps Gaussian random fields to samples.
+5. DDO/NCSN [34]: The Denoising Diffusion Operator (DDO) is the analogue of score-based
+generative models [45] in infinite dimensions. We follow Kerrigan et al. [25] and use the
+NCSN noise scale; the loss and noise schedule, including preconditioning, follow the code
+released with Lim et al. [34].
+C.3
+Dataset Description
+Of all the datasets we experiment on, AEMET, Gene expression, Economics are from Kerrigan et al.
+[25], Navier–Stokes, KdV, stochastic Navier–Stokes, stochastic KdV are from Salvi et al. [43], and
+Heston is from Issa et al. [23]. The descriptions below follow those sources; the architectures and
+training budgets of our runs are given in Appendix C.4.
+AEMET Dataset:
+This dataset comprises functional observations representing the mean annual
+profile of average daily temperature (°C) over 1980–2009, collected from 73 weather stations in
+Spain. Each curve is sampled on a uniform grid of length 365.
+Gene Expression:
+The full dataset contains 10,928 time series sampled at 20 evenly spaced
+time points, measuring gene-expression amplitudes for four genes. To produce a periodic spiking
+appearance while preserving the underlying structure, we concatenate the gene-specific sequences
+in time. Before training, the data are log-transformed and mean-centered. We then focus on 156
+high-variability trajectories, selected by requiring the time-averaged standard deviation of each
+centered series to exceed 0.3.
+Economic Dataset:
+We use the three economic datasets (population, GDP, labor) of Kerrigan
+et al. [25]; a separate model is trained on each, and the reported Economy metrics are averaged over
+the component series within each seed (the matched-seed comparisons of Tables 1 and 2 use the
+population and GDP series). As an example, the population dataset consists of time series tracking
+population changes for 169 countries worldwide from 1950 to 2018, sampled at 69 discrete time
+points. For visualization, each country’s series is normalized by its own mean, so the curves show
+population relative to that country’s average over the 69-year period. Overall, the trajectories display
+approximately linear growth with a common change point shared across countries.
+Heston Dataset:
+The Heston model [21] is a stochastic volatility model with diffusion-driven,
+non-smooth sample paths. It models the asset price St and its variance νt as (in the standard Heston
+notation, which is local to this paragraph):
+dSt = µtStdt + √νtStdW S
+t
+dνt = κ(θ −νt)dt + ξ√νtdW ν
+t ,
+where W S
+t , W ν
+t are Wiener processes with correlations.
+The Heston dataset is generated using the simulation code provided in the official repository of
+sigker-nsde [23] 4. The script generates 5000 univariate time series of length 100 on [0, 1]; we
+model the normalized log-variance paths. A long-horizon variant with 1000 time steps (Heston-Long)
+is used only in the sensitivity study (the “long volatility paths” of Appendices C.8 and C.16) and in
+the convergence diagnostic of Figure 6.
+KdV and Stochastic KdV Equation:
+The stochastic Korteweg–de Vries equation is a higher-order
+SPDE given by:
+∂tu + γ∂3
+xu = 6u∂xu + ξ,
+u(t, 0) = u(t, 1),
+u(0, x) = u0(x),
+(t, x) ∈[0, T] × [0, 1],
+4https://github.com/issaz/sigker-nsdes
+29
+
+
+and the base KdV equation simply removes the Q-Wiener process ξ. The KdV dataset is a single
+trajectory on a grid of 512 spatial points with 201 time steps, and each time slice is one sample; the
+stochastic KdV dataset consists of 1200 trajectories on a grid of 128 spatial points with 101 time
+steps each, again treated as snapshots. The simulation code for these equations is taken from the
+torch-spde repository [43] 5.
+Navier–Stokes and Stochastic Navier–Stokes Equation:
+The 2D stochastic Navier–Stokes
+equation for an incompressible flow has the form:
+∂tw −ν∆w = −u · ∇w + f + σξ,
+w(0, x) = w0(x),
+(t, x) ∈[0, T] × [0, 1]2,
+where the deterministic force is a function of space only, and ξ is a Q-Wiener process colored
+in space and rescaled by σ = 0.05. The initial condition is a Gaussian Random Field w0 ∼
+N(0, 33/2(−∆+ 49I)−3) with periodic boundary conditions, and the viscosity is ν = 10−3. The
+base Navier–Stokes equation corresponds to the case where σ = 0 (no stochastic forcing). We again
+use the simulation code from torch-spde for these 2D datasets, on a uniform 64 × 64 grid. The
+turbulent benchmark of Section 4.2 uses the ν = 10−5 data of Li et al. [32] on the same grid (1200
+trajectories; we keep the snapshots at t ≥10 and train on 9600 of them), and a 128 × 128 forced
+Navier–Stokes dataset is used only for the cost measurements of Appendix C.9.
+C.4
+Training Configuration Description
+The following tables give the hyperparameters of our runs. In all cases, the base FFM model follows
+the configuration in the original codebase of Kerrigan et al. [25]. We keep the neural architectures
+fixed and tune only the OT-related hyperparameters; for the 2D PDE datasets we additionally study
+the Gaussian-prior length scale in Appendix C.16.
+1. All FFM and kFFM runs use the Adam optimizer with learning rate 10−3 and a StepLR
+scheduler (step size 50, γ = 0.1).
+2. Table 5 gives the FNO configurations on the 1D sequence datasets and Table 6 those on the
+1D PDE datasets. We perform no hyperparameter search for the FNO backbone; only the
+OT-related hyperparameters are varied, so the configurations are dataset-specific. “Batch
+Size (Sig)” is the batch size used with the signature kernel, whose memory grows with path
+length.
+3. The hyperparameters of the FNO on the 2D PDE datasets are in Table 7.
+4. Shared training settings are given in Table 8.
+Table 5: Training hyperparameters for 1D sequence datasets (FFM with FNO backbone).
+Dataset
+Epochs
+Batch Size
+Batch Size (Sig)
+FNO Modes
+Width
+MLP Width
+GP ℓ
+GP σ2
+AEMET
+300
+512
+64
+64
+256
+128
+0.01
+0.1
+Gene Expr.
+300
+512
+128
+16
+256
+128
+0.01
+0.1
+Economy
+300
+512
+128
+16
+128
+64
+0.01
+0.1
+Heston
+300
+512
+128
+32
+256
+128
+0.01
+0.1
+Table 6: Training hyperparameters for 1D PDE datasets (FFM with FNO backbone).
+Dataset
+Epochs
+Batch Size
+Batch Size (Sig)
+FNO Modes
+Width
+MLP Width
+GP ℓ
+GP σ2
+KdV
+300
+16
+16
+64
+256
+128
+0.01
+0.1
+Stochastic KdV
+100
+512
+128
+32
+256
+128
+0.01
+0.1
+C.5
+Configuration Selection Protocol
+kFFM as evaluated in this paper has two per-dataset configuration choices: the OT cost entering the
+entropic coupling (signature kernel, Euclidean–RBF kernel, Sobolev-RBF kernel, or the raw L2 cost)
+and the Gaussian base measure (a smooth GP prior or white noise). The “kFFM (selected)” column of
+5https://github.com/crispitagorico/torchspde
+30
+
+
+Table 7: Training hyperparameters for 2D spatial PDE datasets (FFM with 2D-FNO backbone).
+Dataset
+Epochs
+Batch Size
+Batch Size (Sig)
+FNO Modes
+Hidden Ch.
+Proj. Ch.
+GP ℓ
+GP σ2
+Navier–Stokes
+300
+512
+512
+16
+32
+64
+0.001
+1.0
+Stoch. NS
+100
+512
+512
+16
+32
+64
+0.001
+1.0
+Table 8: Common training settings for all datasets.
+Parameter
+Value
+Optimizer
+Adam
+Learning Rate
+10−3
+LR Scheduler
+StepLR (step=50, γ=0.1)
+FFM σmin
+10−4
+Number of Seeds
+10 (seeds 20, . . . , 29); 20 (seeds 20, . . . , 219) where n = 20 in Table 2; 5 on the turbulent benchmark
+ODE solver tolerances (atol, rtol)
+10−5
+Table 1 is determined by a validation-based rule rather than by test-set performance: for each dataset,
+every candidate configuration is trained identically, the configuration with the best sliced Wasserstein
+distance — a criterion independent of the kernels being compared — on a held-out validation split is
+selected, and only the selected configuration is then evaluated on the test set. In practice this rule
+is nearly deterministic and coincides with a simple prior-knowledge heuristic that practitioners can
+apply without any search: use the signature kernel with a GP base for path-like or rough sequence
+data, and a bounded RBF cost (Sobolev-RBF with a GP base on the 1D KdV family, Euclidean-RBF
+on the Navier–Stokes family) for PDE fields, with the white-noise base selected on the Navier–Stokes
+family, whose fields are rougher than a smooth GP prior. On our benchmark the validated choice
+coincides with the best-performing configuration on all datasets except short-horizon Heston, where
+the top configurations are statistically indistinguishable. Pointwise diagnostics by kernel variant are
+reported in Appendix C.6; the cost and base measure of each selected cell are tagged in Table 1, and
+the Sinkhorn regularization and kernel bandwidth follow the defaults of Appendix C.8, to which the
+results are insensitive within the ranges reported in the sensitivity study below.
+C.6
+Detailed Main-Paper Results
+This appendix includes a self-contained summary of the full baseline roster used in the paper,
+together with structural diagnostics, fuller pointwise comparisons, kernel ablations, and the super-
+resolution visualizations referenced in Section 4. The additional pointwise tables follow the evaluation
+convention of Kerrigan et al. [25]: discretization-level mean/variance MSE summaries together with
+autocorrelation or log-spectrum diagnostics, and higher moments where reported. These tables focus
+on models for which such pointwise statistics are currently available, while Table 1 in the main text
+summarizes the complete baseline family comparison including CFM-OT(L2).
+C.7
+Full Statistics Report on Sequence Datasets
+For the sequence datasets, in addition to the mean/variance/autocorrelation tables above, we also
+report kurtosis and skewness in Table 14, since these were also reported in Kerrigan et al. [25]. We
+keep them in the appendix because they are complementary to the main conclusion rather than central
+to it.
+C.8
+Implementation Details and Good Practices
+Algorithm 1 (Section 3.1) summarizes kFFM training; here we collect the implementation choices
+behind it.
+Unless stated otherwise, the Sinkhorn regularization is ϵ = 0.05 on the median-normalized cost
+matrix and the RBF bandwidth is σ = 1 on the same normalized scale (i.e. the median heuristic).
+The coupling is computed per minibatch with the following choices, which we found to matter
+for stability and recommend as defaults. (i) Median-normalize the per-batch cost matrix before
+Sinkhorn; this is the most important stability lever and makes the entropic regularization ϵ scale-free.
+(ii) Use log-domain Sinkhorn [38]. (iii) Sample endpoint pairs from the plan rather than using the
+barycentric projection. (iv) Use a bounded (kernel) cost: results are then invariant to ϵ across three
+31
+
+
+Table 9: Interpretable structural diagnostics complementing the full-baseline MMD comparison in
+Table 1. The first block reports autocorrelation error on sequence datasets; the second block reports
+log-spectrum error on PDE datasets. Lower is better. As in Tables 11 and 13, the kFFM column
+reports the best kernel variant per row (the signature kernel on Gene Expression, Economy, and
+Heston). All results are averaged over 10 seeds.
+Dataset
+DDO/NCSN
+GANO
+DDPM
+FFM
+CFM-OT(L2)
+kFFM
+AEMET (Autocorr.)
+4.21±0.94×10−3 4.45±3.43×10−6
+2.84±2.98×10−7
+4.69±1.53×10−7 1.23±2.72×10−8
+2.60±1.92×10−7
+Gene Expr. (Autocorr.)
+5.48±0.24×10−2 1.16±0.68×10−1
+3.59±3.46×10−4
+1.59±1.98×10−4
+2.78±2.32×10−3
+4.18±4.02×10−5
+Economy (Autocorr.)
+2.73±0.95×10−1 2.29±1.91×10−1
+2.05±2.85×10−2
+1.72±1.02×10−4
+9.35±3.75×10−3
+8.90±8.39×10−5
+Heston (Autocorr.)
+4.36±0.25×10−2 8.36±8.68×10−3
+3.35±2.80×10−4
+2.78±2.05×10−4
+1.73±1.17×10−4
+3.31±3.38×10−5
+KdV (Log-spectrum)
+4.52±0.00×101
+2.02±0.30×101
+1.71±0.13×101
+1.72±0.03×101
+2.73±0.05×101
+1.69±0.02×101
+Navier–Stokes (Log-spectrum) 9.93±0.08×10−1
+2.21±0.15×100
+2.58±0.63×10−1 7.92±0.89×10−1
+3.44±0.35×10−1
+5.87±0.46×10−1
+Stoch. KdV (Log-spectrum)
+1.84±0.00×101
+1.45±0.09×101
+1.57±0.22×100
+4.27±0.25×100
+9.25±0.31×100
+3.97±0.28×100
+Stoch. NS (Log-spectrum)
+1.06±0.28×100
+1.03±0.93×100
+8.60±2.39×10−1
+6.22±1.05×10−2 3.11±0.93×10−2
+3.22±0.63×10−2
+Table 10: Sequence-data pointwise diagnostics following the evaluation convention of Kerrigan
+et al. [25]: mean and variance of the discretization-level MSE between target and generated samples,
+together with average autocorrelation error. We compare baseline FFM (Independent) against the
+OT-coupled variants: Signature = signature kernel, RBF = Euclidean–RBF kernel, Euclidean = raw
+L2 cost with the GP base (kFFM-Euc). Results are mean±std over 10 seeds. Best is green; second
+best is orange.
+Dataset
+Kernel
+Mean
+Variance
+Autocorr.
+AEMET
+Independent 7.38 ± 6.37 × 10−2 1.20 ± 0.40 × 10−2 4.69 ± 1.53 × 10−7
+Signature
+3.60 ± 3.66 × 10−2 7.84 ± 5.59 × 10−3 3.87 ± 2.45 × 10−7
+RBF
+1.51 ± 1.61 × 10−2 4.70 ± 2.57 × 10−3 2.60 ± 1.92 × 10−7
+Euclidean
+4.10 ± 2.69 × 10−2 5.59 ± 2.65 × 10−3 3.47 ± 1.99 × 10−7
+Gene Expr.
+Independent 1.39 ± 0.30 × 10−3 5.13 ± 0.74 × 10−3 1.59 ± 1.98 × 10−4
+Signature
+5.21 ± 0.98 × 10−4 2.23 ± 0.23 × 10−3 4.18 ± 4.02 × 10−5
+RBF
+1.25 ± 0.20 × 10−3 5.67 ± 0.74 × 10−3 4.54 ± 6.51 × 10−5
+Euclidean
+1.25 ± 0.20 × 10−3 5.56 ± 0.61 × 10−3 4.45 ± 4.47 × 10−5
+Economy
+Independent 4.90 ± 3.26 × 10−5 1.08 ± 1.13 × 10−5 1.72 ± 1.02 × 10−4
+Signature
+3.30 ± 2.22 × 10−5 6.60 ± 5.62 × 10−6 8.90 ± 8.39 × 10−5
+RBF
+3.96 ± 2.12 × 10−5 6.82 ± 3.44 × 10−6 1.38 ± 0.89 × 10−4
+Euclidean
+3.94 ± 2.07 × 10−5 6.76 ± 3.48 × 10−6 1.38 ± 0.89 × 10−4
+Heston
+Independent 6.66 ± 4.77 × 10−3 1.07 ± 0.25 × 10−1 2.78 ± 2.05 × 10−4
+Signature
+3.33 ± 2.25 × 10−3 8.17 ± 1.14 × 10−2 3.31 ± 3.38 × 10−5
+RBF
+4.48 ± 4.18 × 10−3 8.27 ± 1.53 × 10−2 1.41 ± 1.03 × 10−4
+Euclidean
+3.38 ± 3.81 × 10−3 8.40 ± 0.77 × 10−2 9.08 ± 7.99 × 10−5
+orders of magnitude and Sinkhorn converges faster (15–25% faster end-to-end training than with the
+unbounded L2 cost; Table 15); with the raw L2 cost keep ϵ ≤0.1 (we observed a ≈10× degradation
+at ϵ ≥0.5 on long volatility paths). (v) Per-batch re-coupling was stable on all datasets. (vi) Batch
+size. Minibatch kernel OT induces the expected minibatch plan ¯πb (Section 3.1); in a sweep over
+b ∈{64, 128, 256, 512} on Heston and Stoch. KdV, kFFM tracks FFM across the 8× range, and the
+only seed-consistent edge favors kFFM at the largest batch (Stoch. KdV, b = 512: 3/3 seeds, 0.11 vs.
+0.52 × 10−3 MMD-RBF).
+C.9
+Compute and Memory Cost
+Table 15 summarizes the measured cost of the coupling step, profiled on Heston, Stoch. KdV, and
+Navier–Stokes at 642 and 1282 for batch sizes b ∈{64, 128, 256, 512}. The end-to-end overhead is
+5–7% at the largest resolution we train (1282), and because the O(b2) coupling cost is independent
+of model size and resolution, its relative weight shrinks as the backbone grows. The bounded RBF
+cost also conditions the Sinkhorn iterations (the Gibbs kernel e−cκ/ϵ stays bounded away from 0 and
+1 across batches; Theorem 1), which is why it is about 8× faster than unbounded-L2 Sinkhorn at
+b = 512. Signature-kernel memory grows with path length, which is why the selection rule assigns
+RBF or L2 costs to very long sequences.
+32
+
+
+Table 11: Baseline comparison for time series datasets among models with available pointwise
+statistics. The full baseline roster, including CFM-OT(L2), is summarized in Table 1. Following
+Kerrigan et al. [25], we report mean/variance MSE and autocorrelation error computed on the
+discretized samples. The kFFM row reports the best of the kernel variants in Table 10 for each metric
+(an oracle over variants, used only for these diagnostics), whereas Table 1 uses the validation-selected
+configuration. Results are mean±std over 10 seeds. Best is green; second best is orange.
+Dataset
+Model
+Mean
+Variance
+Autocorr.
+AEMET
+DDO/NCSN 3.56 ± 0.96 × 10−1 1.17 ± 0.03 × 10−1 4.21 ± 0.94 × 10−3
+DDPM
+1.92 ± 1.29 × 10−1 3.22 ± 2.98 × 10−2 2.84 ± 2.98 × 10−7
+GANO
+2.47 ± 0.89 × 10−1 2.35 ± 0.01 × 10−1 4.45 ± 3.43 × 10−6
+FFM
+7.38 ± 6.37 × 10−2 1.20 ± 0.40 × 10−2 4.69 ± 1.53 × 10−7
+kFFM
+1.51 ± 1.61 × 10−2 4.70 ± 2.57 × 10−3 2.60 ± 1.92 × 10−7
+Gene Expr.
+DDO/NCSN 6.07 ± 1.06 × 10−3 9.69 ± 0.70 × 10−3 5.48 ± 0.24 × 10−2
+DDPM
+4.10 ± 1.24 × 10−3 1.08 ± 0.08 × 10−2 3.59 ± 3.46 × 10−4
+GANO
+1.89 ± 0.52 × 10−2 3.14 ± 0.00 × 10−2 1.16 ± 0.68 × 10−1
+FFM
+1.39 ± 0.30 × 10−3 5.13 ± 0.74 × 10−3 1.59 ± 1.98 × 10−4
+kFFM
+5.21 ± 0.98 × 10−4 2.23 ± 0.23 × 10−3 4.18 ± 4.02 × 10−5
+Economy
+DDO/NCSN 1.70 ± 1.34 × 10−3 9.91 ± 2.06 × 10−3 2.73 ± 0.95 × 10−1
+DDPM
+6.08 ± 7.92 × 10−4 2.27 ± 5.34 × 10−4 2.05 ± 2.85 × 10−2
+GANO
+3.79 ± 0.51 × 10−1 7.28 ± 4.08 × 10−4 2.29 ± 1.91 × 10−1
+FFM
+4.90 ± 3.26 × 10−5 1.08 ± 1.13 × 10−5 1.72 ± 1.02 × 10−4
+kFFM
+3.30 ± 2.22 × 10−5 6.60 ± 5.62 × 10−6 8.90 ± 8.39 × 10−5
+Heston
+DDO/NCSN 1.60 ± 0.47 × 10−2 7.32 ± 0.15 × 10−1 4.36 ± 0.25 × 10−2
+DDPM
+9.33 ± 9.43 × 10−3 1.08 ± 0.25 × 10−1 3.35 ± 2.80 × 10−4
+GANO
+1.55 ± 0.90 × 10−2 4.41 ± 1.15 × 10−1 8.36 ± 8.68 × 10−3
+FFM
+6.66 ± 4.77 × 10−3 1.07 ± 0.25 × 10−1 2.78 ± 2.05 × 10−4
+kFFM
+3.33 ± 2.25 × 10−3 8.17 ± 1.14 × 10−2 3.31 ± 3.38 × 10−5
+Table 12: PDE pointwise diagnostics following the evaluation convention of Kerrigan et al. [25]:
+mean and variance of the discretization-level MSE between target and generated samples, together
+with average log-spectrum error. Here we compare the baseline FFM (Independent) against its
+OT-coupled variants: RBF = Euclidean–RBF kernel, Euclidean = raw L2 cost with the GP base
+(kFFM-Euc). Results are mean±std over 10 seeds. Best is green; second best is orange.
+Dataset
+Kernel
+Mean
+Variance
+Spectrum (log)
+KdV
+Independent 5.20 ± 3.37 × 10−4 1.39 ± 0.49 × 10−4
+1.72 ± 0.03 × 101
+RBF
+1.48 ± 0.95 × 10−4 5.68 ± 2.58 × 10−5
+1.69 ± 0.02 × 101
+Euclidean
+2.51 ± 0.74 × 10−4 6.88 ± 3.30 × 10−5
+1.69 ± 0.03 × 101
+Navier–Stokes
+Independent 7.96 ± 7.82 × 10−2 3.11 ± 0.80 × 10−2 7.92 ± 0.89 × 10−1
+RBF
+2.01 ± 2.01 × 10−3 7.51 ± 3.33 × 10−4 5.87 ± 0.46 × 10−1
+Euclidean
+2.03 ± 1.68 × 10−2 1.87 ± 0.57 × 10−2 6.00 ± 0.57 × 10−1
+Stoch. KdV
+Independent 1.69 ± 1.31 × 10−3 3.15 ± 2.31 × 10−3
+4.27 ± 0.25 × 100
+RBF
+1.17 ± 0.72 × 10−3 1.62 ± 0.91 × 10−3
+4.05 ± 0.14 × 100
+Euclidean
+2.34 ± 1.71 × 10−3 2.51 ± 1.50 × 10−3
+3.97 ± 0.28 × 100
+Stoch. NS
+Independent 3.72 ± 2.31 × 10−1
+5.76 ± 0.76 × 100 6.22 ± 1.05 × 10−2
+RBF
+3.38 ± 1.15 × 10−2 2.59 ± 0.76 × 10−1 3.22 ± 0.63 × 10−2
+Euclidean
+1.81 ± 0.66 × 10−1
+4.59 ± 0.81 × 100 5.25 ± 0.62 × 10−2
+C.10
+Non-Kernel Metrics
+Table 3 (Section 4.1) reports sliced Wasserstein distance and marginal W1 for kFFM versus FFM
+on the same runs. Coupling and evaluation kernels already differ for our strongest configurations
+(signature coupling, RBF-MMD evaluation), and the gains persist under every non-kernel metric.
+Table 16 adds the autocorrelation and log-spectrum errors on the same matched runs for the sequence
+datasets; the pointwise diagnostics by kernel variant on the original 10-seed runs are in Appendix
+C.6.
+33
+
+
+Table 13: Baseline comparison for PDE datasets among models with available pointwise statistics.
+The full baseline roster, including CFM-OT(L2), is summarized in Table 1. Following Kerrigan et al.
+[25], we compare kFFM against baseline models on discretization-level mean/variance MSE and
+log-spectrum error; the kFFM row reports the best of the kernel variants in Table 12 for each metric
+(an oracle over variants, used only for these diagnostics), whereas Table 1 uses the validation-selected
+configuration. Results are mean±std over 10 seeds. Best is green; second best is orange.
+Dataset
+Model
+Mean
+Variance
+Spectrum (log)
+KdV
+DDO/NCSN 2.46 ± 0.46 × 10−1 2.78 ± 0.43 × 10−2
+4.52 ± 0.00 × 101
+DDPM
+3.67 ± 0.91 × 10−3 5.81 ± 0.69 × 10−3
+1.71 ± 0.13 × 101
+GANO
+1.87 ± 0.94 × 10−1 2.91 ± 0.16 × 10−2
+2.02 ± 0.30 × 101
+FFM
+5.20 ± 3.37 × 10−4 1.39 ± 0.49 × 10−4
+1.72 ± 0.03 × 101
+kFFM
+1.48 ± 0.95 × 10−4 5.68 ± 2.58 × 10−5
+1.69 ± 0.02 × 101
+Navier–Stokes
+DDO/NCSN 4.79 ± 0.01 × 10−1 4.39 ± 0.00 × 10−2 9.93 ± 0.08 × 10−1
+DDPM
+5.27 ± 0.21 × 10−1 2.17 ± 0.52 × 10−2 2.58 ± 0.63 × 10−1
+GANO
+6.16 ± 4.25 × 10−2 2.74 ± 1.59 × 10−2
+2.21 ± 0.15 × 100
+FFM
+7.96 ± 7.82 × 10−2 3.11 ± 0.80 × 10−2 7.92 ± 0.89 × 10−1
+kFFM
+2.01 ± 2.01 × 10−3 7.51 ± 3.33 × 10−4 5.87 ± 0.46 × 10−1
+Stoch. KdV
+DDO/NCSN 3.59 ± 0.60 × 10−2 1.55 ± 0.01 × 10−1
+1.84 ± 0.00 × 101
+DDPM
+3.90 ± 0.78 × 10−3 7.19 ± 8.48 × 10−3
+1.57 ± 0.22 × 100
+GANO
+1.80 ± 0.31 × 10−3 1.42 ± 1.57 × 10−2
+1.45 ± 0.09 × 101
+FFM
+1.69 ± 1.31 × 10−3 3.15 ± 2.31 × 10−3
+4.27 ± 0.25 × 100
+kFFM
+1.17 ± 0.72 × 10−3 1.62 ± 0.91 × 10−3
+3.97 ± 0.28 × 100
+Stoch. NS
+DDO/NCSN 3.45 ± 0.01 × 10−1
+7.59 ± 0.02 × 100
+1.06 ± 0.28 × 100
+DDPM
+3.52 ± 0.36 × 10−1
+4.81 ± 0.28 × 100 8.60 ± 2.39 × 10−1
+GANO
+4.38 ± 0.48 × 10−1
+7.05 ± 0.65 × 100
+1.03 ± 0.93 × 100
+FFM
+3.72 ± 2.31 × 10−1
+5.76 ± 0.76 × 100 6.22 ± 1.05 × 10−2
+kFFM
+3.38 ± 1.15 × 10−2 2.59 ± 0.76 × 10−1 3.22 ± 0.63 × 10−2
+C.11
+Turbulent Navier–Stokes: Samples and Statistics
+Table 17 gives the turbulent benchmark of Section 4.2 with explicit configurations and unscaled
+values, and Figure 4 shows vorticity samples (pooled vorticity PDFs and energy spectra are in Figure
+1). We also re-ran the standard Navier–Stokes configurations of Section 4.1 with the same physics
+diagnostics (3 seeds): the flow-matching family leads (enstrophy W1 of 0.16 vs. 0.28 for DDPM;
+vorticity-PDF W1 of 0.14–0.15 vs. 0.39), and kFFM matches FFM within noise on the physics
+metrics while retaining its distributional edge from Table 1. The kernel-cost mismatch is larger in
+the turbulent regime: prior-data L2 distances more than double relative to the standard benchmark
+(median 91 vs. 40), pushing the RBF cost deeper into saturation, the regime where Theorem 2 is
+weakest; the empirical results carry the method there.
+C.12
+Measuring the Kernel-Cost Mismatch
+Analytically, cRBF(f, g) = 2(1−e−∥f−g∥2/2σ2) is a rescaled L2 cost up to relative error O((D/σ)2),
+with D the batch diameter; median normalization cancels the rescaling, so ∆κ is small at large
+bandwidth. We measured the mismatch on training-faithful batches through the rank correlation
+between kernel and L2 cost matrices and the total variation (TV) distance between the induced plans.
+(1) Where the RBF cost is not saturated it is a monotone transform of L2 (rank correlation ≈1:
+Gene Expression 1.000, Heston 0.98), i.e. the same geometry with compressed outliers. (2) The
+signature kernel genuinely re-ranks pairs (rank correlation with L2 of only 0.33–0.37 on AEMET
+and Gene Expression), the data class where its wins are largest and most significant; ∆κ is large
+there by design, and Theorem 2 controls the deviation from Wasserstein with the chosen cost rather
+than proximity to L2 OT. (3) On smooth Navier–Stokes fields the plans agree across costs (plan TV
+≤0.02), the small-∆κ regime where the bound is tightest and the bounded cost’s stability and speed
+are the operative benefits.
+C.13
+Synthetic Couplings: Where L2 Pairing Fails
+Figure 5 isolates the two failure modes of L2 pairing discussed in Section 4.1 on synthetic data at the
+training coupling protocol (stable over 6 seeds): a conditioning failure under heavy-tailed nuisance
+34
+
+
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+3
+2
+1
+0
+1
+2
+3
+Value
+Ground Truth (n=73)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+2
+1
+0
+1
+2
+3
+Value
+Independent (n=500)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+3
+2
+1
+0
+1
+2
+3
+Value
+Euclidean (n=500)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+2
+1
+0
+1
+2
+3
+Value
+RBF (n=500)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+3
+2
+1
+0
+1
+2
+3
+Value
+Signature (n=500)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+6
+4
+2
+0
+2
+4
+Value
+DDPM (n=500)
+(a) Samples.
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+2
+0
+2
+Value
+Ground Truth
+(Original: 365 pts)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+2
+0
+2
+Value
+Independent
+(4x: 1460 pts)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+2
+0
+2
+Value
+Euclidean
+(4x: 1460 pts)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+2
+0
+2
+Value
+RBF
+(4x: 1460 pts)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+2
+0
+2
+Value
+Signature
+(4x: 1460 pts)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+t
+6
+4
+2
+0
+2
+4
+Value
+DDPM
+(4x: 1460 pts)
+(b) 4x temporal super-resolution.
+Figure 2: Qualitative results on AEMET; panels labeled Euclidean, RBF, and Signature are kFFM
+variants (kFFM-Euc, kFFM-RBF, kFFM-Sig) and Independent is FFM. Kernel OT better preserves
+the seasonal spread and amplitude of trajectories both at the original resolution and under temporal
+super-resolution.
+Ground Truth
+Independent
+Euclidean
+RBF
+DDPM
+DDO
+(a) Samples.
+Ground Truth
+(Original: 64x64)
+Independent
+(2x: 128x128)
+Euclidean
+(2x: 128x128)
+RBF
+(2x: 128x128)
+DDPM
+(2x: 128x128)
+DDO
+(2x: 128x128)
+(b) 2x spatial super-resolution.
+Figure 3: Qualitative results on Navier–Stokes; panels labeled Euclidean and RBF are kFFM variants
+(kFFM-Euc, kFFM-RBF) and Independent is FFM. Kernel OT produces smoother and more coherent
+flow structures than independent coupling, and this advantage persists under spatial super-resolution.
+bursts, cured by any bounded cost, and a geometry failure on paths matched by volatility, cured only
+by the signature kernel.
+C.14
+Why Straightness Arguments Do Not Directly Transfer
+Finite-dimensional OT-CFM is often motivated by the Euclidean W2 picture: a better coupling,
+combined with linear interpolation, can lead to straighter paths and hence lower numerical integration
+cost. That intuition depends on geometric facts that are specific to the finite-dimensional Wasserstein
+setting and should not be treated as automatic in function space.
+Proposition 6 (Coupling-only role of kernel OT). Fix a coupling π ∈Π(µ0, µ1). In kFFM, condi-
+tional on (f0, f1) ∼π, the path is
+gf0,f1
+t
+= tf1 + σtf0,
+σt = 1 −(1 −σmin)t,
+so that
+∂tgf0,f1
+t
+= f1 −(1 −σmin)f0,
+∂2
+t gf0,f1
+t
+= 0 :
+35
+
+
+Table 14: Higher-moment sequence-data statistics (skewness and kurtosis errors) for the models
+with available pointwise diagnostics, following the evaluation convention of Kerrigan et al. [25];
+mean, variance, and autocorrelation errors are in Table 11, and the full baseline roster, including
+CFM-OT(L2), in Table 1. The kFFM row uses the best kernel variant per metric. Lower is better.
+Best is green, second best is orange.
+Dataset
+Model
+Skewness
+Kurtosis
+AEMET
+DDO/NCSN
+2.73 ± 0.24 × 10−1
+3.57 ± 0.18 × 10−1
+DDPM
+1.61 ± 0.50 × 10−1
+3.95 ± 1.79 × 10−1
+GANO
+2.34 ± 0.39 × 10−1
+3.84 ± 0.83 × 10−1
+FFM
+5.52 ± 4.06 × 10−2
+3.94 ± 4.16 × 10−1
+kFFM
+8.12 ± 5.35 × 10−3
+4.22 ± 2.61 × 10−2
+Gene Expr.
+DDO/NCSN
+2.02 ± 0.13 × 10−1
+3.75 ± 0.44 × 10−1
+DDPM
+3.72 ± 1.17 × 10−1
+1.57 ± 1.31 × 101
+GANO
+8.62 ± 4.56 × 10−1
+2.88 ± 2.57 × 100
+FFM
+1.75 ± 0.36 × 10−1
+1.64 ± 0.57 × 100
+kFFM
+7.43 ± 0.76 × 10−2
+4.87 ± 1.17 × 10−1
+Economy
+DDO/NCSN
+4.91 ± 1.24 × 10−1
+4.70 ± 1.87 × 100
+DDPM
+1.26 ± 3.23 × 100
+9.00 ± 34.10 × 101
+GANO
+1.05 ± 0.57 × 100
+3.78 ± 1.71 × 100
+FFM
+1.80 ± 0.80 × 10−1
+1.75 ± 0.69 × 100
+kFFM
+7.65 ± 2.94 × 10−2
+9.77 ± 4.01 × 10−1
+Heston
+DDO/NCSN
+1.36 ± 0.01 × 101
+1.58 ± 0.00 × 103
+DDPM
+3.97 ± 0.91 × 100
+9.53 ± 2.04 × 102
+GANO
+6.19 ± 0.99 × 100
+1.33 ± 0.06 × 103
+FFM
+5.30 ± 2.79 × 100
+1.59 ± 1.12 × 103
+kFFM
+3.31 ± 0.61 × 100
+8.38 ± 1.60 × 102
+Table 15: Measured training cost of the kernel-OT coupling step across benchmarks. The O(b2)
+Sinkhorn solve is independent of model size and resolution.
+Quantity
+Measurement
+End-to-end training overhead vs.
+FFM
+5–7% at the largest trained resolution (1282 Navier–Stokes)
+Peak coupling memory
+80–151 MB across benchmarks and b ∈{64, . . . , 512}; 1.5–9%
+of the FNO forward+backward peak (e.g. 116 MB vs. 7.62 GB on
+Navier–Stokes 642)
+Per-batch coupling time
+1–80 ms, about one FNO step
+Bounded RBF vs. unbounded L2
+Sinkhorn (b = 512)
+9 vs. 73 ms per batch (≈8×); 15–25% faster end-to-end training
+Signature-kernel memory
+0.63 GB at 100 time points vs. 12.5 GB at 512; the selection rule
+therefore assigns RBF/L2 costs to very long sequences
+Larger-model control
+Giving FFM the +6% budget as extra epochs does not close the gap
+(loss curves plateau early)
+the conditional path is affine in t and deterministic given the pair, and its geometry does not depend
+on π. Moreover, the training objective can be written as
+Lπ
+CF M(θ) = Et, (f0,f1)∼π
+∂tgf0,f1
+t
+−vθ
+ gf0,f1
+t
+, t
+
+2
+F .
+Therefore, optimizing over π changes only the distribution of endpoint pairs presented to the model;
+it does not introduce any explicit pathwise straightness, geodesic, or action-minimization term.
+Proof. The path and its velocity are exactly those of Section 3.1; they coincide with the FFM path
+tf + σtξ and conditional field f −(1 −σmin)ξ of Section 2.1 with the base noise ξ replaced by the
+paired prior sample f0. Differentiating the affine path gives the displayed derivatives. Substituting the
+conditional path into the conditional flow matching objective yields the displayed loss. Since π enters
+only through the sampling law of (f0, f1) and no additional functional of the path t 7→gf0,f1
+t
+appears
+in the objective, the method does not explicitly optimize any global path-geometry quantity.
+36
+
+
+Table 16: Non-kernel and structural metrics for kFFM-Sig vs. FFM on the sequence datasets (same
+prior and architecture; lower is better), computed on the matched runs of Table 2: mean±std over 10
+shared seeds (Economy averages the population and GDP series within each seed). Every comparison
+is individually significant when paired by seed (Wilcoxon p ≤0.027; kFFM better on 9–10 of the 10
+seeds on both datasets); the wide autocorrelation spread on Gene Expression is across-seed variation
+shared by both methods, which the pairing removes. These runs are distinct from the 10-seed runs
+behind Table 10, so the autocorrelation values differ between the two tables; both favor kFFM.
+Dataset
+Metric
+FFM
+kFFM-Sig
+Gene Expr.
+Sliced-W
+0.106 ± 0.006
+0.087 ± 0.006
+Marginal-W1
+0.074 ± 0.005
+0.059 ± 0.004
+Autocorr. MSE (×10−5)
+9.3 ± 6.8
+3.3 ± 3.6
+log-Spectrum MSE (×10−2)
+1.76 ± 0.42
+0.86 ± 0.22
+Economy
+Sliced-W
+0.0291 ± 0.0019
+0.0233 ± 0.0012
+Marginal-W1
+0.0171 ± 0.0016
+0.0137 ± 0.0009
+Autocorr. MSE (×10−4)
+1.59 ± 0.39
+1.12 ± 0.35
+log-Spectrum MSE
+1.09 ± 0.07
+0.97 ± 0.04
+Table 17: Full version of Table 4 with explicit configurations (cost/base measure) and unscaled values.
+Turbulent 2D Navier–Stokes (ν = 10−5, 1200 trajectories, Re ≈2000): distributional and physics
+diagnostics (lower is better), mean±std over 5 seeds, identical FNO backbone and training budget
+for all flow/diffusion methods. Best per column in bold (on MMD, kFFM and CFM-OT(L2) tie
+within std). Vort-PDF W1: W1 between pooled vorticity distributions; Enstrophy W1: W1 between
+per-snapshot enstrophy distributions; Skew/Kurt: absolute errors of pooled-vorticity skewness and
+excess kurtosis; log-Spec: log-spectral error.
+Method
+MMD
+Sliced-W
+Vort-PDF W1
+Enstrophy W1
+Skew err.
+Kurt err.
+log-Spec
+kFFM (selected: Euclidean-RBF/wn)
+0.00148 ± 0.0006
+0.193 ± 0.01
+0.0375 ± 0.01
+0.155 ± 0.02
+0.0027 ± 0.003
+0.0777 ± 0.01
+0.0204 ± 0.008
+CFM-OT(L2) (raw L2/wn)
+0.00147 ± 0.001
+0.194 ± 0.01
+0.0408 ± 0.01
+0.157 ± 0.01
+0.00404 ± 0.002
+0.0752 ± 0.01
+0.0223 ± 0.007
+kFFM-Sob (Sobolev-RBF/gp)
+0.111 ± 0.02
+0.612 ± 0.05
+0.104 ± 0.03
+0.194 ± 0.05
+0.0456 ± 0.02
+0.0679 ± 0.05
+0.0652 ± 0.01
+kFFM-Euc (raw L2/gp)
+0.109 ± 0.02
+0.623 ± 0.03
+0.104 ± 0.04
+0.197 ± 0.06
+0.0495 ± 0.03
+0.0774 ± 0.04
+0.067 ± 0.01
+FFM (gp, independent)
+0.108 ± 0.02
+0.601 ± 0.02
+0.107 ± 0.04
+0.201 ± 0.06
+0.0487 ± 0.03
+0.0723 ± 0.05
+0.0646 ± 0.01
+DDO/NCSN
+0.569 ± 0.009
+1.39 ± 0.06
+1.22 ± 0.01
+1.07 ± 0.02
+0.0083 ± 0.01
+1.29 ± 0.01
+0.937 ± 0.02
+DDPM
+0.38 ± 0.02
+1.18 ± 0.1
+0.848 ± 0.03
+0.889 ± 0.02
+0.0789 ± 0.05
+3.37 ± 2
+0.117 ± 0.03
+Corollary 2 (Coupling-invariance of ambient path straightness). For a twice differentiable path
+m : [0, 1] →F, define the ambient acceleration and speed-variation functionals
+A(m) :=
+Z 1
+0
+∥∂2
+t mt∥2
+F dt,
+V(m) :=
+Z 1
+0
+
+∥∂tmt∥F −
+Z 1
+0
+∥∂sms∥F ds
+2
+dt.
+Then for every coupling π ∈Π(µ0, µ1) and every endpoint pair (f0, f1) ∼π, the kFFM conditional
+path gf0,f1 satisfies
+A(gf0,f1) = 0,
+V(gf0,f1) = 0.
+Hence these natural ambient-space straightness measures of the prescribed conditional path are
+identical for all couplings.
+Proof. By Proposition 6, ∂tgf0,f1
+t
+= f1 −(1 −σmin)f0 is constant in t and ∂2
+t gf0,f1
+t
+= 0. Therefore
+A(gf0,f1) = 0. The speed ∥∂tgf0,f1
+t
+∥F = ∥f1 −(1 −σmin)f0∥F is also constant in t, so it coincides
+with its own time average and V(gf0,f1) = 0.
+Proposition 6 and Corollary 2 formalize the internal reason that the usual OT-CFM straightness
+argument does not transfer directly to kFFM: kernel OT acts only at the level of endpoint coupling,
+while the interpolation template remains the same affine FFM path. Any improvement in convergence
+or sampling cost could therefore only arise indirectly through better endpoint pairings and the learned
+velocity field, not from an explicit path-straightness objective, and we do not claim one.
+Our setting is different in a second, geometric way. FFM is formulated on Gaussian measures over
+separable Hilbert spaces, where absolute continuity and transport already depend on Cameron–Martin
+and Feldman–Hajek type conditions rather than Lebesgue-density arguments. Even when one restricts
+37
+
+
+Figure 4: Turbulent 2D Navier–Stokes (ν = 10−5): vorticity samples on a shared color scale (for
+each method, the samples whose enstrophy is closest to the data median). kFFM (selected) and FFM
+reproduce the data’s large-scale vortical organization, DDO/NCSN produces near-noise fields, and
+DDPM coarse blobs. The corresponding pooled vorticity PDFs and energy spectra are in Figure 1.
+attention to Gaussian optimal transport, the appropriate geometry is the Bures–Wasserstein geometry
+rather than the flat Euclidean geometry used by standard OT-CFM heuristics.
+Recent work by Yun and Zemel [52] makes this distinction explicit. For Gaussian measures on
+separable Hilbert spaces, they show that the optimal transport map can fail to admit the usual Brenier
+variational interpretation: formally, it is the subgradient of a convex function that is infinite almost
+everywhere, and the geodesic structure between degenerate Gaussian measures is richer than the
+classical finite-dimensional McCann interpolation picture. This does not mean that efficient flows are
+impossible in function space; rather, it means that the usual “OT implies straighter paths” argument is
+not a theorem in the present setting.
+For this reason, our paper does not claim that kFFM is geodesic or pathwise optimal in a Bures–
+Wasserstein sense. The theoretical guarantees in this paper concern the well-posedness, error
+decomposition, and discretization invariance of the kernel OT surrogate, not global straightness of
+the learned ODE.
+This is also why Section 4 makes no efficiency claim: the main supported claim of the paper is
+better distributional matching from geometry-aware coupling, and Appendix C.15 reports only the
+training-time convergence of the target metric.
+C.15
+Target-Metric Convergence During Training
+In finite-dimensional OT-CFM, optimal transport is often motivated by improved convergence and
+straighter flows [48]. As discussed in Appendix C.14, we do not treat such properties as theoretical
+consequences in function space and make no efficiency claim. We report only the convergence of the
+target metric during training: Table 18 and Figure 6 show the MMD-RBF of FFM and kFFM over
+38
+
+
+Figure 5: Entropic minibatch couplings (b = 64, ϵ = 0.01, median-normalized costs as in training)
+for three synthetic scenarios (rows) and four costs (columns). Sources and targets are sorted so that
+the intended matching is the diagonal, and each panel reports the plan mass on intended matches (a
+uniform plan gives ≈0.14–0.19). Top: shifted bumps matched by location; every cost recovers the
+matching. Middle: bumps where 40% of samples carry large, independent nuisance bursts. Burst
+pairs dominate the median normalization of the unbounded L2 cost, collapsing clean-pair contrasts
+below ϵ, so its plan degenerates to near uniform (0.16); the bounded RBF cost saturates the bursts
+and recovers the matching (0.58), invariant to burst amplitude (the conditioning effect of Theorem 1).
+Bottom: Brownian paths f = vW(t), v ∼U[0.5, 2], matched by volatility. The expected L2 cost
+is separable, E∥f −g∥2 = (v2 + w2)
+R
+t dt, so it carries no assortative signal in expectation and
+its plan stays near uniform (0.25); the signature kernel (lead-lag) reads volatility through quadratic
+variation and concentrates on the intended matching (0.43). No single cost wins every scenario,
+which motivates the per-data-class selection rule of Appendix C.5.
+Table 18: Relative MMD-RBF improvement of kFFM over FFM at the end of the convergence curves
+of Figure 6 (higher is better; values above 100% occur where the unbiased estimate for kFFM is
+negative). Both methods share the GP prior and FNO backbone, isolating the coupling as the only
+changed component.
+Dataset
+Heston
+AEMET
+KdV
+Economy
+Gene Expr.
+Stoch. KdV
+Stoch. NS
+Navier–Stokes
+∆MMD-RBF (%)
++32%
++53%
++8%
++52%
++64%
++225%
++7%
++9%
+the final phase of training, with both models sharing the GP prior and FNO backbone so that the only
+change is the coupling. The curves are the best-so-far value (cumulative minimum) of the across-seed
+mean; on KdV, where the unbiased estimate is noisy at the level of single checkpoints, the curves are
+instead the running mean over the final phase. kFFM ends training at a better MMD-RBF on every
+dataset, with the largest gains on Stoch. KdV, Gene Expr., AEMET, Economy, and Heston.
+C.16
+Hyperparameter Sensitivity
+Unless otherwise noted, we keep the training setup, neural architectures, Gaussian prior, and re-
+maining OT settings fixed at the default values from the main experiments, and vary only one
+39
+
+
+100
+125
+150
+175
+200
+225
+250
+275
+300
+0.0000
+0.0005
+0.0010
+0.0015
+0.0020
+0.0025
+MMD-RBF (lower = better)
+kFFM: +94%
+Heston-Long
+FFM
+kFFM
+40
+50
+60
+70
+80
+90
+100
+0.0005
+0.0000
+0.0005
+0.0010
+0.0015
+0.0020
+0.0025
+0.0030
+kFFM: +225%
+Stochastic KdV
+FFM
+kFFM
+100
+125
+150
+175
+200
+225
+250
+275
+300
+0.006
+0.008
+0.010
+0.012
+0.014
+0.016
+0.018
+kFFM: +64%
+Gene Expression
+FFM
+kFFM
+100
+125
+150
+175
+200
+225
+250
+275
+300
+0.0065
+0.0060
+0.0055
+0.0050
+0.0045
+0.0040
+0.0035
+0.0030
+MMD-RBF (lower = better)
+kFFM: +53%
+AEMET
+FFM
+kFFM
+100
+125
+150
+175
+200
+225
+250
+275
+300
+0.006
+0.008
+0.010
+0.012
+0.014
+kFFM: +52%
+Economy
+FFM
+kFFM
+100
+125
+150
+175
+200
+225
+250
+275
+300
+0.0010
+0.0008
+0.0006
+0.0004
+0.0002
+0.0000
+0.0002
+0.0004
+kFFM: +32%
+Heston
+FFM
+kFFM
+100
+125
+150
+175
+200
+225
+250
+275
+300
+Epoch
+0.070
+0.075
+0.080
+0.085
+0.090
+MMD-RBF (lower = better)
+kFFM: +9%
+Navier-Stokes
+FFM
+kFFM
+40
+50
+60
+70
+80
+90
+100
+Epoch
+0.08
+0.09
+0.10
+0.11
+0.12
+0.13
+0.14
+kFFM: +7%
+Stochastic NS
+FFM
+kFFM
+140
+160
+180
+200
+220
+240
+260
+280
+300
+Epoch
+0.0022
+0.0020
+0.0018
+0.0016
+0.0014
+kFFM: +8%
+KdV
+FFM
+kFFM
+kFFM vs FFM: MMD-RBF Convergence - Zoomed to Final Training Phase
+Figure 6: Per-dataset target-metric convergence using MMD-RBF (lower is better) corresponding
+to the headline summary in Table 18. The plot shows the best-so-far across-seed mean MMD-RBF
+over the final phase of training (on KdV, the running mean over the final phase, from epoch 125)
+for kFFM versus the original FFM under matched GP prior and FNO backbone, so the only change
+is the coupling. The kFFM curve uses the signature kernel on Stoch. KdV, Gene Expr., AEMET,
+Economy, and Heston, the Sobolev-RBF cost on KdV, the Euclidean–RBF cost on Stoch. NS, and the
+raw L2 cost on Navier–Stokes and Heston-Long. kFFM ends training at a better MMD-RBF on every
+dataset, with especially large gains on Stoch. KdV, Gene Expr., AEMET, Economy, and Heston. The
+additional Heston-Long panel is a long-horizon variant of Heston (1000 time steps) used only in this
+diagnostic and in the sensitivity study; it is not one of the eight benchmark datasets.
+hyperparameter at a time. We use the POT6 package [17] for optimal transport. The figures below are
+direct one-at-a-time sweeps: they vary σ or ϵ while holding the other settings fixed. We additionally
+report the sensitivity to the Gaussian-prior length scale on the 2D PDE datasets, where it has the
+clearest effect.
+The kernel-specific hyperparameters are:
+1. RBF kernel: the bandwidth σ ∈{0.1, 0.2, 0.5, 1, 2, 5, 10}.
+2. Signature kernel:
+(a) Boolean switches for the lead-lag and time augmentations (lead_lag, time_aug).
+(b) Dyadic order in {0, 1, 2, 3}.
+(c) Static-kernel bandwidth between 0.1 and 5.
+(d) Maximum sequence length (subsampling) in {32, 50, 64, 128}.
+The hyperparameters for the Sinkhorn algorithm are:
+1. ot_reg,
+the
+regularization
+parameter
+ϵ;
+the
+sweeps
+of
+Figure
+8
+use
+{0.01, 0.05, 0.1, 0.5, 1.0}, and the full grids extend this range.
+2. ot_method: Sinkhorn or exact OT; Sinkhorn generally performs better.
+6https://pythonot.github.io/
+40
+
+
+Signature
+(static sigma)
+RBF
+(Sinkhorn eps)
+Euclidean
+(Sinkhorn eps)
+RBF
+(bandwidth sigma)
+0
+5
+10
+15
+20
+25
+30
+35
+40
+Spread (%) 
+ lower = less sensitive
+10%
+kFFM Hyperparameter Sensitivity on MMD-RBF
+Figure 7: Aggregate MMD-RBF sensitivity of kFFM hyperparameters across datasets; the spread is
+(max −min)/|mean| over the tested settings of the hyperparameter in parentheses, and lower is less
+sensitive. Signature-kernel settings are nearly invariant on the tested sequence datasets, the Sinkhorn
+regularization is typically less influential than the RBF bandwidth, and the results depend more on ϵ
+under the raw L2 (Euclidean) cost than under the bounded RBF cost (median spread of about 8% vs.
+near zero).
+3. ot_coupling: sampling from the plan (default) or barycentric projection; sampling usually
+performs better.
+Figure 7 summarizes the aggregate MMD-RBF spread across datasets for the main tunable kernel
+families, where the spread for a given dataset is computed as (max −min)/|mean| over the tested
+settings. The dominant pattern is that the Sinkhorn regularization is typically quite stable, while the
+RBF bandwidth can matter more on selected datasets. Figure 8 then shows the direct sweeps on
+representative datasets, run at the white-noise base measure: the top panel varies the RBF bandwidth,
+and the bottom panel varies the Sinkhorn regularization. We focus these direct sweeps on the
+axes that showed the most variation; the signature-kernel settings were substantially flatter on the
+tested sequence datasets and are summarized in Figure 7. Re-aggregating the full grids: results are
+indistinguishable within seed-to-seed variation for RBF bandwidths σ ∈[0.1, 2] on every dataset (the
+wider sweeps in Figure 8 show where larger bandwidths start to matter on selected datasets); the
+Sinkhorn regularization is flat across three orders of magnitude (ϵ ∈[0.001, 1]) for bounded costs,
+whereas with the raw L2 cost ϵ ≥0.5 degrades long volatility paths by ≈10×; and the signature
+hyperparameters (dyadic order 0–3, static bandwidth 0.1–5) leave the results unchanged. The kernel
+family and the base measure are the choices that matter: Euclidean costs, raw or bounded, still lose to
+the signature kernel by 2.6–2.9× on Gene Expression and Economy (Section 4.1).
+The choice of Gaussian prior matters more on the 2D PDE datasets (Navier–Stokes and Stoch. NS),
+independently of the kernel. Figure 9 shows the sensitivity of these two datasets to the length scale of
+the Gaussian prior, which encodes a prior belief about the smoothness of the data.
+D
+Extended Related Work
+This section expands the discussion of Section 5. The study of using optimal transport [49] to improve
+flow matching was first proposed by Pooladian et al. [39], Tong et al. [48], which add an OT-induced
+coupling of each minibatch before the interpolation and training step. Several follow-up works
+[28, 51] have aimed to further expand the framework. All have assumed that the sample space is Rd.
+In order to better capture the resolution-invariance of grid data and continuity of path data, Kerrigan
+et al. [25] first proposed Functional Flow Matching, a framework to perform flow matching in Hilbert
+space, relying on Gaussian measure theory. However, OT-based endpoint coupling had not been
+brought to this space.
+The line of research that embeds probability measures in RKHS has been proposed by the pioneering
+work of Gretton et al. [20], Sriperumbudur et al. [46], where kernel-induced metrics, such as Integral
+Probability Metrics (IPM), have been studied extensively [10, 46] and used for two-sample hypothesis
+testing [20], most recently in path space [6] with the signature kernel. The IPM in the form of
+the Maximum Mean Discrepancy (MMD) has been linked with both probability divergences and
+41
+
+
+10
+1
+100
+101
+0.0004
+0.0002
+0.0000
+0.0002
+0.0004
+MMD-RBF
+Heston
+10
+1
+100
+101
+0.004
+0.003
+0.002
+0.001
+0.000
+KdV
+10
+1
+100
+101
+0.00025
+0.00000
+0.00025
+0.00050
+0.00075
+0.00100
+0.00125
+0.00150
+0.00175
+Stoch. KdV
+10
+1
+100
+101
+RBF bandwidth 
+0.0015
+0.0020
+0.0025
+0.0030
+0.0035
+0.0040
+0.0045
+0.0050
+0.0055
+MMD-RBF
+Stoch. NS
+10
+1
+100
+101
+RBF bandwidth 
+0.001
+0.000
+0.001
+0.002
+0.003
+0.004
+0.005
+0.006
+NS 64×64
+10
+1
+100
+101
+RBF bandwidth 
+0.0044
+0.0042
+0.0040
+0.0038
+0.0036
+0.0034
+0.0032
+AEMET
+RBF Bandwidth  Sensitivity (MMD-RBF, =0.1)
+CFM-OT(RBF)
+CFM-OT(L2)
+No coupling
+10
+1
+100
+0.0004
+0.0002
+0.0000
+0.0002
+0.0004
+MMD-RBF
+Heston
+10
+2
+10
+1
+100
+0.003
+0.002
+0.001
+0.000
+0.001
+KdV
+10
+2
+10
+1
+100
+0.00000
+0.00025
+0.00050
+0.00075
+0.00100
+0.00125
+0.00150
+Stoch. KdV
+10
+2
+10
+1
+100
+Sinkhorn regularization 
+0.0015
+0.0020
+0.0025
+0.0030
+0.0035
+0.0040
+0.0045
+0.0050
+0.0055
+MMD-RBF
+Stoch. NS
+10
+2
+10
+1
+100
+Sinkhorn regularization 
+0.002
+0.001
+0.000
+0.001
+0.002
+0.003
+0.004
+0.005
+0.006
+NS 64×64
+10
+2
+10
+1
+100
+Sinkhorn regularization 
+0.0044
+0.0042
+0.0040
+0.0038
+0.0036
+0.0034
+0.0032
+AEMET
+Sinkhorn  Sensitivity (MMD-RBF)
+CFM-OT(RBF)
+CFM-OT(L2)
+No coupling
+Figure 8: Direct one-at-a-time MMD-RBF sweeps on representative datasets (mean and one standard
+deviation across seeds). Top: varying the RBF bandwidth σ at fixed Sinkhorn regularization (ϵ = 0.1).
+Bottom: varying ϵ at fixed bandwidth. All arms in this figure use the white-noise base measure:
+the solid curve (legend: CFM-OT(RBF)) is the Euclidean–RBF kernel coupling, the dashed line is
+CFM-OT(L2), and the dotted line (legend: No coupling) is independent coupling at the same base.
+Across the tested values the swept arm moves within its seed-to-seed variation.
+42
+
+
+Figure 9: Distribution of the pointwise metrics (mean MSE, variance MSE, log-spectrum error) on
+the two 2D PDE datasets, Navier–Stokes and Stoch. NS, as a function of the length scale of the
+Gaussian prior.
+Wasserstein distances [16], and it has an entropic OT formulation in the Hilbert Sinkhorn Divergence
+of Li et al. [31]. It has also been used as the objective of gradient flows [1, 18], which have been
+adopted in deep generative models. The extension of these frameworks to function space is an active
+area of research, and to our knowledge our work is the first to explore it in the context of flow
+matching.
+Concurrent function-space flow matching.
+Three concurrent works are closest to ours; none
+studies the endpoint coupling. Kollovieh et al. [27] use flow matching with GP priors for probabilistic
+time-series forecasting, a conditional task with an independent prior-data coupling; this is closest
+in spirit to our GP-prior setup and orthogonal on the axis we study, and our results suggest that
+framework could itself benefit from kernel-OT coupling. Zhang and Scott [53] straighten flows in
+Hilbert space via rectification, iteratively re-training on model-generated endpoint pairs; rectification
+changes pairs across training rounds using the model, whereas kernel OT changes pairs within each
+batch using data geometry in a single run and extends beyond Hilbert spaces (signature kernel on
+path space), so the two can in principle be composed. Lee and Flouris [30] propose operator flow
+matching for time-series forecasting, again conditional prediction with independent coupling. On the
+finite-dimensional side, Fatras et al. [13, 14] analyze minibatch OT plans and the expected-minibatch
+coupling that Section 3.1 relies on.
+43
