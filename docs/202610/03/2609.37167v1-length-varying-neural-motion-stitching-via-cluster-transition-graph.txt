@@ -1,0 +1,2400 @@
+Length-varying Neural Motion Stitching via Cluster Transition Graph
+HAEMIN KIM, Korea Advanced Institute of Science and Technology (KAIST), Republic of Korea
+JUNGHYUN NAM, Korea Advanced Institute of Science and Technology (KAIST), Republic of Korea
+SEOKHYEON HONG, Korea Advanced Institute of Science and Technology (KAIST), Republic of Korea
+VANESSA TAN, Korea Advanced Institute of Science and Technology (KAIST), Republic of Korea
+JUNYONG NOH, Korea Advanced Institute of Science and Technology (KAIST), Republic of Korea
+Fig. 1. Motion stitching results produced by our method. The results correspond to two test samples. The blue characters indicate the given input motion,
+while the green characters represent generated transition frames. Depending on the given motion pair, our method generates transitions of varying lengths. In
+the first transition, the character makes a small jump to close the legs and crouch to match acceleration. In the second transition, the character lowers the
+body to prepare for a big jump in the following volleyball spiking motion. The sequence is visualized every 10 frames and the root is translated for clear
+visualization.
+Motion stitching aims to create new character animations by seamlessly com-
+bining existing motion sequences. Existing approaches often require manual
+selection of transition range or assume fixed transition length, restricting the
+types of motions that can be connected. To broaden the diversity of motions
+that can be synthesized, it is essential to generate transitions of varying
+lengths, allowing the character sufficient time to adapt its pose when the
+input motions differ significantly. To this end, we propose a length-varying
+neural motion stitching method based on a cluster transition graph, which
+produces naturally connected motion sequences given two distinct input
+motions. Our framework consists of three stages: motion clustering, cluster
+pathfinding, and motion generation. First, motion clustering maps input
+motions to discrete clusters. Next, we identify the corresponding clusters
+in the cluster transition graph and search for a connecting path. In this
+Authors’ Contact Information: Haemin Kim, spot1223@kaist.ac.kr, Korea Advanced
+Institute of Science and Technology (KAIST), Daejeon, Republic of Korea; Junghyun
+Nam, ys4990@kaist.ac.kr, Korea Advanced Institute of Science and Technology (KAIST),
+Daejeon, Republic of Korea; Seokhyeon Hong, ghd3079@kaist.ac.kr, Korea Advanced
+Institute of Science and Technology (KAIST), Daejeon, Republic of Korea; Vanessa Tan,
+vanessa.tan@kaist.ac.kr, Korea Advanced Institute of Science and Technology (KAIST),
+Daejeon, Republic of Korea; Junyong Noh, junyongnoh@kaist.ac.kr, Korea Advanced
+Institute of Science and Technology (KAIST), Daejeon, Republic of Korea.
+This work is licensed under a Creative Commons Attribution-NonCommercial-
+NoDerivatives 4.0 International License.
+graph, nodes represent motion clusters, and directed edges indicate valid
+transitions between them. The resulting path determines both the transition
+length and a guide sequence that informs motion generation. Finally, the
+path and input motions are provided to a Transformer encoder-based mo-
+tion generator to produce the final transition poses. Experimental results
+demonstrate that our method adaptively adjusts the motion length and suc-
+cessfully generates plausible transitions between distinct motions, such as
+crawling, basketball shooting, and slow locomotion. We also show that using
+a graph structure effectively estimates transition durations and produces
+high-fidelity results compared to methods that assume a fixed transition
+length, or directly compute the time. Code is available at Project Page
+CCS Concepts: • Computing methodologies →Motion processing.
+Additional Key Words and Phrases: Transition generation, Motion stitching,
+Motion clustering, Motion generation
+1
+Introduction
+Motion stitching plays a critical role when connecting two differ-
+ent motion sequences in a desired order. Through this technique,
+artists can reuse available motion capture sequences or manually
+keyframed animations. A common choice for motion stitching is
+interpolation-based pose blending, as it is adopted by many ani-
+mation tools. Given two input sequences, these methods generally
+align the second motion to the first motion and then interpolate the
+arXiv:2609.37167v1  [cs.GR]  29 Sep 2026
+
+
+2
+•
+Haemin Kim, Junghyun Nam, Seokhyeon Hong, Vanessa Tan, and Junyong Noh
+poses at the boundary to create intermediate poses. They produce
+natural results in cases where the two inputs are sufficiently similar.
+Although interpolation-based motion stitching provides a simple
+approach for connecting motions, it also has notable drawbacks.
+For example, the world position and orientation of the second mo-
+tion are often required to be carefully adjusted to ensure visually
+pleasing results. As an alternative, frame-by-frame pose inspection
+is performed to find an appropriate transition point. Even with such
+manual adjustments, artifacts such as foot sliding or body floating
+can still occur, especially when the two motions differ significantly.
+Kim et al. [2023] suggested a neural network-based method to
+bypass the process of identifying transition points and support lo-
+comotion stitching. Given two motions that are naively aligned,
+their method outputs a naturally connected sequence with the same
+length as the aligned input. Unfortunately, their method still as-
+sumes two sufficiently similar input motions as it relies on k-nearest
+neighbor (KNN) search to construct input data. In addition, the
+lengths of training motion data are fixed, which restricts the types
+of motions that can be connected. As a result, the system strug-
+gles to handle transitions between two distinct motions such as
+transitioning from running to lying down, which would require a
+complex sequence of intermediate motions, including slowing down
+to a walk, crouching, and gradually lowering the body to match the
+lying down pose.
+To connect such distinct motions, it is essential to produce length-
+varying motion sequences. Prior methods suggested computing tran-
+sition time from pose differences [Wang and Bodenheimer 2008], or
+training a separate RNN to predict the duration [Guo et al. 2022a].
+However, these approaches often yield inaccurate transition dura-
+tions due to the lack of world-space cues. As a result, the generated
+motion length may not reflect the time required for a character
+to reach a given pose. Therefore, instead of explicitly predicting
+transition time, it is more viable to infer the duration by considering
+how a character would move to perform the given motions in order.
+In this paper, we propose a length-varying neural motion stitching
+method with a cluster transition graph. Given two distinct motions
+arranged for stitching, we focus on producing the shortest tran-
+sition that varies in length depending on the combination of the
+two inputs. To achieve this, we integrate three core components:
+motion clustering, cluster pathfinding, and motion generation. First,
+we map the two input motions to clusters, and identify them in
+the cluster transition graph where each node represents a motion
+cluster. The cluster corresponding to the first motion becomes the
+start node, and the one mapped from the second motion becomes
+the goal node. We then perform cluster pathfinding by applying a
+shortest-path algorithm to the graph, using a cost function derived
+from motion features. The resulting path of clusters represents the
+intermediate transition states, which determines the final length
+of motion. Using the original input motions and the cluster path,
+we construct the input for our Transformer encoder-based motion
+generator [Vaswani et al. 2017]. The generator outputs a transition
+sequence connecting the two input motions, along with a destina-
+tion of the root to align the second input motion. The final result is
+obtained by combining the input motions and generated transition
+frames in order.
+A key contribution of our work is the use of a cluster transition
+graph to guide motion generation. This graph enables the discovery
+of intermediate motions, which in turn allows us to estimate transi-
+tion length and produce high-quality results. Given a cluster path on
+the graph, we extract a representative sequence from each cluster
+using a variant of the Vector Quantized Variational Autoencoder
+(VQ-VAE) [Van Den Oord et al. 2017]. These sequences are then
+aligned to serve as a guiding signal for the motion generator. The
+path determines the total number of frames, and the guide provides
+per-pose initialization, reducing ambiguity during generation. As a
+result, graph-based approach enables automatic motion stitching
+across a wide range of motion types.
+Our contributions are summarized as follows:
+• We propose a neural motion stitching method that gener-
+ates variable-length transitions by accounting for structural
+differences between input motions, thereby extending the
+range of motions that stitching methods can handle.
+• The proposed pathfinding approach traverses on the cluster
+transition graph to implicitly estimate appropriate transition
+lengths and obtains a guide that disambiguates the motion
+generation process.
+• The proposed motion generator effectively synthesizes smooth
+transitions and also predicts the root destination required to
+seamlessly align the second motion after transition frames.
+2
+Related Work
+2.1
+Motion Stitching
+One of the most common techniques for connecting two distinct
+motions is to interpolate poses at the boundary. Owing to their sim-
+plicity and efficiency, such approaches have been widely adopted in
+practical animation systems. A representative example is Inertializa-
+tion Blending (IB) [Bollo 2018], which interpolates the displacement
+between the last pose of the first motion and the first pose of the
+second motion. The scaled delta values are then applied to the sub-
+sequent poses during the blending interval given by the user.
+In addition to obtaining transition poses, determining an appro-
+priate transition length is known to be important in generating
+naturally connected motion. Wang et al. [2008] highlighted that
+overly short blend durations result in abrupt changes in velocity,
+while overly long durations smooth out high-frequency details. They
+showed how blend lengths can be computed using geodesic distance
+or joint velocity. We similarly emphasize the importance of transi-
+tion length; however, instead of explicitly calculating the duration
+in seconds, we estimate the transition length indirectly through
+graph traversal.
+Several methods also explore variable-length transitions instead
+of directly computing transition time. Li et al. [2008] introduced
+elastic L-score based on pose-wise features and minimized the score
+to insert an adequate number of intermediate frames. Similarly,
+Koyama et al. [2019] proposed inserting a "one-hop" sequence of
+poses between motions, which is chosen based on per-pose features.
+Our approach generalizes this idea by inserting multiple motion
+clips between the input motions using a cluster transition graph,
+thereby accommodating a wider range of motion types.
+
+
+Length-varying Neural Motion Stitching via Cluster Transition Graph
+•
+3
+In learning-based approaches, Kim et al. [2023] proposed the
+Recurrent Motion Refiner (RMR) that utilizes an RNN to generate
+smooth transitions. Their method focuses solely on locomotion data
+based on KNN-based data pair generation. In contrast, we aim to
+incorporate complex movements by building clusters out of a large
+motion dataset and obtaining variable-length transitions that adapt
+to diverse input motion pairs.
+2.2
+Motion Quantization
+Motion quantization via VQ-VAE has primarily been used to bridge
+motion with other domains such as text and control signals. Text-
+to-motion research adopts VQ-VAE to tokenize motion data and
+associate them with text. Using this discrete motion representation,
+neural networks are trained to generate token sequences either
+autoregressively [Guo et al. 2022b; Jiang et al. 2023; Lu et al. 2025;
+Zhang et al. 2023] or through masked modeling [Guo et al. 2024;
+Pinyoanuntapong et al. 2024]. On the other hand, Starke et al. [2024]
+used a codebook to align control signals with future motion, and Li
+et al. [2024] proposed a shared codebook for heterogeneous motion
+datasets with different character morphologies.
+Unlike prior work, we use quantization for motion clustering,
+inspired by Cho et al. [2021]. Cho et al. [2021] applied VQ-VAE to
+cluster motion data into a finite set of groups, thereby reducing the
+action space in a deep reinforcement learning framework. Similarly,
+our purpose of using VQ-VAE is to group short motion segments
+into a finite number of clusters. This allows large motion datasets to
+be abstracted into discrete motion states and represented as a graph
+without manual labeling.
+2.3
+Graph-based Motion Synthesis
+Graph-based motion synthesis has been extensively studied in the
+field of character animation. These approaches typically begin by
+constructing a graph structure from a given motion dataset. New mo-
+tion sequences are then synthesized by traversing the graph, guided
+by user constraints or cost functions. Many existing methods com-
+puted pairwise distances between all possible pose combinations in
+the database to identify natural transition points [Heck and Gleicher
+2007; Kovar et al. 2002; Lee et al. 2002; Peng et al. 2007; Ren et al.
+2010; Safonova and Hodgins 2007]. In contrast, we represent each
+cluster of motion blocks as a single node and connect nodes based
+on whether a valid transition exists between clusters.
+Several approaches avoid explicit computation of pose-to-pose
+distances when constructing motion graphs. Min et al. [2012] man-
+ually annotated a few example motions and then identified similar
+keyframes across the dataset to divide sequences into groups of
+motion segments. Likewise, Tao et al. [2023] manually divided the
+motion dataset and trained a separate mixture-of-experts model for
+each group. In contrast to these manually organized datasets, we
+aim to support a broad spectrum of motions by grouping motion
+blocks in an unsupervised fashion, using a variant of VQ-VAE as a
+clustering framework.
+2.4
+Motion In-betweening
+In terms of connecting two different frames, motion in-betweening
+methods can be applied to a motion stitching task. Early works such
+as Harvey et al. [2020] utilized an RNN to synthesize in-between
+frames. Their model encoded the first 10 context frames, a target
+keyframe, and pose offsets to predict in-between poses. This ap-
+proach was further extended by combining a Variational Autoen-
+coder [Tang et al. 2022] and style embeddings [Tang et al. 2023].
+To mitigate error accumulation inherent in autoregressive mod-
+els, several studies have employed Transformer-based architectures,
+predicting the entire motion sequence at once. Kim et al. [2022]
+enhanced controllability by including an anchor pose and semantic
+embeddings. Qin et al. [2022] and Hong et al. [2024] proposed a two-
+stage Transformer framework, where the first network produces
+coarse pose estimates and the second refines them into detailed mo-
+tion. Oreshkin et al. [2023] presented the Delta-interpolator, which
+predicts delta motion vectors to be applied to interpolated poses.
+Akhoundi et al. [2025] investigated effective data representation
+for the motion in-betweening task. They showed that selecting an
+appropriate motion format can lead to comparable performance
+to recent methods, even with a simple Transformer encoder archi-
+tecture. Our motion generator shares similarities with the model
+proposed by Akhoundi et al. [2025]. Instead of setting all in-between
+frames as zero, we integrate guide information derived from the
+result of our pathfinding module. This enables our model to produce
+transitions across a diverse set of motion types while maintaining
+consistent quality.
+In contrast to methods that utilize dense context frames, several
+approaches adopt a minimal in-betweening setup with only a single
+context frame and a target frame. He et al. [2022] proposed neural
+motion fields that generate poses conditioned on time, supporting
+both sparse and dense context frames. Starke et al. [2023] and Chu
+and Yang [2024] generated poses autoregressively using a mixture-
+of-experts architecture, and Agrawal et al. [2024] employed skeletal
+Transformer layers. In parallel, diffusion-based methods have been
+widely explored for controllable motion synthesis under joint con-
+straints [Bae et al. 2025; Dai et al. 2024; Karunratanakul et al. 2023;
+Pinyoanuntapong et al. 2025; Tevet et al. 2023; Xie et al. 2023]. Cohan
+et al. [2024] incorporated a masking strategy to further specialize
+in the motion in-betweening task.
+To obtain high-quality outputs from motion in-betweening meth-
+ods, it is important to provide a plausible target pose in the world
+frame, along with precise timing that allows the character to reach
+the desired state. Goel et al. [2025] noted the practical difficulty for
+users in supplying intermediate keyframe inputs at precise timings.
+To address this, they proposed learning time warp parameters jointly
+with pose predictions, automatically adjusting the keyframe timing.
+Our approach automatically determines the total motion length and
+the transformation of the second motion, without requiring users
+to specify explicit values.
+3
+Overview
+Our framework connects two input motions M𝐴and M𝐵into an
+output motion Y through three main stages. We assume that each
+input is a raw motion consisting of 𝑇𝑙+ 1 frames, where the addi-
+tional frame is used to compute displacement over 𝑇𝑙frames. Both
+inputs are defined in canonical space, approximately aligned with
+the identity transformation in the world frame. Specifically, the
+
+
+4
+•
+Haemin Kim, Junghyun Nam, Seokhyeon Hong, Vanessa Tan, and Junyong Noh
+Fig. 2. System overview. Input motions M𝐴and M𝐵are mapped to cluster ID 𝑘𝐴and 𝑘𝐵through motion clustering. During cluster pathfinding, we run a
+shortest-path algorithm on the cluster transition graph, considering 𝑘𝐴as the start node and 𝑘𝐵as the goal node. Once we obtain the cluster path m, we
+utilize the path and the original input motions to generate final connected motion Y.
+first pose of the sequence faces the forward direction (z-axis) of
+the world frame and the x and z components of its root position
+starts at the origin on the ground plane (xz-plane). As shown in
+Figure 2, we first perform motion clustering to assign each input
+motion to a cluster, mapping M𝐴to cluster ID 𝑘𝐴and M𝐵to 𝑘𝐵.
+A cluster consists of motion blocks, short motion segments of 𝑇𝑙
+frames, which serve as the basic building blocks of motion through-
+out our method. In the cluster pathfinding stage, we employ a cluster
+transition graph where 𝑘𝐴and 𝑘𝐵become the start and goal nodes,
+respectively. A shortest-path algorithm then finds a cluster path
+m = {𝑘1,𝑘2, · · · ,𝑘𝑁𝑚} ∈R𝑁𝑚, where 𝑘1 = 𝑘𝐴and 𝑘𝑁𝑚= 𝑘𝐵, and
+determines the number of motion blocks 𝑁𝑚that constitute the
+entire sequence. During motion generation, we aim to generate only
+the transition frames and then combine them with the original input
+motions. To this end, we use M𝐴, M𝐵, and m as input to the motion
+generator, which produces the final output motion Y with length
+𝑇= 𝑇𝑙· 𝑁𝑚. With all three stages combined, we refer to the overall
+framework as Neural Motion Stitching (NMS).
+Throughout our method, we fix a motion block length based
+on 60 FPS motion data. The minimum transition length is fixed
+to 0.3 seconds following Kovar et al. [2002], and accordingly the
+motion block length becomes𝑇𝑙= 16 frames (≈0.3s), on the premise
+that multiple motion blocks are combined to form long transitions
+between distinct motions. For the skeleton, we define the hip joint as
+the root of the character, and use 𝐽= 22 joints for the full skeleton
+motion generation and 𝐽𝑣𝑞= 9 for VQ-VAE training as shown
+Fig. 3. Joints used in the method. Our basic definition for a skeleton includes
+𝐽= 22 joints with hip joints as the root. For CVQ-VAE, we use 𝐽𝑣𝑞= 9 and
+for adversarial training, we also use the head joint which makes 𝐽𝑣𝑞+1 = 10.
+Fig. 4. Motion clustering. Figure (a) shows CVQ-VAE training process for
+cluster construction. Figure (b) shows the cluster assignment process after
+training.
+in Figure 3. All orientation values used for network training are
+represented in 6D format [Zhou et al. 2019].
+4
+Motion Clustering
+The goal of motion clustering is to categorize given motions M𝐴and
+M𝐵into groups. We first construct motion clusters and then establish
+a method to map new motion blocks to one of the clusters. Inspired
+by Cho et al. [2021], we train Clustering VQ-VAE (CVQ-VAE) [Zheng
+and Vedaldi 2023] to construct motion clusters in an unsupervised
+manner. The CVQ-VAE training process is shown in Figure 4 (a).
+The input motion block S = [s1 s2 . . . s𝑇𝑙] ∈R𝑇𝑙×𝑑𝑠is composed of
+𝑇𝑙pose vectors s𝑡∈R𝑑𝑠, where 𝑑𝑠is the dimension of a pose vector.
+The encoder converts S into a vector z ∈R𝑑𝑐, and it is mapped to the
+nearest code ˆc ∈R𝑑𝑐in the codebook C = {c1, c2, . . . , c𝑁𝑐} ⊂R𝑑𝑐
+in terms of cosine similarity, where 𝑁𝑐is the codebook size and 𝑑𝑐
+is the codebook dimension. Each code represents a unique motion
+cluster, and we refer to these codes as cluster codes. The selected code
+ˆc is then decoded into a motion block ˆS = [ˆs1 ˆs2 . . . ˆs𝑇𝑙] ∈R𝑇𝑙×𝑑𝑠.
+We define this decoded sequence as a cluster clip, which serves as
+the representative sequence for the corresponding cluster.
+
+
+Length-varying Neural Motion Stitching via Cluster Transition Graph
+•
+5
+As illustrated in Figure 4 (b), the cluster ID for a new motion is
+assigned using the trained CVQ-VAE. We adopt a candidate-based
+approach with root position comparison to reduce the risk of out-
+liers and prevent false edge connections during graph construction.
+First, we convert the representation of the given motion M𝐴into S𝐴
+and encode it to z𝐴. The top 𝑛candidate codes ˆc𝑎1, ˆc𝑎2, . . . , ˆc𝑎𝑛are re-
+trieved according to their cosine similarity to z𝐴, where 𝑎1,𝑎2, . . . ,𝑎𝑛
+are the candidate cluster IDs. We decode all candidate codes and ac-
+quire corresponding cluster clips, ˆS𝑎1, ˆS𝑎2, . . . , ˆS𝑎𝑛. The final cluster
+ID 𝑘𝐴is selected from the candidate cluster IDs by comparing the
+root position between the cluster clips and S𝐴. We set the number of
+candidate to 𝑛= 3 in all of our experiments. The assignment process
+is repeated with M𝐵to obtain its cluster ID, 𝑘𝐵. For more details on
+cluster assignment, please refer to Section A of the supplementary
+material.
+The number of clusters 𝑁𝑘equals the number of codes selected
+during cluster assignment. It is heavily affected by the codebook
+size 𝑁𝑐, as we adopt the online reinitialization technique suggested
+by Zheng and Vedaldi [2023] during training to maximize codebook
+usage and improve reconstruction quality. In our implementation,
+we use 𝑁𝑐= 2048, achieving 100% codebook utilization. Thus, the
+total number of clusters is 𝑁𝑘= 𝑁𝑐= 2048.
+4.1
+Cluster Construction
+4.1.1
+Data preprocessing. We prepare a training dataset for CVQ-
+VAE using 𝐽𝑣𝑞key joints that play a critical role in visually distin-
+guishing motions. We segment the motion capture sequences into
+clips of𝑇𝑙+1 frames, sliding the window forward by𝑇𝑙/2. Instead of
+using the segmented clips directly, we curate the important features
+and convert them to motion blocks S. Each pose vector s𝑡at frame 𝑡
+is defined as follows:
+s𝑡= {𝑟ℎ
+𝑡, r𝑞
+𝑡, rΔ𝑝
+𝑡, rΔ𝑞
+𝑡, j𝑝𝑟𝑒𝑙
+𝑡
+, jΔ𝑝
+𝑡} ∈R𝑑𝑠
+where 𝑟ℎ
+𝑡is the root height, r𝑞
+𝑡∈R6 is the root orientation, rΔ𝑝
+𝑡
+∈R3
+is the root translational displacement, rΔ𝑞
+𝑡
+∈R6 is the root angular
+displacement, j𝑝𝑟𝑒𝑙
+𝑡
+∈R3𝐽𝑣𝑞is the root-relative joint position, and
+jΔ𝑝
+𝑡
+∈R3𝐽𝑣𝑞is the joint translational displacement. As shown in
+Figure 3, we pick a subset of joints by following Cho et al. [2021]
+and add knee joints to help distinguish actions such as crawling and
+rolling on the ground, resulting in 𝐽𝑣𝑞= 9. We compute translational
+displacement by subtracting the joint’s world position at frame 𝑡
+from its position at frame 𝑡+ 1, and angular displacement by taking
+the relative rotation from frame 𝑡to 𝑡+ 1.
+4.1.2
+Network architecture. We utilize a simple autoencoder archi-
+tecture based on convolutional layers. The encoder compresses the
+time dimension of the input S to𝑇𝑙/4 through nine 1D convolutional
+layers with residual connections. The compressed tensor is flattened
+into a one-dimensional vector and passed through two linear layers,
+producing a vector z. We use cosine distance to find the closest vec-
+tor ˆc of dimension 𝑑𝑐= 64 in the codebook C. The selected vector
+ˆc is passed through two linear layers again, and fed into a decoder
+with an architecture symmetric to the encoder, reconstructing it
+into a sequence ˆS.
+4.1.3
+Loss function. Our loss function for training CVQ-VAE is as
+follows:
+L𝑐𝑙𝑢𝑠𝑡𝑒𝑟= 𝜆𝑟𝑒𝑐𝑜𝑛L𝑟𝑒𝑐𝑜𝑛+ 𝜆𝑝𝑜𝑠L𝑝𝑜𝑠
++ 𝜆𝑣𝑞L𝑣𝑞+ 𝜆𝑐𝑜𝑛𝑡𝑟𝑎𝑠L𝑐𝑜𝑛𝑡𝑟𝑎𝑠,
+where 𝜆𝑟𝑒𝑐𝑜𝑛, 𝜆𝑝𝑜𝑠, 𝜆𝑣𝑞, and 𝜆𝑐𝑜𝑛𝑡𝑟𝑎𝑠controls the scale of each loss
+and set to 0.01, 1.5, 1.0, 1.0, respectively.
+The reconstruction loss L𝑟𝑒𝑐𝑜𝑛computes the mean squared error
+between poses in the input S and those in the output ˆS:
+L𝑟𝑒𝑐𝑜𝑛= 1
+𝑇𝑙
+𝑇𝑙
+∑︁
+𝑡=1
+∥s𝑡−ˆs𝑡∥2
+2,
+where each features are normalized with mean and standard devia-
+tion of each channel.
+Additionally, we compute the position loss L𝑝𝑜𝑠in the original
+data distribution to capture movement in the world frame:
+L𝑝𝑜𝑠= 1
+𝑇𝑙
+𝑇𝑙
+∑︁
+𝑡=1
+∥T𝑡j𝑝𝑟𝑒𝑙
+𝑡
+−ˆT𝑡ˆj𝑝𝑟𝑒𝑙
+𝑡
+∥2
+2,
+where T𝑡is the root transformation reconstructed from 𝑟ℎ
+𝑡, rΔ𝑝
+𝑡, and
+r𝑞
+𝑡. We multiply T𝑡to j𝑝𝑟𝑒𝑙
+𝑡
+to obtain the joint’s world position, and
+compute the mean squared error between the world joint positions
+in the input S and the output ˆS.
+The vector quantization loss L𝑣𝑞encourages encoder outputs
+and codebook codes to move toward each other [Van Den Oord et al.
+2017]:
+L𝑣𝑞= ∥𝑠𝑔[z] −ˆc∥2
+2 + 𝛽∥z −𝑠𝑔[ˆc]∥2
+2,
+where 𝑠𝑔[·] denotes the stop-gradient operator and 𝛽is a weighting
+factor set to 0.25 following Van Den Oord et al. [2017].
+We also adopt the contrastive loss L𝑐𝑜𝑛𝑡𝑟𝑎𝑠to promote code spar-
+sity and distinct clusters [Zheng and Vedaldi 2023]:
+L𝑐𝑜𝑛𝑡𝑟𝑎𝑠= −1
+𝑁𝑐
+𝑁𝑐
+∑︁
+𝑖=1
+log
+𝑒𝑠𝑖𝑚(c𝑖,z+
+𝑖)/𝜏
+𝑒𝑠𝑖𝑚(c𝑖,z+
+𝑖)/𝜏+ Í𝑁𝑛𝑒𝑔
+𝑗=1 𝑒𝑠𝑖𝑚(c𝑖,z−
+𝑗)/𝜏
+where 𝑠𝑖𝑚(·) denotes cosine similarity, 𝑁𝑛𝑒𝑔is the number of nega-
+tive samples in a training batch, and 𝜏is the temperature parameter
+set to 0.07. For each cluster code 𝑐𝑖, we treat the closest latent vector
+z+
+𝑖in the batch as the positive sample and the bottom 50% of the
+latent vectors with the lowest similarity as negative samples.
+5
+Cluster Pathfinding
+5.1
+Graph Construction
+The objective of cluster pathfinding is to acquire a cluster path m
+that specifies cluster clips to be inserted between the two input
+motions M𝐴and M𝐵. To this end, we first construct the cluster
+transition graph, a directed graph in which each node represents a
+cluster and each edge denotes a valid transition between the clusters.
+We build this graph by sliding a window across the motion capture
+sequences, assigning a cluster to each window, and defining edges
+between consecutive clusters. For example, as described in Figure 5
+(a), we assign a cluster 𝑘𝑢to a block in the motion capture sequence,
+slide the window forward without overlapping, and assign a cluster
+𝑘𝑣to the next block. Because these two blocks are adjacent in the
+motion capture sequence, we define a directed edge from cluster 𝑘𝑢
+
+
+6
+•
+Haemin Kim, Junghyun Nam, Seokhyeon Hong, Vanessa Tan, and Junyong Noh
+Fig. 5. Cluster pathfinding. Figure (a) visualizes how edge is defined in the
+cluster transition graph. Figure (b) shows the result of pathfinding algorithm.
+The yellow arrows indicate selected edges for the shortest path.
+to 𝑘𝑣. By connecting these two clusters, we assume that there exists
+a plausible transition from 𝑘𝑢to 𝑘𝑣. Repeating this process across
+all training sequences yields a directed graph with 𝑁𝑘nodes.
+5.2
+Graph Traversal
+We apply the A* search algorithm to the graph and find the shortest
+cluster path m consisting of 𝑁𝑚nodes, which starts at node 𝑘𝐴and
+ends at node𝑘𝐵as illustrated in Figure 5 (b). This process finds 𝑁𝑚−2
+nodes that will be inserted between the two inputs, which in turn
+determine the length of the final motion. Because edges in the graph
+are constructed only between clusters with valid transitions, any
+path corresponds to a sequence of natural motion blocks. Therefore,
+the shortest path is the minimal sequence of such blocks connecting
+the start and goal nodes, instead of the shortest geometric distance in
+joint space. We choose this path to avoid unnecessary intermediate
+motion states. For instance, given two walking motions, a natural
+expectation is a walking-to-walking transition instead of passing
+through states such as sitting or running. This formulation ensures
+that the generated transitions remain consistent with the input
+motions.
+The A* algorithm selects a path that minimizes:
+𝑓(𝑘𝑢) = 𝑔(𝑘𝑢) + ℎ(𝑘𝑢),
+where 𝑘𝑢is the next node on the path, 𝑔(𝑘𝑢) is the accumulated
+cost along the edges from the start node 𝑘𝐴to 𝑘𝑢, and ℎ(𝑘𝑢) is a
+heuristic function that estimates the cost from 𝑘𝑢to the goal node,
+𝑘𝐵.
+To compute 𝑔(𝑘𝑢), we define a cost function for each edge that
+accounts for the distance between the connected nodes in the latent
+space and the pose difference in motion space. For each edge (𝑘𝑢,𝑘𝑣),
+the cost 𝑑is defined as:
+𝑑(𝑘𝑢,𝑘𝑣) = 𝜆𝑐𝑜𝑑𝑒𝑑𝑐𝑜𝑑𝑒(c𝑘𝑢, c𝑘𝑣) + 𝜆𝑏𝑛𝑑𝑑𝑏𝑛𝑑(ˆs𝑘𝑢,𝑇𝑙, ˆs𝑘𝑣,1),
+(1)
+where c𝑘𝑢and c𝑘𝑣are the respective cluster codes, ˆS𝑘𝑢
+=
+[ˆs𝑘𝑢,1 ˆs𝑘𝑢,2 . . . ˆs𝑘𝑢,𝑇𝑙] and ˆS𝑘𝑣= [ˆs𝑘𝑣,1 ˆs𝑘𝑣,2 . . . ˆs𝑘𝑣,𝑇𝑙] are the clus-
+ter clips with 𝑇𝑙frames. The first term with 𝑑𝑐𝑜𝑑𝑒captures dissimi-
+larity between the two clusters in the latent space by measuring the
+cosine distance between the cluster codes. The second term with
+𝑑𝑏𝑛𝑑evaluates the cost of transitioning at the boundary, measur-
+ing the root difference between the last pose of ˆS𝑘𝑢and the first
+pose of ˆS𝑘𝑣. The weights 𝜆𝑐𝑜𝑑𝑒and 𝜆𝑏𝑛𝑑control the relative impor-
+tance of these terms and we set 𝜆𝑐𝑜𝑑𝑒= 0.2 and 𝜆𝑏𝑛𝑑= 1.0 in our
+implementation.
+The heuristic ℎ(𝑘𝑢) is defined in the same manner, but compares
+𝑘𝑢and the goal node 𝑘𝐵as follows:
+ℎ(𝑘𝑢) = 𝜆𝑐𝑜𝑑𝑒𝑑𝑐𝑜𝑑𝑒(c𝑘𝑢, c𝑘𝐵) + 𝜆𝑏𝑛𝑑𝑑𝑏𝑛𝑑(ˆs𝑘𝑢,𝑇𝑙, ˆs𝑘𝐵,1),
+(2)
+where c𝑘𝐵is the cluster code of the goal node, and ˆS𝑘𝐵
+=
+[ˆs𝑘𝐵,1 ˆs𝑘𝐵,2 . . . ˆs𝑘𝐵,𝑇𝑙] is its cluster clip. The 𝜆𝑐𝑜𝑑𝑒and 𝜆𝑏𝑛𝑑are the
+weights for each term and take the same values as in Equation 1.
+Inspired by Lee et al. [2002], we define 𝑑𝑏𝑛𝑑using the root fea-
+tures from the cluster clips. Given two boundary poses ˆs𝑘𝑢,𝑇𝑙and
+ˆs𝑘𝑣,1, we measure differences in root height, root orientation, root
+translational displacement, and root angular displacement:
+𝑑𝑏𝑛𝑑(ˆs𝑘𝑢,𝑇𝑙, ˆs𝑘𝑣,1) = 𝜆ℎ∥𝑟ℎ
+𝑘𝑣,1 −𝑟ℎ
+𝑘𝑢,𝑇𝑙∥2
++ 𝜆𝑞∥log(R𝑞
+𝑘𝑣,1(R𝑞
+𝑘𝑢,𝑇𝑙)−1)∥2
++ 𝜆Δ𝑝∥rΔ𝑝
+𝑘𝑣,1 −rΔ𝑝
+𝑘𝑢,𝑇𝑙∥2
++ 𝜆Δ𝑞∥log(RΔ𝑞
+𝑘𝑣,1(RΔ𝑞
+𝑘𝑢,𝑇𝑙)−1)∥2.
+(3)
+Here, R𝑞is the root orientation matrix converted from r𝑞, and
+RΔ𝑞is the root angular displacement matrix converted from rΔ𝑞.
+We only use the root features in 𝑑𝑏𝑛𝑑, because the root motion has
+the most significant impact on achieving natural results. For the
+weights, we set 𝜆ℎ= 1.0, 𝜆𝑞= 1.0, 𝜆Δ𝑝= 0.5, and 𝜆Δ𝑞= 0.5 in our
+implementation.
+6
+Motion Generation
+Motion generation produces the final connected motion based on
+the two inputs and the cluster path. As shown in Figure 6, the
+inputs M𝐴, M𝐵, and m are preprocessed to form the input U ∈
+R𝑇×(𝑑𝑥+𝑑𝑠), where 𝑇is the number of frames in the final sequence
+and 𝑑𝑥+ 𝑑𝑠is the dimension of each frame vector. The sequence U
+includes X𝐴∈R𝑇𝑙×𝑑𝑥and X𝐵∈R𝑇𝑙×𝑑𝑥, where each input motion
+M𝐴and M𝐵is represented as 𝑇𝑙pose vectors x ∈R𝑑𝑥. These pose
+Fig. 6. Motion generation. The input motions M𝐴and M𝐵and the cluster
+path m are processed to construct the network input U. The preprocessed
+sequence U is then provided to the Transformer encoder, and outputs tran-
+sition poses Y𝑡𝑓and the root destination vector f. Lastly, the original input
+motions and the output are combined to produce the connected result Y.
+
+
+Length-varying Neural Motion Stitching via Cluster Transition Graph
+•
+7
+vectors encompass the orientations of all 𝐽joints, resulting in a total
+dimensionality of 𝑑𝑥per pose. A Transformer encoder receives U
+and outputs a sequence of the same length, from which we extract
+only the transition frames Y𝑡𝑓in the range𝑇𝑙+1 ≤𝑡≤𝑇−𝑇𝑙. We also
+predict the root destination vector f = {𝑟ℎ
+𝑇𝑑𝑒𝑠𝑡, r𝑞
+𝑇𝑑𝑒𝑠𝑡, rΔ𝑝
+𝑇𝑑𝑒𝑠𝑡, rΔ𝑞
+𝑇𝑑𝑒𝑠𝑡} ∈
+R16, where𝑇𝑑𝑒𝑠𝑡= 𝑇−𝑇𝑙+1. To assemble the final motion Y ∈R𝑇×𝑑𝑥,
+we transform and concatenate X𝐴and X𝐵with Y𝑡𝑓. We convert f
+to a transformation matrix and match the first root of X𝐵to this
+transformation to obtain X′′
+𝐵. Finally, we concatenate X𝐴, Y𝑡𝑓, and
+X′′
+𝐵to obtain the connected motion Y.
+6.1
+Data Preprocessing
+6.1.1
+Data format. To generate the final motion that includes all 𝐽
+joints and their orientations, we incorporate a data format different
+from that used in the motion clustering stage. We define a motion X
+as a sequence of pose vectors x𝑡, where 𝑡indicates the frame index.
+Then, each pose vector is defined as follows:
+x𝑡= {𝑟ℎ
+𝑡, r𝑞
+𝑡, rΔ𝑝
+𝑡, rΔ𝑞
+𝑡, j𝑞𝑟𝑒𝑙
+𝑡
+} ∈R𝑑𝑥
+where j𝑞𝑟𝑒𝑙
+𝑡
+∈R6𝐽is a root-relative joint orientation following
+Akhoundi et al. [2025]. We use this full joint representation for
+X𝐴, X𝐵, Y𝑡𝑓and final output Y.
+6.1.2
+Input processing. As shown in Figure 7, we utilize the raw
+input motions M𝐴and M𝐵, and a cluster path m to form the network
+input U. To acquire U, we prepare two sequences: a guide S𝑔and
+a target X𝑡𝑔𝑡. The guide S𝑔supplies the first draft of intermediate
+poses to the motion generator with information about 𝐽𝑣𝑞joints. It
+is obtained by combining cluster clips corresponding to each node
+in the path. Specifically, as shown in the "Guide processing" section
+of Figure 7, the codes c𝑘2, . . . , c𝑘𝑁𝑚−1 are decoded into 𝑁𝑚−2 clus-
+ter clips, ˆS𝑘2, . . . , ˆS𝑘𝑁𝑚−1. We also represent M𝐴and M𝐵as S𝐴and
+S𝐵, respectively, matching the representation used for cluster clips.
+Then, we align each block to the last root of the previous block, and
+concatenate them into a sequence in the order: S𝐴, ˆS′
+𝑘2, . . . , ˆS′
+𝑘𝑁𝑚−1,
+S′
+𝐵. Here, we define motion alignment as translating a motion on the
+ground plane and rotating it around the up-axis to closely match the
+given transformation. The resulting sequence forms the guide S𝑔,
+whose length determines the final sequence length 𝑇. The accumu-
+lated root transformation at frame 𝑇𝑑𝑒𝑠𝑡acts as the initial estimate
+of the first root transformation of X𝐵in the final connected motion.
+The target X𝑡𝑔𝑡provides high-resolution motion data in the target
+skeleton with 𝐽joints, which improves the training convergence of
+the motion generator. The construction of the target is illustrated
+in the "Target processing" section of Figure 7. To construct X𝑡𝑔𝑡, we
+convert M𝐴and M𝐵into X𝐴and X𝐵, respectively, while keeping
+X𝐴intact and setting the following transition frames to zero. The
+root transformation at 𝑇𝑑𝑒𝑠𝑡is then copied from the guide S𝑔, to
+align X𝐵to this transformation to obtain X′
+𝐵. The aligned sequence
+is then concatenated after the zeroed transition frames to complete
+the target. As a final step, X𝑡𝑔𝑡and S𝑔are concatenated along the
+feature dimension to produce the network input U = [X𝑡𝑔𝑡S𝑔]. For
+more details on input processing, please refer to Section B of the
+supplementary material.
+Fig. 7. Input processing for motion generation. The first section describes
+guide processing, and the second shows target processing. The arrow con-
+necting the first and second sections indicates that the root transformation
+at frame 𝑇𝑑𝑒𝑠𝑡in the guide is copied to translate and rotate X𝐵.
+6.1.3
+Training dataset. For training, we generate variable-length
+data pairs from motion capture sequences. Each motion capture se-
+quence is segmented to clips of 𝑚motion blocks, which become our
+ground truth data for the motion generator. In our implementation,
+we obtained varying lengths of motions by using 3 ≤𝑚≤8 and
+applying a sliding window with stride 3 · 𝑇𝑙/2. To create the paired
+input, we directly utilize ground truth instead of employing cluster
+pathfinding. We split the ground truth into blocks, assign each block
+to a cluster, and then compose the guide and target sequences as
+described in Section 6.1.2. This approach enables the network to
+learn motion generation of varying lengths in a supervised manner.
+6.2
+Motion Generator
+Our motion generator is a single Transformer encoder that receives
+input U and outputs transition frames Y𝑡𝑓and the root destina-
+tion vector f. The given frames are first projected to a latent space
+
+
+8
+•
+Haemin Kim, Junghyun Nam, Seokhyeon Hong, Vanessa Tan, and Junyong Noh
+Fig. 8. Data input to discriminator. From the output sequence Y, function
+𝜙extracts only the translational displacement. The dotted lines indicate
+the boundaries between blocks and the red boxes denote newly segmented
+motion blocks that serve as inputs to the discriminator 𝐷.
+through a linear layer and then processed by the Transformer en-
+coder. The encoder follows the architecture of Vaswani et al. [2017],
+consisting of multi-head attention and feed-forward layers. It is com-
+posed of six Transformer encoder layers, with 8 heads and a hidden
+dimension of 512. We adopt relative positional encoding [Huang
+et al. 2019] without using absolute positional encoding, following
+prior work [Akhoundi et al. 2025; Hong et al. 2024; Qin et al. 2022].
+This allows the network to handle input sequences longer than the
+training samples.
+6.2.1
+Adversarial training. Inspired by Harvey et al. [2020], we em-
+ploy adversarial training for the motion generator. The discriminator
+𝐷has two goals: (i) reducing popping artifacts at block boundaries
+and (ii) alleviating foot sliding across the generated sequence. The
+input given to 𝐷is illustrated in Figure 8. Given an output Y, we
+compute the translational displacement of the head and 𝐽𝑣𝑞joints,
+through the function 𝜙. Then we newly segment the sequence into
+blocks, including the boundary frames that originate from the data
+preprocessing stage. We stack the segmented blocks together in a
+batch, and provide it to the discriminator. The network is composed
+of three 1D convolutional layers to compress the temporal dimen-
+sion, and two linear layers to produce the scores that discriminate
+between generated and ground-truth blocks. The scores across all
+blocks in a batch are averaged to yield the discriminator output.
+6.2.2
+Loss function. The total loss function for the motion genera-
+tor is defined as follows:
+L𝑔𝑒𝑛= 𝜆𝑡𝑟𝑎𝑛𝑠L𝑡𝑟𝑎𝑛𝑠+ 𝜆𝑓𝑘L𝑓𝑘
++ 𝜆𝑑𝑒𝑠𝑡L𝑑𝑒𝑠𝑡+ 𝜆𝑎𝑑𝑣L𝑎𝑑𝑣,
+where 𝜆𝑡𝑟𝑎𝑛𝑠, 𝜆𝑓𝑘, 𝜆𝑑𝑒𝑠𝑡, and 𝜆𝑎𝑑𝑣are the weights that control the
+effect of each loss term. In the following paragraphs, we use e to
+denote ground truth values.
+The transition loss compares the output transition poses with
+those of paired ground truth:
+L𝑡𝑟𝑎𝑛𝑠=
+1
+𝑇−2𝑇𝑙
+𝑇−𝑇𝑙
+∑︁
+𝑡=𝑇𝑙+1
+∥x𝑡−˜x𝑡∥1,
+where we only compute for transition frames in the range [𝑇𝑙+
+1,𝑇−𝑇𝑙].
+The forward kinematics (FK) loss compute the joint position
+difference in the world frame:
+L𝑓𝑘=
+1
+𝑇−2𝑇𝑙
+𝑇−𝑇𝑙
+∑︁
+𝑡=𝑇𝑙+1
+∥𝐹𝐾(T𝑡, j𝑞𝑟𝑒𝑙
+𝑡
+) −𝐹𝐾( ˜T𝑡, ˜j𝑞𝑟𝑒𝑙
+𝑡
+)∥1,
+where 𝐹𝐾(·) represents the process of converting root relative joint
+orientations j𝑞𝑟𝑒𝑙
+𝑡
+to parent relative orientations, and computing
+forward kinematics with the reconstructed root transformation T𝑡.
+The destination loss supervises the network to predict the root
+transformation at 𝑇𝑑𝑒𝑠𝑡by comparing f with the ground truth value:
+L𝑑𝑒𝑠𝑡= ∥f −˜f∥1.
+As explained in Section 6.2.1, we employ the loss terms from
+Least Square Generative Adversarial Network (LSGAN) [Mao et al.
+2017]. For the generator, we use:
+L𝑎𝑑𝑣= 1
+2EU∼𝑝U [(𝐷(𝜙(𝐺(U))) −1)2],
+where 𝐺denotes the Transformer that generates motion. Accord-
+ingly, the loss for the discriminator is as follows:
+L𝑑𝑖𝑠𝑐=1
+2E ˜Y∼𝑝Y [(𝐷(𝜙( ˜Y)) −1)2] + 1
+2EU∼𝑝U [𝐷(𝜙(𝐺(U)))2]
++ 𝜆𝑅1E ˜Y∼𝑝Y
+∇Y𝑑𝐷(Y𝑑)|Y𝑑=𝜙( ˜Y)
+
+2
+2
+
+.
+The last term is the R1 regularization to stabilize GAN training
+[Mescheder et al. 2018], where gradient is computed with respect to
+Y𝑑, a sequence of translational displacement converted from ground
+truth ˜Y. For all the motion generator losses, we set weights 𝜆𝑡𝑟𝑎𝑛𝑠,
+𝜆𝑓𝑘, 𝜆𝑑𝑒𝑠𝑡, and 𝜆𝑎𝑑𝑣, as 1.0, 1.0, 1.0, and 2.0 respectively. For the
+discriminator, we use 𝜆𝑅1 = 10.0.
+7
+Experiments
+In this section, we present motion stitching results, an ablation
+study, a scalability evaluation, and comparisons with prior methods.
+For all experiments, we use our framework trained on LAFAN1
+dataset [Harvey et al. 2020]. We excluded sequences with obstacles
+and mirrored the remaining sequences for data augmentation. Fol-
+lowing Harvey et al. [2020], Subject 5 is used for validation and
+the others for training. In visualized results, blue characters denote
+input motions and green characters denote generated transitions,
+and unless otherwise stated, raw output poses are visualized every 8
+frames. Further implementation details are provided in the Section
+C of the supplementary material.
+7.1
+Motion Stitching on Diverse Motions
+We first demonstrate that our method effectively adapts the tran-
+sition length according to the given motion pair. As presented in
+Figure 9, the character progresses through meaningful intermediate
+motions, such as preparing for a jump or stepping before lifting
+the body. These results show that our method reaches the second
+motion through natural movements when given distinct motions as
+input.
+Our method also adapts the transition length based on foot phase.
+As illustrated in Figure 10, we compared two cases where the first
+input motion is identical but the second differs in foot phase. When
+
+
+Length-varying Neural Motion Stitching via Cluster Transition Graph
+•
+9
+Fig. 9. Motion stitching results on distinct motions. The total number of
+frames of output Y is given below each result.
+Fig. 10. Stitching motions with difference foot phases. The first input motion
+is identical in both test cases. The red boxes mark the first footstep of the
+second input motion in each case.
+the second input begins with the left foot in contact (Figure 10 (a)),
+the total length consists of 64 frames, whereas starting with the
+right foot (Figure 10 (b)) yields a longer motion with 80 frames by
+inserting an additional step.
+When the two input clips contain only a single pose, our method
+interprets them as stationary motions with zero root velocity. As
+shown in Figure 11, we compared results obtained using full mo-
+tion block inputs and repeated single-pose inputs. For the latter, the
+boundary poses from the same motion pair are repeated to construct
+the input. While motion block inputs produced quick transitions
+with varying root velocities, the single-pose case caused the charac-
+ter to gradually adjust its joint configurations toward the second
+pose, resulting in a longer transition. Animated results are provided
+in the supplementary video (00:03~01:00).
+7.2
+Motion Stitching on Unseen Motions
+To assess how our method can be generalized to unseen motion
+sequences, we connected motions drawn from different datasets. As
+shown in Figure 12, we tested combinations of sequences from
+Fig. 11. Comparison between the results from motion block and single pose
+inputs.
+LAFAN1, NSM [Starke et al. 2019], Mixamo [Adobe 2025], Ze-
+roEGGS [Ghorbani et al. 2023], Motorica [Alexanderson et al. 2023;
+Valle-Pérez et al. 2021], and 100Style [Mason et al. 2022] without
+additional training. The character successfully performed locomo-
+tive transitions, including slowing down to match a stationary pose
+(Figure 12 (a)), adapting foot placement between walking motions
+(Figure 12 (b,c)), and transitioning from sprinting to jumping (Fig-
+ure 12 (d)). Our method generated natural transitions between dance
+motion and stylized locomotion (Figure 12 (e)), or monologue ges-
+tures (Figure 12 (f)). It further handled motions with rich ground
+contact, a characteristic commonly observed in sports sequences
+(Figure 12 (g)). Animated results are presented in the accompanying
+video (01:03~01:49).
+Overall, our method generated plausible transitions between two
+unseen motions. We attribute this robustness to the use of predefined
+clusters and graph-based length estimation. Each unseen motion is
+mapped to a known cluster, allowing the method to infer a plausible
+transition duration through pathfinding. In addition, the guide input
+consists of cluster clips observed during training. Consequently, the
+input to the motion generator remains consistent with the training
+distribution, enabling stable transition generation.
+7.3
+Transition Direction Control
+We demonstrate the flexibility of our approach through an additional
+experiment on direction control. Because the motion generator is
+conditioned on the guide S𝑔, the generation process can be steered by
+modifying S𝑔without retraining the network. To enable directional
+control, we added a direction control term to both the cost function
+(Equation 1) and the heuristic function (Equation 2) used during
+cluster pathfinding. The control input was defined as a unit vector
+on the ground plane, representing the desired forward direction
+of the motion. For each node visit, the direction control term was
+computed as the cosine distance between the given control input and
+root translational displacement in the world frame, accumulated
+from cluster clips. The accumulated root displacement was also
+projected on the ground to compare the direction. As a result, the
+cluster pathfinding selected nodes that guided the character to move
+in the specified direction.
+Figure 13 presents the results of this experiment. All three exam-
+ples use identical input motions, with control inputs of [0, 0, 1] (for-
+ward), [1, 0, 0] (left), and [−1, 0, 0] (right). As shown in the figure, the
+character successfully follows the specified control directions while
+matching the phase to the second motion. In particular, the second
+and third results exhibit sharp directional turns because the mod-
+ified cluster pathfinding selected direction changing movements.
+These results demonstrate that our framework provides flexibility
+in transition generation by allowing the guide to be adapted using
+information from cluster clips.
+7.4
+Ablation Study
+We conducted an ablation study on the guide input S𝑔and the desti-
+nation loss L𝑑𝑒𝑠𝑡. After training models under different conditions,
+we evaluated them on the motion generation test set using L2P and
+L2Q metric [Harvey et al. 2020], which measure the average L2
+distances of the world positions and quaternions from the ground
+
+
+10
+•
+Haemin Kim, Junghyun Nam, Seokhyeon Hong, Vanessa Tan, and Junyong Noh
+Fig. 12. Motion stitching results on unseen motions. The source dataset of each input motion is indicated below each result, along with the total motion length.
+Fig. 13. Controlling transition direction. Poses are visualized every 16
+frames.
+truth data, respectively. We also provide comparisons of the raw
+generated motions to illustrate the visual impact of each component.
+7.4.1
+Guide input. We evaluated the impact of providing S𝑔as an
+input to the motion generator. For comparison, we trained an addi-
+tional motion generator without S𝑔, using only the target X𝑡𝑔𝑡as
+input. This configuration resembles a motion in-betweening formu-
+lation [Akhoundi et al. 2025], where the model predicts transition
+frames given a set of dense context frames, zeroed out transition
+frames, and the last keyframe. As shown in the first and last rows of
+Table 1, excluding the guide information caused the model to pro-
+duce results that deviated from the ground truth data. This difference
+is also visible in the generated motions, as shown in the accompa-
+nying video (01:50~02:28). Without direct initialization from S𝑔, the
+character tended to slide when transitioning to the next input mo-
+tion, instead of performing natural intermediate poses. For example,
+the character’s hip remains elevated for an extended period and the
+character rises abruptly without any movement to support its body
+from the ground. These observations suggest that S𝑔helps disam-
+biguate the generation process, effectively guiding the network to
+produce detailed transitions. Additional results on the effect of S𝑔
+are provided in Section D of the supplementary material.
+7.4.2
+Destination loss. We conducted an ablation study on the des-
+tination loss L𝑑𝑒𝑠𝑡to examine its effect on generating smoothly
+connected motion. A motion generator was trained without L𝑑𝑒𝑠𝑡,
+producing only Y𝑡𝑓without the root destination vector f. In this
+case, we aligned X𝐵to the last predicted root of Y𝑡𝑓to obtain the
+final output Y. As shown in the second and the last rows of Table 1,
+our full model achieved results closer to the ground truth compared
+to the model that was trained without the loss. The qualitative com-
+parison is provided in the supplementary video (02:29~03:04). The
+results generated without L𝑑𝑒𝑠𝑡exhibited popping artifacts at the
+second boundary where the generated motion meets the second
+input motion, caused by the discontinuity in the root transformation.
+In contrast, our method produced smooth transitions without such
+artifacts. These findings emphasize the importance of predicting
+the root of the next frame to ensure seamless connections between
+the generated poses and the second input motion.
+7.5
+Scalability
+7.5.1
+Scalability of cluster transition graph. As shown in Table 2,
+we examined the scalability of our cluster transition graph by in-
+creasing the size and diversity of the training dataset. Starting from
+LAFAN1, we progressively added InterAct [Huang et al. 2024] for
+Table 1. Ablation study on guide and destination loss. The best result is
+highlighted in bold.
+Ablation
+L2P ↓
+L2Q ↓
+No S𝑔
+0.567
+0.972
+No L𝑑𝑒𝑠𝑡
+0.442
+0.918
+Ours
+0.436
+0.909
+
+
+Length-varying Neural Motion Stitching via Cluster Transition Graph
+•
+11
+Table 2. Evaluation of graph scalability. L𝑟𝑒𝑐𝑜𝑛denotes the validation reconstruction loss after CVQ-VAE training, and codebook size indicates the number of
+codes used for each dataset. Pathfinding time and graph memory are reported from the graph constructed with each codebook.
+Dataset
+Dataset size
+(hours)
+L𝑟𝑒𝑐𝑜𝑛
+Codebook size
+(dim.)
+Pathfinding time
+(sec)
+Graph memory
+(MB)
+LAFAN1
+6.970 = 6.970
+1.933
+2048
+0.037
+25.213
+LAFAN1 + InterAct
+6.970 + 18.637 = 25.607
+2.297
+4096
+0.074
+82.273
+LAFAN1 + InterAct + 100Style
+6.970 + 18.637 + 44.257 = 69.864
+1.733
+8192
+0.207
+290.952
+single character and the 100Style dataset, and trained CVQ-VAE on
+the combined data with mirrored augmentation. For each dataset
+configuration, we avoided using an excessively large codebook be-
+cause it would reduce the average number of samples per cluster,
+potentially leading to an unbalanced training dataset for the motion
+generator. Instead, we selected the codebook size at which further
+increasing it yielded only marginal improvements in reconstruction
+loss. We then measured the pathfinding time for 1,000 randomly
+sampled start–goal node pairs. We also report the memory usage
+for the graph, which consists of adjacency matrix, cost matrix for
+all possible node pairs, and cluster clips. As presented in the table,
+the required codebook size for similar reconstruction performance
+increased only moderately as the dataset grows, while the other ele-
+ments scaled with the codebook size. This indicates that CVQ-VAE
+effectively summarizes motion data from multiple sources into a
+finite set of codes, keeping the graph size manageable for practical
+use.
+7.5.2
+Utilizing large dataset. Our method can be extended to larger
+datasets than LAFAN1 that are not specifically designed for tran-
+sition generation. As shown in Table 3, we trained a full pipeline
+NMS𝑙𝑎𝑟𝑔𝑒, on a combined dataset of InterAct and 100Style without
+using LAFAN1. Despite the substantial increase in dataset size, the
+codebook size modestly increased. We attribute this to the char-
+acteristics of the datasets, where variation in root movement is
+relatively limited compared to LAFAN1, resulting in a relatively
+compact codebook.
+As demonstrated in Figure 14, NMS𝑙𝑎𝑟𝑔𝑒successfully connects
+different input motions. In each test case, the input pair is drawn
+from InterAct and 100Style, forming an unseen motion combination.
+The model generates realistic transitions from sitting to dinosaur
+walking, and from kicking to shrugging. These results indicate that
+our method can scale to larger datasets and learn effectively from
+combined motion sources.
+Table 3. Dataset used to train NMS𝑙𝑎𝑟𝑔𝑒compared with the original NMS.
+Dataset size in hours, CVQ-VAE reconstruction loss L𝑟𝑒𝑐𝑜𝑛, and the code-
+book size are also reported.
+Method
+Dataset
+Dataset
+size
+L𝑟𝑒𝑐𝑜𝑛
+Codebook
+size
+NMS
+LAFAN1
+6.970
+1.934
+2048
+NMS𝑙𝑎𝑟𝑔𝑒
+InterAct
++ 100Style
+62.894
+1.379
+4096
+7.6
+Comparison
+We compare our method to existing motion stitching methods,
+IB [Bollo 2018] and RMR [Kim et al. 2023], and motion in-
+betweening approaches, RMIB [Harvey et al. 2020], TS [Qin et al.
+2022], NeMF [He et al. 2022], CondMDI [Cohan et al. 2024] and
+SILK [Akhoundi et al. 2025]. The baselines are divided into two
+groups: fixed-length and variable-length methods. By comparing
+with fixed-length methods, we show that generating varying tran-
+sition lengths is crucial to obtain high-quality motion. We further
+compare against variable-length methods that use direct transi-
+tion time estimation and show the effectiveness of using a cluster
+transition graph for transition length estimation. For completeness,
+we provide additional comparisons with another diffusion-based
+architecture in Section E of the supplementary material.
+7.6.1
+Test datasets. We use three test datasets to compare
+our method with the two baseline groups. The first dataset,
+LAFAN1𝑤𝑖𝑡ℎ𝑖𝑛, consists of input pairs extracted within each LAFAN1
+test sequence using the same sliding window size and stride de-
+scribed in Section 6.1.3. We defined the first and last motion blocks
+of 16 frames in a window as the two inputs, resulting in 66, 780
+input pairs. The second dataset, LAFAN1𝑟𝑎𝑛𝑑𝑜𝑚, is constructed by
+sampling motion blocks from different LAFAN1 action categories.
+We first group motion sequences according to their labels, then ran-
+domly select one input block from one category and the other from
+a different category, yielding 10,000 pairs. This dataset evaluates
+how well each method connects distinct motions. The final dataset,
+Mixamo + 100Style, contains pairs where the first input motion is
+sampled from Mixamo and the second from 100Style. This dataset
+evaluates generalization to unseen motion sequences.
+7.6.2
+Baselines. The fixed-length methods include motion stitching
+methods IB and RMR, and motion in-betweening methods with fixed
+total length𝑇. Given the two input motions with 16 frames each, we
+applied each method and obtained connected motion sequences. For
+Fig. 14. Qualitative results of NMS𝑙𝑎𝑟𝑔𝑒.
+
+
+12
+•
+Haemin Kim, Junghyun Nam, Seokhyeon Hong, Vanessa Tan, and Junyong Noh
+Fig. 15. Qualitative comparison with other methods. In this figure, green characters indicate the poses edited or generated by each method. Notable poses in
+each result are highlighted in yellow.
+
+
+Length-varying Neural Motion Stitching via Cluster Transition Graph
+•
+13
+Table 4. Comparison of FID, detail distance, jitter, FS, and GP across different methods. The first row reports results on motion capture sequences. The second
+to seventh rows represent fixed-length methods, and the remaining rows represent variable-length methods. Best scores are shown in bold, and second-best
+scores are underlined.
+LAFAN1𝑤𝑖𝑡ℎ𝑖𝑛
+LAFAN1𝑟𝑎𝑛𝑑𝑜𝑚
+Mixamo + 100Style
+Method
+FID↓
+Detail
+dist.↓
+Jitter↓
+FS↓
+GP↓
+FID↓
+Detail
+dist.↓
+Jitter↓
+FS↓
+GP↓
+FID↓
+Detail
+dist.↓
+Jitter↓
+FS↓
+GP↓
+Mocap
+0.01
+–
+273.38
+0.12
+0.09
+–
+–
+–
+–
+–
+–
+–
+–
+–
+–
+IB
+1.17
+11.85
+920.18
+1.16
+0.11
+9.27
+40.69
+1827.77
+1.80
+0.13
+18.45
+43.95
+1563.18
+1.78
+0.04
+RMR
+1.55
+14.00
+689.36
+0.33
+0.09
+10.34
+46.28
+1875.18
+0.68
+0.20
+20.92
+74.25
+2456.11
+0.94
+0.12
+NeMF
+0.38
+12.85
+1189.86
+0.54
+0.15
+8.29
+22.25
+1488.02
+0.99
+0.22
+15.88
+33.36
+1495.07
+1.37
+0.11
+RMIB + fixed 𝑇
+0.36
+15.42
+1118.32
+0.59
+0.14
+7.97
+15.51
+1492.89
+0.93
+0.22
+19.04
+33.71
+4174.35
+4.69
+0.11
+TS + fixed 𝑇
+0.30
+13.33
+1039.67
+0.27
+0.09
+7.61
+13.66
+1252.96
+0.75
+0.10
+14.02
+26.14
+2676.78
+0.90
+0.05
+CondMDI + fixed 𝑇
+0.58
+7.29
+3797.48
+0.54
+0.09
+8.05
+15.90
+4510.02
+1.14
+0.09
+14.58
+31.56
+5131.86
+1.46
+0.06
+SILK + fixed 𝑇
+0.56
+10.45
+1154.88
+0.85
+0.10
+8.24
+23.57
+1380.73
+1.28
+0.11
+14.30
+28.52
+1354.38
+1.41
+0.05
+RMIB + BC
+0.36
+13.61
+1302.39
+0.77
+0.15
+7.95
+24.78
+1404.16
+0.74
+0.27
+21.81
+45.96
+3179.67
+3.72
+0.22
+TS + BC
+0.34
+11.67
+1235.63
+0.28
+0.09
+7.66
+20.02
+1016.50
+0.44
+0.13
+14.54
+39.79
+1774.01
+0.60
+0.08
+CondMDI + BC
+4.03
+32.22
+10656.29
+1.88
+0.14
+20.61
+58.78
+17456.14
+3.53
+0.22
+30.33
+53.08
+19912.32
+4.12
+0.16
+SILK + BC
+0.44
+8.63
+1284.75
+1.09
+0.10
+7.91
+18.21
+1139.37
+0.97
+0.11
+12.51
+23.26
+1000.23
+0.90
+0.07
+NMS (Ours)
+0.20
+5.18
+382.89
+0.23
+0.09
+7.60
+15.86
+385.00
+0.38
+0.10
+14.26
+26.54
+589.82
+0.52
+0.05
+IB, we aligned the two inputs and blended the poses for 10 frames
+at the boundary, producing a sequence of 32 frames. For RMR, it
+receives aligned inputs and produces a connected motion with the
+same length, generating the entire sequence of 32 frames. For NeMF,
+RMIB, TS, CondMDI and SILK, we generated 32 in-between poses
+and inserted them between the two inputs, producing a motion
+with 𝑇= 64 frames. This fixed length was chosen by computing the
+mean output length of our method across the LAFAN1𝑤𝑖𝑡ℎ𝑖𝑛, and
+selecting the closest supported length. All neural network-based
+methods were trained with training sequences in LAFAN1 with 60
+FPS, and tested on the three datasets without additional training.
+For variable-length methods, we evaluated our method against
+blend length computation (BC) [Wang and Bodenheimer 2008]
+combined with motion in-betweening models. Following Wang
+et al. [2008], the transition duration was computed based on joint
+angular displacement, where the last frame of the first input and
+the first frame of the second input were treated as the start and end
+of the transition, respectively. Using the estimated transition time,
+we approximated the target keyframe and generated poses using
+the motion in-betweening methods. Among the models categorized
+as fixed-length methods, we selected those capable of generating
+variable-length outputs, namely RMIB, TS, CondMDI, and SILK.
+These combined methods produced output motions ranging in total
+length from 33 to 212 frames.
+In the case of motion in-betweening methods, we defined all 16
+frames in the first input as the context frames, and the first frame
+of the second input as the target keyframe. Because we assume that
+both inputs are aligned to the identity transformation in the world
+frame, we estimated the world transformation of the target keyframe
+through a separate process. Given the number of transition frames,
+we interpolated the root translational and angular displacement at
+the last frame of the first input and the first frame of the second input.
+We then accumulated the interpolated displacements to obtain a
+root transformation for the target keyframe.
+7.6.3
+Qualitative comparison. Qualitative comparisons are shown
+in Figure 21. The first sample is from LAFAN1𝑟𝑎𝑛𝑑𝑜𝑚, and the second
+is from the Mixamo + 100Style dataset. Animated comparisons are
+provided in the supplementary video (03:21~04:47). As illustrated
+in the last row, our method generated gradual intermediate poses
+that guided the character to the second input. Among fixed-length
+methods, IB produced abrupt pose changes, and RMR struggled to
+preserve the characteristics of the original input motions. The other
+motion in-betweening methods produced better results than IB and
+RMR by inserting new intermediate poses. However, they tended
+to generate overly smoothed motions for challenging pairs such as
+getting up in Sample (a), and exhibited boundary discontinuities or
+implausible poses for unseen inputs, as shown in Sample (b).
+As shown in the last four rows of Figure 21, combining BC with
+motion in-betweening methods often led to unnatural results. When
+BC underestimated transition time, as in Sample (a), RMIB, TS,
+CondMDI, and SILK generated abrupt pose changes, whereas our
+method allocated sufficient time for the character to get up with
+limbs supporting the body. Even with similar predicted lengths, as
+in Sample (b), our method achieved higher motion fidelity compared
+to the BC-based methods, producing smooth transition for unseen
+input motions without discontinuities.
+7.6.4
+Quantitative comparison. As no ground truth motion exists
+for the shortest transition, we evaluated performance using Frechet
+Inception Distance (FID), motion detail distance, jitter, foot sliding
+(FS), and ground penetration (GP). We computed FID using an RNN-
+based autoencoder [Guo et al. 2024] to measure how closely the
+generated local pose sequences resemble motion capture data. We
+also reported motion detail distance, inspired by motion detail met-
+ric by Starke et al. [2022]. The original metric measures the vividness
+
+
+14
+•
+Haemin Kim, Junghyun Nam, Seokhyeon Hong, Vanessa Tan, and Junyong Noh
+Fig. 16. User study results shown as box plots.
+of generated motions by taking the average of joint rotations per
+second, where higher values indicate greater motion detail. How-
+ever, in our setting, this can overestimate quality for motions that
+move too rapidly within a limited duration. Therefore, we compute
+the Wasserstein distance between the distribution of detail values
+from generated sequences and that of motion capture sequences.
+This penalized both overly static motions and excessively abrupt
+movements, better reflecting overall motion quality. We use jitter [Yi
+et al. 2021], which quantifies motion smoothness by measuring the
+average joint jerk. In our experiments, jitter mainly captures how
+smoothly the generated transition connects the inputs at the bound-
+ary. To evaluate foot-contact quality, we computed FS [Zhang et al.
+2018] and scaled the values by 103. Finally, we computed GP [Lee
+et al. 2023] and reported the values in centimeters. Note that, for ref-
+erence, we included scores from test sequences in LAFAN1 (Mocap)
+when reporting results on LAFAN1𝑤𝑖𝑡ℎ𝑖𝑛.
+The resulting metric scores are reported in Table 7. Among fixed-
+length methods, NeMF, RMIB, TS, CondMDI, and SILK outperformed
+IB and RMR in terms of FID and detail distance on LAFAN1𝑟𝑎𝑛𝑑𝑜𝑚
+and Mixamo + 100Style, indicating their ability to generate plau-
+sible poses. However, these methods exhibited high jitter, which
+we attribute to discontinuities at the boundaries between input and
+generated motions. In particular, TS with fixed 𝑇achieved strong
+FID and detail distance scores but suffered from high jitter. This
+suggests that TS struggles to match boundary poses for unseen
+inputs, which is consistent with the qualitative results presented
+in Figure 21. In contrast, our method achieved the best scores for
+LAFAN1𝑤𝑖𝑡ℎ𝑖𝑛, and significantly lower jitter for LAFAN1𝑟𝑎𝑛𝑑𝑜𝑚and
+Mixamo + 100Style, while maintaining comparable FID and detail
+distance.
+As shown in the last five rows in Table 7, combining BC with mo-
+tion in-betweening methods did not yield significant performance
+improvements. This suggests that BC failed to estimate realistic
+transition lengths required for optimal performance. Our method
+outperformed all BC-based approaches except SILK + BC on Mixamo
++ 100Style. SILK tended to generate motions close to the training dis-
+tribution, producing poses that resemble motion-capture sequences.
+However, such poses do not necessarily yield perceptually natural
+transitions for unseen input motions, as reflected in the jitter, FS, GP,
+and qualitative results. Our method achieved strong performance
+on these criteria. We attribute its overall performance advantage to
+graph-based transition length estimation. By traversing the graph,
+our method implicitly captures the time required for specific move-
+ment patterns, whereas BC estimates the length solely from the
+joint angular displacement at the boundary.
+7.6.5
+User study. We conducted a user study to further evaluate
+the visual quality of the results produced by our method relative to
+fixed-length methods with comparable quantitative performance.
+The study involved 20 participants aged 23 to 36. Participants rated
+their familiarity with character animation on a 7-point scale, where
+the average rating was 4.9, indicating that the participants had
+moderate familiarity with character animation. Then they rated
+the naturalness of the generated motion sequences on a 7-point
+Likert scale across 10 test cases [Zhang et al. 2025]. The test set
+consists of five locomotion scenarios and five challenging cases,
+such as transitions from lying down to jumping. The results shown
+in Figure 19 suggest that our method provides strong visual quality,
+receiving the highest score across methods. This difference is likely
+due to the ability of our approach to produce gradual transitions that
+remain consistent with the input motions. Among the baselines,
+NeMF, TS, and CondMDI attained higher mean scores than the
+others, as they generated more plausible poses on unseen inputs
+than those from IB, RMR, RMIB, and SILK.
+8
+Discussion
+8.1
+Effect of Training Dataset
+Although our method successfully generates gradual transition
+poses, it can still produce popping artifacts at the first boundary
+when the input motions deviate from the training distribution. Em-
+pirically, we found that this is more likely to occur when the char-
+acter begins in relatively rare poses without two-foot support (e.g.
+crawling, kicking, or lying down), or when the input motion orig-
+inates from an unseen dataset. While such artifacts can affect vi-
+sual quality, they can be effectively mitigated through simple post-
+process blending. A comparison of sequences obtained with and
+without postprocessing is provided in the supplementary video
+(04:47~04:55).
+To achieve optimal performance, our method requires high-
+quality motion clusters constructed from training datasets that
+include diverse motion capture sequences. If the data is limited
+in quantity or diversity, an input motion may be mapped to an
+unsuitable cluster. This can produce incorrect transitions even be-
+tween semantically plausible input motions, such as running to
+walking. For example, as shown in Figure 17 (a), when our frame-
+work trained on LAFAN1 is given diving and walking motions as
+input, it struggles to generate realistic outputs because there are
+no motion clusters related to swimming sequences. We expect that
+including a diverse set of motions in the dataset will further expand
+the coverage of motion clusters and improve realism across a wider
+range of input combinations.
+8.2
+Pathfinding-based Guide Generation
+While cluster pathfinding serves as a core component of the method,
+it is deterministic and does not consider semantic conditions. Unlike
+generative approaches that produce variations or support text and
+
+
+Length-varying Neural Motion Stitching via Cluster Transition Graph
+•
+15
+Table 5. Inference time comparison in milliseconds.
+Method
+Length
+estimation
+Motion
+generation
+Total
+IB
+–
+1.5
+1.5
+RMR
+–
+2.6
+2.6
+NeMF
+–
+22007.5
+22007.5
+RMIB + fixed 𝑇
+–
+45.7
+45.7
+TS + fixed 𝑇
+–
+7.1
+7.1
+CondMDI + fixed 𝑇
+–
+15173.6
+15173.6
+SILK + fixed 𝑇
+–
+6.5
+6.5
+RMIB + BC
+0.7
+50.3
+51.0
+TS + BC
+0.7
+6.5
+7.2
+CondMDI + BC
+0.7
+14223.6
+14224.3
+SILK + BC
+0.7
+6.5
+7.2
+NMS (Ours)
+6.3
+8.2
+14.5
+action conditioning, our method yields the same transitions when
+the cost settings are fixed. However, using the pathfinding algo-
+rithm has advantages in that it requires no additional training and
+guarantees that a valid path to the goal node will be found. It also
+allows for simple adjustments of cost terms and can produce diverse
+transitions from the same inputs, as demonstrated in Section 7.3.
+An important consideration when employing pathfinding algo-
+rithm is the need for manual tuning of the weight parameters. Al-
+though the graph is constructed from valid transitions between
+clusters, the selected paths should resemble those seen during mo-
+tion generator training so that the corresponding guide inputs re-
+main consistent with the training samples. We observed that the
+guides producing plausible results contained root movements that
+were smoother than those of other joints. Therefore, as discussed
+in Section 5.2, we prioritized root-related features to minimize arti-
+facts. Additional experiment on the pathfinding weight parameters
+is provided in Section F of the supplementary material.
+8.3
+Realtime Application
+Because motion stitching is often used in real-time applications,
+the inference time of our method can be a limitation when A* is em-
+ployed. To evaluate the computational efficiency, we measured the
+inference time of our method and baseline methods on 1,000 test in-
+puts sampled from LAFAN1𝑤𝑖𝑡ℎ𝑖𝑛. The average results are reported
+in Table 5. NeMF and CondMDI required approximately 22 and 15
+seconds, respectively, due to latent-space optimization and iterative
+denoising. Among the remaining baselines, IB and RMR were the
+fastest but generally produced low-quality motions, while RMIB-
+based methods were slower than TS-based or SILK-based methods
+because they generate frames autoregressively. When compared
+with TS-based and SILK-based methods, the main bottleneck of our
+method was the length estimation via A*. To improve efficiency,
+future work could explore replacing graph and search algorithm en-
+tirely with a neural network, producing guides that imitate the ones
+extracted from motion capture data. Such a design could reduce the
+cost of length estimation while also automating the weight tuning.
+In addition, extending motion stitching to environment-aware
+scenarios can be an important direction for future work, particu-
+larly for real-time applications in which characters interact with
+surroundings. Our current framework focuses on transition gener-
+ation in an empty environment. Incorporating terrain and object
+information similar to PFNN [Holden et al. 2017] or NSM [Starke
+et al. 2019], could broaden its applicability to interactive settings.
+Such information could also be integrated into the pathfinding objec-
+tive through interaction-aware cost terms, allowing the method to
+select motion states that respond appropriately to the surroundings
+while maintaining natural transitions.
+8.4
+Variation of Transition Lengths
+Although our method adapts transition length according to input
+motion dissimilarity, motion quality may degrade in challenging
+cases. To examine the relationship among transition length, input
+motion dissimilarity, and motion quality, we collected all gener-
+ated motions from the three test datasets discussed in Section 7.6,
+grouped them into three length-based bins, and randomly selected
+500 samples from each bin. For each bin, we measured the average
+cosine distance between the cluster codes of the input motions and
+the average boundary pose difference using Equation 3. We also
+computed all motion quality metrics introduced in Section 7.6.4 for
+all bins.
+As shown in Table 6, the output motion length generally increased
+with input dissimilarity. The corresponding quality metrics also in-
+creased with output motion length, indicating a decline in motion
+quality. This decline is likely associated with the difficulty of the
+input pairs, as the longest bin contains challenging transitions such
+as lying down to aiming and kneeling to running. These transitions
+remain plausible as demonstrated by similar cases in Figure 9 (b) and
+Figure 12 (g), but may occasionally lose fine motion details or exhibit
+foot sliding. To mitigate these artifacts, future work could incorpo-
+rate an additional module that adapts the pathfinding weights to
+each input pair and encourages gradual pose changes in challenging
+cases.
+8.5
+Graph Scalability
+As shown in Section 7.5, the cluster transition graph can be scaled
+to datasets larger than LAFAN1 to some extent, but it still faces
+Table 6. Comparison of input motion dissimilarity and motion quality across
+motion-length ranges. Length is measured by the total number of frames,
+and the best scores are shown in bold.
+Input diff.
+Metrics
+Length
+Cosine
+dist.
+Pose
+diff.
+FID↓
+Detail
+dist.↓
+Jitter↓
+FS↓
+GP↓
+[48, 80)
+0.45
+0.41
+1.63
+7.34
+422.46
+0.25
+0.08
+[80, 128)
+0.75
+0.69
+5.85
+12.05
+402.97
+0.26
+0.09
+[128, 176]
+0.80
+1.83
+12.09
+17.89
+374.95
+0.75
+0.14
+
+
+16
+•
+Haemin Kim, Junghyun Nam, Seokhyeon Hong, Vanessa Tan, and Junyong Noh
+Fig. 17. Failure cases of our method. (a) Input mapped to an unsuitable
+cluster. (b) Physically implausible motion. The red boxes highlight unnatural
+poses.
+scalability challenges as graph memory usage grows with the train-
+ing dataset size. In the future, graph memory could be reduced by
+pruning rarely used edges or using a hierarchical graph structure.
+Nevertheless, the results presented in Section 7.2 suggest that our
+method can generalize to unseen motion combinations when trained
+with sufficiently diverse datasets. By providing the motion generator
+with appropriate transition durations and guides, the cluster transi-
+tion graph helps produce plausible results even with a moderately
+sized motion dataset.
+8.6
+Physical Plausibility
+Our method may produce results that do not fully comply with
+real-world physical principles because it does not incorporate any
+physics constraints. When transitioning between motions that differ
+significantly, how the character supports the body with its limbs, or
+how the character’s center of mass changes are critical for achiev-
+ing high-fidelity motion. Our approach captures these aspects to
+some extent by constraining the motion generation through graph
+traversal. However, as shown in Figure 17 (b), it can still produce
+smoothing artifacts such as the character lifting its hips without ap-
+propriate support from other body parts. To further improve realism,
+physics-based terms could be integrated to model the relationship
+between contact forces and body movement, or physics simulation
+could be applied to refine the transitions.
+9
+Conclusion
+In this work, we propose a neural network-based motion stitching
+framework that generates transitions of varying lengths using a clus-
+ter transition graph. Our approach categorizes input motions, identi-
+fies intermediate motion states through the cluster pathfinding, and
+produces naturally connected transitions based on the discovered
+path and the given motions. As demonstrated in our experiments,
+leveraging the cluster path as a motion guide reduces ambiguity
+during transition generation and effectively connects a wide range
+of motion types. Because the guide is determined independently
+through cluster pathfinding, the motion generation process can be
+controlled by modifying the terms used in the pathfinding algo-
+rithm, without any additional training. Comparisons with existing
+methods further show that generating varying-length transitions
+and inferring transition duration implicitly through graph structure
+improve motion stitching performance. In the future, replacing the
+pathfinding module with a learnable path generator could elimi-
+nate manual weight tuning and enable diverse conditioning signals.
+Other future directions include utilizing a diverse and well-balanced
+dataset to improve output quality, and incorporating physics-based
+constraints to enhance the realism of generated motions.
+Acknowledgments
+We thank Nicolas Nghiem for his invaluable help with rendering
+the results. This research was supported by Culture, Sports and
+Tourism R&D Program through the Korea Creative Content Agency
+grant funded by the Ministry of Culture, Sports and Tourism in 2024
+(RS-2024-00440434).
+References
+Adobe. 2025. Mixamo. https://www.mixamo.com/. Accessed: 2025-01-16.
+Dhruv Agrawal, Jakob Buhmann, Dominik Borer, Robert W Sumner, and Martin Guay.
+2024. SKEL-Betweener: a Neural Motion Rig for Interactive Motion Authoring. ACM
+Transactions on Graphics (TOG) 43, 6 (2024), 1–11.
+Elly Akhoundi, Hung Yu Ling, Anup Anand Deshmukh, and Judith Bütepage. 2025.
+SILK: Smooth InterpoLation frameworK for motion in-betweening. In Proceedings
+of the Computer Vision and Pattern Recognition Conference. 2900–2909.
+Simon Alexanderson, Rajmund Nagy, Jonas Beskow, and Gustav Eje Henter. 2023.
+Listen, Denoise, Action! Audio-Driven Motion Synthesis with Diffusion Models.
+ACM Trans. Graph. 42, 4, Article 44 (2023), 20 pages. doi:10.1145/3592458
+Jinseok Bae, Inwoo Hwang, Young-Yoon Lee, Ziyu Guo, Joseph Liu, Yizhak Ben-Shabat,
+Young Min Kim, and Mubbasir Kapadia. 2025. Less is more: Improving motion
+diffusion models with sparse keyframes. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision. 11069–11078.
+David Bollo. 2018. Inertialization: High-performance animation transitions in’gears of
+war’. In Proc. of GDC, Vol. 2016.
+Rui Chen, Mingyi Shi, Shaoli Huang, Ping Tan, Taku Komura, and Xuelin Chen. 2024.
+Taming diffusion probabilistic models for character control. In ACM SIGGRAPH
+2024 Conference Papers. 1–10.
+Kyungmin Cho, Chaelin Kim, Jungjin Park, Joonkyu Park, and Junyong Noh. 2021.
+Motion recommendation for online character control. ACM Transactions on Graphics
+(TOG) 40, 6 (2021), 1–16.
+Yuchen Chu and Zeshi Yang. 2024. Real-time diverse motion in-betweening with
+space-time control. In Proceedings of the 17th ACM SIGGRAPH Conference on Motion,
+Interaction, and Games. 1–8.
+Setareh Cohan, Guy Tevet, Daniele Reda, Xue Bin Peng, and Michiel van de Panne.
+2024. Flexible motion in-betweening with diffusion models. In ACM SIGGRAPH
+2024 Conference Papers. 1–9.
+Wenxun Dai, Ling-Hao Chen, Jingbo Wang, Jinpeng Liu, Bo Dai, and Yansong Tang.
+2024. Motionlcm: Real-time controllable motion generation via latent consistency
+model. In European Conference on Computer Vision. Springer, 390–408.
+Saeed Ghorbani, Ylva Ferstl, Daniel Holden, Nikolaus F Troje, and Marc-André Carbon-
+neau. 2023. ZeroEGGS: Zero-shot Example-based Gesture Generation from Speech.
+In Computer Graphics Forum, Vol. 42. Wiley Online Library, 206–216.
+Purvi Goel, Haotian Zhang, C Karen Liu, and Kayvon Fatahalian. 2025. Generative
+Motion Infilling from Imprecisely Timed Keyframes. In Computer Graphics Forum.
+Wiley Online Library, e70060.
+Chuan Guo, Yuxuan Mu, Muhammad Gohar Javed, Sen Wang, and Li Cheng. 2024.
+Momask: Generative masked modeling of 3d human motions. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition. 1900–1910.
+Chuan Guo, Shihao Zou, Xinxin Zuo, Sen Wang, Wei Ji, Xingyu Li, and Li Cheng. 2022a.
+Generating diverse and natural 3d human motions from text. In Proceedings of the
+IEEE/CVF conference on computer vision and pattern recognition. 5152–5161.
+Chuan Guo, Xinxin Zuo, Sen Wang, and Li Cheng. 2022b. Tm2t: Stochastic and tokenized
+modeling for the reciprocal generation of 3d human motions and texts. In European
+Conference on Computer Vision. Springer, 580–597.
+Félix G Harvey, Mike Yurick, Derek Nowrouzezahrai, and Christopher Pal. 2020. Robust
+motion in-betweening. ACM Transactions on Graphics (TOG) 39, 4 (2020), 60–1.
+Chengan He, Jun Saito, James Zachary, Holly Rushmeier, and Yi Zhou. 2022. Nemf:
+Neural motion fields for kinematic animation. Advances in Neural Information
+Processing Systems 35 (2022), 4244–4256.
+Rachel Heck and Michael Gleicher. 2007. Parametric motion graphs. In Proceedings of
+the 2007 symposium on Interactive 3D graphics and games. 129–136.
+Daniel Holden, Taku Komura, and Jun Saito. 2017. Phase-functioned neural networks
+for character control. ACM Transactions on Graphics (TOG) 36, 4 (2017), 1–13.
+Seokhyeon Hong, Haemin Kim, Kyungmin Cho, and Junyong Noh. 2024. Long-term
+Motion In-betweening via Keyframe Prediction. In Computer Graphics Forum, Vol. 43.
+Wiley Online Library, e15171.
+Cheng-Zhi Anna Huang, Ashish Vaswani, Jakob Uszkoreit, Ian Simon, Curtis
+Hawthorne, Noam Shazeer, Andrew M Dai, Matthew D Hoffman, Monica Dinculescu,
+
+
+Length-varying Neural Motion Stitching via Cluster Transition Graph
+•
+17
+and Douglas Eck. 2019. Music Transformer: Generating Music with Long-Term
+Structure. In International Conference on Learning Representations.
+Yinghao Huang, Leo Ho, Dafei Qin, Mingyi Shi, and Taku Komura. 2024. InterAct:
+Capture and Modelling of Realistic, Expressive and Interactive Activities between
+Two Persons in Daily Scenarios. (2024). arXiv:2405.11690 [cs.CV]
+Biao Jiang, Xin Chen, Wen Liu, Jingyi Yu, Gang Yu, and Tao Chen. 2023. Motiongpt:
+Human motion as a foreign language. Advances in Neural Information Processing
+Systems 36 (2023), 20067–20079.
+Korrawe Karunratanakul, Konpat Preechakul, Supasorn Suwajanakorn, and Siyu Tang.
+2023. Guided motion diffusion for controllable human motion synthesis. In Proceed-
+ings of the IEEE/CVF international conference on computer vision. 2151–2162.
+Haemin Kim, Kyungmin Cho, Seokhyeon Hong, and Junyong Noh. 2023. Recurrent
+motion refiner for locomotion stitching. In Computer Graphics Forum, Vol. 42. Wiley
+Online Library, e14920.
+Jihoon Kim, Taehyun Byun, Seungyoun Shin, Jungdam Won, and Sungjoon Choi. 2022.
+Conditional motion in-betweening. Pattern Recognition 132 (Dec. 2022), 108894.
+doi:10.1016/j.patcog.2022.108894
+Lucas Kovar, Michael Gleicher, and Frédéric Pighin. 2002. Motion graphs. ACM Trans.
+Graph. 21, 3 (July 2002), 473–482. doi:10.1145/566654.566605
+Yuki Koyama and Masataka Goto. 2019. Precomputed optimal one-hop motion transition
+for responsive character animation. The Visual Computer 35, 6 (2019), 1131–1142.
+Jehee Lee, Jinxiang Chai, Paul SA Reitsma, Jessica K Hodgins, and Nancy S Pollard. 2002.
+Interactive control of avatars animated with human motion data. In Proceedings of
+the 29th annual conference on Computer graphics and interactive techniques. 491–500.
+Sunmin Lee, Taeho Kang, Jungnam Park, Jehee Lee, and Jungdam Won. 2023. Same:
+Skeleton-agnostic motion embedding for character animation. In SIGGRAPH Asia
+2023 Conference Papers. 1–11.
+Lei Li, James McCann, Christos Faloutsos, and Nancy S Pollard. 2008. Laziness is a
+virtue: Motion stitching using effort minimization. (2008).
+Peizhuo Li, Sebastian Starke, Yuting Ye, and Olga Sorkine-Hornung. 2024. Walkthedog:
+Cross-morphology motion alignment via phase manifolds. In ACM SIGGRAPH 2024
+Conference Papers. 1–10.
+Ilya Loshchilov and Frank Hutter. 2019. Decoupled Weight Decay Regularization. In
+International Conference on Learning Representations.
+Shunlin Lu, Jingbo Wang, Zeyu Lu, Ling-Hao Chen, Wenxun Dai, Junting Dong, Zhiyang
+Dou, Bo Dai, and Ruimao Zhang. 2025. Scamo: Exploring the scaling law in autore-
+gressive motion generation model. In Proceedings of the Computer Vision and Pattern
+Recognition Conference. 27872–27882.
+Xudong Mao, Qing Li, Haoran Xie, Raymond YK Lau, Zhen Wang, and Stephen
+Paul Smolley. 2017. Least squares generative adversarial networks. In Proceed-
+ings of the IEEE international conference on computer vision. 2794–2802.
+Ian Mason, Sebastian Starke, and Taku Komura. 2022. Real-Time Style Modelling of
+Human Locomotion via Feature-Wise Transformations and Local Motion Phases.
+Proceedings of the ACM on Computer Graphics and Interactive Techniques 5, 1, Article
+6 (may 2022). doi:10.1145/3522618
+Lars Mescheder, Andreas Geiger, and Sebastian Nowozin. 2018. Which training methods
+for GANs do actually converge?. In International conference on machine learning.
+PMLR, 3481–3490.
+Jianyuan Min and Jinxiang Chai. 2012. Motion graphs++ a compact generative model
+for semantic motion analysis and synthesis. ACM Transactions on Graphics (TOG)
+31, 6 (2012), 1–12.
+Boris N Oreshkin, Antonios Valkanas, Félix G Harvey, Louis-Simon Ménard, Florent
+Bocquelet, and Mark J Coates. 2023. Motion In-Betweening via Deep Δ-Interpolator.
+IEEE Transactions on Visualization and Computer Graphics 30, 8 (2023), 5693–5704.
+Jen-Yu Peng, I-Chen Lin, Jui-Hsiang Chao, Yan-Ju Chen, and Gwo-Hao Juang. 2007.
+Interactive and flexible motion transition. Computer Animation and Virtual Worlds
+18, 4-5 (2007), 549–558.
+Ekkasit Pinyoanuntapong, Muhammad Saleem, Korrawe Karunratanakul, Pu Wang,
+Hongfei Xue, Chen Chen, Chuan Guo, Junli Cao, Jian Ren, and Sergey Tulyakov. 2025.
+Maskcontrol: Spatio-temporal control for masked motion synthesis. In Proceedings
+of the IEEE/CVF International Conference on Computer Vision. 9955–9965.
+Ekkasit Pinyoanuntapong, Pu Wang, Minwoo Lee, and Chen Chen. 2024. Mmm: Gener-
+ative masked motion model. In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition. 1546–1555.
+Jia Qin, Youyi Zheng, and Kun Zhou. 2022. Motion In-Betweening via Two-Stage
+Transformers. ACM Trans. Graph. 41, 6 (2022), 184–1.
+Cheng Ren, Liming Zhao, and Alla Safonova. 2010. Human motion synthesis with
+optimization-based graphs. In Computer Graphics Forum, Vol. 29. Wiley Online
+Library, 545–554.
+Alla Safonova and Jessica K. Hodgins. 2007. Construction and optimal search of
+interpolated motion graphs. ACM Trans. Graph. 26, 3 (July 2007), 106–es. doi:10.
+1145/1276377.1276510
+Paul Starke, Sebastian Starke, Taku Komura, and Frank Steinicke. 2023. Motion in-
+betweening with phase manifolds. Proceedings of the ACM on Computer Graphics
+and Interactive Techniques 6, 3 (2023), 1–17.
+Sebastian Starke, Ian Mason, and Taku Komura. 2022. Deepphase: Periodic autoencoders
+for learning motion phase manifolds. ACM Transactions on Graphics (ToG) 41, 4
+(2022), 1–13.
+Sebastian Starke, Paul Starke, Nicky He, Taku Komura, and Yuting Ye. 2024. Categorical
+codebook matching for embodied character controllers.
+ACM Transactions on
+Graphics (TOG) 43, 4 (2024), 1–14.
+Sebastian Starke, He Zhang, Taku Komura, and Jun Saito. 2019. Neural state machine
+for character-scene interactions. ACM Transactions on Graphics 38, 6 (2019), 178.
+Xiangjun Tang, He Wang, Bo Hu, Xu Gong, Ruifan Yi, Qilong Kou, and Xiaogang Jin.
+2022. Real-time controllable motion transition for characters. ACM Transactions on
+Graphics (TOG) 41, 4 (2022), 1–10.
+Xiangjun Tang, Linjun Wu, He Wang, Bo Hu, Xu Gong, Yuchen Liao, Songnan Li,
+Qilong Kou, and Xiaogang Jin. 2023. RSMT: Real-time Stylized Motion Transition for
+Characters. In Special Interest Group on Computer Graphics and Interactive Techniques
+Conference Conference Proceedings (SIGGRAPH ’23). ACM, 1–10. doi:10.1145/3588432.
+3591514
+Hongyu Tao, Shuaiying Hou, Changqing Zou, Hujun Bao, and Weiwei Xu. 2023. Neural
+motion graph. In SIGGRAPH Asia 2023 Conference Papers. 1–11.
+Guy Tevet, Sigal Raab, Brian Gordon, Yoni Shafir, Daniel Cohen-or, and Amit Haim
+Bermano. 2023. Human Motion Diffusion Model. In The Eleventh International
+Conference on Learning Representations.
+Guillermo Valle-Pérez, Gustav Eje Henter, Jonas Beskow, Andre Holzapfel, Pierre-Yves
+Oudeyer, and Simon Alexanderson. 2021. Transflower: Probabilistic Autoregressive
+Dance Generation with Multimodal Attention. ACM Trans. Graph. 40, 6, Article 195
+(2021), 14 pages. doi:10.1145/3478513.3480570
+Aaron Van Den Oord, Oriol Vinyals, et al. 2017. Neural discrete representation learning.
+Advances in neural information processing systems 30 (2017).
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N
+Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017. Attention is all you need. Advances
+in neural information processing systems 30 (2017).
+Jing Wang and Bobby Bodenheimer. 2008. Synthesis and evaluation of linear motion
+transitions. ACM Transactions on Graphics (TOG) 27, 1 (2008), 1–15.
+Yiming Xie, Varun Jampani, Lei Zhong, Deqing Sun, and Huaizu Jiang. 2023. Omni-
+control: Control any joint at any time for human motion generation. arXiv preprint
+arXiv:2310.08580 (2023).
+Xinyu Yi, Yuxiao Zhou, and Feng Xu. 2021. Transpose: Real-time 3d human translation
+and pose estimation with six inertial sensors. ACM Transactions On Graphics (TOG)
+40, 4 (2021), 1–13.
+He Zhang, Sebastian Starke, Taku Komura, and Jun Saito. 2018. Mode-adaptive neural
+networks for quadruped motion control. ACM Transactions on Graphics (ToG) 37, 4
+(2018), 1–11.
+Jianrong Zhang, Yangsong Zhang, Xiaodong Cun, Yong Zhang, Hongwei Zhao, Hong-
+tao Lu, Xi Shen, and Ying Shan. 2023. Generating human motion from textual
+descriptions with discrete representations. In Proceedings of the IEEE/CVF conference
+on computer vision and pattern recognition. 14730–14740.
+Xiaotang Zhang, Ziyi Chang, Qianhui Men, and Hubert PH Shum. 2025. Motion In-
+Betweening for Densely Interacting Characters. In Proceedings of the SIGGRAPH
+Asia 2025 Conference Papers. 1–11.
+Chuanxia Zheng and Andrea Vedaldi. 2023. Online clustered codebook. In Proceedings
+of the IEEE/CVF International Conference on Computer Vision. 22798–22807.
+Yi Zhou, Connelly Barnes, Jingwan Lu, Jimei Yang, and Hao Li. 2019. On the continuity
+of rotation representations in neural networks. In Proceedings of the IEEE/CVF
+conference on computer vision and pattern recognition. 5745–5753.
+
+
+18
+•
+Haemin Kim, Junghyun Nam, Seokhyeon Hong, Vanessa Tan, and Junyong Noh
+A
+Cluster Assignment
+After constructing clusters by training CVQ-VAE in Section 4.1 of
+the main paper, we assign a cluster to a new motion block by finding
+candidate codes from the codebook and choosing the final cluster
+among the candidates. We adopt a candidate-based approach to
+avoid outliers, unlike the training process where the closest code is
+selected for the encoded vector. When using only the nearest code,
+we observed that some samples exhibit root positions that differ sig-
+nificantly from the majority of the samples within the same cluster,
+and also deviate from the corresponding cluster clip. Such outliers
+can produce false edge connections during graph construction, ulti-
+mately degrading motion quality. We suspect this issue arises from
+the use of root-relative joint positions in s𝑡, which may group mo-
+tions with similar relative joint configurations but inconsistent root
+motion, leading to visual mismatches within a cluster. Although the
+loss term L𝑝𝑜𝑠mitigates this problem by incorporating world-frame
+positions, it does not fully ensure consistent root positions for all
+samples assigned to the same cluster.
+To address this, we first select candidate codes and then compare
+the root position to identify the final cluster ID. We encode S𝐴into
+z𝐴, and retrieve the 𝑛closest cluster codes ˆc𝑎1, ˆc𝑎2, ..., ˆc𝑎𝑛in terms
+of cosine distance, along with their cluster clips, ˆS𝑎1, ˆS𝑎2, . . . , ˆS𝑎𝑛.
+The final cluster ID 𝑘𝐴is obtained by selecting the candidate cluster
+whose cluster clip has the minimum Euclidean distance in root
+position from the input motion S𝐴:
+𝑘𝐴=
+arg min
+𝑘∈{𝑎1,𝑎2,...,𝑎𝑛}
+1
+𝑇𝑙
+𝑇𝑙
+∑︁
+𝑖=1
+∥p𝐴,𝑖−ˆp𝑘,𝑖∥2.
+p𝐴,𝑖denotes the root position at frame 𝑖in S𝐴, and ˆp𝑘,𝑖denotes the
+same value from ˆS𝑘. We mapped all motion blocks in the dataset
+to clusters and selected the minimum number of candidates that
+avoided outlier assignment, which was 𝑛= 3.
+B
+Directly Connected Paths
+During the input processing described in Section 6.1.2 of the main
+paper, we construct guides differently when the start and goal nodes
+are directly connected in the cluster transition graph, such that the
+resulting path consists only of these two nodes. Instead of using
+cluster clips, we insert a single block of 𝑇𝑙frames between S𝐴and
+S𝐵, which is the minimum transition length in our method. Then
+these frames are filled by interpolating each feature in S𝐴and S𝐵.
+In this case, the resulting guide S𝑔consists of 𝑁𝑏+ 1 motion blocks.
+C
+Implementation Details
+C.0.1
+CVQ-VAE training details. We trained CVQ-VAE on a mo-
+tion block dataset created from training sequences in LAFAN1. The
+model was trained for 100 epochs with a batch size of 64, which
+required about 2.2 hours. To select anchors for online reinitializa-
+tion, probabilistic random vectors [Zheng and Vedaldi 2023] were
+employed. We used an AdamW optimizer [Loshchilov and Hutter
+2019] with a learning rate of 10−4 on an Nvidia GeForce RTX 3090
+GPU. The learning rate was gradually reduced using cosine function,
+reaching a minimum value of 10−5 at the last epoch.
+C.0.2
+Cluster pathfinding weight tuning. Adjusting the weights
+𝜆𝑐𝑜𝑑𝑒and 𝜆𝑏𝑛𝑑in Equation 1, and 𝜆ℎ, 𝜆𝑞, 𝜆Δ𝑝, and 𝜆Δ𝑞in Equation 3 of
+Section 5.2 of the main paper strongly influences the resulting path
+m and the quality of the generated motion. To facilitate tuning, we
+precomputed all pairwise distances between valid codebook entries,
+both for cluster codes and for cluster clips. We then normalized
+the range of all precomputed distance values to [0, 1]. The distance
+values for each feature were divided by the feature-wise mean value
+to reduce the scale imbalance between the terms. The weights were
+then tuned by evaluating motion quality in the subsequent motion
+generation stage.
+C.0.3
+Motion generator training details. The motion generator was
+trained on subsequences of LAFAN1 with varying lengths. It was
+trained for 100 epochs with a batch size of 64, which required about
+25 hours. We adopted the AdamW optimizer on an Nvidia GeForce
+RTX 3090 GPU. The learning rate was increased to 10−4 during a
+linear warm-up stage for the first 1% of the total iteration. After
+warm-up, cosine annealing was applied to gradually decrease the
+learning rate to zero.
+The adversarial training started only after the warm-up stage to
+prevent the discriminator from dominating the training process. For
+discriminator training, we used an Adam optimizer with a learning
+rate of 10−5, which was slower than the motion generator. The
+learning rate was also annealed following cosine function, reaching
+10−6 at the last epoch.
+D
+Effect of Guide for Direction Control
+In addition to the results reported in Section 7.4.1 of the main paper,
+the guide input S𝑔improves the model’s responsiveness to control
+signals in the direction control scenario described in Section 7.3
+Given the same inputs, we provided the same control vectors to
+each model and compared the resulting transition trajectories as
+shown in Figure 18. While both models performed similarly under
+a forward control input, differences became apparent when signif-
+icant directional changes are required. In these cases, the motion
+generated by our method adhered more closely to the control in-
+put, exhibiting sharper body turns compared to the model trained
+without S𝑔. This suggests that S𝑔provides additional cues on what
+poses to generate, complementing the information provided by the
+second input motion. Moreover, as the guide directly conditions the
+generation process, transition generation can be easily controlled
+by adjusting the pathfinding step.
+Fig. 18. Comparison between our method and the model trained without S𝑔.
+Results are visualized every 16 frames from the top view and the sequence
+from No S𝑔is translated for visibility. The red arrows indicate the input
+control vector.
+
+
+Length-varying Neural Motion Stitching via Cluster Transition Graph
+•
+19
+Fig. 19. User study results shown as box plots.
+E
+Additional Comparison
+We additionally compare our method with another diffusion-based
+model that generates future motion from past motion [Chen et al.
+2024]. Because their original model was not designed for motion
+in-betweening, we adapted it to the in-betweening setting and refer
+to the modified model as CAMDM𝑖𝑛𝑏. Specifically, we used the past
+motion token from the original formulation and input second motion
+along with noisy frames, allowing the network to observe the target
+motion. The adapted model was trained on variable-length motion
+sequences from the LAFAN1 training set, as with the other baselines.
+We evaluate CAMDM𝑖𝑛𝑏, CondMDI, and NMS with the same sam-
+ples and metrics introduced in Section 7.6 of the main paper. The
+qualitative comparison is provided in Figure 21. Similar to CondMDI,
+CAMDM𝑖𝑛𝑏with a fixed total length 𝑇produced overly smoothed
+motion and boundary discontinuities. Combining the model with
+BC did not improve the performance, as shown in the second-to-last
+row of the figure. The generated motion lacked detail and struggled
+to match the second motion in Sample (a), and noticeable disconti-
+nuities remained at the boundaries in Sample (b).
+These observations are consistent with our quantitative evalu-
+ation. As presented in Table 7, CAMDM𝑖𝑛𝑏exhibited high jitter,
+despite the moderate performance on FID and detail distance. We
+assume that this is because the generated motions often deviate
+from the target motions, especially when the given input is signif-
+icantly different from training samples as in Mixamo + 100Style.
+In contrast, the metric scores demonstrate that ours successfully
+connects two given motions with minimal jitter, while maintaining
+low FID and detail distance scores across datasets.
+We further report user study results in Figure 19 to compare the
+visual quality of the results produced by our method relative to
+fixed-length CAMDM𝑖𝑛𝑏. Our method achieved the highest score,
+while CAMDM𝑖𝑛𝑏obtained an average score similar to CondMDI.
+These results indicates that our method provides better overall visual
+quality than CAMDM𝑖𝑛𝑏.
+F
+Hyperparameter Ablation
+We evaluated the sensitivity of the cluster pathfinding cost weights
+introduced in Section 5.2, namely 𝜆𝑐𝑜𝑑𝑒, 𝜆ℎ, 𝜆𝑞, 𝜆Δ𝑝, and 𝜆Δ𝑞. We
+randomly sampled 1,000 input motion pairs from the LAFAN1𝑤𝑖𝑡ℎ𝑖𝑛
+dataset, fixed 𝜆𝑏𝑛𝑑= 1, and independently halved and doubled each
+weight while keeping the remaining weights fixed. As shown in
+Fig. 20. Comparison of our method using the default value of 𝜆ℎand twice
+the default value. The red box highlights the difference between the two
+results.
+the Metrics columns of Table 8, although some alternative settings
+achieve slightly better scores on individual metrics, no single con-
+figuration consistently outperforms the default setting across all
+evaluation metrics within the tested range.
+Changing the cost weights had impact on selecting cluster paths
+and the resulting motion lengths. As reflected in the average transi-
+tion lengths reported in the last column of Table 8, different weight
+configurations produced motions of different lengths even for the
+same input pair. We selected our setting over High 𝜆ℎbecause ours
+achieved the best detail distance score, while High 𝜆ℎoften resulted
+in lingering motion before it reached the second input motion. This
+qualitative difference is illustrated in Figure 20, where ours gener-
+ates a motion with 64 frames, whereas High 𝜆ℎproduces a longer
+motion with 112 frames, going through additional footsteps before
+the second input motion. An interesting direction for future work
+would be to automatically learn these weights, adapting them to
+the input motions or user preferences.
+
+
+20
+•
+Haemin Kim, Junghyun Nam, Seokhyeon Hong, Vanessa Tan, and Junyong Noh
+Fig. 21. Qualitative comparison with other methods. In this figure, green characters indicate the poses edited or generated by each method. Notable poses in
+each results are highlighted in yellow.
+Table 7. Comparison of FID, detail distance, jitter, FS, and GP. Best scores are shown in bold, and second-best scores are underlined.
+LAFAN1𝑤𝑖𝑡ℎ𝑖𝑛
+LAFAN1𝑟𝑎𝑛𝑑𝑜𝑚
+Mixamo + 100Style
+Method
+FID↓
+Detail
+dist.↓
+Jitter↓
+FS↓
+GP↓
+FID↓
+Detail
+dist.↓
+Jitter↓
+FS↓
+GP↓
+FID↓
+Detail
+dist.↓
+Jitter↓
+FS↓
+GP↓
+CondMDI + fixed 𝑇
+0.58
+7.29
+3797.48
+0.54
+0.09
+8.05
+15.90
+4510.02
+1.14
+0.09
+14.58
+31.56
+5131.86
+1.46
+0.06
+CAMDM𝑖𝑛𝑏+ fixed 𝑇
+0.91
+10.42
+3385.96
+0.47
+0.09
+7.80
+20.51
+3712.66
+0.98
+0.11
+13.40
+29.89
+4008.95
+1.22
+0.06
+CondMDI + BC
+4.03
+32.22
+10656.29
+1.88
+0.14
+20.61
+58.78
+17456.14
+3.53
+0.22
+30.33
+53.08
+19912.32
+4.12
+0.16
+CAMDM𝑖𝑛𝑏+ BC
+1.28
+13.18
+3985.72
+0.39
+0.10
+11.67
+21.07
+6050.19
+0.64
+0.19
+15.97
+30.78
+6925.71
+0.68
+0.11
+NMS (Ours)
+0.20
+5.18
+382.89
+0.23
+0.09
+7.60
+15.86
+385.00
+0.38
+0.10
+14.26
+26.54
+589.82
+0.52
+0.05
+
+
+Length-varying Neural Motion Stitching via Cluster Transition Graph
+•
+21
+Table 8. Comparison of FID, detail distance, jitter, foot sliding, and ground penetration across different hyperparameter settings. The first row reports the
+results obtained with our default setting. The remaining rows show the results obtained by halving or doubling one parameter at a time. Foot sliding is scaled
+by 103 and ground penetration is represented in centimeters. Best scores are indicated in bold, and second-best scores are underlined.
+Parameter setting
+Metrics
+Length
+Variation
+𝜆𝑐𝑜𝑑𝑒
+𝜆ℎ
+𝜆𝑞
+𝜆Δ𝑝
+𝜆Δ𝑞
+FID↓
+Detail
+dist.↓
+Jitter↓
+Foot
+sliding↓
+Ground
+pene.↓
+Avg.
+length
+Ours
+0.2
+1.0
+1.0
+0.5
+0.5
+0.620
+5.616
+378.083
+0.253
+0.093
+58.416
+Low 𝜆𝑐𝑜𝑑𝑒
+0.1
+1.0
+1.0
+0.5
+0.5
+0.619
+5.699
+377.089
+0.253
+0.093
+58.704
+High 𝜆𝑐𝑜𝑑𝑒
+0.4
+1.0
+1.0
+0.5
+0.5
+0.622
+5.641
+377.671
+0.251
+0.093
+58.432
+Low 𝜆ℎ
+0.2
+0.5
+1.0
+0.5
+0.5
+0.620
+5.704
+377.746
+0.238
+0.093
+58.416
+High 𝜆ℎ
+0.2
+2.0
+1.0
+0.5
+0.5
+0.616
+5.847
+375.124
+0.244
+0.093
+59.584
+Low 𝜆𝑞
+0.2
+1.0
+0.5
+0.5
+0.5
+0.621
+5.678
+377.085
+0.241
+0.092
+58.736
+High 𝜆𝑞
+0.2
+1.0
+2.0
+0.5
+0.5
+0.620
+5.732
+377.466
+0.245
+0.093
+58.928
+Low 𝜆Δ𝑝
+0.2
+1.0
+1.0
+0.25
+0.5
+0.620
+5.696
+377.358
+0.253
+0.093
+58.784
+High 𝜆Δ𝑝
+0.2
+1.0
+1.0
+1.0
+0.5
+0.622
+5.677
+377.035
+0.249
+0.093
+58.368
+Low 𝜆Δ𝑞
+0.2
+1.0
+1.0
+0.5
+0.25
+0.621
+5.709
+376.583
+0.244
+0.093
+58.816
+High 𝜆Δ𝑞
+0.2
+1.0
+1.0
+0.5
+1.0
+0.618
+5.663
+376.215
+0.250
+0.092
+58.816
