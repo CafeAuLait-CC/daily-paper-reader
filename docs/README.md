@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-03</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-04</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 2 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>10</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-03 22:37:13 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-04 22:02:27 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日速读10篇、精读0篇，已列出的Flow Matching相关速读中最高分为《Smoother Flow Matching via Contrastive Trajectory Repulsion</p>
+<p>今日速读2篇，未做精读，最高分7.0给了《World Motion Models》。</p>
+<p>最值得看的是用灵活序列建模处理SE(3)轨迹的世界运动模型方向，其次是6.0分的一步生成建模与训练动力学动作思路。</p>
+<p>普通读者可先读7.0那篇了解三维运动轨迹怎么被统一建模，再决定是否深挖生成式加速这条线。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -91,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">10 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Smoother Flow Matching via Contrastive Trajectory Repulsion">Smoother Flow Matching via Contrastive Trajectory Repulsion</span></li><li><span class="dpr-home-dashboard-paper-title" title="Harmonizing Spectral Evolution in Conditional Flow Matching for TTS">Harmonizing Spectral Evolution in Conditional Flow Matching for TTS</span></li><li><span class="dpr-home-dashboard-paper-title" title="FILIGREE3D: Scaling Sparse Latent Flow Matching for Ultra-High-Resolution Image-to-3D Generation">FILIGREE3D: Scaling Sparse Latent Flow Matching for Ultra-High-Resolution Image-to-3D Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="World Motion Models: Flexible Sequence Modeling of SE(3) Trajectories">World Motion Models: Flexible Sequence Modeling of SE(3) Trajectories</span></li><li><span class="dpr-home-dashboard-paper-title" title="One-Step Generative Modeling via Training Dynamics Action">One-Step Generative Modeling via Training Dynamics Action</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>10</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
 </section>
 </div>
 
