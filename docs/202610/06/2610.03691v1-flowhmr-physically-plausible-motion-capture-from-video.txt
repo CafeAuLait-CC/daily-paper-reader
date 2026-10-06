@@ -1,0 +1,1349 @@
+FLOWHMR: PHYSICALLY PLAUSIBLE MOTION CAPTURE FROM VIDEO
+Zhanke Wang1,*
+Chengfeng Zhao2,*
+Qing Shuai3,†
+Jingzhong Lin4
+Heng Li5
+Zeyu Ling6
+Yuxin Wen3
+Jing Li3
+Di Kang3
+Chunchao Guo3
+Linchao Bao3,†
+1Peking University
+2The Hong Kong University of Science and Technology
+3Tencent
+4East China Normal University
+5Sun Yat-sen University
+6Zhejiang University
+Project page: https://flowhmr.github.io/
+Figure 1: Physically plausible motion recovery. Given a monocular video (rows 1 and 3), FlowHMR recovers
+global 3D human motion (pink) that a physics-based controller can successfully track in simulation (blue).
+ABSTRACT
+We present FlowHMR, a framework for recovering physically plausible global 3D
+human motion from monocular video. Previous learning-based methods typically
+regress human motion directly from video and train the network with geomet-
+ric supervision. However, recovering human motion from monocular video is
+inherently ambiguous in depth, and direct regression tends to collapse toward
+an averaged solution. Moreover, the recovered motions are not guaranteed to be
+physically plausible, so physics-based tracking of them often fails. To address
+these challenges, we formulate video motion capture as a video-conditioned motion
+generation problem and first pretrain a flow matching model for this task. Given an
+input video, the pretrained model generates diverse motion candidates, but not all
+of them are faithful to the video or physically trackable. We therefore post-train
+the model using Group Relative Policy Optimization (GRPO) with two rewards.
+A fidelity reward encourages consistency with the input video. A tracking reward
+favors motions that a physics-based controller can track successfully. Together,
+these rewards shift the model’s output preference, so the post-trained model stays
+faithful to the input video while producing more physically plausible motion. We
+further introduce Wild-4K, a large and diverse dataset of about 4K internet videos,
+for evaluating human motion recovery in the wild. Qualitative and quantitative ex-
+periments on Wild-4K show that our method outperforms state-of-the-art methods
+in overall motion fidelity and achieves a physical tracking success rate of 82.47%,
+compared with 62.82% for the strongest baseline, GVHMR. Code and checkpoints
+are available at https://github.com/flowhmr/flowhmr.
+*Equal contribution.
+†Corresponding authors.
+1
+arXiv:2610.03691v1  [cs.CV]  2 Oct 2026
+
+
+1
+INTRODUCTION
+Recovering global 3D human motion from monocular video is a fundamental problem in computer
+vision and computer graphics (Ye et al., 2023; Shin et al., 2024; Shen et al., 2024). It enables
+a wide range of applications, from character animation to humanoid robot learning from human
+demonstrations (He et al., 2025; Allshire et al., 2025). Internet videos capture an enormous variety
+of human activities, making them a rich source of motion data for these applications. Leveraging
+such data requires recovering motion that is both faithful to the video and physically plausible in
+unconstrained, in-the-wild settings.
+However, monocular motion capture is inherently challenging: depth is ambiguous, body parts are
+frequently occluded, and the observed image-space motion entangles human and camera movement.
+Video-based methods exploit temporal context to produce coherent pose sequences (Kocabas et al.,
+2020). To recover motion in world coordinates, subsequent methods jointly estimate human and
+camera motion (Ye et al., 2023), or combine temporal modeling with camera motion and contact
+cues (Shin et al., 2024; Shen et al., 2024). Such learning-based methods are typically trained with
+geometric objectives of 2D projections, 3D poses, and global trajectories, which aligns the predicted
+motion with the visual observations. Whereas, as deterministic regressors, they produce a single
+estimate and tend to yield over-smoothed, averaged predictions under ambiguous observations. Gen-
+erative models naturally capture this ambiguity, and generative motion priors have been incorporated
+into video-based motion capture (Rempe et al., 2021; Li et al., 2025a; Wang et al., 2026b).
+Another limitation of geometric objectives is that they do not explicitly model the dynamics and
+contact of human motion. Auxiliary losses that penalize foot skating or ground penetration impose
+only kinematic constraints and provide indirect supervision of the underlying dynamics. Physics
+simulation complements geometric supervision by providing feedback on whether a motion is
+physically executable, and prior work has used physics-refined motions to further train motion
+generators (Gillman et al., 2024; Li et al., 2025c). For video-based motion capture, the key challenge
+is to incorporate such physical feedback without sacrificing fidelity to the body articulation and global
+trajectory observed in the input video.
+We present FlowHMR, a generative framework for recovering physically plausible global 3D human
+motion from monocular video (Figure 3). We formulate video motion capture as video-conditioned
+motion generation and learn the conditional distribution of global human motion with flow match-
+ing (Lipman et al., 2023). Our motion representation jointly encodes body pose, hand articulation, and
+the global root trajectory of the entire sequence in a unified world coordinate frame. The generator is
+a multimodal diffusion transformer (MM-DiT) conditioned on visual features and camera information.
+We pretrain the model on approximately 3,000 hours of synthetic videos paired with ground-truth 3D
+motion, and then post-train it via reinforcement learning (RL) with simulation-based rewards.
+During post-training, we use two complementary rewards. The fidelity reward measures agreement
+with the ground-truth motion, while the tracking reward measures how accurately a pretrained,
+frozen humanoid controller (Luo et al., 2023; 2024) tracks the generated motion in simulation. We
+adopt MixGRPO (Li et al., 2025b) for policy optimization, allowing physical feedback to shape the
+generator’s outputs while the ground-truth motion anchors reconstruction.
+To evaluate motion capture in the wild, we introduce Wild-4K, a large and diverse evaluation set of
+approximately 4K internet videos covering everyday activities, highly dynamic movements, and severe
+occlusions. We assess overall motion fidelity through blind pairwise user studies, complemented by
+kinematic metrics and physical tracking evaluation. Experiments show that human evaluators prefer
+FlowHMR over state-of-the-art methods in terms of motion fidelity, and that FlowHMR achieves a
+physical tracking success rate of 82.47%, compared with 62.82% for the strongest baseline, GVHMR.
+In summary, our main contributions are as follows:
+• We propose FlowHMR, a video-conditioned flow matching framework that jointly models
+body pose, hand articulation, and global trajectory in a world coordinate frame for motion
+capture from monocular video.
+• We introduce an RL post-training scheme with fidelity and physical tracking rewards, which
+makes the recovered motion more physically plausible while keeping it faithful to the input
+video.
+2
+
+
+• We present Wild-4K, a large and diverse evaluation set of approximately 4K internet videos
+for assessing motion fidelity and physical tracking success rate.
+2
+RELATED WORK
+Video-based human motion capture.
+Monocular motion capture requires inferring temporally
+coherent body poses and global trajectories under depth ambiguity, occlusion, and camera motion.
+Optimization-based methods regularize reconstruction with learned motion priors: HuMoR (Rempe
+et al., 2021) introduces a generative motion prior for robust pose estimation, while GLAMR (Yuan
+et al., 2022) and SLAHMR (Ye et al., 2023) combine motion priors with optimization to recover
+global motion from moving-camera videos. Feed-forward methods such as TRACE (Sun et al., 2023),
+WHAM (Shin et al., 2024), and GVHMR (Shen et al., 2024) directly regress world-space motion
+from video through temporal and geometric modeling, and PromptHMR (Wang et al., 2025b) extends
+promptable human mesh recovery to video. Generative models have also been applied to video-
+based motion capture: GENMO (Li et al., 2025a) unifies motion estimation and generation within a
+single generative model, and DuoMo (Wang et al., 2026b) performs video-conditioned camera-space
+reconstruction followed by world-space diffusion refinement. Large-scale synthetic datasets such
+as BEDLAM (Black et al., 2023) and BEDLAM2.0 (Tesch et al., 2025) provide videos paired with
+ground-truth body and camera annotations across diverse appearances, motions, and viewpoints.
+Following this line of work, FlowHMR learns a video-conditioned distribution of world-space motion
+from paired video and motion data, and this generative formulation further enables post-training with
+physical feedback.
+Physics-aware motion capture and generation.
+Physical constraints have been incorporated
+into motion capture through physics-based pose optimization in PhysCap (Shimada et al., 2020),
+differentiable contact and stability terms in IPMAN (Tripathi et al., 2023), and explicit dynamics
+modeling in D&D (Li et al., 2022) and PhysPT (Zhang et al., 2024). SimPoE (Yuan et al., 2021)
+jointly learns kinematic pose refinement and simulated character control, while PhysHMR (Feng et al.,
+2025) learns a vision-conditioned humanoid control policy via expert distillation and reinforcement
+learning. In text-to-motion generation, physics has been integrated at different stages: PhysDiff (Yuan
+et al., 2023) projects intermediate denoised motions onto physically plausible ones via simulation;
+InsActor (Ren et al., 2023) maps diffusion-generated plans to latent skills for execution in simulation;
+CLoSD (Tevet et al., 2025) feeds simulated motions back to a diffusion planner in a closed loop; and
+SimDiff (Watanabe et al., 2025) trains environment-conditioned adapters on simulated trajectories. In
+contrast, FlowHMR uses simulation only during training. A pretrained, frozen PHC+ controller (Luo
+et al., 2023; 2024) tracks the sampled motions in simulation, and its tracking performance, together
+with framewise agreement with the ground-truth motion, provides the reward for updating the video-
+conditioned generator. At inference, the generator directly produces motion without simulation-based
+selection or correction.
+Reward-based post-training of motion generators.
+Reward-based optimization has also been
+applied to motion generators. ReinDiffuse (Han et al., 2025) fine-tunes a motion diffusion model with
+proximal policy optimization (PPO) using rewards that penalize kinematic artifacts. More recently,
+group relative policy optimization (GRPO) (Shao et al., 2024) and its extensions to flow-based mod-
+els (Liu et al., 2025; Xue et al., 2025) have been adopted for motion generation. HY-Motion (Tencent
+Hunyuan 3D Digital Human Team, 2025) combines preference optimization with Flow-GRPO using
+semantic and kinematic rewards, and RLPF (Yue et al., 2025) optimizes text-to-motion generation with
+GRPO using simulation-based tracking and alignment rewards. GenTrack (Ling et al., 2026) jointly
+optimizes motion generation and tracking through online co-training, alternating generator alignment
+using execution feedback with tracker updates on newly generated motions. PhysMoDPO (Zhang
+et al., 2026) instead constructs preferences over generated motions from execution feedback to
+optimize diffusion models. For motion capture, MotionGRPO (Yao et al., 2026) applies GRPO to
+full-body motion recovery from head-mounted device signals using learned perceptual and joint-level
+rewards. We build on MixGRPO (Li et al., 2025b), an efficient flow-based GRPO variant that mixes
+ODE and SDE sampling. Unlike prior work, we target video-conditioned motion capture and combine
+a framewise fidelity reward against the ground-truth motion with a physical tracking reward. We
+further analyze how these rewards affect reconstruction fidelity, physical trackability, and sample
+diversity.
+3
+
+
+Occlusion
+Challenging pose
+Lower-body crop
+Lateral crop
+0
+200
+400
+600
+800
+22
+28
+650
+Motion
+0
+1k
+2k
+3k
+4k
+47
+95
+3000
+Motion-video pairs
+40%
+15%
+15%
+5%
+5%
+5%
+5%
+5% 5%
+(a) Synthetic examples
+(b) Dataset scale
+(c) Camera distribution
+Duration (h)
+BEDLAM 1
+BEDLAM 2
+Ours
+Static
+Random track
+Side track
+Arc
+Pull
+Static track
+Front track
+Orbit
+Push
+Figure 2: Training data scale and diversity. (a) Synthetic examples featuring occlusions, challenging poses,
+and partial visibility. (b) Total durations of motion data and paired motion-video data, compared with BEDLAM,
+the largest prior synthetic dataset. (c) Proportions of sampled camera trajectory types. We use a diverse set of
+camera trajectories to simulate the camera motion found in in-the-wild internet videos.
+3
+DATA
+3.1
+SYNTHETIC TRAINING DATA
+BEDLAM (Black et al., 2023) and BEDLAM2.0 (Tesch et al., 2025) demonstrate the value of syn-
+thetic data for human motion recovery, but the available video duration remains limited: BEDLAM2.0
+provides 74.52 hours. To scale paired supervision for body, hand, and global motion recovery, we
+render approximately 3,000 hours of video from 650 hours of source motion, varying cameras and
+appearance while preserving motion annotations.
+Motion coverage and annotation.
+To cover varied articulation and trajectories, we combine public
+motion datasets and animation assets spanning locomotion, dance, exercise, and hand motion. We
+fit all SMPL-family motion data to a common SMPL-H representation (Romero et al., 2017); other
+animation assets are retargeted to SMPL-H. We remove sequences with abnormal joint positions
+or velocities, or foot sliding, to avoid learning artifacts from the source motions, following HY-
+Motion (Tencent Hunyuan 3D Digital Human Team, 2025).
+Camera variation.
+To distinguish human movement from apparent motion caused by the camera,
+we render motions with static and moving cameras across varied viewpoints, distances, and focal
+lengths. Using the 3D bounding box of each motion sequence, an automated camera-generation script
+generates diverse camera trajectories while ensuring that the person remains in view. Full-body views
+and partial image-boundary truncation expose the model to different amounts of visual evidence.
+Appearance and occlusion.
+We source background assets from Poly Haven (Poly Haven, 2025)
+and character textures from ATLAS (Liu et al., 2024). To increase visual diversity, we randomize
+character textures, lighting, and ground materials in Blender, and randomly place occluders in the
+scene foreground and in front of the camera. Examples are shown in Figure 2(a). Videos are rendered
+at 1080p and 30 fps in portrait, landscape, and square formats, with motion and camera annotations.
+Physical tracking.
+To identify motions that can be tracked in physics simulation, we track the
+annotated motions with a fixed PHC+ controller (Luo et al., 2023; 2024). Requiring a tracking
+score above 0.6 and no early termination yields approximately 571k pairs for post-training, with the
+original motion annotations retained as fidelity targets. Pretraining uses all paired data regardless of
+the tracking outcome.
+3.2
+WILD-4K: INTERNET VIDEO EVALUATION
+Existing annotated benchmarks cover limited recording environments or numbers of sequences:
+Human3.6M (Ionescu et al., 2014) captures activities in an indoor laboratory, RICH (Huang et al.,
+2022) records interactions in selected indoor and outdoor scenes, and 3DPW (von Marcard et al.,
+4
+
+
+Stage 1  Pre-training
+Noisy motion
+FlowHMR
+Timestep 𝑡
+Stage 2  Post-training
+Physical
+Simulation
+Fidelity reward rfid
+Tracking reward rtrack
+GRPO update
+Image tokens
+Predicted motion
+GT motion
+Flow matching loss
+Geometric loss
+Camera tokens
+Gaussian noise
+FlowHMR
+Image tokens
+Camera tokens
+Motion candidates
+Execution
+Initialize
+Denoising loop
+Global
+orientation
+Root
+motion
+Body
+pose
+Hand
+pose
+Body
+shape
+Motion representation
+Joint
+positions
+Foot
+contact
+Group
+advantage
+Figure 3: Overview of the FlowHMR training pipeline. To recover faithful and physically plausible global
+human motion from monocular video, FlowHMR is trained in two stages. Stage 1 performs generative pretraining,
+in which a video-conditioned flow-matching model is trained on paired video–motion data with a flow-matching
+loss and a forward kinematics loss. Stage 2 performs physics-based post-training, in which the model, initialized
+from the Stage 1 checkpoint, is further fine-tuned with GRPO using two rewards: a fidelity reward that measures
+agreement with the ground-truth motion, and a physical tracking reward that measures how accurately a frozen,
+pretrained controller tracks the generated motion in a physics simulator.
+2018) contains 60 video sequences. To assess generalization across a broader range of actions,
+scenes, and visibility conditions, we construct Wild-4K using 4,182 internet video clips curated from
+Koala-36M (Wang et al., 2025a).
+A VLM (Qwen Team, 2026) and pose/person detectors (Xu et al., 2022; Ge et al., 2021) select clips
+with a single adult and full-body framing, allowing temporary occlusion. We exclude underwater,
+aerial, and suspended settings to match the ground-plane simulation environment. The VLM groups
+clips as normal, difficult, or self-occluded, covering everyday activity, demanding actions, and
+occluded views. Camera poses are estimated with VGGT-Ω(Wang et al., 2026a). Without ground-
+truth motion, Wild-4K supports human judgments of reconstruction quality, geometric artifact
+measurements, and simulation tracking, complementing the annotated benchmarks in Section 5.
+4
+METHOD
+4.1
+OVERVIEW
+Given a monocular video, FlowHMR recovers global 3D human motion that is faithful to the video
+and physically plausible. Figure 3 illustrates the overall framework, which consists of two stages.
+In the first stage (Section 4.2), we pretrain a video-conditioned flow matching model on the paired
+video and motion data described in Section 3. In the second stage (Section 4.3), we post-train the
+model via reinforcement learning with a fidelity reward and a physical tracking reward.
+4.2
+GENERATIVE VIDEO-TO-MOTION PRETRAINING
+Depth ambiguity and occlusion make monocular motion capture ill-posed: multiple 3D motions can
+explain the same visual observations. We therefore formulate it as conditional generation and use
+flow matching to learn the distribution of global human motion conditioned on video and camera
+observations.
+5
+
+
+4.2.1
+CONDITIONAL MOTION MODEL
+Motion representation.
+Recovering global motion from a moving camera requires a coordinate
+frame that is consistent across frames. We express each sequence in a gravity-aligned world frame
+whose heading is defined by the camera orientation at the first frame, and translate the motion
+horizontally so that it starts at the origin. An N-frame motion is encoded as x ∈RN×D. Following
+Kimodo (Rempe et al., 2026) and related motion representations (Guo et al., 2022; Tencent Hunyuan
+3D Digital Human Team, 2025), we define the root as the temporally smoothed pelvis trajectory. Each
+frame contains (i) the horizontal velocity and absolute height of the root; (ii) the SMPL-H (Romero
+et al., 2017) joint positions, each decomposed into a horizontal offset relative to the root and an
+absolute height; (iii) the joint rotations in the continuous 6D representation (Zhou et al., 2019), where
+the pelvis orientation is expressed in the world frame and all other rotations are relative to their parent
+joints; and (iv) the body shape parameters and foot contact labels. All features are standardized using
+statistics computed on the training set. This representation jointly encodes body and hand articulation
+together with the global trajectory.
+Conditioning.
+The model is conditioned on per-frame visual features and camera orientations in
+the world frame. For each frame, we crop the person region and extract visual features using the
+frozen, pose-aware image encoder of SAM 3D Body (Yang et al., 2026). The visual features and
+camera rotations are separately projected to a common dimension and summed to form per-frame
+condition tokens, denoted by c.
+Network architecture.
+We adopt the 0.46B-parameter multimodal diffusion transformer (MM-
+DiT) architecture of HY-Motion (Tencent Hunyuan 3D Digital Human Team, 2025). We replace its
+text-conditioning branch with a visual-conditioning branch whose tokens are aligned frame by frame
+with the motion sequence. At flow time t, the noisy motion xt is embedded into per-frame motion
+tokens. The network first applies dual-stream blocks, which use separate projection weights for
+motion and condition tokens, and then single-stream blocks, which process the concatenated token
+sequence with shared weights. The time t is embedded and modulates each block through adaptive
+layer normalization (adaLN), and a final linear layer predicts the clean motion ˆx1 = fθ(xt, c, t).
+In both types of blocks, we apply local temporal attention: each motion token attends to motion
+and condition tokens within a local temporal window, whereas each condition token attends only to
+condition tokens within the window. This design aggregates evidence across neighboring frames
+while keeping the condition features independent of the noisy motion.
+4.2.2
+PRETRAINING WITH FLOW MATCHING
+We train the conditional generator with flow matching (Lipman et al., 2023) on paired videos and
+ground-truth 3D motion, learning to transport Gaussian noise to human motion. For each training
+pair, let x1 denote the ground-truth motion and c the corresponding conditions. We sample Gaussian
+noise x0 and a time t, and linearly interpolate between x0 and x1 to obtain the noisy motion xt.
+Following JiT (Li & He, 2025), the network directly predicts the clean motion, which we convert into
+a velocity prediction:
+xt = (1 −t)x0 + tx1,
+x0 ∼N(0, I),
+ˆvθ = fθ(xt, c, t) −xt
+d(t)
+,
+v∗= x1 −xt
+d(t)
+,
+(1)
+where t ∈[0, 1] is sampled from a logit-normal distribution (Esser et al., 2024), and d(t) =
+max(1 −t, ϵ) clips the denominator near t = 1 for numerical stability. The flow matching loss is a
+weighted sum of Smooth-L1 losses computed separately for each feature group:
+LFM =
+X
+k
+wk ℓSL1
+ ˆv(k)
+θ , v∗(k)
+,
+(2)
+where k indexes the root trajectory, articulation, body shape, and foot contact features, and wk
+balances their contributions. To directly supervise the global body configuration, we further decode
+both ˆx1 and x1 into global joint rotations and positions via SMPL-H forward kinematics (FK), each
+using its own body shape, and apply Smooth-L1 losses between them without pelvis or Procrustes
+alignment. The total pretraining objective is
+Lpre = LFM + λrotLrot + λposLpos.
+(3)
+6
+
+
+Since no alignment is applied, Lrot and Lpos penalize errors in both the global trajectory and the
+articulation. All losses are averaged over feature dimensions and valid frames, excluding padded
+frames.
+Implementation details.
+We pretrain the model for 500K steps with a global batch size of 1,024,
+using AdamW with a learning rate cosine-decayed from 10−4 to 10−5. During training, we randomly
+drop the visual conditions while always retaining the camera conditions. This encourages the model
+to also learn motion generation without visual conditioning, rather than overfitting to the video
+conditions.
+Inference.
+At inference, we integrate the learned velocity field from Gaussian noise using 20
+uniform Euler steps, without classifier-free guidance (CFG). To decode the global motion, we
+integrate the predicted root velocity to obtain the horizontal root trajectory, and add the predicted
+horizontal offset of the pelvis joint to obtain the horizontal pelvis position. The vertical pelvis position
+is given by the predicted absolute height of the pelvis joint; the root height feature is supervised
+during training but not used for decoding. We average the predicted shape parameters over time to
+obtain a single body shape per sequence, and compute the SMPL-H global translation by subtracting
+the shape-dependent rest-pose pelvis offset from the decoded pelvis position. The final SMPL-H
+body is then determined by the predicted joint rotations, body shape, and global translation.
+4.3
+PHYSICS-BASED POST-TRAINING
+The pretraining objectives supervise geometric reconstruction but do not explicitly account for
+dynamics and contact. We therefore post-train the generator with feedback from physics simulation.
+A pretrained, frozen humanoid controller tracks each generated motion in simulation, and its tracking
+accuracy serves as a reward for reinforcement learning. Since optimizing tracking alone may favor
+motions that are easy to execute but deviate from the input video, we combine it with a fidelity reward
+that measures agreement with the ground-truth motion.
+4.3.1
+REWARDS
+Given the conditions c of a training video and its ground-truth motion xgt, we sample a group of G
+motions {x(i)}G
+i=1 using the stochastic sampler described in Section 4.3.2. Each sampled motion
+is evaluated with a fidelity reward and a physical tracking reward. For brevity, we omit the sample
+index i below.
+Fidelity reward.
+The fidelity reward measures how closely a sampled motion matches the ground-
+truth motion. We decode both motions into SMPL-H joint positions via FK, denoted by pn,j and
+pgt
+n,j for frame n and joint j, and define
+rfid = exp
+
+−
+1
+τNJ
+N
+X
+n=1
+J
+X
+j=1
+pn,j −pgt
+n,j
+
+2
+
+,
+(4)
+where N is the number of valid frames, J is the number of body and hand joints, and τ is a temperature
+that controls the reward scale. As with the FK losses in pretraining, joint positions are compared in
+the world frame without any alignment, so the reward accounts for errors in both articulation and
+global trajectory.
+Physical tracking reward.
+The tracking reward measures whether a sampled motion can be
+executed under physical dynamics and contact. We use a pretrained, frozen PHC+ controller (Luo
+et al., 2023; 2024) to track the sampled motion in Isaac Gym (Makoviychuk et al., 2021), using the
+sampled motion itself as the tracking reference. Let bref
+n,m and bsim
+n,m denote the positions of rigid body
+m at step n in the reference motion and in the simulated rollout, respectively. The tracking reward is
+rtrack = exp
+"
+−1
+τH
+H
+X
+n=1
+min
+ 
+1
+M
+M
+X
+m=1
+bsim
+n,m −bref
+n,m
+
+2 , dmax
+!#
+,
+(5)
+7
+
+
+where H = N −1 is the number of simulated steps after initialization, M is the number of rigid
+bodies of the simulated humanoid, and dmax caps the per-step error, e.g., after the humanoid falls.
+We set τ = 0.15 m for both rewards and dmax = 0.5 m. Following PHC (Luo et al., 2023), a rollout
+is considered a failure if the mean body position error exceeds 0.5 m at any step, and a success
+otherwise.
+Before simulation, each motion is converted to the coordinate convention of the controller at 30 Hz
+with upright-start alignment, and the humanoid is initialized at the first reference frame. We disable
+the fail-state recovery and motion looping of the controller, so that tracking failures are reflected
+in the reward rather than corrected by the controller. Motions whose conversion or simulation fails
+receive a tracking reward of zero.
+4.3.2
+REWARD-GUIDED POLICY OPTIMIZATION
+Since the simulator is non-differentiable and both rewards are defined only on complete motions, we
+optimize the generator with policy gradients instead of backpropagating through the simulation. We
+initialize the generator from the pretrained model and adopt MixGRPO (Li et al., 2025b), referred to
+as GRPO in our experiments.
+Group sampling.
+For each training video, the current generator samples a group of G = 8 motions.
+Following MixGRPO, stochastic (SDE) sampling is applied only within a window of denoising steps,
+and deterministic Euler (ODE) steps are used elsewhere. All motions in a group share the same initial
+Gaussian noise and differ only through the independent noise injected within the stochastic window,
+so that differences in their rewards can be attributed to the transitions being optimized.
+Advantage estimation.
+We keep only groups that contain both successful and failed tracking
+outcomes, since groups in which all motions succeed or all fail provide little contrast between
+trackable and untrackable motions. Within each retained group, the two rewards are standardized
+separately, so that neither reward dominates due to differences in scale, and then combined with equal
+weights:
+A(i) = clip
+ 
+r(i)
+fid −µfid
+σfid
++ r(i)
+track −µtrack
+σtrack
+, −Amax, Amax
+!
+,
+(6)
+where µ and σ denote the mean and standard deviation of the corresponding reward within the group.
+The advantages weight the policy updates only at the stochastic transitions within the sampling
+window. Only the generator is updated; the visual encoder and the controller remain frozen.
+5
+EXPERIMENTS
+We evaluate motion capture from internet videos through blinded human comparisons, supported by
+simulation tracking and geometric measurements.
+5.1
+EXPERIMENTAL SETUP
+Datasets.
+Training data and Wild-4K construction are described in Section 3. Wild-4K contains
+4,182 internet video clips without ground-truth motion annotations. We use the full set for tracking
+and geometric evaluation. For human evaluation, we sample comparison pairs without replacement
+from a pool constructed using 500 Wild-4K videos; the evaluated video sets differ across baselines.
+RICH (Huang et al., 2022) provides annotated reconstruction and physical-execution comparisons on
+185 sequences (Section 5.3). The internal Studio set supports pretraining ablations, as described in
+Section 5.5.1.
+Human evaluation.
+Our primary evaluation uses blinded pairwise comparisons of direct predictions
+for the same video, with randomized A/B order; each sampled pair is judged once by a single annotator.
+Annotators judge overall motion quality through naturalness, video fidelity, global trajectory, and
+ground-contact artifacts. Finger poses use a shared default and are excluded from assessment. G/S/B
+denote wins, ties, and losses for our method, aggregated over valid judgments.
+8
+
+
+Evaluation metrics.
+To complement the overall human judgment, we report Success Rate under
+a fixed PHC+ controller, with Tracking Score additionally reported in the post-training ablations.
+Success requires rtrack > 0.6, no early termination, and completion of the scored horizon; all evalu-
+ated clips enter the denominator. Following PhysDiff (Yuan et al., 2023), we measure Penetration,
+Floating, and Skating on generated motions before simulation. Penetration and Floating use the
+lowest mesh vertex’s distance below and above the ground with a 5 mm tolerance; Skating measures
+horizontal foot displacement during contact. We average each error within a sequence and report its
+median over all 4,182 clips in millimeters.
+Compared methods.
+We compare with GVHMR, PromptHMR, GENMO, and DuoMo (Shen
+et al., 2024; Wang et al., 2025b; Li et al., 2025a; Wang et al., 2026b). Ours w/o RL and Ours denote
+FlowHMR before and after post-training.
+Inference settings.
+FlowHMR generates one motion per video with seed 0 and 20 sampling steps,
+without classifier-free guidance, simulation-based selection, or motion correction. Wild-4K tracking
+evaluation uses at most 360 frames per clip at 30 Hz.
+5.2
+RESULTS ON INTERNET VIDEOS
+Table 1: Quantitative Results on Wild-4K. Left: our method outperforms all baselines in blinded human
+evaluation, with more wins than losses in every comparison. Bars show win/tie/loss percentages over valid
+judgments; evaluated videos differ across comparisons. Right: simulation Success Rate (SR, %) under PHC+
+and physical errors on 4,182 clips. Our method achieves the highest SR, the lowest penetration (Pen.) and
+floating (Float) errors, and the second-lowest skating (Skate) error.
+GVHMR
+PromptHMR
+GENMO
+DuoMo
+Ours w/o RL
+61.5
+63.1
+79.2
+62.3
+26.4
+28.5
+31.5
+16.9
+33.8
+58.9
+Win
+Tie
+Loss
+Method
+SR ↑
+Pen. ↓
+Float ↓
+Skate ↓
+GVHMR
+62.82
+1.02
+0.81
+1.59
+PromptHMR
+60.33
+1.10
+2.71
+3.64
+GENMO
+58.80
+1.52
+1.20
+2.55
+DuoMo
+56.71
+1.76
+2.08
+2.56
+Ours w/o RL
+78.79
+0.60
+0.53
+2.48
+Ours
+82.47
+0.06
+0.20
+2.17
+5.2.1
+BLINDED HUMAN EVALUATION
+In Table 1 (left), FlowHMR wins 61.5–79.2% of valid annotations against the four external methods,
+with losses of 3.8–10.0%.
+The comparison with Ours w/o RL evaluates the perceptual effect of post-training within the same
+model. Among 129 valid annotations, the post-trained model receives 34 wins (26.4%), 76 ties
+(58.9%), and 19 losses (14.7%). Post-training is preferred more often than the pretrained model,
+while the majority of comparisons are judged equal.
+5.2.2
+TRACKING AND PHYSICAL PLAUSIBILITY
+On Wild-4K (Table 1, right), Ours w/o RL reaches a Success Rate of 78.79%, compared with the
+highest external baseline rate of 62.82%. Post-training raises this rate to 82.47%, a gain of 3.68
+percentage points.
+To determine whether the tracking gains are accompanied by fewer geometric defects, we examine the
+generated motions before simulation. Median Penetration decreases from 0.60 to 0.06 mm, Floating
+from 0.53 to 0.20 mm, and Skating from 2.48 to 2.17 mm after post-training. GVHMR (Shen et al.,
+2024) still has lower Skating at 1.59 mm.
+9
+
+
+Video
+output
+tracking result
+output
+tracking result
+output
+tracking result
+output
+tracking result
+GVHMR
+GENMO
+DuoMo
+Ours
+Figure 4: Qualitative comparison of reconstruction and simulation tracking. The top row shows the input
+video, followed by GVHMR (Shen et al., 2024), GENMO (Li et al., 2025a), DuoMo (Wang et al., 2026b), and
+FlowHMR. Each method panel pairs the reconstructed output (pink, left) with its tracking result in simulation
+(blue, right). Our method enables successful simulation tracking of this sequence, whereas all compared baselines
+fail.
+5.3
+RECONSTRUCTION AND PHYSICAL EXECUTION ON RICH
+Wild-4K measures recovery quality on internet videos without motion annotations. To evaluate
+reconstruction accuracy together with physical execution on the same annotated sequences, we
+additionally compare methods on RICH (Huang et al., 2022). Table 2 reports geometric errors and
+PHC+ tracking for all 185 sequences, including tracking failures. WA-/W-/PA-MPJPE measure
+world-aligned, world-coordinate, and Procrustes-aligned joint position errors, respectively. RTE
+denotes root translation error; RTE and Jitter are evaluated over complete sequences.
+Table 2: Quantitative reconstruction and physical-execution results on RICH. WA/W/PA denote WA-
+/W-/PA-MPJPE; these and foot sliding (FS) use mm. RTE is in %; Jitter in m/s3. PHC+ Success (%) and
+tracking MPJPE (mm) use all 185 sequences, including failures; the latter compares execution with the generated
+reference motion. Ours achieves the highest PHC+ Success Rate and the lowest tracking MPJPE, and competitive
+reconstruction results.
+Method
+Reconstruction
+Motion quality
+PHC+ execution
+WA ↓
+W ↓
+PA ↓
+RTE ↓
+Jitter ↓
+FS ↓
+Success ↑
+MPJPE ↓
+GVHMR
+82.83
+133.08
+40.05
+2.49
+20.69
+3.64
+28.11
+154.3
+PromptHMR
+72.25
+115.55
+41.92
+1.71
+19.56
+4.27
+35.14
+150.5
+GENMO
+88.12
+140.51
+42.20
+2.49
+16.44
+4.02
+35.68
+148.2
+DuoMo
+52.86
+78.28
+37.43
+1.33
+7.53
+3.29
+24.86
+179.1
+Ours w/o RL
+55.70
+88.37
+30.78
+1.92
+7.07
+3.63
+48.65
+133.5
+Ours
+56.68
+88.43
+31.40
+1.82
+6.71
+3.14
+51.35
+118.8
+Post-training increases FlowHMR’s PHC+ Success Rate from 48.65% to 51.35% and reduces tracking
+MPJPE from 133.5 to 118.8 mm. The final model has the highest success rate and lowest tracking
+error among the evaluated methods. Its WA-MPJPE and PA-MPJPE increase slightly relative to the
+pretrained model, from 55.70 to 56.68 mm and from 30.78 to 31.40 mm, respectively, while Jitter and
+10
+
+
+Video
+Motion
+Simulation
+Figure 5: SONIC execution on Unitree G1. Rows show the input video, the motion reconstructed by FlowHMR
+(pink), and SONIC tracking in Isaac Lab (blue).
+Foot-sliding decrease. DuoMo (Wang et al., 2026b) has lower WA-MPJPE, W-MPJPE, and RTE,
+but a lower PHC+ Success Rate. Reconstruction accuracy and controller tracking therefore provide
+complementary evidence about the recovered motions.
+5.4
+EXECUTION UNDER SONIC
+To evaluate physical execution under a controller not used in post-training, we retarget Wild-4K
+reconstructions to the Unitree G1 humanoid with GMR (Araujo et al., 2025) and track them with
+SONIC (Luo et al., 2026) in Isaac Lab (Mittal et al., 2025), counting a clip as successful if the
+reference sequence finishes without a non-timeout termination. We evaluate on the 615 clips on
+which at least one method succeeds. As shown in Table 3, FlowHMR achieves the highest success
+rate of 77.72%, outperforming the strongest baseline, GVHMR (Shen et al., 2024) (54.15%). Figure 5
+shows an example of FlowHMR motion successfully executed by SONIC.
+Table 3: SONIC success rate on Wild-4K. Bold and underlining mark the best and second-best values.
+Method
+Success rate (%) ↑
+PromptHMR
+44.07
+GENMO
+48.78
+DuoMo
+51.06
+GVHMR
+54.15
+FlowHMR (ours)
+77.72
+5.5
+ABLATION STUDIES
+5.5.1
+PRETRAINING DESIGN
+We study how training data, generative modeling, and model size affect reconstruction on the internal
+Studio set. Studio contains 300 video sequences spanning diverse motion categories with optical
+motion capture ground truth, supporting quantitative comparisons of body, hand, and trajectory
+reconstruction. Table 4 reports mean results across its motion categories; MPJREhand denotes mean
+per-joint hand rotation error.
+Training data scale.
+We evaluate the effect of pretraining data scale by comparing models trained
+on 200 and 3,000 hours of pretraining data. The 3,000-hour model improves all six reported metrics.
+WA-MPJPE decreases from 149.44 to 67.82 mm and hand-rotation error from 25.17 to 16.08 degrees.
+Generative formulation.
+We compare Flow Matching with feed-forward regression to assess the
+effect of generative modeling on reconstruction. Flow Matching reduces WA-MPJPE from 73.28 to
+11
+
+
+Table 4: Ablations of the pretrained model.
+Factor
+Setting
+WA-MPJPE
+(mm) ↓
+MPJPE
+(mm) ↓
+RTE
+(mm) ↓
+MPJREhand
+(◦) ↓
+Jitter
+(mm/s2) ↓
+Foot-sliding
+(mm) ↓
+Data scale
+200 h
+149.44
+90.92
+4.91
+25.17
+16.34
+3.53
+3,000 h
+67.82
+43.49
+1.86
+16.08
+11.75
+2.55
+Prediction
+Regression
+73.28
+43.44
+2.39
+14.55
+18.01
+3.94
+Flow Matching
+67.82
+43.49
+1.86
+16.08
+11.75
+2.55
+Model size
+0.2B
+67.82
+43.49
+1.86
+16.08
+11.75
+2.55
+0.46B
+63.39
+42.31
+1.81
+16.48
+11.03
+2.27
+1B
+62.84
+42.37
+1.83
+15.96
+10.93
+2.28
+67.82 mm and also improves RTE, Jitter, and Foot-sliding. MPJPE is similar (43.49 versus 43.44 mm),
+while hand-rotation error is higher (16.08 versus 14.55 degrees).
+Model size.
+Increasing model size from 0.2B to 1B reduces WA-MPJPE from 67.82 to 62.84 mm
+and Jitter from 11.75 to 10.93. The gains are not monotonic across all metrics: the 0.46B model has
+the lowest MPJPE, RTE, and Foot-sliding among the three sizes.
+5.5.2
+POST-TRAINING DESIGN
+Table 5: Ablation of post-training. We compare different post-training methods and reinforcement-learning
+reward settings. Our GRPO with fidelity (Fid.) and physical tracking (Track.) rewards achieves higher simulation
+success than both SFT variants while keeping reconstruction errors close to the pretrained model. Optimizing
+tracking alone yields high success at the cost of severe reconstruction errors. Adding a reward based on Phys-Err
+(penetration, floating, and skating errors) (Yuan et al., 2023) yields comparable tracking success but worse
+reconstruction accuracy than our joint-reward design. ∗marks reward hacking, excluded from ranking.
+RICH
+Wild-4K (PHC+)
+Method
+Target / reward
+WA-MPJPE
+(mm) ↓
+PA-MPJPE
+(mm) ↓
+Success
+(%) ↑
+Score ↑
+Pretrained
+—
+55.70
+30.78
+78.79
+0.692
+SFT
+Filtered originals
+54.80
+30.88
+78.38
+0.690
+Projected targets
+70.80
+42.13
+80.25
+0.706
+GRPO
+Fid. only
+57.29
+31.62
+73.79
+0.658
+Track. only∗
+255.67
+139.20
+99.62∗
+0.942∗
+Fid. + Phys-Err
+62.15
+37.43
+77.98
+0.671
+Fid. + Track. + Phys-Err
+60.66
+34.38
+82.57
+0.744
+Ours
+Fid. + Track.
+56.68
+31.40
+82.47
+0.746
+Table 5 compares supervision targets and reward combinations using the pretrained model as a shared
+reference. Reconstruction and tracking are reported together to assess whether tracking gains preserve
+the recovered action.
+Post-training strategies.
+We test whether supervised fine-tuning (SFT) with filtered original targets
+or simulated trajectories obtains tracking gains comparable to joint-reward GRPO. SFT with filtered
+originals retains the original motion targets and reduces RICH WA-MPJPE to 54.80 mm, but does
+not improve Wild-4K tracking over the pretrained model. Projected-target SFT uses simulated body
+poses and root trajectories as supervision targets. It increases Success Rate to 80.25%, but raises
+WA-MPJPE to 70.80 mm and PA-MPJPE to 42.13 mm. Joint-reward GRPO reaches 82.47% Success
+Rate with smaller reconstruction costs, retaining the original annotation as its fidelity reference.
+Reward components.
+The fidelity and physical tracking rewards serve as different objectives,
+so we first test what happens when either is used alone. Fidelity-only GRPO does not improve
+reconstruction or tracking over the pretrained model. Tracking-only GRPO reaches 99.62% Success
+12
+
+
+Video
+Input frames
+Pretrained
+output
+tracking result
+SFT (Proj.)
+output
+tracking result
+Ours
+output
+tracking result
+GRPO (Sim.)
+output
+tracking result
+Figure 6: Qualitative comparison of post-training strategies. Columns show the input video, pretrained
+FlowHMR, SFT with projected targets (Proj.), joint-reward GRPO (Ours), and tracking-only GRPO (Sim.).
+Rows show three synchronized time points. Each method panel pairs the reconstructed output (pink, left) with
+its tracking result in simulation (blue, right).
+Rate, but WA-MPJPE and PA-MPJPE increase to 255.67 and 139.20 mm. This reward-hacking
+behavior shows why high tracking scores must be assessed together with reconstruction fidelity.
+We also evaluate a reward based on Phys-Err (penetration, floating, and skating errors) (Yuan et al.,
+2023) to favor motions with fewer geometric artifacts. Replacing the physical tracking reward with a
+kinematic proxy gives a Success Rate of 77.98%, below the pretrained model’s 78.79%.
+Adding this reward to the joint fidelity and tracking rewards yields a comparable Success Rate
+(82.57% versus 82.47%), but higher reconstruction errors and a slightly lower Tracking Score. We
+use the two-reward configuration for its better reconstruction at comparable tracking performance.
+Qualitative comparison.
+Figure 6 illustrates the differences between post-training strategies. The
+pretrained model fails during tracking and falls. Projected-target SFT degrades reconstruction fidelity:
+in the second row, the reconstructed pose no longer matches the leg lift in the input frame. Tracking-
+only GRPO exhibits reward hacking, keeping the character in place instead of reproducing the input
+motion. Our joint-reward model better preserves the input action while maintaining upright tracking
+in this example.
+5.6
+SAMPLING VARIABILITY
+We evaluate fixed pretrained and final GRPO checkpoints with eight seeds on a 300-video subset of
+Wild-4K: 153 normal, 99 self-occluded, and 48 difficult motions. Table 6 reports variation among
+generated motions and execution quality under PHC+, using the metrics defined in Section 5.1.
+Table 6: Sampling before and after post-training. Ours w/o RL and Ours are each evaluated with eight seeds
+on a 300-video subset of Wild-4K. (a) Pairwise seed MPJPE averages the 28 pairs per video, then takes the
+median across videos. Tracking MPJPE averages the eight seed-level errors between execution and generated
+references over all motions. (b) Mean ± standard deviation of the eight seed-level PHC+ results.
+(a) Motion variation and tracking
+Model
+Pairwise seed
+MPJPE (mm) ↓
+Tracking MPJPE
+(cm) ↓
+Ours w/o RL
+57.25
+8.35
+Ours
+22.86
+6.96
+(b) Execution across seeds
+Model
+Success Rate (%)
+↑
+Tracking Score
+↑
+Ours w/o RL
+76.33 ± 1.02
+0.6799 ± 0.0055
+Ours
+79.71 ± 0.42 0.7344 ± 0.0019
+13
+
+
+Video
+output
+tracking result
+output
+tracking result
+output
+tracking result
+GVHMR
+PHMR
+GENMO
+DuoMo
+Ours
+Figure 7: Qualitative comparison. The top row shows the input video, followed by GVHMR, PromptHMR
+(PHMR), GENMO, DuoMo, and Ours.
+After GRPO, mean PHC+ Success Rate increases from 76.33% to 79.71%, while its standard deviation
+across eight seeds falls from 1.02 to 0.42 percentage points. Pairwise seed MPJPE decreases from
+57.25 to 22.86 mm, and tracking MPJPE decreases from 8.35 to 6.96 cm. These results indicate better
+mean tracking performance and lower sensitivity to sampling seeds on this subset. Reduced variation
+across generated samples is distinct from the movement amplitude within a motion sequence.
+5.7
+QUALITATIVE COMPARISONS
+In Figure 4, GVHMR (Shen et al., 2024) and DuoMo (Wang et al., 2026b) fall during PHC+ tracking,
+while GENMO (Li et al., 2025a) deviates substantially from its generated reference. FlowHMR
+remains upright with torso orientation and arm poses closer to the reference. Visually plausible
+reconstruction alone does not guarantee stable physical execution. Additional qualitative examples
+and comparisons appear in Figures 6 to 8.
+6
+LIMITATIONS AND FUTURE WORK
+Physics-based simulation provides feedback that improves the physical plausibility and tracking of
+recovered motion. However, physical execution is currently evaluated in a simplified environment
+containing only a ground plane. Simulation-based post-training also requires repeated rollouts for
+sampled motions, making training costly as the data scale, sequence length, or number of samples
+grows.
+Internet videos often contain interactions with objects and support surfaces. Future work could
+reconstruct these entities and model their contacts in simulation, while developing more efficient
+simulation and rollout strategies to scale physical feedback to more videos and longer sequences.
+14
+
+
+Figure 8: Additional qualitative examples. We present two challenging cases: a fitness exercise that demands
+precise balance control, and a fast-paced boxing sequence. In both cases, our generated motions are successfully
+tracked in the physics simulator, demonstrating that our results remain physically balanced while faithfully
+following highly dynamic movements.
+7
+CONCLUSION
+We presented FlowHMR, a generative framework for recovering global 3D human motion from
+monocular video. It combines Flow Matching pretraining with physics-based reinforcement learning
+to jointly optimize reconstruction fidelity and simulation tracking. We also introduced Wild-4K and
+found improved overall motion quality and tracking performance over the evaluated baselines.
+15
+
+
+REFERENCES
+Arthur Allshire, Hongsuk Choi, Junyi Zhang, David McAllister, Anthony Zhang, Chung Min Kim, Trevor
+Darrell, Pieter Abbeel, Jitendra Malik, and Angjoo Kanazawa. Visual imitation enables contextual humanoid
+control. In Proceedings of the Conference on Robot Learning, 2025. URL https://arxiv.org/abs/
+2505.03729.
+Joao Pedro Araujo, Yanjie Ze, Pei Xu, Jiajun Wu, and C. Karen Liu. Retargeting matters: General motion
+retargeting for humanoid motion tracking. arXiv preprint arXiv:2510.02252, 2025. URL https://arxiv.
+org/abs/2510.02252.
+Michael J Black, Priyanka Patel, Joachim Tesch, and Jinlong Yang. Bedlam: A synthetic dataset of bodies
+exhibiting detailed lifelike animated motion. In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, pp. 8726–8737, 2023.
+Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi,
+Dominik Lorenz, Axel Sauer, Frederic Boesel, Dustin Podell, Tim Dockhorn, Zion English, Kyle Lacey,
+Alex Goodwin, Yannik Marek, and Robin Rombach. Scaling rectified flow transformers for high-resolution
+image synthesis. In Forty-first International Conference on Machine Learning, 3 2024. URL http:
+//arxiv.org/abs/2403.03206.
+Qiao Feng, Yiming Huang, Yufu Wang, Jiatao Gu, and Lingjie Liu. PhysHMR: Learning humanoid control
+policies from vision for physically plausible human motion reconstruction. In SIGGRAPH Asia 2025
+Conference Papers. Association for Computing Machinery, 2025. doi: 10.1145/3757377.3763951. URL
+https://fengq1a0.github.io/projects/physhmr/index.html.
+Zheng Ge, Songtao Liu, Feng Wang, Zeming Li, and Jian Sun. YOLOX: Exceeding YOLO series in 2021. arXiv
+preprint arXiv:2107.08430, 2021. URL https://arxiv.org/abs/2107.08430.
+Nate Gillman, Michael Freeman, Daksh Aggarwal, Chia-Hong Hsu, Calvin Luo, Yonglong Tian, and Chen Sun.
+Self-correcting self-consuming loops for generative model training. In Proceedings of the 41st International
+Conference on Machine Learning, volume 235 of Proceedings of Machine Learning Research, pp. 15646–
+15677. PMLR, 2024. URL https://proceedings.mlr.press/v235/gillman24a.html.
+Chuan Guo, Shihao Zou, Xinxin Zuo, Sen Wang, Wei Ji, Xingyu Li, and Li Cheng. Generating diverse and natural
+3d human motions from text. In Proceedings of the IEEE/CVF conference on computer vision and pattern
+recognition, pp. 5152–5161, 2022. URL https://ericguo5513.github.io/text-to-motion.
+Gaoge Han, Mingjiang Liang, Jinglei Tang, Yongkang Cheng, Wei Liu, and Shaoli Huang. ReinDiffuse: Crafting
+physically plausible motions with reinforced diffusion model. In Proceedings of the Winter Conference
+on Applications of Computer Vision (WACV), pp. 2218–2227, 2025.
+URL https://openaccess.
+thecvf.com/content/WACV2025/html/Han_ReinDiffuse_Crafting_Physically_
+Plausible_Motions_with_Reinforced_Diffusion_Model_WACV_2025_paper.html.
+Tairan He, Jiawei Gao, Wenli Xiao, Yuanhang Zhang, Zi Wang, Jiashun Wang, Zhengyi Luo, Guanqi He, Nikhil
+Sobanbabu, Chaoyi Pan, Zeji Yi, Guannan Qu, Kris Kitani, Jessica K. Hodgins, Linxi Fan, Yuke Zhu, Changliu
+Liu, and Guanya Shi. ASAP: Aligning simulation and real-world physics for learning agile humanoid whole-
+body skills. In Proceedings of Robotics: Science and Systems, 2025. doi: 10.15607/RSS.2025.XXI.066. URL
+https://www.roboticsproceedings.org/rss21/p066.html.
+Chun-Hao P Huang, Hongwei Yi, Markus Höschle, Matvey Safroshkin, Tsvetelina Alexiadis, Senya Polikovsky,
+Daniel Scharstein, and Michael J Black. Capturing and inferring dense full-body human-scene contact. In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp. 13274–13285,
+2022.
+Catalin Ionescu, Dragos Papava, Vlad Olaru, and Cristian Sminchisescu. Human3.6M: Large scale datasets and
+predictive methods for 3d human sensing in natural environments. IEEE Trans. Pattern Anal. Mach. Intell.,
+2014.
+Muhammed Kocabas, Nikos Athanasiou, and Michael J. Black. VIBE: Video inference for human body pose and
+shape estimation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 5253–5263, 2020. URL https://openaccess.thecvf.com/content_CVPR_2020/html/
+Kocabas_VIBE_Video_Inference_for_Human_Body_Pose_and_Shape_Estimation_
+CVPR_2020_paper.html.
+Jiefeng Li, Siyuan Bian, Chao Xu, Gang Liu, Gang Yu, and Cewu Lu. D&D: Learning human dynamics from
+dynamic camera. In European Conference on Computer Vision, 2022. URL https://arxiv.org/abs/
+2209.08790.
+Jiefeng Li, Jinkun Cao, Haotian Zhang, Davis Rempe, Jan Kautz, Umar Iqbal, and Ye Yuan. Genmo: A generalist
+model for human motion. In Proceedings of the IEEE/CVF International Conference on Computer Vision
+(ICCV), 2025a.
+Junzhe Li, Yutao Cui, Tao Huang, Yinping Ma, Chun Fan, Miles Yang, and Zhao Zhong. MixGRPO: Unlocking
+flow-based GRPO efficiency with mixed ODE-SDE.
+arXiv preprint arXiv:2507.21802, 2025b.
+URL
+https://arxiv.org/abs/2507.21802.
+Tianhong Li and Kaiming He. Back to basics: Let denoising generative models denoise. arXiv preprint
+arXiv:2511.13720, 2025.
+16
+
+
+Zhuo Li, Mingshuang Luo, Ruibing Hou, Xin Zhao, Hao Liu, Hong Chang, Zimo Liu, and Chen
+Li.
+Morph: A motion-free physics optimization framework for human motion generation.
+In Pro-
+ceedings of the IEEE/CVF International Conference on Computer Vision, pp. 14580–14589, 2025c.
+URL
+https://openaccess.thecvf.com/content/ICCV2025/html/Li_Morph_A_
+Motion-free_Physics_Optimization_Framework_for_Human_Motion_Generation_
+ICCV_2025_paper.html.
+Zeyu Ling, Xinyao Yu, Renye Yan, Jikang Cheng, Zhanke Wang, Qing Shuai, and Changqing Zou. GenTrack:
+Physical alignment for robot-native motion generation and zero-shot humanoid tracking. arXiv preprint
+arXiv:2608.01410, 2026. URL https://arxiv.org/abs/2608.01410.
+Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow matching for
+generative modeling, 2023. URL https://arxiv.org/abs/2210.02747.
+Jie Liu, Gongye Liu, Jiajun Liang, Yangguang Li, Jiaheng Liu, Xintao Wang, Pengfei Wan, Di Zhang, and Wanli
+Ouyang. Flow-GRPO: Training flow matching models via online RL. arXiv preprint arXiv:2505.05470, 2025.
+URL https://arxiv.org/abs/2505.05470.
+Yufei Liu, Junwei Zhu, Junshu Tang, Shijie Zhang, Jiangning Zhang, Weijian Cao, Chengjie Wang, Yunsheng
+Wu, and Dongjin Huang. Texdreamer: Towards zero-shot high-fidelity 3d human texture generation. In
+European Conference on Computer Vision, pp. 184–202. Springer, 2024. ATLAS dataset: https://
+huggingface.co/datasets/ggxxii/ATLAS.
+Zhengyi Luo, Jinkun Cao, Alexander Winkler, Kris Kitani, and Weipeng Xu. Perpetual humanoid control for
+real-time simulated avatars. In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+2023. URL https://arxiv.org/abs/2305.06456.
+Zhengyi Luo, Jinkun Cao, Josh Merel, Alexander Winkler, Jing Huang, Kris Kitani, and Weipeng Xu. Universal
+humanoid motion representations for physics-based control. In The Twelfth International Conference on
+Learning Representations, 2024. URL https://arxiv.org/abs/2310.04582v2.
+Zhengyi Luo, Ye Yuan, Tingwu Wang, Chenran Li, Fernando Castañeda, Sirui Chen, Zi-Ang Cao, Jiefeng
+Li, David Minor, Qingwei Ben, Jinhyung Park, David Sami, Zi Wang, Xingye Da, Runyu Ding, Cyrus
+Hogg, Lina Song, Edy Lim, Eugene Jeong, Tairan He, Haoru Xue, Wenli Xiao, Simon Yuen, Jan Kautz, Yan
+Chang, Umar Iqbal, Linxi Fan, and Yuke Zhu. SONIC: Supersizing motion tracking for natural humanoid
+whole-body control. Science Robotics, 11(117):eaed4592, 2026. doi: 10.1126/scirobotics.aed4592. URL
+https://www.science.org/doi/abs/10.1126/scirobotics.aed4592.
+Viktor Makoviychuk, Lukasz Wawrzyniak, Yunrong Guo, Michelle Lu, Kier Storey, Miles Macklin, David
+Hoeller, Nikita Rudin, Arthur Allshire, Ankur Handa, and Gavriel State. Isaac Gym: High performance
+GPU-based physics simulation for robot learning. arXiv preprint arXiv:2108.10470, 2021. URL https:
+//arxiv.org/abs/2108.10470.
+Mayank Mittal, Pascal Roth, James Tigue, Antoine Richard, Octi Zhang, Peter Du, Antonio Serrano-Muñoz,
+Xinjie Yao, René Zurbrügg, Nikita Rudin, Lukasz Wawrzyniak, Milad Rakhsha, Alain Denzler, Eric Heiden,
+Ales Borovicka, Ossama Ahmed, Iretiayo Akinola, Abrar Anwar, Mark T. Carlson, Ji Yuan Feng, Animesh
+Garg, Renato Gasoto, Lionel Gulich, Yijie Guo, M. Gussert, Alex Hansen, Mihir Kulkarni, Chenran Li,
+Wei Liu, Viktor Makoviychuk, Grzegorz Malczyk, Hammad Mazhar, Masoud Moghani, Adithyavairavan
+Murali, Michael Noseworthy, Alexander Poddubny, Nathan Ratliff, Welf Rehberg, Clemens Schwarke, Ritvik
+Singh, James Latham Smith, Bingjie Tang, Ruchik Thaker, Matthew Trepte, Karl Van Wyk, Fangzhou Yu,
+Alex Millane, Vikram Ramasamy, Remo Steiner, Sangeeta Subramanian, Clemens Volk, CY Chen, Neel
+Jawale, Ashwin Varghese Kuruttukulam, Michael A. Lin, Ajay Mandlekar, Karsten Patzwaldt, John Welsh,
+Huihua Zhao, Fatima Anes, Jean-Francois Lafleche, Nicolas Moënne-Loccoz, Soowan Park, Rob Stepinski,
+Dirk Van Gelder, Chris Amevor, Jan Carius, Jumyung Chang, Anka He Chen, Pablo de Heras Ciechomski,
+Gilles Daviet, Mohammad Mohajerani, Julia von Muralt, Viktor Reutskyy, Michael Sauter, Simon Schirm,
+Eric L. Shi, Pierre Terdiman, Kenny Vilella, Tobias Widmer, Gordon Yeoman, Tiffany Chen, Sergey Grizan,
+Cathy Li, Lotus Li, Connor Smith, Rafael Wiltz, Kostas Alexis, Yan Chang, David Chu, Linxi "Jim" Fan,
+Farbod Farshidian, Ankur Handa, Spencer Huang, Marco Hutter, Yashraj Narang, Soha Pouya, Shiwei Sheng,
+Yuke Zhu, Miles Macklin, Adam Moravanszky, Philipp Reist, Yunrong Guo, David Hoeller, and Gavriel
+State. Isaac Lab: A GPU-accelerated simulation framework for multi-modal robot learning. arXiv preprint
+arXiv:2511.04831, 2025. URL https://arxiv.org/abs/2511.04831.
+Poly Haven. Poly haven. https://polyhaven.com/, 2025. Accessed: 2025-01-26.
+Qwen Team. Qwen3.5: Towards native multimodal agents, February 2026. URL https://qwen.ai/blog?
+id=qwen3.5.
+Davis Rempe, Tolga Birdal, Aaron Hertzmann, Jimei Yang, Srinath Sridhar, and Leonidas J. Guibas. Humor: 3d
+human motion model for robust pose estimation. In Proceedings of the IEEE/CVF International Conference
+on Computer Vision (ICCV), pp. 11488–11499, October 2021.
+Davis Rempe, Mathis Petrovich, Ye Yuan, Haotian Zhang, Xue Bin Peng, Yifeng Jiang, Tingwu Wang, Umar
+Iqbal, David Minor, Michael de Ruyter, Jiefeng Li, Chen Tessler, Edy Lim, Eugene Jeong, Sam Wu, Ehsan
+Hassani, Michael Huang, Jin-Bey Yu, Chaeyeon Chung, Lina Song, Olivier Dionne, Jan Kautz, Simon Yuen,
+and Sanja Fidler. Kimodo: Scaling controllable human motion generation. arXiv:2603.15546, 2026.
+17
+
+
+Jiawei Ren, Mingyuan Zhang, Cunjun Yu, Xiao Ma, Liang Pan, and Ziwei Liu.
+InsActor: Instruction-
+driven physics-based characters.
+In Advances in Neural Information Processing Systems, vol-
+ume 36, 2023.
+URL https://proceedings.neurips.cc/paper_files/paper/2023/
+hash/bc943cd038a5531d5433b1431c822c01-Abstract-Conference.html.
+Javier Romero, Dimitrios Tzionas, and Michael J. Black. Embodied hands: Modeling and capturing hands and
+bodies together. ACM Transactions on Graphics, (Proc. SIGGRAPH Asia), 36, 11 2017. ISSN 15577368.
+doi: 10.1145/3130800.3130883.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang,
+Y. K. Li, Y. Wu, and Daya Guo. DeepSeekMath: Pushing the limits of mathematical reasoning in open
+language models. arXiv preprint arXiv:2402.03300, 2024. URL https://arxiv.org/abs/2402.
+03300.
+Zehong Shen, Huaijin Pi, Yan Xia, Zhi Cen, Sida Peng, Zechen Hu, Hujun Bao, Ruizhen Hu, and Xiaowei
+Zhou. World-grounded human motion recovery via gravity-view coordinates. In SIGGRAPH Asia Conference
+Proceedings, 2024.
+Soshi Shimada, Vladislav Golyanik, Weipeng Xu, and Christian Theobalt. PhysCap: Physically plausible
+monocular 3D motion capture in real time. ACM Transactions on Graphics, 39(6), 2020. URL https:
+//vcai.mpi-inf.mpg.de/projects/PhysCap/.
+Soyong Shin, Juyong Kim, Eni Halilaj, and Michael J Black. Wham: Reconstructing world-grounded humans
+with accurate 3d motion. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, pp. 2070–2080, 2024.
+Yu Sun, Qian Bao, Wu Liu, Tao Mei, and Michael J Black. Trace: 5d temporal regression of avatars with
+dynamic cameras in 3d environments. In Proceedings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition, pp. 8856–8866, 2023.
+Tencent Hunyuan 3D Digital Human Team. Hy-motion 1.0: Scaling flow matching models for text-to-motion
+generation. arXiv preprint arXiv:2512.23464, 2025.
+Joachim Tesch, Giorgio Becherini, Prerana Achar, Anastasios Yiannakidis, Muhammed Kocabas, Priyanka Patel,
+and Michael J Black. Bedlam2.0: Synthetic humans and cameras in motion. In The Thirty-ninth Annual
+Conference on Neural Information Processing Systems Datasets and Benchmarks Track, 2025.
+Guy Tevet, Sigal Raab, Setareh Cohan, Daniele Reda, Zhengyi Luo, Xue Bin Peng, Amit Haim Bermano, and
+Michiel van de Panne. CLoSD: Closing the loop between simulation and diffusion for multi-task character
+control. In International Conference on Learning Representations, 2025. URL https://openreview.
+net/forum?id=pZISppZSTv.
+Shashank Tripathi, Lea Müller, Chun-Hao P. Huang, Omid Taheri, Michael J. Black, and Dimitrios Tzionas.
+3D human pose estimation via intuitive physics. In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, pp. 4713–4725, 2023. URL https://arxiv.org/abs/2303.18246.
+Timo von Marcard, Roberto Henschel, Michael Black, Bodo Rosenhahn, and Gerard Pons-Moll. Recovering
+accurate 3d human pose in the wild using imus and a moving camera. In European Conference on Computer
+Vision (ECCV), 2018.
+Jianyuan Wang, Minghao Chen, Shangzhan Zhang, Nikita Karaev, Johannes Schönberger, Patrick Labatut, Piotr
+Bojanowski, David Novotny, Andrea Vedaldi, and Christian Rupprecht. VGGT-Ω. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2026a. URL https://vggt-omega.
+github.io/.
+Qiuheng Wang, Yukai Shi, Jiarong Ou, Rui Chen, Ke Lin, Jiahao Wang, Boyuan Jiang, Haotian Yang, Mingwu
+Zheng, Xin Tao, Fei Yang, Pengfei Wan, and Di Zhang. Koala-36M: A large-scale video dataset improving
+consistency between fine-grained conditions and video content. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition, pp. 8428–8437, 2025a.
+Yufu Wang, Yu Sun, Priyanka Patel, Kostas Daniilidis, Michael J Black, and Muhammed Kocabas. Prompthmr:
+Promptable human mesh recovery. In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 1148–1159, 2025b.
+Yufu Wang, Evonne Ng, Soyong Shin, Rawal Khirodkar, Yuan Dong, Zhaoen Su, Jinhyung Park,
+Kris Kitani,
+Alexander Richard,
+Fabian Prada,
+and Michael Zollhöfer.
+DuoMo:
+Dual mo-
+tion diffusion for world-space human reconstruction.
+In Proceedings of the IEEE/CVF Confer-
+ence on Computer Vision and Pattern Recognition, pp. 42777–42788, 2026b.
+URL https:
+//openaccess.thecvf.com/content/CVPR2026/html/Wang_DuoMo_Dual_Motion_
+Diffusion_for_World-Space_Human_Reconstruction_CVPR_2026_paper.html.
+Akihisa Watanabe, Jiawei Ren, Siyao Li, Yichen Peng, Erwin Wu, and Edgar Simo-Serra. SimDiff: Simulator-
+constrained diffusion model for physically plausible motion generation. arXiv preprint arXiv:2509.20927,
+2025. URL https://arxiv.org/abs/2509.20927.
+Yufei Xu, Jing Zhang, Qiming Zhang, and Dacheng Tao. ViTPose: Simple vision transformer baselines for
+human pose estimation. In Advances in Neural Information Processing Systems, volume 35, pp. 38571–38584,
+2022.
+Zeyue Xue, Jie Wu, Yu Gao, Fangyuan Kong, Lingting Zhu, Mengzhao Chen, Zhiheng Liu, Wei Liu, Qiushan
+Guo, Weilin Huang, and Ping Luo. DanceGRPO: Unleashing GRPO on visual generation. arXiv preprint
+arXiv:2505.07818, 2025. URL https://arxiv.org/abs/2505.07818.
+18
+
+
+Xitong Yang, Devansh Kukreja, Don Pinkus, et al. Sam 3d body: Robust full-body human mesh recovery. arXiv
+preprint arXiv:2602.15989, 2026.
+Nanjie Yao, Junlong Ren, Wenhao Shen, and Hao Wang. MotionGRPO: Overcoming low intra-group diversity
+in GRPO-based egocentric motion recovery. In International Conference on Machine Learning, 2026. URL
+https://arxiv.org/abs/2605.05680.
+Vickie Ye, Georgios Pavlakos, Jitendra Malik, and Angjoo Kanazawa. Decoupling human and camera motion
+from videos in the wild. In Proceedings of the IEEE/CVF conference on computer vision and pattern
+recognition, pp. 21222–21232, 2023.
+Ye Yuan,
+Shih-En Wei,
+Tomas Simon,
+Kris Kitani,
+and Jason Saragih.
+SimPoE: Simulated
+character control for 3D human pose estimation.
+In Proceedings of the IEEE/CVF Confer-
+ence on Computer Vision and Pattern Recognition,
+pp. 7159–7169,
+2021.
+URL https:
+//openaccess.thecvf.com/content/CVPR2021/html/Yuan_SimPoE_Simulated_
+Character_Control_for_3D_Human_Pose_Estimation_CVPR_2021_paper.html.
+Ye Yuan, Umar Iqbal, Pavlo Molchanov, Kris Kitani, and Jan Kautz. Glamr: Global occlusion-aware human
+mesh recovery with dynamic cameras. In Proceedings of the IEEE/CVF conference on computer vision and
+pattern recognition, pp. 11038–11049, 2022.
+Ye Yuan, Jiaming Song, Umar Iqbal, Arash Vahdat, and Jan Kautz. PhysDiff: Physics-guided human motion
+diffusion model. In Proceedings of the IEEE/CVF International Conference on Computer Vision, 2023. URL
+https://arxiv.org/abs/2212.02500.
+Junpeng Yue, Zepeng Wang, Yuxuan Wang, Weishuai Zeng, Jiangxing Wang, Xinrun Xu, Yu Zhang, Sipeng
+Zheng, Ziluo Ding, and Zongqing Lu. RL from physical feedback: Aligning large motion models with
+humanoid control. arXiv preprint arXiv:2506.12769, 2025. URL https://arxiv.org/abs/2506.
+12769v1.
+Yangsong Zhang, Anujith Muraleedharan, Rikhat Akizhanov, Abdul Ahad Butt, Gül Varol, Pascal Fua, Fabio
+Pizzati, and Ivan Laptev. PhysMoDPO: Physically-plausible humanoid motion with preference optimization.
+arXiv preprint arXiv:2603.13228, 2026. URL https://arxiv.org/abs/2603.13228.
+Yufei Zhang, Jeffrey O. Kephart, Zijun Cui, and Qiang Ji. PhysPT: Physics-aware pretrained transformer
+for estimating human dynamics from monocular videos. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition, pp. 2305–2317, 2024. URL https://arxiv.org/abs/
+2404.04430.
+Yi Zhou, Connelly Barnes, Jingwan Lu, Jimei Yang, and Hao Li. On the continuity of rotation representations in
+neural networks. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition.,
+pp. 5745–5753, 6 2019. URL http://arxiv.org/abs/1812.07035.
+19

@@ -1,0 +1,4300 @@
+AREX: Affine-Residual Exponential Integrator
+for Few-Step Sampling in Flow Matching
+Shizheng Lin1,2
+Soon Hoe Lim*1,2
+N. Benjamin Erichson3,4
+1Department of Mathematics, KTH Royal Institute of Technology
+2Nordita, KTH Royal Institute of Technology and Stockholm University
+3International Computer Science Institute
+4Lawrence Berkeley National Laboratory
+Abstract.
+We introduce AREX, a training-free sampler for pretrained flow matching
+models that uses the target mean and covariance to capture an analytically tractable
+part of the sampling dynamics. We show that the velocity field of the moment-matched
+Gaussian target is the L2-optimal affine approximation to the marginal velocity field.
+This motivates decomposition of the learned dynamics into an affine component over the
+whole sampling path, determined by the first two target moments, and a neural residual
+term. AREX keeps the affine component and integrates it using an explicit matrix-valued
+propagator. In turn, we only require to integrate over the residual term. This differs from
+scalar exponential integrators, which analytically handle only isotropic linear dynamics.
+Across image and text-to-image generation tasks, AREX consistently improves sample
+fidelity in the few-step sampling regime without retraining the underlying model.
+Code:
+https://github.com/glasgow233/AREX
+Figure 1
+Few-step text-to-image generation with AREX. Qualitative samples from the pretrained
+FLUX.1-dev model using AREX-C with only 8 network evaluations. AREX analytically propagates the
+moment-matched affine component of the learned flow and numerically integrates only the residual. All
+samples are generated without retraining the model.
+1 Introduction
+Flow matching (FM) (Lipman et al., 2022) and related variants are ODE-based generative modeling
+frameworks based on dynamical measure transport. Given a prescribed probability path from a
+simple reference distribution to the data distribution, FM learns the associated velocity field with
+a neural network and generates samples by integrating the resulting ODE. The computational
+bottleneck is sampling: resolving the learned flow accurately can require many neural network
+evaluations, and efficient few-step generators can reduce the number of function evaluations (NFEs).
+*Work done while visiting ICSI/UC Berkeley.
+1
+arXiv:2610.03483v1  [stat.ML]  2 Oct 2026
+
+
+There are two main lines of work. On the training side, Mean Flow (Geng et al., 2026a,b) proposes
+to learn the average velocity, while Align Your Flow (Sabour et al., 2026) and pi-Flow (Chen et al.,
+2026) distill a few-step generator from a teacher. On the sampling side, training-free samplers
+such as DDIM (Song et al., 2020), DPM-Solver (Lu et al., 2022), DPM-Solver++ (Lu et al., 2025),
+DPM-Solver-v3 (Zheng et al., 2023), DEIS (Zhang and Chen, 2022), UniPC (Zhao et al., 2023),
+CAB (Roy and Nair, 2026), A-FloPS (Jin et al., 2026), and STORK (Tan et al., 2026) can be
+deployed to any pretrained model without further training. Several of them have a similar structure.
+DDIM, the DPM-Solver family, DEIS, UniPC, A-FloPS and CAB split the generative dynamics
+into a linear part, which can be integrated exactly, and a residual part, which can be integrated by
+a quadrature. The linear part is typically a scalar multiple of the identity. In A-FloPS the scalar
+is fixed by the noise schedule first and then refit to the trajectory at every step. However, these
+methods ignore the underlying data geometry and the fact that the distribution a sampler moves
+towards can be strongly anisotropic. Since the scalar linear part could not help in capturing the
+anisotropy, the neural network is exposed to the larger challenge of dealing with both the anisotropy
+and the residual part.
+In this work, we focus on the sampling side and ask:
+How can we leverage both the analytical structure of the flow dynamics and the geometry of
+the target data to design a better training-free sampler in the low-NFE regime?
+To tackle this question we use the insight that the first two moments of the target distribution
+induce a nontrivial part of the flow dynamics. The target covariance describes how the data vary
+along different directions. Replacing the target by a Gaussian with the same mean and covariance
+preserves this directional information while making the corresponding velocity field affine. Along
+each eigenvector of the covariance, the dynamics then expand or contract at a rate determined
+by the corresponding eigenvalue. For a general target, this affine field is the L2-optimal affine
+approximation to the population velocity field at every time. It also admits a closed-form solution.
+Since the same target covariance determines the principal directions throughout the trajectory, the
+dynamics decouple along these directions and can be solved independently.
+This gives us a principled affine component that does not need to be approximated numerically. We
+introduce Affine–Residual Exponential Integrator (AREX), which decomposes the learned velocity
+field into this moment-matched affine component and a residual term. AREX solves the affine
+part analytically and applies numerical quadrature only to the residual, so the direction-dependent
+dynamics captured by the target covariance do not have to be recovered using network evaluations.
+We use an Adams–Bashforth (AB) scheme that reuses residual evaluations from previous steps
+while requiring only one new network evaluation per step. Gaussian teleportation (Wang and
+Vastola, 2024) similarly exploits a Gaussian approximation, but only over the initial part of the
+trajectory before switching to a conventional solver; AREX retains the affine component over the
+full trajectory. We further extend this construction to conditional generation with AREX-C, using
+the within-condition covariance for the affine dynamics and estimating the condition-specific mean
+using the first network evaluation. Figure 2 illustrates the resulting few-step behavior.
+Our main contributions are as follows.
+• Method. We introduce AREX, a training-free exponential integrator that uses the target mean
+and covariance to separate a moment-matched affine component from the learned velocity field.
+AREX solves this affine component analytically and applies Adams–Bashforth quadrature only
+to the remaining residual, requiring one new network evaluation per step. We further extend the
+construction to conditional generation with AREX-C using a shared within-condition covariance
+and a condition-specific mean estimated using the first network evaluation.
+• Theory. We provide theoretical results and organize them under three principles to justify
+AREX. We show that the moment-matched affine field is L2-optimal (Proposition 1), connect
+the residual term to non-Gaussian score correction (Proposition 2), derive a closed-form formula
+2
+
+
+Reference (Euler-1000)
+Euler
+SharpEuler
+DPM-Solver++
+UniPC
+CAB
+DPM-Solver-v3
+AREX
+Figure 2
+Unconditional sampling on the two-moons target at NFE 4. The Euler-1000 solution is shown as
+a high-accuracy reference. At the same four-evaluation budget, AREX recovers the target geometry better
+than the competing training-free samplers.
+for the propagator for the affine component (Proposition 3), quantify the resulting discretization
+error (Proposition 4), and provide a distributional error bound for AREX-ABp (Theorem 1).
+• Results.
+We evaluate AREX and AREX-C on unconditional CIFAR-10, class-conditional
+ImageNet-256, and text-conditional MJHQ-30K generation. Across these settings, AREX gives
+the best FID among the compared training free samplers in the low NFE regime, from NFE 2–8
+on CIFAR-10 and ImageNet-256, and from NFE 4–10 on MJHQ-30K, without retraining the
+flow.
+2 AREX: Affine–Residual Exponential Integrator for Sampling
+In flow matching, we generate a sample by integrating the learned velocity field vθ:
+˙xt = vθ(t, xt),
+x0 ∼N(0, Id).
+(1)
+When only a few network evaluations are possible, the numerical solver must approximate the ODE
+trajectory using a coarse time grid. In this work, our aim is to address this problem, introducing a
+method to make it easier to integrate, without changing or retraining vθ. To do so, we borrow a
+standard idea behind exponential integrators: split the dynamics into a part that can be solved
+exactly and a residual that must be approximated numerically (Hochbruck and Ostermann, 2010).
+The choice of this split determines how much work is left to the numerical solver.
+We advocate using the first two moments of the target distribution to identify an affine component
+of the dynamics that has an exact solution. To see why these quantities are useful, recall that
+the source distribution is isotropic, while the target generally is not. Its covariance describes the
+directions in which the data vary and the scale of that variation. Along the flow matching path,
+these directions must therefore expand or contract by different amounts as the source is transported
+toward the target. This direction-dependent motion is already present before accounting for any
+finer non-Gaussian structure of the data. For a Gaussian target, the mean and covariance completely
+determine the flow, and the resulting velocity field is affine. More importantly, this affine flow
+can be integrated in closed form. This suggests using the Gaussian with the same mean and
+covariance as the target to capture the part of the learned dynamics that is explained by its global
+geometry. AREX leverages this idea by integrating the corresponding affine flow exactly and
+applying numerical quadrature only to the residual between the affine and learned velocity fields.
+3
+
+
+2.1 Target moments describe direction-dependent dynamics
+We now make this intuition precise for the linear flow matching path used throughout this work.
+Let p0 := N(0, Id) and p1 denote the source and target distribution. Given X0 ∼p0, X1 ∼p1, with
+X0 and X1 independent, we connect the two distributions through the linear interpolation
+Xt = (1 −t)X0 + tX1.
+(2)
+We denote the target mean by m1 = E[X1] and its covariance by Σ1 = Cov(X1). The covariance
+describes how the target varies across directions. To characterize this directional variation, we
+compute its eigendecomposition Σ1 = QΛQ⊤, with eigenvalues Λ = diag(λ1, . . . , λd). The columns
+of Q give the principal directions of the target, while λj gives its variance along direction j. When
+these variances differ, the target is anisotropic, with different scales along different directions. This
+direction-dependent structure also appears along the flow path. In direction j, the variance of Xt is
+σj(t)2 = (1 −t)2 + t2λj.
+(3)
+Thus, different directions expand or contract at different rates as the source is transported toward
+the target. A scalar linear term cannot capture this behavior because it applies the same scaling in
+every direction. This motivates choosing an affine component that captures this direction-dependent
+structure before applying numerical approximation.
+2.2 A moment-matched affine flow
+To construct an affine component that captures this directional structure, we consider the Gaussian
+distribution N(m1, Σ1) with the same mean and covariance as the target. Under the same linear
+interpolation, the marginal velocity field of this Gaussian is affine:
+vG(t, x) = m1 + Kt(x −tm1),
+(4)
+where
+Kt =
+tΣ1 −(1 −t)I
+(1 −t)2I + t2Σ1
+−1.
+(5)
+For a Gaussian target, vG is exactly the velocity field v∗(t, x) := E[X1 −X0|Xt = x] (see App.
+C). For a general target, we use it as the affine component of the learned dynamics. This choice
+depends only on the target mean and covariance and therefore captures the directional structure
+described above, while leaving the remaining non-Gaussian component to the residual. In Section 3,
+we show that this choice is also the L2-optimal affine approximation to the population velocity field.
+The key property of this affine field is that its flow can be solved exactly. Although Kt changes
+with time, it depends on t only through functions of the same covariance matrix Σ1.
+The
+eigendecomposition of Σ1 therefore diagonalizes Kt at every time, so the dynamics separate into
+one scalar equation along each principal direction of the target. For 0 ≤s ≤t < 1, this gives the
+propagator
+F(t, s) = Q diag
+ 
+σj(t)
+σj(s)
+!
+Q⊤,
+(6)
+where σj(t)2 = (1 −t)2 + t2λj as defined above. Starting from x(s), the affine flow is then
+x(t) = tm1 + F(t, s)
+ x(s) −sm1
+.
+(7)
+The factor σj(t)/σj(s) gives the exact change in scale along direction j between times s and t.
+4
+
+
+2.3 Integrating the residual
+AREX solves the affine dynamics determined by the target mean and covariance in closed form.
+The difference between the learned velocity field and this affine component defines the residual,
+which we approximate numerically:
+r(t, x) = vθ(t, x) −vG(t, x).
+(8)
+Thus, vθ = vG + r, and the residual captures the part of the learned dynamics not explained by the
+moment-matched affine field. Since the flow generated by vG is known exactly, we can use variation
+of constants to separate its contribution from that of the residual. Over a step from s to t,
+x(t) = tm1 + F(t, s)(x(s) −sm1)
+|
+{z
+}
+exact affine transport
++
+Z t
+s
+F(t, τ) r(τ, x(τ)) dτ
+|
+{z
+}
+residual correction
+.
+(9)
+The first term is the exact affine solution derived above. The only quantity that remains to be
+approximated numerically is the integral of the residual. This decomposition is the main difference
+between AREX and scalar exponential samplers. Both approaches solve part of the dynamics
+analytically and approximate the remainder by quadrature. Scalar methods use a linear component
+that acts equally in every direction. AREX instead removes the direction-dependent affine dynamics
+determined by the target covariance, so that the numerical solver is applied to the remaining
+residual.
+2.4 AREX-AB: quadrature of the residual
+Eq. (9) reduces the sampling problem to approximating the residual integral. AREX uses one
+network evaluation per step for this purpose and reuses residual evaluations from previous steps
+through an Adams–Bashforth (AB) scheme. This increases the polynomial order of the residual
+quadrature without additional network evaluations.
+Let 0 = t0 < t1 < · · · < tN < 1 denote the sampling grid. On the step [tn, tn+1], we evaluate
+the network at τ ⋆
+n = tn + ρ(tn+1 −tn), where ρ ∈[0, 1). Starting from xn, we first move to this
+evaluation point using the exact affine flow,
+exn = τ ⋆
+nm1 + F(τ ⋆
+n, tn)
+ xn −tnm1
+.
+(10)
+We then evaluate the learned velocity once and compute the residual
+rn = vθ(τ ⋆
+n, exn) −vG(τ ⋆
+n, exn).
+(11)
+The one-node version of AREX uses only rn to approximate the residual over the current step.
+AREX-AB2 additionally uses the residual from the previous step, while AREX-AB3 uses the
+previous two. Let Pn(τ) denote the corresponding AB interpolation polynomial formed from the
+available residuals. The update is
+xn+1 = tn+1m1 + F(tn+1, tn)
+ xn −tnm1
+ +
+Z tn+1
+tn
+F(tn+1, τ)Pn(τ) dτ.
+(12)
+The first two terms propagate the affine dynamics exactly, while the last term approximates the
+residual contribution. Because AB2 and AB3 use residuals that have already been computed
+at earlier steps, all variants require only one new network evaluation per step. For the linear
+interpolation considered here, the resulting quadrature weights can be precomputed from the
+eigenvalues of Σ1 and the sampling grid.
+5
+
+
+Algorithm 1 AREX-ABp. One network evaluation per step.
+Require: velocity field vθ; target moments m1, Σ1; residual profile ϕ; grid t0 < · · · < tN
+1: compute the eigendecomposition Σ1 = QΛQ⊤
+2: precompute the affine propagators and residual quadrature weights
+3: sample x0 ∼N(0, Id)
+4: for n = 0, . . . , N −1 do
+5:
+move xn to τ ⋆
+n using the affine flow in (10)
+6:
+evaluate vθ(τ ⋆
+n, exn) and compute rn
+7:
+combine rn with the available stored residuals using ABp
+8:
+update xn+1 using (12)
+9: end for
+10: return xN
+Residual magnitude profile.
+On a coarse time grid, the residual can change substantially in
+magnitude between consecutive evaluations. Directly interpolating the raw residual then asks the
+AB polynomial to capture both this systematic change in scale and the remaining variation of
+the residual. We account for the first effect with a residual magnitude profile measured once from
+model trajectories. In the eigenbasis of Σ1, let rj = (Q⊤r)j and define
+ϕj(t) =
+
+E rj(t, x(t))21/2 .
+(13)
+The function ϕj(t) measures the typical magnitude of the residual along direction j at time t. We
+incorporate this time-dependent variation into the quadrature weights: on each step, the usual AB
+interpolation is applied to the residual evaluations, while the integration kernel is modulated by
+the relative profile ϕj(τ)/ϕj(τ ⋆
+n). The profile therefore accounts for systematic changes in residual
+scale without altering the residual evaluations used by the multistep rule. It is estimated once per
+checkpoint and does not require additional network evaluations during sampling. The resulting
+weights depend on the target covariance, sampling grid, and residual profile, and are precomputed
+before generation.
+Algorithm 1 summarizes AREX-ABp; AREX-C extends it to conditional sampling (see App. B).
+3 Theoretical Results
+In this section, we provide theoretical results to justify and gain insights into AREX. We organize
+the main results under three principles here; full details and proofs are provided in App. C, and
+additional discussions are provided in App. D. Throughout, we denote r⋆:= v⋆−vG, rθ := vθ −vG.
+3.1 Principle I: Let data geometry define the solvable backbone
+Let pt denote the marginal distribution of Xt. The affine component in (4) is not an arbitrary
+choice: it is optimally selected by the data statistics in the following sense.
+Proposition 1 (Optimality of affine backbone). For 0 ≤t < 1, vG(t, ·) is the orthogonal projection
+of v⋆(t, ·) onto the space of affine vector fields in L2(pt). Hence, for every affine field ev,
+∥v⋆−ev∥2
+L2(pt) = ∥v⋆−vG∥2
+L2(pt) + ∥vG −ev∥2
+L2(pt).
+(14)
+The following result shows that the residual r⋆is a scaled non-Gaussian score correction.
+Proposition 2 (Score-based interpretation of the residual). For 0 < t < 1, let Σt := (1−t)2I +t2S
+and gt := N(tm1, Σt), which is the moment-matched Gaussian of pt. Then,
+r⋆(t, x) = 1 −t
+t
+(∇log pt(x) −∇log gt(x)) ,
+(15)
+6
+
+
+and ∥r⋆(t, ·)∥2
+L2(pt) =
+
+1−t
+t
+2 I(pt|gt), where I(pt|gt) = EX∼pt∥∇log pt(X) −∇log gt(X)∥2 is the
+Fisher divergence between pt and gt. Moreover, for any fixed t ∈(0, 1), r⋆(t, ·) = 0 pt-a.e. if and
+only if p1 is Gaussian.
+Thus, since rθ = r⋆+ (vθ −v⋆), the residual term evaluated by the sampler consists of both the
+non-Gaussian correction and neural approximation error.
+3.2 Principle II: Propagate the solvable backbone exactly
+It turns out that the affine dynamics are analytically tractable and admits a closed-form propagator.
+The key ingredient that make this happen is that the matrices Kt share the same eigenbasis and
+commute across time, and each modal coefficient is available in closed-form.
+Proposition 3 (Closed-form formula for the nonautonomous propagator). Let 0 ≤s ≤t < 1.
+The solution of the ODE ˙˜x = vG(t, ˜x) with value ˜x(s) at time s is given by (7) with x set to ˜x.
+Moreover, F(t, s)F(s, r) = F(t, r), 0 ≤r ≤s ≤t < 1, and the solution x(t) of the generative ODE
+admits the representation in (9).
+Therefore, the backbone dynamics can be propagated without discretization error, and numerical
+approximation is needed only for the residual term. In view this, AREX can be an improved
+scheme compared to standard numerical schemes. Standard Euler discretizes the full velocity field,
+while frozen exponential Euler (FEE) integrates the locally frozen affine component exactly but
+still approximates its temporal variation. This distinction is already notable in the leading local
+errors. To see this, consider the left-node AREX (ρ = 0) for simplicity; extension to general ρ is
+straightforward. Let y(t) := x(t) −tm1, Rθ(t, y) := rθ(t, tm1 + y),
+f(t, y) := Kty + Rθ(t, y),
+DfRθ := ∂tRθ + DyRθ f,
+(16)
+For a step of size h, their local errors are (see App. C for details), respectively:
+dEuler = h2
+2
+h
+(K′
+t + K2
+t )y + KtRθ + DfRθ
+i
++ O(h3),
+(17)
+dFEE = h2
+2
+K′
+ty + DfRθ
+ + O(h3),
+dAREX = h2
+2 DfRθ + O(h3).
+(18)
+Thus Euler discretizes both the affine backbone and the residual; FEE removes the contributions of
+the frozen affine operator but retains the effect of its temporal variation; AREX eliminates the
+explicit pure-backbone terms from the leading local error, leaving only the material derivative of
+the residual. This discussion corresponds to AREX–1, which uses one left-node residual evaluation
+per step. AREX–ABp replaces this constant-in-time residual approximation with a p-point AB
+extrapolant, applying higher-order reconstruction only to the residual term rather than to the full
+velocity field.
+3.3 Principle III: Spend numerical budget only on the residual
+Once the backbone is propagated exactly, the solver error relative to the exact learned ODE is
+controlled by the residual dynamics not resolved numerically due to finite NFEs.
+Consider one step from s to t = s + h and an evaluation time τ ⋆= s + ρh, ρ ∈[0, 1). Define the
+affine-only stage ey(τ) := F(τ, s)y(s), and the one-node AREX approximation
+y+ = F(t, s)y(s) + Ω(0)Rθ(τ ⋆, ey(τ ⋆)) ,
+Ω(0) :=
+Z t
+s
+F(t, τ) dτ.
+(19)
+Proposition 4 (Error bound). Let Φ := sups≤u≤v≤t ∥F(v, u)∥, Rmax := sups≤τ≤t ∥Rθ(τ, y(τ))∥,
+and Lg := sups≤τ≤t
+ d
+dτ Rθ(τ, y(τ))
+ (which bounds the material derivative of the residual discussed
+7
+
+
+in Principle II). Assume that Rθ(τ ⋆, ·) is Lx-Lipschitz on the segment between y(τ ⋆) and ey(τ ⋆).
+Then
+∥y(t) −y+∥≤Φh2
+"
+ρ2 + (1 −ρ)2
+2
+Lg + ρΦLxRmax
+#
+.
+(20)
+The two terms in (20) correspond to temporal quadrature error and stage-state error respectively.
+For ρ > 0, the residual is evaluated at the affine predictor ey(τ ⋆) rather than y(τ ⋆); their O(h)
+mismatch contributes an additional O(h2) error through the state dependence of the residual. The
+first term is minimized by ρ = 1/2 whereas the second one by ρ = 0. We tune ρ via a grid search
+(see App. E) in our implementation to balance the two competing error terms.
+For the one-node rule, moving the residual evaluation away from the left endpoint can improve its
+temporal placement, but introduces an error because the residual is evaluated at an affine-only
+predictor rather than the true intermediate state. The following theorem summarizes this tradeoff.
+Theorem 1 (Informal: Distributional error bound for unprofiled AREX–ABp). Let G(t) :=
+Rθ(t, y(t)) denote the residual term, and suppose Mp := sup0≤t≤T ∥G(p)(t)∥L2 < ∞. Under certain
+stability and Lipschitz assumptions, AREX–ABp with stage un = tn + ρh satisfies, up to constants
+independent of h:
+W2
+
+bqp,ρ
+T , qθ
+T
+
+≲Astart + cp,ρTMphp + ρhM0,
+(21)
+where
+M0 := sup
+0≤t≤T
+∥G(t)∥L2,
+cp,ρ := 1
+p!
+Z 1
+0
+p−1
+Y
+j=0
+|ξ −ρ + j| dξ,
+(22)
+and Astart is the residual reconstruction error introduced by the startup steps.
+The detailed theorem, proof, the ρ = 0 specialization, and explicit bounds are given in App. C.
+The error bound depends on the temporal regularity of the residual G(t) through Mp, together with
+an additional off-grid stage error when ρ > 0. The O(Mphp) term measures temporal reconstruction
+of the residual, while the O(ρhM0) term is the accumulated error from evaluating the residual at
+an affine-only off-grid stage. Thus ρ > 0 trades temporal placement against stage-state accuracy.
+At ρ = 0, the stage-state term vanishes, and with an order-p startup, AREX-ABp has global order
+p relative to the learned ODE. For fixed ρ > 0, the bound guarantees only first-order asymptotic
+accuracy in general, although an interior stage may still be beneficial at small NFEs.
+4 Empirical Results
+In this section, we provide empirical results to evaluate the effectiveness of AREX(-C) on CIFAR-10,
+ImageNet-256, and MJHQ-30K. All experiments are run on an NVIDIA GH200 GPU (120GB). We
+further provide the details, wall clock analysis, ablation study and additional results in App. E.
+4.1 CIFAR-10: Unconditional Generation on Pixel Space
+For CIFAR-10, we use the I-CFM model from Tong et al. (2023) as backbone for the unconditional
+model in pixel space, and evaluate FID using 50K generated samples (Krizhevsky et al., 2009).
+Table 1 presents the FID evaluation results. For NFE 2, the AREX-AB2 is 4.2× better than Euler,
+DPM-Solver++ and UniPC, 3.6-3.7× better than STORK-4, CAB and A-FloPS, and 2.9× better
+than DPM-Solver-v3. At NFE 4 it beats DPM-Solver++ by 3.5×, UniPC by 3×, A-FloPS by
+2.4×, DPM-Solver and CAB by 2× and STORK-4 by 1.9×. At NFE 8 the closest gap is STORK-4
+at 0.38, followed by DPM-Solver-v3 at 1.56. At NFE 16 the gap of STORK-4 is 0.2, and 0.4 for
+DPM-Solver-v3. At NFE 32 STORK-4 is ahead by 0.05 and DPM-Solver-v3 is ahead by 0.09. AB2
+and AB3 are within 0.2 of each other at every NFE. Thus, advantage of AREX is largest at low
+NFEs and diminishes as the discretization is refined, consistent with Proposition 6.
+8
+
+
+Table 1
+FID results for CIFAR-10. AREX is best from NFE 2 to 16; DPM-Solver-v3 is best at NFE 32.
+Sampler
+NFE 2
+NFE 4
+NFE 8
+NFE 16
+NFE 32
+Euler
+166.24
+51.88
+17.46
+9.15
+6.28
+DPM-Solver++
+166.24
+43.18
+11.48
+6.74
+4.99
+UniPC
+166.24
+36.53
+10.49
+7.14
+5.29
+A-FloPS
+145.63
+29.27
+10.29
+7.14
+6.02
+CAB
+145.05
+23.77
+8.91
+5.85
+4.23
+DPM-Solver-v3
+112.04
+24.69
+6.95
+3.92
+3.55
+STORK-4
+141.40
+23.21
+5.73
+3.72
+3.59
+AREX (one node)
+54.63
+26.13
+11.45
+5.34
+3.66
+AREX-AB2
+39.24
+12.20
+5.39
+3.50
+3.64
+AREX-AB3
+39.24
+12.35
+5.58
+3.60
+3.69
+Table 2
+FID results for ImageNet-256, with SiT-XL/2, class-conditional with CFG at SiT’s published
+scale w = 1.5. AREX-C-AB3 is best at NFE 2, 4 and 8. At NFE 16, UniPC, DPM-Solver-v3, CAB and
+AREX-C-AB3 lie within 0.13 FID of each other, and at NFE 32 every method but Euler and the one-node
+rule lies within 0.37 FID.
+Sampler
+NFE 2
+NFE 4
+NFE 8
+NFE 16
+NFE 32
+Euler
+154.29
+53.98
+11.02
+4.17
+2.65
+DPM-Solver++
+154.28
+31.37
+4.20
+2.56
+2.12
+UniPC
+154.28
+22.08
+3.57
+2.22
+2.05
+A-FloPS
+129.73
+20.74
+3.34
+2.39
+2.39
+CAB
+132.94
+12.37
+4.04
+2.26
+2.02
+STORK-4
+132.95
+12.59
+3.98
+2.48
+2.19
+DPM-Solver-v3
+92.20
+9.77
+3.07
+2.13
+2.12
+AREX-C (one node)
+134.79
+34.14
+9.70
+4.14
+2.72
+AREX-C-AB2
+84.15
+9.58
+3.23
+2.38
+2.17
+AREX-C-AB3
+84.15
+8.18
+3.02
+2.24
+2.12
+4.2 ImageNet-256: Class-Conditional Generation on Latent Space
+We use SiT-XL/2 (Ma et al., 2024) as backbone for the class-conditional task in latent space with
+classifier free guidance (CFG) at SiT’s CFG with w = 1.5. The model is conditional, so we use the
+AREX-C sampler. We evaluate FID using 50k samples (Russakovsky et al., 2015), as well as sFID,
+IS precision and recall (see App. E).
+The results are in Table 2. AREX-C-AB3 is the best performing sampler at NFE 2, 4, 8, improving
+by 1.6 FID over DPM-Solver-V3 at NFE 4 and by 4.2 over CAB. From NFE 16 the gaps between
+different method is small. At NFE 16, gaps between the leading four methods lie within 0.13 FID.
+At NFE 32, gaps between all the methods besides Euler and the one-node rule are within 0.37.
+Unlike on CIFAR-10, the one-node method is no better than the baselines here. Thus the gain
+on this backbone requires the multistep integration of the residual together with the exact affine
+transport.
+4.3 MJHQ-30K: Text-Conditional Generation with Guidance on Latent Space
+For the MJHQ-30K task, we use the SANA-0.6B 512px (Xie et al., 2024) backbone and CFG with
+w = 4.5. We evaluate FID using 30k samples (Li et al., 2024), following (Tan et al., 2026).
+The results are in Table 3. and Fig 3 shows samples at NFE 4, 6 and 8. Among the baselines
+in Table 3, AREX-C-AB2 is the best at every NFE, and AREX-C-AB3 is also ahead of every
+baseline at every NFE. The closest baseline is DPM-Solver-v3 up to NFE 9, and the gap is 2.4 FID
+9
+
+
+Figure 3
+Samples generated by different sampling schemes with SANA-0.6B, MJHQ-30K prompts, w = 4.5,
+at NFE 4, 6 and 8, using the configurations of Table 3.
+Table 3
+FID results for MJHQ-30K, with SANA-0.6B 512px, CFG w = 4.5. STORK-4 is run in its
+published configuration at every NFE; NFE 4–6 lie below the range reported in its paper. Among the
+samplers in the table, AREX-C-AB2 is best at every NFE, including NFE 10.
+Sampler
+NFE 4
+NFE 5
+NFE 6
+NFE 7
+NFE 8
+NFE 9
+NFE 10
+DPM-Solver++(2M)
+23.39
+14.96
+11.59
+9.84
+8.85
+8.24
+7.99
+UniPC
+25.25
+15.47
+12.06
+10.31
+9.36
+8.69
+8.38
+A-FloPS
+62.48
+33.88
+21.72
+15.68
+12.68
+10.98
+9.91
+CAB
+60.00
+48.88
+41.68
+32.20
+23.99
+18.05
+13.45
+STORK-4
+73.34
+37.30
+16.33
+9.68
+7.70
+7.07
+6.70
+DPM-Solver-v3
+10.56
+8.80
+7.95
+7.58
+7.11
+6.98
+6.87
+AREX-C (one node)
+11.02
+8.60
+7.70
+7.23
+6.92
+6.81
+6.73
+AREX-C-AB2
+8.15
+6.86
+6.53
+6.39
+6.33
+6.38
+6.35
+AREX-C-AB3
+9.91
+7.51
+6.85
+6.66
+6.52
+6.51
+6.44
+at NFE 4. At NFE 10 the closest is STORK-4 with the FID gap of 0.35. On this backbone, the
+guided residual is both large and varies rapidly along the trajectory, precisely the regime targeted
+by the residual magnitude profile in Section 2. The stronger performance of AB2 over AB3 at
+every NFE is also consistent with this rapid variation: its shorter history is less sensitive to poorly
+resolved temporal changes. In contrast, AB3 performs better on SiT-XL/2, where the residual
+appears sufficiently smooth to benefit from the higher-order multistep approximation.
+10
+
+
+5 Conclusion
+We introduced AREX and AREX-C, training-free samplers for flow matching and justify the design
+through three principles: (i) use the data statistics to define the affine backbone, (ii) integrate
+the backbone dynamics exactly, and (iii) use the NFE budget only for numerically resolving the
+residual. This gives a complementary perspective on few-step generation. Instead of requiring the
+flow to be straight or simple, AREX exploits structured dynamics that can be solved analytically
+and spend the NFE budget only on the residual. Across CIFAR-10, ImageNet-256, and MJHQ-30K,
+this training-free strategy consistently improves generation fidelity in the low-NFE regime. More
+broadly, our results suggest that effective few-step sampling can be achieved by principled separation
+of the tractable structure from genuinely difficult residual dynamics at inference time.
+Acknowledgments
+The computations were enabled by resources provided by the National Academic Infrastructure for
+Supercomputing in Sweden (NAISS), funded by the Swedish Research Council (NAISS 2026/3-562).
+SHL would like to acknowledge support from the Wallenberg Initiative on Networks and Quantum
+Information (WINQ) and the Swedish Research Council (VR/2021-03648). NBE would like to
+acknowledge support from the U.S. Department of Energy, Office of Science, Office of Advanced
+Scientific Computing Research, through the EXPRESS: 2025 Exploratory Research for Extreme-
+Scale Science program and the RAPIDS Institute under the Scientific Discovery through Advanced
+Computing (SciDAC) program, under Contract No. DE-AC02-05CH11231 at Lawrence Berkeley
+National Laboratory. The views, opinions, and/or findings expressed are those of the authors and
+should not be interpreted as representing the official views or policies of the U.S. Government.
+References
+Jean-David Benamou and Yann Brenier. A computational fluid mechanics solution to the Monge-
+Kantorovich mass transfer problem. Numerische Mathematik, 84(3):375–393, 2000.
+Hansheng Chen, Kai Zhang, Hao Tan, Leonidas Guibas, Gordon Wetzstein, and Sai Bi. pi-flow:
+Policy-based few-step generation via imitation distillation.
+In International Conference on
+Learning Representations, volume 2026, pages 151521–151547, 2026.
+Zhengyang Geng, Mingyang Deng, Xingjian Bai, Zico Kolter, and Kaiming He. Mean flows for one-
+step generative modeling. Advances in Neural Information Processing Systems, 38:75460–75482,
+2026a.
+Zhengyang Geng, Yiyang Lu, Zongze Wu, Eli Shechtman, J Zico Kolter, and Kaiming He. Improved
+mean flows: On the challenges of fastforward generative models. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition, pages 30467–30476, 2026b.
+Marlis Hochbruck and Alexander Ostermann. Exponential integrators. Acta Numerica, 19:209–286,
+2010.
+Cheng Jin, Zhenyu Xiao, and Yuantao Gu. A-FloPS: Accelerating diffusion models via adaptive
+flow path sampler. In Proceedings of the AAAI Conference on Artificial Intelligence, volume 40,
+pages 22390–22398, 2026.
+Alex Krizhevsky, Geoffrey Hinton, et al. Learning multiple layers of features from tiny images.
+2009.
+Daiqing Li, Aleks Kamko, Ehsan Akhgari, Ali Sabet, Linmiao Xu, and Suhail Doshi. Playground
+v2. 5: Three insights towards enhancing aesthetic quality in text-to-image generation. arXiv
+preprint arXiv:2402.17245, 2024.
+11
+
+
+Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow matching
+for generative modeling. arXiv preprint arXiv:2210.02747, 2022.
+Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow straight and fast: Learning to generate and
+transfer data with rectified flow. arXiv preprint arXiv:2209.03003, 2022.
+Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu. Dpm-solver: A fast
+ode solver for diffusion probabilistic model sampling in around 10 steps. Advances in Neural
+Information Processing Systems, 35:5775–5787, 2022.
+Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu. Dpm-solver++: Fast
+solver for guided sampling of diffusion probabilistic models. Machine Intelligence Research, 22
+(4):730–751, 2025.
+Nanye Ma, Mark Goldstein, Michael S Albergo, Nicholas M Boffi, Eric Vanden-Eijnden, and
+Saining Xie. SiT: Exploring flow and diffusion-based generative models with scalable interpolant
+transformers. In European Conference on Computer Vision, pages 23–40. Springer, 2024.
+Gabriel Peyré. Optimal transport for machine learners. arXiv preprint arXiv:2505.06589, 2025.
+Anuska Roy and Pravin Nair. CAB: Accelerating flow and diffusion sampling via rectification and
+corrected Adams-Bashforth. arXiv preprint arXiv:2605.16736, 2026.
+Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma, Zhiheng
+Huang, Andrej Karpathy, Aditya Khosla, Michael Bernstein, et al. ImageNet large scale visual
+recognition challenge. International Journal of Computer Vision, 115(3):211–252, 2015.
+Amirmojtaba Sabour, Sanja Fidler, and Karsten Kreis. Align your flow: Scaling continuous-time
+flow map distillation. Advances in Neural Information Processing Systems, 38:146459–146512,
+2026.
+Jiaming Song, Chenlin Meng, and Stefano Ermon. Denoising diffusion implicit models. arXiv
+preprint arXiv:2010.02502, 2020.
+Zheng Tan, Weizhen Wang, Andrea Bertozzi, and Ernest Ryu. Stork: Faster diffusion and flow
+matching sampling by resolving both stiffness and structure-dependence.
+In International
+Conference on Learning Representations, volume 2026, pages 75478–75506, 2026.
+Alexander Tong, Kilian Fatras, Nikolay Malkin, Guillaume Huguet, Yanlei Zhang, Jarrid Rector-
+Brooks, Guy Wolf, and Yoshua Bengio. Improving and generalizing flow-based generative models
+with minibatch optimal transport. arXiv preprint arXiv:2302.00482, 2023.
+Binxu Wang and John J Vastola. The unreasonable effectiveness of Gaussian score approximation
+for diffusion models and its applications. arXiv preprint arXiv:2412.09726, 2024.
+Zibin Wang, Zhiyuan Ouyang, and Xiangyun Zhang. Block Flow: Learning straight flow on data
+blocks. arXiv preprint arXiv:2501.11361, 2025.
+Enze Xie, Junsong Chen, Junyu Chen, Han Cai, Haotian Tang, Yujun Lin, Zhekai Zhang, Muyang
+Li, Ligeng Zhu, Yao Lu, et al. SANA: Efficient high-resolution image synthesis with linear
+diffusion transformers. arXiv preprint arXiv:2410.10629, 2024.
+Qinsheng Zhang and Yongxin Chen. Fast sampling of diffusion models with exponential integrator.
+arXiv preprint arXiv:2204.13902, 2022.
+Wenliang Zhao, Lujia Bai, Yongming Rao, Jie Zhou, and Jiwen Lu. UniPC: A unified predictor-
+corrector framework for fast sampling of diffusion models. Advances in Neural Information
+Processing Systems, 36:49842–49869, 2023.
+12
+
+
+Kaiwen Zheng, Cheng Lu, Jianfei Chen, and Jun Zhu. Dpm-solver-v3: Improved diffusion ode
+solver with empirical model statistics. Advances in Neural Information Processing Systems, 36:
+55502–55542, 2023.
+Appendix
+A Related Work
+Efficient few-step sampling has been studied extensively for diffusion and flow-based generative
+models, through both improved numerical integration at inference time and training procedures
+that simplify the learned dynamics.
+Schedule-aware solvers and residual quadrature.
+DDIM (Song et al., 2020), DPM-Solver, DPM-
+Solver++ (Lu et al., 2025), DEIS (Zhang and Chen, 2022), and UniPC (Zhao et al., 2023) exploit
+analytical structure induced by the diffusion schedule and improve the approximation of the
+remaining network-dependent dynamics. CAB (Roy and Nair, 2026) similarly rectifies the dynamics
+and improves their multistep quadrature without additional NFEs. These methods primarily exploit
+scalar, schedule-induced structure. AREX instead introduces a data-dependent anisotropic affine
+backbone determined by the target covariance and applies Adams–Bashforth quadrature only to its
+residual. Under the linear flow matching interpolant, the covariance-free first-order specialization
+reduces to the Euler/DDIM-type update.
+Adaptive linear decompositions.
+DPM-Solver-v3 (Zheng et al., 2023) and A-FloPS (Jin et al., 2026)
+also seek more favorable linear–nonlinear decompositions. DPM-Solver-v3 adapts coordinatewise
+linear coefficients using empirical statistics of the pretrained network, while A-FloPS fits a scalar
+linear component locally from the evolving trajectory. AREX differs in both source and structure:
+its backbone is the L2-optimal affine approximation to the population velocity field and is generally
+matrix-valued, with eigendirections determined by the target covariance. Thus these methods
+extract exploitable structure from the network or numerical trajectory, whereas AREX derives it
+from the second-order geometry of the target distribution.
+Gaussian analytical structure and complementary solvers.
+The closest conceptual connection is
+Gaussian teleportation (Wang and Vastola, 2024), which exploits the observation that diffusion
+scores at sufficiently high noise are well approximated by a moment-matched Gaussian score and
+uses its analytical dynamics to skip an initial portion of sampling. AREX instead retains the
+moment-matched affine dynamics throughout the entire trajectory and numerically integrates
+only the non-Gaussian residual; AREX-C extends this construction to conditional generation.
+Orthogonally, STORK (Tan et al., 2026) improves coarse-step stability through stabilized Runge–
+Kutta schemes and virtual stages. This targets numerical stability rather than the identification of
+an analytically solvable anisotropic component, and is therefore complementary to AREX.
+Finally, AREX provides a complementary perspective to training-side approaches that promote
+straighter flows for few-step generation. Existing methods often seek straighter learned trajectories,
+motivated by the reduced discretization error of first-order solvers (Tong et al., 2023; Liu et al., 2022).
+AREX instead takes a training-free view: not all trajectory curvature needs to be removed. Its
+affine backbone can generate substantial acceleration while remaining exactly solvable. Accordingly,
+the leading local error of AREX is governed by the material derivative of the residual rather than
+by the acceleration of the full trajectory. AREX therefore replaces global flow straightness with the
+weaker requirement that the unresolved residual dynamics be temporally simple.
+13
+
+
+B Conditional Sampling with AREX-C
+In this section, we present and derive AREX-C (see Algorithm 2), a conditional version of AREX
+for efficient conditional sampling.
+Conditional generation changes both the location and the spread of the terminal distribution. In
+particular, different classes or prompts can have different means, while the variation around those
+means can also change. A covariance pooled across conditions mixes these two effects.
+To be more precise, let C denote the random condition (with distribution π) and let c denote a
+particular realization. For a fixed condition c, consider the classifier-free-guided velocity field
+vw(t, x, c) = v∅(t, x) + w
+ vc(t, x, c) −v∅(t, x)
+,
+(23)
+where vc and v∅denote the conditional and unconditional network evaluations, respectively. Let
+qw
+1 (· | c) denote the terminal distribution obtained by integrating (23) from X0 ∼N(0, Id), and
+define
+µw(c) := Eqw
+1 (·|c)[X],
+Sw(c) := Covqw
+1 (·|c)(X).
+(24)
+If Σw
+1 denotes the covariance obtained after pooling these terminal distributions over conditions,
+then the law of total covariance gives
+Σw
+1 =
+EC[Sw(C)]
+|
+{z
+}
+within-condition covariance
++
+CovC(µw(C))
+|
+{z
+}
+between-condition covariance
+.
+(25)
+The first term describes variation around the mean of a fixed condition, whereas the second describes
+how the terminal means themselves vary across conditions. For sampling at a particular condition,
+these two sources of variation play different roles: the between-condition term reflects differences
+between possible conditional targets rather than variation within the target being sampled.
+AREX-C uses the average within-condition covariance
+¯Sw := EC[Sw(C)]
+(26)
+as the covariance of its affine component. In practice, ¯Sw is estimated once, offline, from accurate
+self-samples of the guided model on a calibration set of conditions. If eXw,c
+1,i denotes such a self-sample,
+let
+eµw(c) := 1
+K
+K
+X
+i=1
+eXw,c
+1,i
+(27)
+and
+eSw(c) :=
+1
+K −1
+K
+X
+i=1
+  eXw,c
+1,i −eµw(c)
+  eXw,c
+1,i −eµw(c)
+⊤.
+(28)
+For equally weighted calibration conditions, we then use
+b¯Sw :=
+1
+|Ccal|
+X
+c∈Ccal
+eSw(c).
+(29)
+Since b¯Sw is shared across conditions, its eigendecomposition and the corresponding affine propagators
+can be computed once. The same holds for the residual magnitude profile ϕ of Sec. 2, which we
+use in all reported AREX-C results. We measure a single profile per checkpoint, shared across
+conditions. It is the root-mean-square residual in the eigenbasis of b¯Sw along guided trajectories
+whose conditions cover the calibration set. The affine center of each such trajectory is set by its
+own first network evaluation, in the same way as at sampling time (see below). Thus, the residual
+quadrature weights depend only on the time grid, the eigenvalues of b¯Sw, and ϕ, and they are also
+14
+
+
+precomputed once. The condition enters the sampler only through the affine center bµw(c; x0), which
+is held fixed along the trajectory and leaves the weights unchanged.
+The remaining quantity is the location of the affine component for the current condition. Rather
+than storing a separate mean for every possible class or prompt, AREX-C constructs this quantity
+from the first network evaluation.
+To motivate the construction, first consider the CFM velocity field without additional guidance.
+For the linear interpolation
+Xt = (1 −t)X0 + tX1,
+U = X1 −X0,
+(30)
+where X0 is independent of (X1, C), the population conditional velocity is
+v⋆
+c(t, x, c) = E
+U | Xt = x, C = c
+.
+(31)
+Since X1 = Xt + (1 −t)U, we obtain
+x + (1 −t)v⋆
+c(t, x, c) = E
+X1 | Xt = x, C = c
+.
+(32)
+At t = 0, the source is independent of the target conditional on c, and hence
+x + v⋆
+c(0, x, c) = E[X1 | C = c] =: µtr(c),
+(33)
+where µtr(c) denotes the conditional mean of the training target. Similarly, if m1 := E[X1] denotes
+the pooled data mean, then the exact unconditional field satisfies
+v⋆
+∅(0, x) = m1 −x.
+(34)
+Consequently, the ideal CFG field at t = 0 satisfies
+v⋆
+w(0, x, c) = v⋆
+∅(0, x) + w
+ v⋆
+c(0, x, c) −v⋆
+∅(0, x)
+
+(35)
+= m1 + w
+ µtr(c) −m1
+ −x,
+(36)
+and therefore
+x + v⋆
+w(0, x, c) = m1 + w
+ µtr(c) −m1
+.
+(37)
+Thus the first guided network evaluation contains a natural estimate of the direction of the
+condition-dependent displacement from the pooled mean.
+For the learned guided field, we accordingly define the endpoint-form prediction
+bx1,w(t, x, c) = x + (1 −t)vw(t, x, c).
+(38)
+When w̸ = 1, however, vw is generally not the FM marginal velocity associated with the original
+linear interpolation. Consequently, bx1,w(t, x, c) should not in general be interpreted as E[X1 | Xt =
+x, C = c], nor does its value near the beginning of the trajectory generally equal the terminal mean
+µw(c) of the guided flow.
+Indeed, let Zw,c
+t
+solve
+d
+dtZw,c
+t
+= vw(t, Zw,c
+t
+, c),
+Zw,c
+0
+∼N(0, Id).
+(39)
+Then, under the usual integrability assumptions,
+µw(c) = E[Zw,c
+1
+] = E[Zw,c
+0
+] +
+Z 1
+0
+E
+vw(t, Zw,c
+t
+, c)
+ dt =
+Z 1
+0
+E
+vw(t, Zw,c
+t
+, c)
+ dt.
+(40)
+Thus the terminal mean depends on the guided velocity along the entire trajectory. The first
+endpoint prediction may therefore systematically over- or underestimate the eventual displacement
+of µw(c) from m1.
+15
+
+
+We account for this mismatch using a single scalar calibration coefficient. Let t0 denote the first,
+near-zero network evaluation time. Given calibration source samples x0,i ∼N(0, Id) and calibration
+conditions c ∈Ccal, define
+ac,i := bx1,w(t0, x0,i, c) −m1,
+bc := eµw(c) −m1.
+(41)
+We fit
+α = arg min
+α′∈R
+X
+c∈Ccal
+X
+i
+α′ac,i −bc
+2 .
+(42)
+Since the regression contains a single scalar parameter, its solution is
+α =
+X
+c∈Ccal
+X
+i
+⟨ac,i, bc⟩
+X
+c∈Ccal
+X
+i
+∥ac,i∥2 .
+(43)
+This scalar is fitted once for a given model and guidance configuration; it is not fitted to the
+downstream evaluation metric.
+At sampling time, the first network evaluation is used to construct the trajectory-wise affine mean
+bµw(c; x0) = m1 + α
+ bx1,w(t0, x0, c) −m1
+.
+(44)
+We write bµw(c; x0) rather than µw(c) because, for a learned model and a nonzero first evaluation
+time, the endpoint prediction can retain a dependence on the particular source sample x0. Once
+computed, bµw(c; x0) is held fixed for the remainder of that sampling trajectory.
+In the ideal population setting with w = 1 and t0 = 0, (33) gives
+bx1,1(0, x0, c) = µtr(c),
+(45)
+independently of x0. Moreover, the exact conditional flow transports the source distribution to the
+conditional target distribution, so
+µ1(c) = µtr(c).
+(46)
+Hence the ideal calibration coefficient is α = 1. For a learned finite-capacity model and a numerically
+estimated terminal law, the fitted value need not equal one exactly.
+AREX-C then applies AREX using
+ bµw(c; x0), b¯Sw
+
+(47)
+in place of the unconditional moments (m1, Σ1). In particular, its affine component is
+vC
+G(t, x) = bµw(c; x0) + KC
+t
+ x −tbµw(c; x0)
+,
+(48)
+where
+KC
+t =
+tb¯Sw −(1 −t)Id
+(1 −t)2Id + t2b¯Sw
+−1.
+(49)
+The corresponding residual is
+rC
+w(t, x; c, x0) = vw(t, x, c) −vC
+G(t, x).
+(50)
+Because b¯Sw is shared across conditions, the eigensystem of KC
+t
+and the corresponding exact
+propagator are also shared. Only the affine center bµw(c; x0) changes with the condition and source
+sample.
+The first network evaluation serves both purposes required by AREX-C. We first compute
+v0 = vw(t0, x0, c),
+(51)
+16
+
+
+use it in (38) and (44) to obtain bµw(c; x0), and then form
+r0 = v0 −vC
+G(t0, x0).
+(52)
+The same network evaluation therefore gives both the conditional mean proxy and the first residual.
+Accordingly, the first AREX residual node is placed at t0, while subsequent residual nodes use the
+usual AREX placement. AREX-C therefore introduces no additional network function evaluation
+during sampling relative to AREX. Estimating b¯Sw, eµw(c), and α incurs an offline calibration cost.
+Connection with the affine L2 projection.
+Conditional generation itself does not invalidate
+the affine optimality result. When w = 1 and the exact conditional I-CFM field is used, the
+unconditional argument applies condition by condition: for a fixed condition c, the optimal affine
+field is determined by
+ µtr(c), Str(c)
+,
+(53)
+where Str(c) = Cov(X1 | C = c). There is also a corresponding interpretation when the linear
+part of the affine field is constrained to be shared across conditions. Define ¯Str = EC[Str(C)], and
+consider affine fields of the form
+at(c, x) = µtr(c) + At
+ x −tµtr(c)
+,
+(54)
+where At is shared across conditions. Let
+Y = U −µtr(C),
+Zt = Xt −tµtr(C).
+(55)
+Because X0 is independent of (X1, C) and has covariance Id,
+E
+Y Z⊤
+t
+ = t ¯Str −(1 −t)Id,
+(56)
+while
+E
+ZtZ⊤
+t
+ = (1 −t)2Id + t2 ¯Str.
+(57)
+Therefore, the minimizer of E
+∥Y −AtZt∥2 is
+A⋆
+t =
+t ¯Str −(1 −t)Id
+(1 −t)2Id + t2 ¯Str
+−1.
+(58)
+This is exactly the affine operator obtained by replacing the target covariance in the unconditional
+Gaussian affine field with the average within-condition covariance ¯Str. Thus the shared within-
+condition construction has an exact restricted L2 interpretation for population conditional I-CFM
+when w = 1.
+For w̸ = 1, however, the CFG field is generally not the conditional-expectation velocity associated
+with the original interpolant, so neither the condition-wise projection result nor (58) applies directly.
+The pair
+ bµw(c; x0), b¯Sw
+ should therefore be viewed as a calibrated affine decomposition of the
+guided dynamics, whose effectiveness we evaluate empirically in Section 4.
+C Proofs and Details of the Main Theoretical Results
+In this section, we provide proofs and details of theoretical results from the main paper. We first
+recall the setting and notation.
+Setting.
+Let X0 ∼N(0, Id) and X1 ∼p1 be independent, with E∥X1∥2 < ∞. Define m1 := E[X1]
+and S := Cov(X1) ⪰0, and consider the linear interpolant Xt = (1 −t)X0 + tX1. Let pt denote
+the law of Xt and v⋆(t, x) := E[X1 −X0 | Xt = x] its marginal velocity.
+For t < 1, set Σt := (1 −t)2I + t2S and define the Gaussian gt := N(tm1, Σt). Its associated affine
+field is
+vG(t, x) := m1 + Kt(x −tm1),
+Kt :=
+ tS −(1 −t)I
+Σ−1
+t .
+(59)
+17
+
+
+Algorithm 2 AREX-C. The first network evaluation provides both the conditional mean proxy
+and the first residual.
+Require: guided velocity vw(·, ·, c); pooled data mean m1; calibrated within-condition covariance
+b¯Sw; calibration coefficient α; residual profile ϕ, shared across conditions; grid t0 < · · · < tN;
+AREX-ABp
+1: Compute b¯Sw = QΛQ⊤and precompute the affine propagators.
+2: Precompute the residual quadrature weights for the chosen grid and residual profile.
+3: Sample x0 ∼N(0, Id).
+4: Evaluate v0 ←vw(t0, x0, c).
+5: Set bx1,w ←x0 + (1 −t0)v0.
+6: Set bµw ←m1 + α(bx1,w −m1) and hold it fixed for the trajectory.
+7: Set the first residual node τ0 = t0 and compute r0 ←v0 −vC
+G(t0, x0).
+8: Apply the first AREX step from t0 to t1 using r0.
+9: Initialize the residual history with (τ0, r0).
+10: for n = 1, . . . , N −1 do
+11:
+Apply the AREX-ABp update using vw, (bµw, b¯Sw), and the available residual history.
+12: end for
+13: return xN.
+Special case: Gaussian targets.
+In particular, if X1 is Gaussian, then (X1 −X0, Xt) is jointly
+Gaussian. Hence Gaussian conditioning gives
+E[X1 −X0 | Xt = x] = E[X1 −X0] + Cov(X1 −X0, Xt) Cov(Xt)−1 x −E[Xt]
+
+(60)
+= m1 +
+tS −(1 −t)I
+Σ−1
+t (x −tm1)
+(61)
+= vG(t, x).
+(62)
+Thus, for a Gaussian target, vG(t, x) coincides with the marginal velocity v⋆(t, x) = E[X1 −X0 |
+Xt = x].
+Endpoint convention.
+We state the affine field for t < 1 since Σt = (1 −t)2I + t2S is then positive
+definite for every S ⪰0, so that Kt is well defined. If S ≻0, all expressions extend directly to
+t = 1. If S is singular, Kt need not be defined at t = 1, but the propagator has the continuous
+terminal extension
+F(1, s) := lim
+t↑1 F(t, s) = Q diag
+ pλj
+σj(s)
+!
+Q⊤.
+Thus a sampling step may terminate at t = 1 without evaluating K1: the affine transport and
+residual quadrature are understood through this continuous endpoint extension.
+C.1 Proof of Proposition 1
+Proof of Proposition 1. Fix t < 1 and set
+U := X1 −X0,
+X := Xt,
+µt := tm1.
+(63)
+By independence of X0 and X1,
+Cov(U, X) = Cov
+ X1 −X0, (1 −t)X0 + tX1
+ = tS −(1 −t)I.
+(64)
+Since Cov(X) = Σt, (4) is precisely the affine least-squares predictor of U from X.
+We next verify the corresponding orthogonality. Since
+v⋆(t, X) = E[U | X],
+(65)
+18
+
+
+the tower property gives
+E[v⋆(t, X)] = E[U] = m1.
+(66)
+Moreover,
+E
+h v⋆(t, X) −m1
+(X −µt)⊤i
+= E
+h
+(U −m1)(X −µt)⊤i
+= tS −(1 −t)I.
+(67)
+On the other hand,
+vG(t, X) −m1 = Kt(X −µt),
+(68)
+and hence
+E
+h vG(t, X) −m1
+(X −µt)⊤i
+= KtΣt = tS −(1 −t)I.
+(69)
+Let H(X) := v⋆(t, X) −vG(t, X). Eq. (67)–(69) imply
+E[H(X)] = 0,
+E
+h
+H(X)(X −µt)⊤i
+= 0.
+(70)
+Every affine vector field can be written as
+a(x) = b + B(x −µt)
+(71)
+for some b ∈Rd and B ∈Rd×d. Therefore, using (70),
+⟨H, a⟩L2(pt) = E
+h
+H(X)⊤a(X)
+i
+(72)
+= b⊤E[H(X)] + tr
+
+B E[(X −µt)H(X)⊤]
+
+(73)
+= 0.
+(74)
+Thus v⋆−vG is orthogonal to every affine vector field. The space of affine vector fields is finite-
+dimensional and therefore closed in L2(pt), so vG is the orthogonal projection of v⋆onto this space.
+The Pythagorean identity then follows immediately.
+C.2 Proof of Proposition 2
+Proof of Proposition 2. We prove the score-based representation and Gaussian characterization
+result as follows.
+Score-based representation. Fix 0 < t < 1. Since
+Xt = tX1 + (1 −t)X0
+(75)
+is the convolution of the law of tX1 with a nondegenerate Gaussian, pt has a smooth, strictly
+positive density. Denoting φ(1−t)2I for the density of N(0, (1 −t)2I),
+pt(x) = E
+h
+φ(1−t)2I(x −tX1)
+i
+.
+(76)
+Differentiating under the expectation,
+∇xpt(x) = −
+1
+(1 −t)2 E
+h
+(x −tX1)φ(1−t)2I(x −tX1)
+i
+.
+(77)
+Dividing by pt(x) > 0 gives
+∇x log pt(x) = −
+1
+(1 −t)2 (x −t E[X1 | Xt = x]) .
+(78)
+19
+
+
+Hence
+E[X1 | Xt = x] = x + (1 −t)2∇x log pt(x)
+t
+.
+(79)
+Since
+X1 −X0 = X1 −Xt
+1 −t
+,
+(80)
+we obtain
+v⋆(t, x) = E[X1 | Xt = x] −x
+1 −t
+= x
+t + 1 −t
+t
+∇x log pt(x).
+(81)
+Let
+gt = N(tm1, Σt).
+(82)
+Its score is
+∇x log gt(x) = −Σ−1
+t (x −tm1).
+(83)
+Consequently,
+x
+t + 1 −t
+t
+∇x log gt(x) = m1 + 1
+t
+h
+I −(1 −t)Σ−1
+t
+i
+(x −tm1)
+(84)
+= m1 + 1
+t [Σt −(1 −t)I] Σ−1
+t (x −tm1).
+(85)
+Using
+Σt −(1 −t)I = (1 −t)2I + t2S −(1 −t)I = t
+ tS −(1 −t)I
+,
+(86)
+we obtain
+x
+t + 1 −t
+t
+∇x log gt(x) = vG(t, x).
+(87)
+Subtracting this identity from (81) yields
+r⋆(t, x) = 1 −t
+t
+(∇x log pt(x) −∇x log gt(x)) .
+(88)
+Therefore,
+∥r⋆(t, ·)∥2
+L2(pt) =
+1 −t
+t
+2
+I(pt | gt).
+(89)
+Gaussian characterization. If X1 is Gaussian with mean m1 and covariance S, then Xt is
+Gaussian with mean tm1 and covariance Σt. Thus pt = gt and r⋆(t, ·) = 0.
+Conversely, suppose for some fixed t ∈(0, 1) that
+r⋆(t, ·) = 0
+pt-a.e.
+(90)
+Then
+∇log pt = ∇log gt
+pt-a.e.
+(91)
+Since both sides are continuous and pt is strictly positive, the equality holds everywhere. Hence
+∇log pt
+gt
+= 0
+on Rd.
+(92)
+Because Rd is connected, pt/gt is constant. Normalization therefore gives pt = gt. Thus Xt is
+Gaussian.
+20
+
+
+By independence,
+φXt(ξ) = exp
+
+−1
+2(1 −t)2∥ξ∥2
+
+φX1(tξ).
+(93)
+Since Xt ∼N(tm1, Σt),
+φXt(ξ) = exp
+
+it m⊤
+1 ξ −1
+2ξ⊤ (1 −t)2I + t2S
+ξ
+
+.
+(94)
+The Gaussian factor is nonzero, so
+φX1(tξ) = exp
+
+it m⊤
+1 ξ −1
+2t2ξ⊤Sξ
+
+.
+(95)
+Setting η = tξ gives
+φX1(η) = exp
+
+im⊤
+1 η −1
+2η⊤Sη
+
+.
+(96)
+This is the characteristic function of a Gaussian law with mean m1 and covariance S (note that S
+may be singular). Hence X1 is Gaussian.
+C.3 Proof of Proposition 3
+Proof of Proposition 3. Since S and Σt share the eigenbasis Q,
+Kt = Q diag
+ k1(t), . . . , kd(t)
+Q⊤,
+(97)
+where
+kj(t) =
+tλj −(1 −t)
+(1 −t)2 + t2λj
+.
+(98)
+Thus all Kt are simultaneously diagonalizable and commute across time.
+For the affine ODE
+˙ex = m1 + Kt(ex −tm1),
+(99)
+set
+ey(t) := ex(t) −tm1.
+(100)
+Then
+˙ey(t) = Ktey(t).
+(101)
+Denoting z(t) := Q⊤ey(t), each mode satisfies
+˙zj(t) = kj(t)zj(t).
+(102)
+Moreover,
+d
+dt log σj(t) =
+tλj −(1 −t)
+(1 −t)2 + t2λj
+= kj(t).
+(103)
+Hence
+zj(t) = exp
+Z t
+s
+kj(τ) dτ
+
+zj(s) = σj(t)
+σj(s)zj(s).
+(104)
+Therefore,
+ey(t) = F(t, s)ey(s),
+(105)
+where
+F(t, s) = Q diag
+ σ1(t)
+σ1(s), . . . , σd(t)
+σd(s)
+
+Q⊤.
+(106)
+21
+
+
+Returning to the original coordinates,
+ex(t) = tm1 + F(t, s)
+ ex(s) −sm1
+,
+(107)
+which proves (7).
+The composition property follows immediately:
+F(t, s)F(s, r) = Q diag
+ 
+σj(t)
+σj(s)
+σj(s)
+σj(r)
+!
+Q⊤= F(t, r).
+(108)
+For the full learned dynamics, set
+y(t) := x(t) −tm1,
+Rθ(t, y) := rθ(t, tm1 + y).
+(109)
+Then
+˙y(t) = Kty(t) + Rθ(t, y(t)).
+(110)
+Variation of constants gives
+y(t) = F(t, s)y(s) +
+Z t
+s
+F(t, τ)Rθ(τ, y(τ)) dτ,
+(111)
+which is the representation in (9).
+C.4 Local Error Comparison
+We next derive the local error comparison discussed in Principle II. Define the one-step local error
+using the convention:
+dh := y(t + h) −Ψh(y(t)).
+(112)
+Assume that Kt is C2 in time and that Rθ is C2 jointly in time and state in a neighborhood of the
+exact trajectory, with the required derivatives bounded there.
+Fix the exact state y = y(t) and abbreviate
+R := Rθ(t, y),
+f := Kty + R.
+(113)
+The material derivative of Rθ along the learned flow is
+DfRθ := ∂tRθ(t, y) + DyRθ(t, y)f.
+(114)
+The exact trajectory has the expansion
+y(t + h) = y + h ˙y(t) + h2
+2 ¨y(t) + O(h3).
+(115)
+Since ˙y = f(t, y) = Kty + Rθ(t, y), we obtain
+¨y = ∂tf + Dyf f
+(116)
+= K′
+ty + ∂tRθ + (Kt + DyRθ)(Kty + Rθ)
+(117)
+= (K′
+t + K2
+t )y + KtRθ + DfRθ.
+(118)
+Therefore,
+y(t + h) = y + hf + h2
+2
+h
+(K′
+t + K2
+t )y + KtRθ + DfRθ
+i
++ O(h3).
+(119)
+22
+
+
+Euler.
+Euler gives
+ΨE(y) = y + h(Kty + Rθ).
+(120)
+Subtracting this from (119) yields
+dE = h2
+2
+h
+(K′
+t + K2
+t )y + KtRθ + DfRθ
+i
++ O(h3).
+(121)
+Frozen exponential Euler.
+Freezing both Kt and Rθ(t, y) at the left endpoint gives
+ΨFEE(y) = ehKty +
+ Z h
+0
+e(h−τ)Kt dτ
+!
+R.
+(122)
+Since
+ehKt = I + hKt + h2
+2 K2
+t + O(h3),
+(123)
+we have
+ehKty = y + hKty + h2
+2 K2
+t y + O(h3).
+(124)
+Similarly,
+Z h
+0
+e(h−τ)Kt dτ =
+Z h
+0
+h
+I + (h −τ)Kt + O(h2)
+i
+dτ
+(125)
+= hI + h2
+2 Kt + O(h3).
+(126)
+Thus
+ΨFEE(y) = y + hf + h2
+2
+
+K2
+t y + KtR
+
++ O(h3).
+(127)
+Comparison with (119) gives
+dFEE = h2
+2
+K′
+ty + DfRθ
+ + O(h3).
+(128)
+AREX-1.
+The left-node AREX map is
+ΨAREX(y) = F(t + h, t)y +
+ Z t+h
+t
+F(t + h, τ) dτ
+!
+R.
+(129)
+The evolution family satisfies
+∂1F(t, s) = KtF(t, s),
+F(s, s) = I,
+(130)
+where ∂1 denotes differentiation with respect to the first argument. Hence
+∂2
+1F(t, s) = K′
+tF(t, s) + K2
+t F(t, s),
+(131)
+and therefore
+F(t + h, t) = I + hKt + h2
+2 (K′
+t + K2
+t ) + O(h3).
+(132)
+For τ ∈[t, t + h], the integral equation for the propagator gives
+F(t + h, τ) = I +
+Z t+h
+τ
+KξF(ξ, τ) dξ.
+(133)
+23
+
+
+Smoothness of K therefore implies, uniformly in τ,
+F(t + h, τ) = I + (t + h −τ)Kt + O(h2).
+(134)
+Consequently,
+Z t+h
+t
+F(t + h, τ) dτ = hI + h2
+2 Kt + O(h3).
+(135)
+Using (132)–(135),
+ΨAREX(y) = y + hf + h2
+2
+h
+(K′
+t + K2
+t )y + KtR
+i
++ O(h3).
+(136)
+Subtracting from (119) gives
+dAREX = h2
+2 DfRθ + O(h3).
+(137)
+Thus Euler, frozen exponential Euler, and AREX successively remove affine contributions from the
+leading local error. If Rθ ≡0, AREX reduces to
+yn+1 = F(tn+1, tn)yn,
+(138)
+which is the exact affine flow on any grid.
+C.5 Proof of Proposition 4
+Proof of Proposition 4. Define g(τ) := Rθ(τ, y(τ)). The variation-of-constants formula gives
+y(t) = F(t, s)y(s) +
+Z t
+s
+F(t, τ)g(τ) dτ.
+(139)
+Subtracting (19) yields
+y(t) −y+ =
+Z t
+s
+F(t, τ) [g(τ) −Rθ (τ ⋆, ey(τ ⋆))] dτ.
+(140)
+Add and subtract g(τ⋆):
+y(t) −y+ =
+Z t
+s
+F(t, τ)
+g(τ) −g(τ ⋆)
+ dτ
+(141)
++
+Z t
+s
+F(t, τ) [Rθ(τ ⋆, y(τ ⋆)) −Rθ (τ ⋆, ey(τ ⋆))] dτ.
+(142)
+By the definition of Lg,
+∥g(τ) −g(τ ⋆)∥≤Lg|τ −τ ⋆|.
+(143)
+Hence (141) is bounded by
+ΦLg
+Z t
+s
+|τ −τ ⋆| dτ = Φh2
+2
+h
+ρ2 + (1 −ρ)2i
+Lg.
+(144)
+Next, variation of constants up to τ⋆gives
+y(τ ⋆) −ey(τ ⋆) =
+Z τ ⋆
+s
+F(τ ⋆, τ)Rθ(τ, y(τ)) dτ.
+(145)
+Therefore,
+∥y(τ ⋆) −ey(τ ⋆)∥≤ρhΦRmax.
+(146)
+24
+
+
+By the Lx-Lipschitz assumption,
+∥Rθ(τ ⋆, y(τ ⋆)) −Rθ (τ ⋆, ey(τ ⋆))∥≤ρhΦLxRmax.
+(147)
+Since ∥F(t, τ)∥≤Φ, the norm of (142) is at most ρh2Φ2LxRmax. Combining this and (144) gives
+∥y(t) −y+∥≤Φh2
+"
+ρ2 + (1 −ρ)2
+2
+Lg + ρΦLxRmax
+#
+.
+(148)
+C.6 Proof of Theorem 1
+Let 0 = t0 < t1 < · · · < tN = T, tn = nh, Nh = T, and fix
+un := tn + ρh,
+ρ ∈[0, 1).
+(149)
+Given byn, define the affine-only stage and its residual by
+eyn := F(un, tn)byn,
+bGn := Rθ(un, eyn).
+(150)
+On step n, let
+bPn(t) =
+X
+k∈Jn
+Ln,k(t) bGk,
+Jn ⊆{0, . . . , n},
+(151)
+and define
+byn+1 = F(tn+1, tn)byn +
+Z tn+1
+tn
+F(tn+1, t) bPn(t) dt.
+(152)
+For a full AREX-ABp step, Jn = {n, n −1, . . . , n −p + 1}, and
+bPn(tn + ξh) =
+p−1
+X
+j=0
+ℓj,ρ(ξ) bGn−j,
+0 ≤ξ ≤1,
+(153)
+where ℓj,ρ is the Lagrange basis associated with the nodes ρ, ρ−1, . . . , ρ−(p−1). This is equivalent
+to the Newton divided-difference representation.
+Let G(t) := Rθ(t, y(t)) and define the oracle reconstruction
+P ⋆
+n(t) :=
+X
+k∈Jn
+Ln,k(t)G(uk).
+(154)
+Set
+Aρ :=
+N−1
+X
+n=0
+Z tn+1
+tn
+∥G(t) −P ⋆
+n(t)∥L2 dt,
+(155)
+and
+κT :=
+sup
+0≤s≤t≤T
+∥F(t, s)∥,
+κρ := max
+0≤n<N ∥F(un, tn)∥.
+(156)
+Assume that, for every startup and full step,
+1
+h
+Z tn+1
+tn
+X
+k∈Jn
+|Ln,k(t)| dt ≤¯βp,ρ,
+(157)
+where ¯βp,ρ is independent of h.
+The following theorem is a detailed version of Theorem 1.
+25
+
+
+Theorem 2 (Distributional error bound for unprofiled AREX-ABp). Consider
+˙y(t) = Kty(t) + Rθ(t, y(t)),
+0 ≤t ≤T.
+(158)
+Assume that κT < ∞and that Rθ(t, ·) is globally LR-Lipschitz uniformly in t, and all affine stage
+points. Define
+M0 := sup
+0≤t≤T
+∥G(t)∥L2,
+(159)
+and suppose M0 < ∞. Then the following statements hold.
+(i) The terminal solver error satisfies
+W2
+
+bqp,ρ
+T , qθ
+T
+
+≤κT exp
+
+κT κρ ¯βp,ρLRT
+ h
+Aρ + ρh κT ¯βp,ρLRTM0
+i
+.
+(160)
+(ii) If, in addition,
+G ∈Cp([0, T]; L2),
+Mp := sup
+0≤t≤T
+∥G(p)(t)∥L2 < ∞,
+(161)
+then, on every full AREX-ABp step,
+∥G(tn + ξh) −P ⋆
+n(tn + ξh)∥L2 ≤Mphp
+p!
+p−1
+Y
+j=0
+|ξ −ρ + j|.
+(162)
+Consequently,
+Aρ ≤Astart + cp,ρTMphp,
+(163)
+where
+cp,ρ := 1
+p!
+Z 1
+0
+p−1
+Y
+j=0
+|ξ −ρ + j| dξ,
+(164)
+and Astart denotes the oracle residual reconstruction error of the startup steps. Hence,
+W2
+
+bqp,ρ
+T , qθ
+T
+
+≤κT eκT κρ ¯βp,ρLRT h
+Astart + cp,ρTMphp + ρh κT ¯βp,ρLRTM0
+i
+.
+(165)
+Proof of Theorem 2. In the sequel, all L2 norms below are taken with respect to the randomness
+of the common initial condition. We couple the exact and numerical trajectories through the same
+initial condition, so that by0 = y(0).
+Define
+en := byn −y(tn),
+En := max
+0≤k≤n ∥ek∥L2.
+(166)
+Step 1: control of the off-grid affine-stage error.
+Variation of constants on [tn, un] gives
+y(un) = F(un, tn)y(tn) +
+Z un
+tn
+F(un, s)G(s) ds.
+(167)
+By definition, eyn = F(un, tn)byn. Subtracting (167) therefore gives
+eyn −y(un) = F(un, tn)en −
+Z un
+tn
+F(un, s)G(s) ds.
+(168)
+Next, taking L2 norms and applying Minkowski’s inequality, we obtain:
+∥eyn −y(un)∥L2 ≤∥F(un, tn)∥∥en∥L2 +
+Z un
+tn
+∥F(un, s)∥∥G(s)∥L2 ds
+(169)
+≤κρEn + ρh κT M0,
+(170)
+26
+
+
+where we used un −tn = ρh and ∥F(un, s)∥≤κT for tn ≤s ≤un.
+Define δn := bGn −G(un). Since
+bGn = Rθ(un, eyn),
+G(un) = Rθ(un, y(un)),
+(171)
+the global LR-Lipschitz property of Rθ(t, ·), uniformly in t ∈[0, T], implies that
+∥δn∥L2 ≤LR∥eyn −y(un)∥L2
+(172)
+≤LRκρEn + ρh LRκT M0.
+(173)
+Step 2: control of the residual reconstruction error.
+By (151) and (154),
+bPn(t) −P ⋆
+n(t) =
+X
+k∈Jn
+Ln,k(t)δk.
+(174)
+The coefficients Ln,k(t) are deterministic scalars. Since Jn ⊆{0, . . . , n}, we have
+Ek ≤En,
+k ∈Jn.
+(175)
+Applying (173) with index k therefore gives
+∥δk∥L2 ≤LRκρEn + ρhLRκT M0,
+k ∈Jn.
+(176)
+Hence
+Z tn+1
+tn
+∥bPn(t) −P ⋆
+n(t)∥L2 dt ≤
+Z tn+1
+tn
+X
+k∈Jn
+|Ln,k(t)|∥δk∥L2 dt
+(177)
+≤
+Z tn+1
+tn
+X
+k∈Jn
+|Ln,k(t)| (LRκρEn + ρhLRκT M0) dt
+(178)
+≤h¯βp,ρ (LRκρEn + ρhLRκT M0) .
+(179)
+Step 3: propagation to the grid points.
+The numerical update is given by:
+byn+1 = F(tn+1, tn)byn +
+Z tn+1
+tn
+F(tn+1, t) bPn(t) dt,
+(180)
+whereas variation of constants for the exact trajectory gives
+y(tn+1) = F(tn+1, tn)y(tn) +
+Z tn+1
+tn
+F(tn+1, t)G(t) dt.
+(181)
+Subtracting and inserting P ⋆
+n give:
+en+1 = F(tn+1, tn)en +
+Z tn+1
+tn
+F(tn+1, t) [P ⋆
+n(t) −G(t)] dt
+(182)
++
+Z tn+1
+tn
+F(tn+1, t)
+h
+bPn(t) −P ⋆
+n(t)
+i
+dt.
+(183)
+Iterating (183) from e0 = 0 and using the composition law
+F(ti, tn+1)F(tn+1, t) = F(ti, t),
+(184)
+we obtain, for every i ≥1,
+ei =
+i−1
+X
+n=0
+Z tn+1
+tn
+F(ti, t) [P ⋆
+n(t) −G(t)] dt +
+i−1
+X
+n=0
+Z tn+1
+tn
+F(ti, t)
+h
+bPn(t) −P ⋆
+n(t)
+i
+dt.
+(185)
+27
+
+
+Taking L2 norms and applying Minkowski’s inequality gives
+∥ei∥L2 ≤κT
+i−1
+X
+n=0
+Z tn+1
+tn
+∥P ⋆
+n(t) −G(t)∥L2 dt + κT
+i−1
+X
+n=0
+Z tn+1
+tn
+∥bPn(t) −P ⋆
+n(t)∥L2 dt.
+(186)
+The first sum is bounded by κT Aρ. Applying (179) to the second gives
+∥ei∥L2 ≤κT Aρ + κT κρ ¯βp,ρLRh
+i−1
+X
+n=0
+En + ρκ2
+T ¯βp,ρLRM0 ih2.
+(187)
+Since ih ≤T, ih2 ≤Th, and therefore
+∥ei∥L2 ≤κT
+h
+Aρ + ρh κT ¯βp,ρLRTM0
+i
++ κT κρ ¯βp,ρLRh
+i−1
+X
+n=0
+En.
+(188)
+To pass from (188) to Ei, fix m ∈{0, . . . , i}. Since
+m−1
+X
+n=0
+En ≤
+i−1
+X
+n=0
+En
+(189)
+and mh2 ≤ih2 ≤Th, the same right-hand side bounds ∥em∥L2. Taking the maximum over
+0 ≤m ≤i therefore yields
+Ei ≤κT
+h
+Aρ + ρh κT ¯βp,ρLRTM0
+i
++ κT κρ ¯βp,ρLRh
+i−1
+X
+n=0
+En.
+(190)
+Set a := κT
+h
+Aρ + ρh κT ¯βp,ρLRTM0
+i
+and b := κT κρ ¯βp,ρLR. Then
+Ei ≤a + bh
+i−1
+X
+n=0
+En.
+(191)
+By the discrete Gronwall inequality,
+EN ≤a(1 + bh)N ≤aebNh.
+(192)
+Since Nh = T,
+EN ≤κT exp
+
+κT κρ ¯βp,ρLRT
+ h
+Aρ + ρh κT ¯βp,ρLRTM0
+i
+.
+(193)
+Step 4: passage to Wasserstein distance.
+The exact and numerical trajectories are constructed
+from the same random initial condition, so their terminal values define an admissible coupling.
+Hence, in centered coordinates,
+W 2
+2 (Law(byN), Law(y(T))) ≤E
+h
+∥byN −y(T)∥2i
+= ∥eN∥2
+L2.
+(194)
+Now, since bxN = Tm1 + byN, x(T) = Tm1 + y(T), using the translation invariance of W2 we have:
+W2
+
+bqp,ρ
+T , qθ
+T
+
+= W2 (Law(byN), Law(y(T))) .
+(195)
+Taking square roots and using (193) allow us to arrive at (160).
+28
+
+
+Step 5: smooth residual specialization.
+Assume now that G ∈Cp 
+[0, T]; L2(Ω; Rd)
+
+. Consider
+a full AREX–ABp step and write
+t = tn + ξh,
+0 ≤ξ ≤1.
+(196)
+The interpolation nodes are
+un−j = tn + (ρ −j)h,
+j = 0, . . . , p −1.
+(197)
+Thus P ⋆
+n is the degree-(p −1) interpolating polynomial of the L2-valued function G at these nodes.
+The standard scalar Lagrange interpolation estimate extends straightforwardly to L2-valued func-
+tions. Indeed, let Λ be any bounded linear functional on L2(Ω; Rd) with ∥Λ∥≤1. Applying the
+scalar interpolation remainder to Λ ◦G gives
+|Λ (G(tn + ξh) −P ⋆
+n(tn + ξh))| ≤Mphp
+p!
+p−1
+Y
+j=0
+|ξ −ρ + j|.
+(198)
+Taking the supremum over all such Λ yields
+∥G(tn + ξh) −P ⋆
+n(tn + ξh)∥L2 ≤Mphp
+p!
+p−1
+Y
+j=0
+|ξ −ρ + j|.
+(199)
+Integrating over the step with dt = h dξ gives
+Z tn+1
+tn
+∥G(t) −P ⋆
+n(t)∥L2 dt ≤Mphp+1
+p!
+Z 1
+0
+p−1
+Y
+j=0
+|ξ −ρ + j| dξ
+(200)
+= cp,ρMphp+1.
+(201)
+There are at most N = T/h full steps. Adding the error terms therefore gives
+Aρ ≤Astart + Ncp,ρMphp+1
+(202)
+≤Astart + cp,ρTMphp.
+(203)
+This proves (163). Finally, substituting this estimate into (160) yields (165).
+C.7 Specialization to the Left-Node ρ = 0 Case
+We next specialize Theorem 2 to the left-node case (ρ = 0).
+Corollary 1 (Grid-node AREX–ABp). Under the assumptions of Theorem 2, set ρ = 0. Then
+un = tn, eyn = byn, κ0 = 1, and the stage-state contribution in (165) vanishes. Moreover,
+cp,0 = 1
+p!
+Z 1
+0
+p−1
+Y
+j=0
+(ξ + j) dξ =: cp.
+(204)
+If Astart ≤Cstarthp, then
+W2
+
+bqp,0
+T , qθ
+T
+
+≤κT eκT ¯βp,0LRT (Cstart + cpTMp) hp.
+(205)
+Hence grid-node AREX–ABp has global order p relative to the exact learned ODE.
+Finally, we specialize Corollary 1 to AREX-AB2 and AREX-AB3 and provide more explicit error
+bounds.
+29
+
+
+Explicit bounds for AREX-AB2 and AREX-AB3.
+For q = 1, 2, 3, define
+Mq := sup
+0≤t≤T
+∥G(q)(t)∥L2.
+(206)
+For the standard Adams–Bashforth reconstructions,
+c1 = 1
+2,
+c2 = 5
+12,
+c3 = 3
+8,
+(207)
+while the corresponding reconstruction-stability constants are
+β1 = 1,
+β2 = 2,
+β3 = 11
+3 .
+(208)
+For AREX-AB2 with one AREX-1 startup step, the startup contribution is at most 1
+2M1h2, while
+the remaining AB2 steps contribute at most
+5
+12TM2h2. Hence
+A ≤
+1
+2M1 + 5
+12TM2
+
+h2,
+(209)
+and therefore
+W2
+
+bqAREX-AB2
+T
+, qθ
+T
+
+≤κT e2κT LRT
+1
+2M1 + 5
+12TM2
+
+h2.
+(210)
+For the standard AREX-1–AB2–AB3 ramp, the first startup step contributes at most 1
+2M1h2, the
+second at most
+5
+12M2h3, and the remaining AB3 steps contribute at most 3
+8TM3h3. Thus
+A ≤1
+2M1h2 +
+ 5
+12M2 + 3
+8TM3
+
+h3.
+(211)
+Applying the same stability argument as in Theorem 2 gives
+W2
+
+bqAREX-AB3
+T
+, qθ
+T
+
+≤κT e(11/3)κT LRT
+1
+2M1h2 +
+ 5
+12M2 + 3
+8TM3
+
+h3
+
+.
+(212)
+Thus the naive ramp is generically only second-order because of its first AREX-1 startup step.
+If, however, G′(0) = 0, then
+G(t) −G(0) =
+Z t
+0
+(t −s)G′′(s) ds,
+(213)
+and therefore
+Z h
+0
+∥G(t) −G(0)∥L2 dt ≤1
+6M2h3.
+(214)
+The startup contribution is then bounded by
+1
+6 + 5
+12
+
+M2h3 = 7
+12M2h3.
+(215)
+Consequently,
+A ≤
+ 7
+12M2 + 3
+8TM3
+
+h3,
+(216)
+and AREX-AB3 satisfies
+W2
+
+bqAREX-AB3
+T
+, qθ
+T
+
+≤κT e(11/3)κT LRT
+ 7
+12M2 + 3
+8TM3
+
+h3.
+(217)
+30
+
+
+D Additional Discussions
+In this section, we provide additional discussions on AREX.
+D.1 Why Not Other Couplings?
+While the affine-residual construction extends to general endpoint coupling with finite second
+moments through the endpoint cross-covariance, the independent-coupling setting used here is
+particularly simple: the cross-covariance vanishes, and with an isotropic source covariance the
+time-dependent affine coefficients are functions of the target covariance alone, so they share a
+fixed eigenbasis and admit a closed-form propagator. For a general coupling, the endpoint cross-
+covariance must also be estimated, and the resulting time-dependent affine operators need not
+commute, so such a simultaneous diagonalization is generally not possible. As a special case, if the
+moment-matched Gaussian endpoints are coupled by OT with quadratic cost, the resulting path
+is the Bures-Wasserstein geodesic (Peyré, 2025). Note also that the cross-covariance of the OT
+coupling is generally unavailable without first solving or approximating the OT problem.
+D.2 Relation to DDIM and Other Samplers
+We next relate the propagator of the affine part to two existing samplers.
+(i) Set S = 0 and freeze the affine mean over a step at
+µ = bx1(s) := x(s) + (1 −s)vθ(s, x(s)).
+(218)
+With no additional residual contribution, (7) reduces to the linear-interpolation analogue of
+the deterministic first-order DDIM/DPM-Solver++ data-prediction update. Under the linear
+FM coefficients αt = t and σt = 1 −t, this update coincides with an Euler step.
+(ii) If the moment-matched Gaussian backbone (µ, S) = (m1, Σ1) is used only on an initial interval
+[0, t1] and the residual is neglected there, then AREX propagates that Gaussian approximation
+analytically across the interval. This is the same basic mechanism as the analytical teleportation
+of Wang and Vastola (2024), up to the parameterization and noise schedule used to describe
+the interpolation.
+To see the first connection explicitly, when S = 0,
+Σt = (1 −t)2I,
+Kt = −
+1
+1 −tI,
+F(t, s) = 1 −t
+1 −sI.
+(219)
+Hence (7) gives
+x(t) = tbx1(s) + 1 −t
+1 −s
+ x(s) −sbx1(s)
+ = 1 −t
+1 −sx(s) + t −s
+1 −s bx1(s).
+(220)
+Equivalently, defining
+bx0(s) = x(s) −sbx1(s)
+1 −s
+,
+(221)
+the update takes the data-prediction form
+x(t) = tbx1(s) + (1 −t)bx0(s).
+(222)
+Substituting
+bx1(s) = x(s) + (1 −s)vθ(s, x(s))
+(223)
+into (220) yields
+x(t) = x(s) + (t −s)vθ(s, x(s)),
+(224)
+which is exactly Euler.
+31
+
+
+This coincidence is specific to the linear interpolation αt = t, σt = 1−t and the frozen zero-covariance
+endpoint-prediction construction above. For a general nonlinear diffusion schedule (αt, σt), the
+deterministic DDIM/DPM-Solver++ update does not in general coincide with Euler. Thus the
+zero-covariance specialization provides a useful baseline: retaining the nonzero target covariance
+introduces the covariance-informed affine transport that distinguishes AREX from this first-order
+endpoint-prediction step. In the full AREX method, the treatment of the residual integral provides
+an additional distinction.
+D.3 The Residual Magnitude Profile
+Proposition 4 suggests reducing the temporal variation of the quantity estimated by the quadrature.
+Freezing or extrapolating r across a step requires its temporal variation to be reconstructed
+numerically, while on a coarse grid this variation can be substantial.
+Its sample-dependent
+component cannot be predicted in advance, while part of its amplitude variation is a property of
+the time slice that can be measured once and built into the weights.
+Our proposed residual profile can achieve this by factoring out a deterministic, empirically measur-
+able component of its time-dependent amplitude. More precisely, we consider the root-mean-square
+(RMS) residual per direction along the model’s own trajectories,
+ϕj(u) =
+ E |rj(u, y(u))|21/2.
+(225)
+We then replace the kernel Fj(t, τ) by Fj(t, τ)ϕj(τ)/ϕj(τ ⋆). For the one-node case, this amounts
+to freezing rj/ϕj rather than rj. The systematic RMS amplitude variation is therefore carried
+by the weights, leaving only the normalized residual variation to the quadrature. The profile can
+be estimated once from calibration trajectories and, once precomputed, introduces no additional
+network evaluations during sampling.
+Proposition 5 (The profile as product integration). In the eigenbasis of S, denote rj(t, y) =
+(QT Rθ(t, y))j =: ϕj(t)gj(t) for a fixed eigen-direction j. In the setting of Proposition 4, suppose
+ϕj > 0, and let
+¯ϕj = max
+τ∈[s,t]
+ϕj(τ)
+ϕj(τ ⋆),
+Lgj = sup
+τ∈[s,t]
+|g′
+j(τ)|.
+(226)
+Then, under the same assumptions as Proposition 4, the profiled one-node step with weight
+eωj =
+Z t
+s
+Fj(t, τ) ϕj(τ)
+ϕj(τ ⋆) dτ
+(227)
+has local error in direction j at most
+Φh2 ¯ϕjϕj(τ ⋆)
+"
+ρ2 + (1 −ρ)2
+2
+Lgj + ρΦLx
+Rmax
+ϕj(τ ⋆)
+#
+.
+(228)
+Proof of Proposition 5. In direction j, the profiled step has error
+Z t
+s
+Fj(t, τ)ϕj(τ)
+gj(τ) −bgj
+ dτ,
+(229)
+where
+bgj = rj(τ ⋆, ey(τ ⋆))
+ϕj(τ ⋆)
+.
+(230)
+Split
+gj(τ) −bgj = gj(τ) −gj(τ ⋆) + rj(τ ⋆, y(τ ⋆)) −rj(τ ⋆, ey(τ ⋆))
+ϕj(τ ⋆)
+.
+(231)
+32
+
+
+The first term is at most Lgj|τ −τ ⋆|, while the second is at most
+LxΦρhRmax
+ϕj(τ ⋆)
+(232)
+using the same argument as in Proposition 4. Finally,
+|Fj(t, τ)|ϕj(τ) ≤Φ¯ϕjϕj(τ ⋆).
+(233)
+Integrating and using
+Z t
+s
+|τ −τ ⋆| dτ = h2
+2
+ρ2 + (1 −ρ)2
+(234)
+gives the stated bound.
+D.4 AREX versus Euler: A Spectral Analysis
+The propagator also reveals which covariance directions are most difficult for standard solvers to
+capture. In particular, we quantify how much error Euler makes in different directions compared
+with AREX.
+In eigen-direction j,
+˙zj(t) = kj(t)zj(t).
+(235)
+Since kj = σ′
+j/σj,
+k′
+j(t) + kj(t)2 = σ′′
+j (t)
+σj(t) =
+λj
+σj(t)4 .
+(236)
+Thus the leading Euler error here is explicitly controlled by the target covariance spectrum.
+The following proposition says that the error of Euler can be written in closed form under this
+direction. The gain over Euler on the affine part can therefore be seen as a function of the spectrum
+and be evaluated eigenvalue by eigenvalue.
+Proposition 6 (Per eigenvalue error of Euler on the affine part). If λj = 0, then
+σj(t) = 1 −t,
+zj(t) = 1 −t
+1 −szj(s),
+(237)
+and a single Euler step from s to t reproduces the exact affine solution.
+For every fixed λj > 0, let tn = nh, Nh = 1, and let AE,j(h) denote Euler’s total multiplicative
+factor from 0 to 1. Then, as h →0,
+log AE,j(h)
+pλj
+= −h
+2
+Z 1
+0
+λj
+σj(t)4 dt + O(h2) = −h
+2
+"
+1 + π
+4
+1 + λj
+pλj
+#
++ O(h2),
+(238)
+whereas for AREX AAREX,j =
+pλj.
+Proof of Proposition 6. The case λj = 0 follows from kj(t) = −(1 −t)−1:
+zj(s) + (t −s)kj(s)zj(s) = 1 −t
+1 −szj(s).
+(239)
+For λj > 0, Euler has per-step factor of 1 + hkj(tn), so
+log(1 + hkj(tn)) = hkj(tn) −h2
+2 kj(tn)2 + O(h3).
+(240)
+33
+
+
+Now, Euler–Maclaurin for the left Riemann sum gives
+h
+N−1
+X
+n=0
+kj(tn) =
+Z 1
+0
+kj(t)dt −h
+2
+ kj(1) −kj(0)
+ + O(h2).
+(241)
+Combining the two expansions,
+log AE,j(h) −
+Z 1
+0
+kj(t)dt = −h
+2
+Z 1
+0
+ k′
+j(t) + kj(t)2dt + O(h2).
+(242)
+Since
+exp
+Z 1
+0
+kj(t)dt
+
+= σj(1)
+σj(0) =
+q
+λj,
+(243)
+and
+Z 1
+0
+λj
+ (1 −t)2 + λjt22 dt = 1 + π
+4
+1 + λj
+pλj
+,
+(244)
+(238) follows.
+The coefficient in (238) is minimized at λj = 1, where the source and target variances agree in that
+direction, although the Euler error does not vanish there. Since AREX propagates the mode exactly,
+AAREX,j =
+pλj, the affine-part discretization error is removed by AREX. Thus, for λj ≫1, the
+error removed by AREX grows as π
+8 h
+pλj in relative multiplicative error, while the corresponding
+absolute error in the terminal standard deviation multiplier scales as O(hλj). For small positive λj,
+the coefficient also becomes large, but this limit is nonuniform: at exactly λj = 0, both Euler and
+AREX are accurate, whereas for 0 < λj ≪1 a narrow terminal region must be resolved before the
+fixed-λj asymptotic behavior holds.
+D.5 Relation to Curvature of the Flow
+The spectral analysis above characterizes the discretization error incurred by a numerical solver for
+the affine part. A related but distinct question is how curved the marginal flow itself is. Importantly,
+a flow need not be globally straight for AREX to be easy to integrate: curvature that is captured by
+the analytically solvable affine component is propagated exactly. The covariance spectrum provides
+a direct way to quantify this distinction.
+We follow Wang et al. (2025) and define the curvature as:
+V :=
+Z 1
+0
+E∥U −E[U | Xt]∥2dt,
+(245)
+which is the integrated conditional variance of the line velocity U = X1 −X0 given the current
+state. In particular, V = 0 if and only if U = E[U | Xt] a.s. for a.e. t, so the straight interpolation
+trajectories coincide almost surely with integral curves of the marginal velocity field. In this case
+every ODE trajectory is a straight line, and V equals the minimum of the flow matching loss.
+The following proposition shows that, for a Gaussian target under the linear interpolant, it has
+a closed form, and for any target it is bounded by the excess transport cost of the independent
+coupling.
+Proposition 7 (Curvature of the affine flow). Let X0 ∼N(0, Id) with X0 ⊥X1, and Xt =
+(1 −t)X0 + tX1. If X1 ∼N(m, Σ), then
+V = π
+2 trΣ1/2 = π
+2
+d
+X
+j=1
+q
+λj.
+(246)
+Moreover, for any X1 with finite second moment,
+V ≤E∥X1 −X0∥2 −W 2
+2 (p0, p1).
+(247)
+34
+
+
+Proof of Proposition 7. For the Gaussian case, rotate into the eigenbasis of Σ.
+It suffices to
+consider one scalar mode
+X0 ∼N(0, 1),
+X1 ∼N(m, c),
+c ≥0.
+(248)
+Let a = 1 + c. Then
+Var(U) = a,
+Cov(U, Xt) = at −1,
+Var(Xt) = (1 −t)2 + ct2 =: D(t).
+(249)
+Joint Gaussianity gives
+Var(U | Xt) = a −(at −1)2
+D(t)
+.
+(250)
+Since
+aD(t) −(at −1)2 = c,
+(251)
+we obtain
+Var(U | Xt) =
+c
+(1 −t)2 + ct2 .
+(252)
+For c > 0,
+Z 1
+0
+c
+(1 −t)2 + ct2 dt = √c
+arctan(√c) + arctan(1/√c)
+ = π
+2
+√c.
+(253)
+For c = 0, the conditional variance is identically zero, so the same formula holds by continuity.
+Summing over eigen-directions proves (246).
+For the general case,
+v⋆(t, Xt) = E[U | Xt]
+(254)
+is the L2 projection of U onto σ(Xt)-measurable random variables. Therefore
+V = E∥U∥2 −
+Z 1
+0
+E∥v⋆(t, Xt)∥2dt.
+(255)
+The pair (pt, v⋆
+t ) satisfies the continuity equation and is an admissible dynamic transport from p0
+to p1. The Benamou–Brenier formula (Benamou and Brenier, 2000) therefore gives
+Z 1
+0
+E∥v⋆(t, Xt)∥2dt ≥W 2
+2 (p0, p1),
+(256)
+which proves (247).
+Remark 1. For a Gaussian target,
+E∥X1 −X0∥2 = ∥m∥2 + trΣ + d,
+(257)
+and
+W 2
+2
+ N(0, I), N(m, Σ)
+ = ∥m∥2 + trΣ + d −2trΣ1/2.
+(258)
+Thus (247) becomes
+V ≤2trΣ1/2,
+(259)
+whereas the exact value is exactly a factor π/4 of this upper bound. Moreover,
+2trΣ1/2 ≤trΣ + d
+(260)
+by 2
+√
+λ ≤1 + λ mode by mode (see Proposition 2 in (Wang et al., 2025)), so the transport-cost
+bound is sharper than the corresponding independent-coupling variance bound in the Gaussian case.
+35
+
+
+Therefore, the Gaussian case makes the distinction especially clear. If X1 is Gaussian, then r⋆≡0,
+so the ideal marginal flow is exactly the affine flow and AREX propagates it without discretization
+error. Nevertheless,
+V = π
+2 trΣ1/2
+(261)
+is generally nonzero (a sum over eigenvalues of π
+2
+pλj, and dominated by the directions with
+λj ≫1), and the affine trajectories can have nonzero acceleration. Thus the full flow need not be
+straight for AREX to be easy to integrate. What matters numerically is the curvature left after the
+solvable affine dynamics have been removed, represented at leading order by DfRθ.
+Proposition 7 and Proposition 6 describe complementary aspects of the same spectral structure: one
+at the level of flow curvature, the other at the level of numerical discretization error. AREX resolves
+this limitation by propagating the curved affine component exactly rather than approximating it.
+D.6 A Diagnostic From the Propagator Itself
+The covariance spectrum also determines the largest possible forward amplification of the exact
+affine evolution. In view of earlier discussions, we define
+κ :=
+p
+1 + λmax.
+(262)
+Lemma 1 (Maximum affine propagator gain). For every λj ≥0,
+sup
+0≤s≤t<1
+σj(t)
+σj(s) =
+q
+1 + λj.
+(263)
+Consequently,
+sup
+0≤s≤t<1
+∥F(t, s)∥2 =
+p
+1 + λmax = κ.
+(264)
+Proof. For λj > 0,
+σj(τ)2 = (1 + λj)τ 2 −2τ + 1
+(265)
+is convex and has its unique minimum at
+τ ⋆
+j =
+1
+1 + λj
+,
+σj(τ ⋆
+j )2 =
+λj
+1 + λj
+.
+(266)
+The function decreases before τ ⋆
+j and increases afterward. Hence the supremum of the forward ratio
+is approached from the minimum as t ↑1; equivalently, using the continuous extension available for
+λj > 0, it is attained at the terminal endpoint:
+σj(1)
+σj(τ ⋆
+j ) =
+pλj
+q
+λj/(1 + λj)
+=
+q
+1 + λj.
+(267)
+For λj = 0, σj(t) = 1−t is nonincreasing, so the supremum is 1 =
+p1 + λj. Since F(t, s) is diagonal
+in the Q basis with modal factors σj(t)/σj(s), taking the maximum over j proves (264).
+The quantity κ measures the largest forward amplification of the exact affine propagator. It is
+therefore a compact diagnostic of the strength of the covariance-induced affine dynamics; by itself
+it is not a theorem predicting a specific improvement over another solver.
+If κ = 1, then λmax = 0 and hence S = 0. In this degenerate case, σj(t) = 1 −t, the affine
+trajectories are linear, and Euler already propagates the affine component exactly. If instead
+S = λI, then
+F(t, s) = σ(t)
+σ(s)I,
+(268)
+36
+
+
+Table 4
+The propagator gain κ = √1 + λmax, computed from the covariance used by the sampler, together
+with the FID at NFE 4.
+Model
+λmax
+κ
+AREX
+Euler
+best baseline
+SANA-0.6B / MJHQ-30K
+76
+8.8
+8.2
+–
+10.6 (DPM-Solver-v3)
+I-CFM / CIFAR-10
+221
+14.9
+12.2
+51.9
+23.2 (STORK-4)
+SiT-XL/2 / ImageNet
+266
+16.3
+8.2
+54.0
+9.8 (DPM-Solver-v3)
+so the affine evolution is isotropic and no matrix-valued anisotropic treatment is needed.
+A
+complementary measure of directional heterogeneity is the spread of modal gain bounds,
+κaniso :=
+s
+1 + λmax
+1 + λmin
+.
+(269)
+When λmin ≪1, κaniso ≈κ.
+The spectral results above describe distinct aspects of the same covariance geometry. Mode j
+contributes π
+2
+pλj to the Gaussian straightness measure V , while its maximal affine propagator
+gain is
+p1 + λj and its leading Euler affine error is governed by λj/σj(t)4. These quantities should
+not be identified, but they all show that the covariance spectrum determines which directions
+carry strong structured dynamics. AREX exploits this structure by propagating the affine part
+exactly and spending numerical effort only on the residual. We validate this for AREX and Euler
+empirically. Table 4 reports the computed κ for the models and tasks we consider. Indeed, all of
+them have κ ≫1.
+More generally, the discussions above suggest that the relevant question is not whether the full
+flow is straight, but whether the part that remains after removing the solvable affine dynamics is
+sufficiently regular to be approximated accurately with a small NFE.
+E Experimental Details and Additional Results
+E.1 Experimental Settings
+In this section, we provide details on the settings of the experiments in Sec. 4. All samplers are
+applied to the same pretrained checkpoints; no model is trained or fine-tuned. On each benchmark,
+every sampler uses the same noise seeds and the same FID code.
+Benchmarks.
+We use three benchmarks. They differ in conditioning and in the space where
+the flow is integrated, so that the same sampler is tested in three cases: the unconditional task,
+the class-conditional task and the text conditional task. On CIFAR-10 Krizhevsky et al. (2009),
+we use the unconditional I-CFM checkpoints released with TorchCFM Tong et al. (2023). On
+ImageNet-256 Russakovsky et al. (2015), we use SiT-XL/2 Ma et al. (2024) in the SD-VAE space
+with classifier free guidance at its published scale w = 1.5. On MJHQ-30K Li et al. (2024), we use
+SANA-0.6B at 512px Xie et al. (2024) with classifier free guidance w = 4.5, following the protocol
+of Tan et al. (2026). The settings are shown in Table 5.
+Evaluation.
+FID is computed against the training set with pytorch-fid on CIFAR-10, with the
+ADM reference batch and evaluator in ImageNet-256, and with the reference statistics of the SANA
+toolkit in MJHQ-30K. We also report sFID, Inception score, precision, and recall in Table 18. One
+NFE is one evaluation of the velocity field that the sampler integrates. With classifier-free guidance,
+this is one evaluation of the guided field, computed as one batched forward pass that returns the
+conditional and the unconditional prediction; the two branches are not counted separately. The
+same convention applies to every sampler and to the cost tables of Appendix E.3.
+37
+
+
+Table 5
+Settings of the three benchmarks.
+Parameter
+CIFAR-10
+ImageNet-256
+MJHQ-30K
+Model
+I-CFM (TorchCFM)
+SiT-XL/2
+SANA-0.6B, 512px
+Space
+pixel
+latent (SD-VAE)
+latent
+Dimension d
+3072
+4096
+8192
+Precision
+fp32
+bf16
+bf16
+Conditioning
+none
+class, CFG w = 1.5
+text, CFG w = 4.5
+Conditions
+–
+1000 classes, cycled
+MJHQ prompts
+Samples for FID
+50k
+50k
+30k
+Reference statistics training set (pytorch-fid) ADM reference batch
+SANA toolkit
+Additional metrics
+–
+sFID, IS, precision, recall –
+Time grid
+uniform in t, [10−3, 1]
+uniform in t, [10−3, 1]
+factory grid, flow_shift= 3
+Held-out split
+10,000 samples, seed 777 2,500 samples, seed 777
+first 1,000 prompts
+Candidate ρ
+{0.05, 0.1, 0.2, 0.35, 0.5}
+{0.05, 0.1, 0.2, 0.35}
+{0.2, 0.35, 0.5}
+Baselines.
+We compare with Euler and six training-free samplers. Two levels of configuration
+have to be distinguished. The first level is the configuration of each baseline. We use the authors’
+released implementation, or the implementation in diffusers, with the hyperparameters that its
+paper reports for the backbone at hand, or the defaults of the code when the paper reports none.
+These settings are never searched. The second level is a small set of discrete options that each
+method exposes, such as the solver order. These options are selected per NFE on the held-out split
+described below, and they are the only quantities that are tuned. Table 6 lists the implementations
+and the options, and Table 7 lists the selected values. For DPM-Solver-v3, the empirical model
+statistics are estimated on the same checkpoint with exact Jacobian-vector products, using the
+authors’ settings: N = 1200 timesteps and K = 1024 samples on CIFAR-10, and N = 250 and
+K = 1024 on SiT-XL/2 and SANA. The time grids differ by method. On CIFAR-10 and SiT-XL/2,
+Euler, DPM-Solver++, UniPC, CAB, STORK and AREX run on the uniform grid in t from 10−3
+to 1. A-FloPS applies its own time shift to this grid, which is the identity on CIFAR-10 (shift
+1) and moves the interior nodes on SiT-XL/2 (shift 3). DPM-Solver-v3 constructs its own grid
+between t = 10−3 and t = 1 −10−3, uniform in t or in log-SNR according to the option selected
+per NFE. On SANA, DPM-Solver++, UniPC, CAB and AREX-C run on the factory grid of the
+released pipeline, STORK and A-FloPS use the grids constructed by their own schedulers, and
+DPM-Solver-v3 uses its own grid, uniform in t. Thus, equal NFE means an equal number of
+evaluations of the same field, not identical grids.
+Two cases deserve a comment. On SANA, DPM-Solver++ and UniPC are the factory schedulers of
+the released pipeline and run at solver order 2 at every NFE. On CIFAR-10 and SiT-XL/2, their
+order is selected per NFE, and the selected order is 1 at NFE 2, 2 at NFE 4, and 3 from NFE 8 on.
+Thus the label 2M applies to the SANA rows only. STORK-4 on SANA is run in the configuration
+of its paper for this backbone, namely s = 9 with the first-order Taylor expansion on the scheduler’s
+own grid, at every NFE. Its paper reports this configuration from NFE 7 on. The entries at NFE
+4–6 in Table 3 are the same configuration applied below that range, with no adaptation. On
+CIFAR-10 and SiT-XL/2, (s, Taylor order) is selected per NFE from {5, 9, 14} × {1, 2}.
+Selection protocol.
+All discrete options of every method are selected per NFE on a held-out split,
+and the reported curve of every method is one configuration per NFE rather than an envelope
+over configurations. The split differs by benchmark. On CIFAR-10, it consists of 10000 samples
+drawn with seed 777, whereas the reported 50k samples use seed 1234, so the noise is disjoint. On
+SiT-XL/2, it consists of 2500 samples drawn with seed 777 over the same 1000 classes, cycled,
+whereas the reported samples use seed 1234; the noise is disjoint and the classes are the same. On
+SANA, it consists of the first 1000 prompts of MJHQ-30K with the same noise seed as the reported
+run. Thus, the held-out samples on SANA are the first 1,000 of the 30000 reported samples, and
+38
+
+
+Table 6
+Baselines, their implementations, and the discrete options that are selected per NFE on the held-out
+split. Everything else is the configuration of the paper or the default of the code.
+Method
+Implementation
+Options selected on the held-
+out split
+Euler
+forward Euler on the learned field
+–
+DPM-Solver++ Lu et al.
+(2025)
+DPMSolverMultistepScheduler
+(dpmsolver++, flow prediction)
+solver order (1, 2 or 3); factory
+order 2 on SANA
+UniPC Zhao et al. (2023) UniPCMultistepScheduler, same con-
+figuration
+solver order (1, 2 or 3); factory
+order 2 on SANA
+A-FloPS Jin et al. (2026) authors’ AEuler, constraint λ ∈[−1, 1] time
+grid
+(unshifted
+or
+shifted), once per pipeline
+CAB Roy and Nair (2026) released scheduler
+solver order (2 or 3)
+STORK-4
+Tan
+et
+al.
+(2026)
+authors’ scheduler
+(s, Taylor order) ∈{5, 9, 14}×
+{1, 2} on CIFAR-10 and SiT-
+XL/2; published configuration
+(s = 9, first order) on SANA
+DPM-Solver-v3
+Zheng
+et al. (2023)
+authors’ code; model statistics esti-
+mated on the same checkpoint
+order, pseudo-order, corrector,
+time grid
+AREX, AREX-C
+ours
+node position ρ, multistep or-
+der
+Table 7
+Options selected per NFE on the held-out split. Entries are listed for NFE 2, 4, 8, 16, 32 on
+CIFAR-10 and SiT-XL/2, and for NFE 4 to 10 on SANA, where one value serves every NFE. “Factory”
+and “published” mark configurations that were fixed rather than selected. The pseudo-order option of
+DPM-Solver-v3 was never selected.
+Method
+Option
+CIFAR-10
+SiT-XL/2
+SANA-0.6B
+DPM-Solver++ solver order
+1, 2, 3, 3, 3
+1, 2, 3, 3, 3
+2 (factory)
+UniPC
+solver order
+1, 2, 3, 3, 3
+1, 2, 3, 3, 3
+2 (factory)
+CAB
+solver order
+2, 3, 3, 3, 3
+2, 2, 2, 2, 2
+2
+A-FloPS
+grid shift (per pipeline) 1
+3
+1
+STORK-4
+(s, Taylor order)
+(14, 1), (9, 2), (9, 2),
+(9, 1), (9, 1)
+(5, 2), then (14, 2)
+(9, 1)
+(pub-
+lished)
+DPM-Solver-v3
+order
+2, 2, 3, 3, 3
+2, 2, 3, 3, 3
+2
+corrector
+yes, yes, no, no, yes
+yes, yes, yes, yes, no no
+time grid
+logSNR,
+uniform,
+logSNR,
+logSNR,
+logSNR
+logSNR,
+then
+uni-
+form
+uniform
+the split is not disjoint on this benchmark. In other words, on CIFAR-10 and SiT-XL/2 the split is
+held out in the noise only, and on SANA it is a subset of the evaluation prompts; in every case the
+selection uses a small sample, and the reported FIDs are computed afterwards on the full sample
+set. The selected options are listed in Table 7 and, for AREX, in Table 8; for DPM-Solver-v3 the
+options amount to sixteen combinations. Thus, the baselines are tuned at least as much as AREX.
+Selection of the node position ρ.
+AREX has one continuous parameter, the position τ ⋆= s + ρh
+of the network evaluation inside each step. Theorem 1 shows what ρ trades. The interpolation
+constant cp,ρ of the multistep rule decreases as the node moves into the step, while the stage-state
+term ρhM0 grows with ρ. We therefore select ρ by a simple grid search on the held-out split,
+separately for each backbone and each NFE, with the residual profile in place and the held-out
+FID as the criterion. The candidate sets are given in Table 5. The multistep order is selected on
+the same split, and ρ is never tuned on the reported samples. Table 9 reports the held-out FIDs of
+the multistep rules at NFE 4 and 8, and Table 8 lists the selected values. The optimal ρ differs
+across backbones and is not determined by the residual share alone. However, the sensitivity is
+consistent on the guided models. At NFE 4, ρ = 0.35 increases the FID by 17 on SiT-XL/2, and
+39
+
+
+ρ = 0.05 increases it by 23 on SANA. Therefore, we select ρ per backbone and per NFE rather
+than fixing a single value.
+Table 8
+Selected node position ρ for each backbone, rule, and NFE.
+Model
+Rule
+NFE 2
+NFE 4
+NFE 8
+NFE 16
+NFE 32
+CIFAR-10
+one-node
+0.5
+0.35
+0.35
+0.2
+0.1
+AB2
+0.2
+0.1
+0.2
+0.2
+0.35
+AB3
+0.2
+0.2
+0.2
+0.2
+0.35
+SiT-XL/2
+one-node
+0.2
+0.2
+0.2
+0.2
+0.2
+AB2
+0.05
+0.05
+0.05
+0.05
+0.1
+AB3
+0.05
+0.05
+0.1
+0.05
+0.1
+SANA-0.6B
+one-node
+0.5 at every NFE from 4 to 10
+AB2
+0.35 at every NFE from 4 to 10
+AB3
+0.35 at every NFE from 4 to 10
+Table 9
+Selection of the node position ρ. FID on the held-out split (CIFAR-10 n = 10,000, SiT-XL/2
+n = 2,500, SANA n = 1,000) with the residual profile in place. The selected value in each row is in bold.
+These are small-sample FIDs, so only differences within a row are meaningful.
+Model
+Rule NFE ρ = 0.05
+0.1
+0.2
+0.35
+0.5
+CIFAR-10
+AB2
+4
+15.37
+14.11
+14.72
+18.11
+26.02
+AB2
+8
+8.52
+7.92
+7.39
+8.69
+13.13
+AB3
+4
+18.34
+15.85
+14.23
+16.27
+24.07
+AB3
+8
+11.22
+9.54
+7.58
+7.96
+12.33
+SiT-XL/2
+AB2
+4
+22.34
+23.48
+28.01
+40.24
+–
+AB2
+8
+16.33
+16.39
+17.19
+19.90
+–
+AB3
+4
+21.08
+21.76
+25.87
+38.32
+–
+AB3
+8
+16.09
+16.04
+16.65
+19.41
+–
+SANA-0.6B
+AB2
+4
+76.54
+69.18
+58.52
+53.62
+55.76
+AB2
+8
+50.67
+49.77
+48.76
+48.24
+48.25
+AB3
+4
+162.50
+133.99
+88.13
+55.59
+55.93
+AB3
+8
+58.22
+53.52
+49.29
+48.29
+48.30
+E.2 Moment and Profile Estimation Details
+Estimating the moments.
+For AREX on CIFAR-10, moments m1 and Σ1 are estimated on pixel
+level from training set with flips, 100k images in total. For AREX-C, µ(c) is the sample mean of
+the condition c. And ¯S is the average over the conditions of the unbiased per-condition covariance,
+so that Σ1 = ¯S + Cov(µ(c)). On SiT-XL/2, we estimated the moments of 2562334 latent elements
+encoded by VAE from all 1281167 ImageNet training images and their flips. On SANA we could
+not gain access to the training set, so we first do a self sampling for 2000 template prompts and
+25 samples for each prompt. Self sampling uses the checkpoints own pipeline and precision with
+factory grid, 20 sampling steps and w = 4.5.
+Eigendecomposition.
+The covariance is decomposed with a symmetric eigen solver from torch on
+GPU (torch.linalg.eigh). On one GH200, forming and decomposing it takes 0.1s at d = 3072
+for CIFAR-10, 0.13s at d = 4096 for SiT-XL/2 and 0.7s at d = 8192 for SANA, scales as d3. Due to
+time and computation resource constraint we have not tested AREX in backbones with larger d.
+For d ≳105, the dense decomposition is not eligible any more. In future work we plan to apply
+top-k rank estimator by randomized PCA, which can reduce the computational cost to O(dNk).
+40
+
+
+Table 10
+Per-step cost, ms per sample, one GH200. "Network" is one evaluation as the benchmark makes it
+(a CFG pair where the model is guided); "AREX" is everything an AREX-AB3 step adds to it. For SiT-XL/2
+and SANA-0.6B, we use bf16 and CFG pair.
+Model
+d
+batch
+Network
+AREX step
+overhead
+DPM++ step
+CIFAR-10, I-CFM (fp32)
+3,072
+1000
+0.140
+0.0021
+1.5%
+0.0003
+SiT-XL/2, w = 1.5
+4,096
+125
+2.12
+0.0058
+0.3%
+0.0027
+SANA-0.6B, w = 4.5
+8,192
+25
+3.72
+0.041
+1.1%
+0.010
+Table 11
+One-time cost per checkpoint: network evaluations (a CFG pair counts as one) and wall-clock
+on one GH200. AREX’s residual profile ϕ is the network cost the method requires. Its moments (with the
+conditional means and α) are statistics of the target: from the training set they cost no network evaluation
+(CIFAR-10 on I-CFM and ImageNet on SiT). On SANA we could not access the training set, so we estimated
+them by self-sampling to substitute the training set, listed on its own († training set, ‡ self-sampled; with the
+training set the pass would be one VAE-encoder run.); the covariance accumulation, eigendecomposition and
+weight tables add 0.1–0.7 s. DPM-Solver-v3: the EMS pass at the authors’ settings. Euler, DPM-Solver++,
+UniPC, STORK, A-FloPS and CAB have no such cost.
+AREX: profile ϕ
+AREX: moments
+DPM-Solver-v3: EMS
+Model
+evals wall-clock
+evals wall-clock evals (+JVP) wall-clock
+CIFAR-10
+1.0 × 105
+14 s
+0†
+–
+1.2 × 106
+27 min
+SiT-XL/2, w = 1.5 1.0 × 105
+3.6 min
+0†
+3 min
+2.6 × 105
+380 min
+SANA-0.6B
+5.1 × 104
+3.2 min 1.0 × 106 ‡
+62 min
+2.6 × 105
+160 min
+The residual profile estimation.
+The residual profile ϕ is measured once per checkpoint. We
+integrate the model with Euler on the uniform grid of the sampler with 50 steps and record the
+residual at every step in the eigenbasis of the covariance used by the sampler. The profile is the
+root-mean-square of these residuals over the trajectories. On CIFAR-10 we use 2048 trajectories. On
+the guided models, the trajectories follow the guided field, and the affine center of each trajectory is
+determined from its first network evaluation, as in AREX-C. On SiT-XL/2 we use 2048 trajectories
+whose classes are spread over all 1000 classes, and on SANA we use 1024 of the synthetic template
+prompts. In both cases the trajectories are pooled into a single profile that is shared across
+conditions. Thus, the residual quadrature weights are precomputed once and reused for every
+condition.
+E.3 Wall-Clock Cost
+NFE is the cost axis of every table above, and the question we will discuss in this part is what the
+sampler adds per step beyond the network evaluation, and what it costs once per checkpoint. All
+timings are on GH200 at the batch size and precision each benchmark script uses, and take the
+best of 20 repetitions after warm-up.
+Inside the evaluation step, an AREX steps including one network evaluation, and adds two changes
+of basis (x →U⊤x and back), the propagator vG and kernel weighted residual. All of the matrix
+vector products have O(d2) complexity and the arithmetic has O(d) complexity. And the weights
+are read from a table computed once pre grid. We present the overhead per sample against the
+evaluation comparing to DPM-Solver++ in Table
+10. Here DPM-Solver++ stands for every
+baseline, as none of them changes basis, and what they do per step are beyond the network call.
+UniPC and CAB use multi-step combinations, STORK uses virtual stages, A-FloPS uses least
+square fits, DPM-Solver-V3 uses coefficient interpolation. AREX’s overhead is about 0.3 −1.5% of
+a network call.
+Beyond the network evaluation step, AREX need a offline evaluation to get a moments and the
+residual profile before the first image, and six of the seven baseline do not need the offline cost.
+41
+
+
+While DPM-Solver-V3 need its empirical model statistics, so we compare AREX with it in Table
+11. The table counts network evaluations and wall clocks at rates of Table 10 and separates the two
+things AREX needs. The profile is a measurement on the model, and is the only network cost of
+the method itself requires. The moments are statistics of the target and cost no network evaluation
+if we can get access to the training set (CIFAR-10 on I-CFM and ImageNet on SiT). The training
+set of SANA is not released, so we have to use self-sampling to substitute for the training set.
+E.4 Ablation Study
+Every row of this section comes from the pipeline of Section 4 with the same checkpoints, grid,
+seeds, sample numbers, and FID protocol as the main tables. Rows in the configuration of the
+main tables are set in bold.
+Table 12
+Order of the quadrature method, rows are from the main tables.
+Model
+Rule
+NFE 2
+NFE 4
+NFE 8
+NFE 16
+NFE 32
+CIFAR-10
+one node
+54.63
+26.13
+11.45
+5.34
+3.66
+AB2
+39.24
+12.20
+5.39
+3.50
+3.64
+AB3
+39.24
+12.35
+5.58
+3.60
+3.69
+SiT-XL/2
+one node
+134.79
+34.14
+9.70
+4.14
+2.72
+AB2
+84.15
+9.58
+3.23
+2.38
+2.17
+AB3
+84.15
+8.18
+3.02
+2.24
+2.12
+Model
+Rule
+NFE 4 NFE 5
+NFE 6
+NFE 7
+NFE 8
+NFE 9
+NFE 10
+SANA-0.6B
+one node
+11.02
+8.60
+7.70
+7.23
+6.92
+6.81
+6.73
+AB2
+8.15
+6.86
+6.53
+6.39
+6.33
+6.38
+6.35
+AB3
+9.91
+7.51
+6.85
+6.66
+6.52
+6.51
+6.44
+Order of the quadrature method.
+Table 12 collects the three AREX rows of Tables 1–3. The
+largest gap is between the one-node rule and AB2 on every backbone. The two multistep rules are
+closer, and the better one depends on the backbone. On CIFAR-10, AB2 is ahead at every NFE
+from 4 on, by at most 0.19 FID. On SiT-XL/2, AB3 is ahead at every NFE from 4 on, by 1.40 FID
+at NFE 4 and by at most 0.21 from NFE 8 on. On SANA, AB2 is ahead at every NFE, by 1.76
+FID at NFE 4 and by 0.09 at NFE 10.
+Comparison to classical integrators.
+Table 13 applies Euler, the classical Adams-Bashforth of
+order two and three, Heun’s method and classical RK4 to the full field vθ on the grid and noise
+of main tables and at equal NFE. Higher order by itself does not reach AREX at NFE≤8. The
+Runge-Kutta are worse than Euler at low NFE. From NFE 16 the gap to AREX closes, as for
+the other baselines, at NFE 32 on SiT-XL/2 the full field AB3 and RK4 are slightly ahead of
+AREX-C-AB3.
+The residual profile.
+Table 14 removes the profile from the weights. The profile complements
+the exact transport. After the affine part is integrated exactly, the quadrature still has to follow
+the size of residual across the coarse step, then ϕ carries the predictable part of this change. Table
+15 gives the classical Adams-Bashforth on the full field and we test the effect of the profile ϕ in this
+case. On CIFAR-10 and SiT-XL/2, ϕ does not improves the result on the full field at NFE≤4. On
+SANA, ψ helps AB2 at every NFE. Full-field AB2 +ψ is behind AREX-C-AB2 by 21.8 FID at
+NFE 4 and by 0.11 at NFE 8, and it is ahead of both AREX-C-AB2 and AREX-C-AB3 but still
+very close at NFE 9 (6.31 vs. 6.38 and 6.51) and at NFE 10 (6.25 vs. 6.35 and 6.44). Thus, on this
+backbone the full-field profile closes the gap at the upper end of the NFE range. The profile is
+42
+
+
+Table 13
+Classical integrators on the full field at equal NFE, against the AREX row of the main tables.
+CIFAR-10 and SiT-XL/2 at 50k samples, SANA-0.6B at 30k. Heun and RK4 take their stages inside chunks
+of two and four consecutive grid intervals, a shorter final chunk uses the rule of its length (Euler for one
+interval, Heun for two, Kutta’s third order rule for three), as for the ETD-RK rows of Table 17. Thus the
+RK4 entry at NFE 2 is one Heun step, and at NFE 5, 6, 7, 9 and 10 on SANA the last chunk is shorter,
+Model
+Integrator
+NFE 2
+NFE 4
+NFE 8
+NFE 16
+NFE 32
+CIFAR-10
+Euler
+166.24
+51.88
+17.46
+9.15
+6.28
+AB2
+145.06
+29.23
+10.46
+6.98
+5.19
+AB3
+145.06
+25.52
+9.30
+6.21
+4.67
+Heun
+412.44
+295.30
+119.29
+48.64
+18.07
+RK4
+412.44
+198.53
+76.15
+26.79
+7.99
+AREX-AB2
+39.24
+12.20
+5.39
+3.50
+3.64
+SiT-XL/2
+Euler
+154.29
+53.98
+11.02
+4.17
+2.65
+AB2
+132.95
+15.74
+4.19
+2.46
+2.12
+AB3
+132.95
+12.35
+3.76
+2.31
+2.07
+Heun
+283.85
+131.45
+14.92
+3.69
+2.31
+RK4
+283.85
+85.67
+7.91
+2.66
+2.08
+AREX-C-AB3
+84.15
+8.18
+3.02
+2.24
+2.12
+Model
+Integrator
+NFE 4
+NFE 5
+NFE 6
+NFE 7
+NFE 8
+NFE 9
+NFE 10
+SANA-0.6B
+Euler
+25.56
+18.52
+14.83
+12.56
+11.12
+10.00
+9.46
+AB2
+38.46
+17.68
+10.48
+8.29
+7.53
+7.08
+6.85
+AB3
+148.53
+129.92
+89.37
+49.65
+26.75
+15.35
+10.06
+Heun
+37.58
+17.89
+12.01
+9.99
+8.13
+7.82
+7.12
+RK4
+58.93
+23.06
+14.41
+10.34
+8.86
+8.87
+7.88
+AREX-C-AB2
+8.15
+6.86
+6.53
+6.39
+6.33
+6.38
+6.35
+informative in which the size of what is integrated has structure. And by subtracting the affine
+part, the residual then has this structure on the backbone.
+Two ingredients of AREX-C.
+Table 16 replaces one ingredient of AREX-C at a time in the
+configuration of the main tables. The first replacement exchanges the within-condition covariance
+¯S for the pooled Σ1, and the second exchanges the conditional mean µ(c) for the pooled mean m1.
+On SiT-XL/2, the covariance changes little, whereas the conditional mean improves the FID by
+4.4 at NFE 4 and by 0.19 at NFE 8. On SANA, the two ingredients act at different budgets. The
+within-condition covariance improves the FID by 1.68 at NFE 4, whereas the conditional mean
+improves it by 0.11 at NFE 8 but is 0.34 behind the pooled mean at NFE 4.
+Alternative integrators for the residual.
+Table 17 replaces the Adams–Bashforth rule for the
+residual by single-step alternatives at equal total NFE. This comparison is run without the residual
+profile. Thus, the AREX rows are the flat rows of Table 14, not the sampler of the main tables.
+The Adams–Bashforth rows use the node position selected on the held-out split without the profile,
+ρ = 0.5 at NFE 2 and ρ = 0.2 from NFE 4 on, and the usual startup: the first step is the
+one-node rule, and AB3 uses AB2 on its second step. The exponential Runge–Kutta stages sit
+at the equispaced nodes s + jh/k, j = 0, . . . , k −1, of each step. The integrating-factor rules use
+the classical tableaus, the explicit midpoint rule for k = 2 and the classical fourth-order rule for
+k = 4. When NFE is not a multiple of k, the last step uses the remaining stages. At NFE 2, a
+rule with k = 3 or k = 4 therefore takes a single two-stage step from t0 to 1, so ETD-RK3 and
+ETD-RK4 coincide with ETD-RK2, and IF-RK4 with IF-RK2, in that column. AREX+STORK
+selects (s, order) per NFE on the same held-out split as STORK; the selected values are (14, 1),
+(14, 2), (5, 2), (9, 2), and (14, 1) at NFE 2 to 32.
+43
+
+
+Table 14
+The residual profile ϕ (13): "profile" is the sampler of the main tables, "flat" removes ϕ from every
+weight.
+Model
+Sampler
+NFE 2 NFE 4 NFE 8 NFE 16 NFE 32
+CIFAR-10
+AREX (one node), flat
+59.62
+29.04
+13.21
+6.23
+4.01
+AREX (one node), profile
+54.63
+26.13
+11.45
+5.34
+3.66
+AREX-AB2, flat
+55.73
+23.67
+9.07
+4.10
+3.63
+AREX-AB2, profile
+39.24
+12.20
+5.39
+3.50
+3.64
+AREX-AB3, flat
+55.73
+21.23
+8.06
+3.88
+3.73
+AREX-AB3, profile
+39.24
+12.35
+5.58
+3.60
+3.69
+SiT-XL/2, w=1.5
+AREX-C (one node), flat
+156.41
+56.21
+14.36
+5.04
+2.92
+AREX-C (one node), profile
+134.79
+34.14
+9.70
+4.14
+2.72
+AREX-C-AB2, flat
+121.95
+21.75
+4.55
+2.54
+2.15
+AREX-C-AB2, profile
+84.15
+9.58
+3.23
+2.38
+2.17
+AREX-C-AB3, flat
+121.95
+19.85
+4.11
+2.38
+2.11
+AREX-C-AB3, profile
+84.15
+8.18
+3.02
+2.24
+2.12
+NFE 4 NFE 5 NFE 6
+NFE 8 NFE 10
+SANA-0.6B
+AREX-C (one node), flat
+13.63
+9.28
+7.93
+6.91
+6.68
+AREX-C (one node), profile
+11.02
+8.60
+7.70
+6.92
+6.73
+AREX-C-AB2, flat
+13.59
+9.18
+7.83
+6.85
+6.65
+AREX-C-AB2, profile
+8.15
+6.86
+6.53
+6.33
+6.35
+AREX-C-AB3, flat
+15.68
+10.01
+8.33
+7.05
+6.76
+AREX-C-AB3, profile
+9.91
+7.51
+6.85
+6.52
+6.44
+Two observations follow. First, at NFE 2 both Adams–Bashforth rules are ahead of every alternative
+by more than 36 FID. At NFE 4, AB3 is best, and AREX+STORK lies between AB3 and AB2.
+From NFE 8 on, the single-step rules catch up: ETD-RK4 is ahead of both Adams–Bashforth rules
+at NFE 8, and at NFE 32 all residual integrators except IF-RK4 lie within 0.35 FID of each other.
+Second, the exponential form is ahead of the integrating-factor form at every NFE up to 16 for
+both stage counts, by a wide margin for k = 4. At NFE 32, IF-RK2 is slightly ahead of ETD-RK2.
+Thus, at the smallest budgets the multistep rule is the better use of the evaluations.
+E.5 Additional Metrics on ImageNet-256
+Table 18 shows the additional metrics on ImageNet-256, including sFID, Inception score (IS),
+precision (P), and recall (R). Experiment configurations are the same as Table 2. AREX-C has
+the best value of every metric at NFE 2 and the best or tied-best precision at every NFE. At NFE
+4, DPM-Solver-v3 has the best sFID and IS. From NFE 8 on, AREX-C has the best IS and ties
+DPM-Solver-v3 on sFID at NFE 8 and 16. CAB has the highest recall from NFE 4 to 16.
+44
+
+
+Table 15
+Classical Adams–Bashforth rules on the full field with (+ψ) and without the magnitude profile of
+the full field, at equal NFE; the AREX row of the main tables for reference.
+Model
+Rule
+NFE 2
+NFE 4
+NFE 8
+NFE 16
+NFE 32
+CIFAR-10
+AB2
+145.06
+29.23
+10.46
+6.98
+5.19
+AB2 +ϕ
+216.19
+32.26
+7.22
+5.12
+4.56
+AB3
+145.06
+25.52
+9.30
+6.21
+4.67
+AB3 +ϕ
+216.19
+29.55
+6.54
+4.60
+4.15
+AREX-AB2
+39.24
+12.20
+5.39
+3.50
+3.64
+SiT-XL/2
+AB2
+132.95
+15.74
+4.19
+2.46
+2.12
+AB2 +ϕ
+135.82
+18.49
+4.67
+2.57
+2.15
+AB3
+132.95
+12.35
+3.76
+2.31
+2.07
+AB3 +ϕ
+135.82
+14.59
+4.20
+2.43
+2.11
+AREX-C-AB3
+84.15
+8.18
+3.02
+2.24
+2.12
+Model
+Rule
+NFE 4
+NFE 5
+NFE 6
+NFE 7
+NFE 8
+NFE 9
+NFE 10
+SANA-0.6B
+AB2
+38.46
+17.68
+10.48
+8.29
+7.53
+7.08
+6.85
+AB2 +ϕ
+29.95
+12.39
+7.76
+6.70
+6.44
+6.31
+6.25
+AB3
+148.53
+129.92
+89.37
+49.65
+26.75
+15.35
+10.06
+AB3 +ϕ
+143.05
+131.87
+85.20
+45.92
+23.84
+13.66
+9.14
+AREX-C-AB2
+8.15
+6.86
+6.53
+6.39
+6.33
+6.38
+6.35
+Table 16
+The ingredients ablation of AREX-C. Pooled Σ1 with m1 is plain AREX; ¯S with µ(c) is AREX-C.
+SiT-XL/2: AREX-C-AB3; SANA-0.6B: AREX-C-AB2.
+SiT-XL/2
+SANA-0.6B
+Covariance, mean
+NFE 4
+NFE 8
+NFE 4
+NFE 8
+pooled Σ1, m1
+12.58
+3.18
+9.49
+6.38
+¯S, m1
+12.54
+3.21
+7.81
+6.44
+¯S, µ(c)
+8.18
+3.02
+8.15
+6.33
+Table 17
+Alternative integrators for the residual at equal total NFE on CIFAR-10, without the residual
+profile; the AREX rows are the flat rows of Table 14. ETD-RKk: exponential Runge–Kutta with k equispaced
+stages (stage residuals interpolated and integrated against the propagator; ETD-RK2m freezes r at the
+midpoint stage, the DPM-Solver-2 rule); IF-RKk: classical k-stage tableau on the residual after the affine
+part has been transported out (Lawson); AREX+STORK: STORK-4 on the residual with the affine transport
+re-based at every step, (s, order) selected on the same held-out split as STORK. When NFE is not a multiple
+of k, the last step uses the remaining stages. At NFE 2, every rule with k ≥3 therefore reduces to its
+two-stage version; ETD-RK3 is also affected at NFE 4, 8 and 16 and is shown for completeness.
+Residual integrator
+NFE 2
+NFE 4
+NFE 8
+NFE 16
+NFE 32
+AREX-AB2, flat (1 NFE/step)
+55.73
+23.67
+9.07
+4.10
+3.63
+AREX-AB3, flat (1 NFE/step)
+55.73
+21.23
+8.06
+3.88
+3.73
+ETD-RK2m (2)
+106.63
+31.06
+11.66
+4.46
+3.59
+ETD-RK2 (2)
+91.89
+26.75
+10.49
+4.20
+3.67
+ETD-RK3 (3)
+91.89
+75.62
+14.06
+15.58
+3.63
+ETD-RK4 (4)
+91.89
+29.43
+7.93
+3.95
+3.94
+IF-RK2 (2)
+108.76
+35.01
+13.18
+4.88
+3.60
+IF-RK4 (4)
+108.76
+122.22
+40.68
+14.66
+5.29
+AREX+STORK (1)
+107.40
+22.57
+9.00
+3.94
+3.63
+STORK-4 (1, full field)
+141.40
+23.21
+5.73
+3.72
+3.59
+45
+
+
+Table 18
+SiT-XL/2 on ImageNet-256, 50k samples, classifier-free guidance w = 1.5: sFID, Inception score
+(IS), precision (P), and recall (R) for the samplers of Table 2, in the same configurations. Bold marks the
+best value of each metric at each NFE.
+Sampler
+Metric
+NFE 2
+NFE 4
+NFE 8
+NFE 16
+NFE 32
+Euler
+sFID
+200.0
+46.0
+10.5
+6.1
+4.9
+IS
+4.8
+60.7
+180.5
+241.0
+264.3
+P / R
+.058/.123
+.365/.440
+.702/.505
+.779/.562
+.796/.590
+DPM-Solver++
+sFID
+200.0
+22.7
+7.4
+5.5
+4.7
+IS
+4.8
+98.3
+233.6
+265.7
+275.9
+P / R
+.058/.123
+.517/.455
+.793/.546
+.801/.582
+.804/.588
+UniPC
+sFID
+200.0
+13.9
+7.3
+4.9
+4.5
+IS
+4.8
+123.0
+243.4
+271.5
+277.3
+P / R
+.058/.123
+.592/.472
+.799/.560
+.803/.590
+.802/.595
+A-FloPS
+sFID
+90.4
+12.5
+5.9
+5.3
+4.8
+IS
+9.9
+123.4
+248.5
+267.0
+259.2
+P / R
+.071/.280
+.584/.503
+.786/.564
+.799/.584
+.787/.602
+CAB
+sFID
+132.9
+14.7
+8.9
+5.3
+4.6
+IS
+8.4
+155.6
+235.2
+271.2
+279.1
+P / R
+.104/.260
+.686/.521
+.781/.580
+.799/.599
+.799/.599
+STORK-4
+sFID
+132.9
+13.5
+8.2
+5.9
+5.2
+IS
+8.4
+157.5
+238.5
+266.4
+271.1
+P / R
+.104/.260
+.686/.513
+.786/.567
+.797/.594
+.795/.596
+DPM-Solver-v3
+sFID
+71.3
+9.1
+5.6
+4.6
+4.6
+IS
+24.5
+191.8
+262.3
+276.7
+278.9
+P / R
+.176/.334
+.719/.444
+.801/.557
+.806/.591
+.805/.590
+AREX-C (one node)
+sFID
+67.4
+32.8
+14.5
+7.8
+5.6
+IS
+12.2
+84.3
+182.3
+236.2
+258.1
+P / R
+.151/.259
+.526/.492
+.701/.558
+.764/.581
+.782/.601
+AREX-C-AB2
+sFID
+44.5
+11.4
+5.8
+4.8
+4.6
+IS
+25.6
+178.5
+266.5
+285.3
+282.1
+P / R
+.281/.405
+.708/.494
+.802/.546
+.812/.568
+.805/.582
+AREX-C-AB3
+sFID
+44.5
+11.2
+5.6
+4.6
+4.6
+IS
+25.6
+188.3
+265.1
+290.5
+283.5
+P / R
+.281/.405
+.727/.502
+.802/.557
+.814/.572
+.805/.584
+46
+
+
+E.6 Qualitative Samples
+Figure 4
+CIFAR-10, I-CFM: four noise draws at NFE 2, 4 and 8, every sampler in the configuration of
+Table 1. Same initial noise down each column group.
+Figure 5
+As Figure 4, four further noise draws.
+47
+
+
+Figure 6
+As Figure 4, four further noise draws.
+Figure 7
+Samples generated by different sampling schemes using the same pretrained SiT-XL/2 backbone
+with CFG w = 1.5 for the classes Egyptian cat and volcano. AREX consistently produces samples with higher
+fidelity, more coherent global structure and finer semantic detail than the other schemes, while retaining
+these improvements as the integration budget increases from NFE 2 to 8.
+48
+
+
+Figure 8
+As Figure 7, classes balloon and space shuttle.
+49
+
+
+Figure 9
+As Figure 7, classes cheeseburger and valley.
+50
+
+
+Figure 10
+SANA-0.6B, MJHQ-30K prompts, w = 4.5, every baseline of Table 3: prompts "raining night,
+backlight, in a Chinese street, people walking with umbrellas" and "botanical drawing, Psilocybe cubensis,
+realistic" at NFE 4, 6 and 8, one initial noise per column group.
+51
+
+
+Figure 11
+As Figure 10, prompts "ultra realistic photo of a dark-blue Toyota RAV4 Hybrid passing by,
+daylight city background” and comic-style nature scene overlooking a lake with forest, northern-lights colour
+theme".
+52
+
+
+Figure 12
+As Figure 10, prompts "loaded nachos with two layers of chili, melted cheese, salsa and jalapeños,
+hyper realistic" and "a laboratory located in the jungle".
+53
