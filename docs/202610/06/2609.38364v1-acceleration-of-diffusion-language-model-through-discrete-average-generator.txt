@@ -1,0 +1,2522 @@
+2026-10-01
+Acceleration of Diffusion Language Model
+through Discrete Average Generator
+Yidong Ouyang1,2,*, Zhengyan Wan1, Themis Haris2, Tian Tan2, Liqian Peng2, Henry Li2, Ziqian Lin2, Jianhang
+Chen2, Maryam Karimzadehgan2, Alec Go2 and George Michailidis1
+1University of California, Los Angeles, 2Google, *Work done as a research intern at Google
+Discrete diffusion models and flow matching have emerged as powerful frameworks for generative
+modeling over discrete state spaces, yet efficient few-step generation remains a fundamental challenge.
+In this work, we introduce the Discrete Average Generator, a principled extension of MeanFlow to
+Continuous-Time Markov Chains (CTMCs). Analogously to how MeanFlow defines an average velocity
+field over a time interval in continuous spaces, we define an average generator as the normalized
+increment of the transition kernel over a time interval. We show that this average generator satisfies a
+self-consistency identity, which provides the foundation for our training objective. We further develop
+training strategies that align with the standard training paradigm of diffusion language models while
+keeping the resulting objective tractable. When projected onto per-coordinate marginals, the self-
+consistency identity admits a closed-form expression, enabling efficient training and inference. In Potts
+model simulations, our objective reduces the total variation distance of the 𝐾-step sampler by up to 67%.
+On OpenWebText, our method achieves the lowest generative perplexity among the evaluated methods
+for 8 to 64 sampling steps while enabling a 16× acceleration, and achieves comparable performance to
+existing methods on ImageNet.
+Keywords: discrete diffusion, diffusion language models, MeanFlow, continuous-time Markov chains,
+few-step generation
+1. Introduction
+Diffusion models and flow matching have achieved remarkable success in continuous domains such
+as image and audio generation (Lipman et al., 2024). Extending these generative frameworks to
+discrete spaces, such as natural language, has attracted growing interest, with discrete flow matching
+and masked diffusion models emerging as promising approaches (Campbell et al., 2024; Gat et al.,
+2024; Sahoo et al., 2024; Shi et al., 2024). However, a fundamental challenge shared with their
+continuous counterparts remains: sampling requires multiple sequential network evaluations, making
+inference computationally expensive. The difficulty is compounded in discrete spaces, where practical
+samplers update all coordinates independently within a step: with few steps, each coordinate is
+drawn from a law computed from the instantaneous rate rather than from the finite-step kernel, and
+the dependence between coordinates updated together is lost.
+In continuous settings, this bottleneck has been addressed by consistency models (Song et al.,
+2023), progressive distillation (Salimans and Ho, 2022), and more recently MeanFlow (Geng et al.,
+2025a), which defines an average velocity field over time intervals and enables high-quality generation
+in very few steps without multi-step distillation. The key insight of MeanFlow is that the average
+velocity satisfies a self-consistent identity involving the instantaneous velocity and its material
+derivative, which can be exploited as a fixed-point training objective.
+In this work, we propose the Discrete Average Generator, a principled extension of MeanFlow to
+discrete state spaces governed by Continuous-Time Markov Chains (CTMCs). The central challenge is
+Corresponding author(s): yidongouyang@g.ucla.edu
+arXiv:2609.38364v1  [stat.ML]  29 Sep 2026
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+that the continuous notion of velocity and its spatial gradient has no direct analogue in discrete spaces.
+We resolve this by defining the CTMC average generator over an interval [𝑡, 𝑟] as the normalized
+increment of the transition kernel, i.e. the unique object for which a single Euler step of size 𝑟−𝑡
+reproduces the exact transition law. We further derive an average generator identity that forms
+the basis of our training objective. Inspired by the progress of velocity prediction (𝑢-prediction /
+𝑣-prediction) to data prediction (𝑥-prediction) made in continuous MeanFlow literature described in
+Section 2.2, we develop a corresponding progression from transition rate prediction (𝑈-prediction /
+𝑄-prediction) to posterior prediction (˜𝑝-prediction) in Section 3.2.
+Although the ˜𝑝-prediction is compatible with existing pretrained diffusion language models, it
+is intractable at the sequence level because of the huge computational cost associated with the
+multiplication of the generator matrix with dimension |S|D × |S|D. By projecting the identity onto
+per-coordinate marginals, as described in Section 3.3, we obtain a tractable closed-form involving
+only D × |S|-dimensional quantities. Our main contributions are as follows:
+• We introduce the Average Generator for CTMCs and prove the Discrete Average Generator
+Identity, the discrete analogue of the MeanFlow identity.
+• We derive a tractable training objective based on ˜𝑝-prediction and per-coordinate marginal
+projection, which aligns with existing diffusion language model parameterizations and admits
+a closed-form expression involving only D × |S|-dimensional quantities.
+• We validate our approach through simulations, text generation on the OpenWebText dataset,
+and image generation on the ImageNet dataset. On OpenWebText, our method achieves the
+lowest generative perplexity among the compared methods for 8 to 64 sampling steps and
+maintains lower generative perplexity with 16× fewer generation steps against the strongest
+baseline. On ImageNet, our method achieves comparable FID and Inception Score to existing
+acceleration methods for diffusion language models.
+2. Preliminary
+2.1. Discrete Flow Matching
+Consider a Continuous-Time Markov Chain (CTMC) defined on the state space SD with marginal
+probability mass functions {𝑝𝑡}𝑡∈[0,1]. Let 𝑄𝑡denote the associated transition rate matrix (i.e., the
+generator) at time 𝑡, which has dimensions |S|D × |S|D. For any distinct states 𝑥, 𝑧∈SD (where
+𝑥≠𝑧), the entry 𝑄𝑡(𝑥, 𝑧) represents the instantaneous transition intensity from state 𝑥to state 𝑧at
+time 𝑡. If 𝑄𝑡(𝑥, 𝑧) satisfies the following rate-properties:
+𝑄𝑡(𝑥, 𝑧) ≥0, for any 𝑧≠𝑥, and
+∑︁
+𝑧∈SD
+𝑄𝑡(𝑥, 𝑧) = 0,
+and the Kolmogorov forward equation (also known as the continuity equation):
+¤𝑝𝑡(𝑥) =
+∑︁
+𝑧∈SD
+𝑄𝑡(𝑧, 𝑥)𝑝𝑡(𝑧) =
+∑︁
+𝑧≠𝑥
+𝑄𝑡(𝑧, 𝑥)𝑝𝑡(𝑧) −
+∑︁
+𝑧≠𝑥
+𝑄𝑡(𝑥, 𝑧)𝑝𝑡(𝑥),
+(1)
+the transition rate 𝑄𝑡is also the generator of the CTMC {𝑝𝑡}𝑡∈[0,1]. In particular, 𝑝𝑡+ℎ|𝑡(𝑥|𝑧) = 𝛿𝑧(𝑥) +
+𝑄𝑡(𝑧, 𝑥)ℎ+ 𝑜(ℎ) for a small time step ℎ.
+To learn a transition rate 𝑄𝑡that can transport from an initial noise distribution 𝑝0 to a target data
+distribution 𝑝1, a well-developed method is to learn the conditional expectation of the conditional
+transition rate 𝑄𝑡(𝑥, 𝑧|𝑥1) that generates the conditional probability path 𝑝𝑡|1(·|𝑥1). Then 𝑄𝑡(𝑥, 𝑧) =
+2
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+𝔼𝑝1|𝑡(𝑥1|𝑥) [𝑄𝑡(𝑥, 𝑧|𝑥1)] can generate the target probability path 𝑝𝑡(see Proposition 3.1 of Campbell
+et al., 2024), i.e., it satisfies the Kolmogorov forward Equation 1. For completeness, we include the
+proof in Appendix B.2. We are free to define the conditional probability path 𝑝𝑡|1(·|𝑥1) and with the
+corresponding conditional transition rate as needed.
+A common approach is to construct a coordinate-wise conditional probability path and transition
+rate,
+𝑝𝑡|1(𝑥|𝑥1) =
+D
+Ö
+𝑑=1
+𝑝𝑑
+𝑡|1(𝑥𝑑|𝑥𝑑
+1),
+𝑄𝑡(𝑥, 𝑧|𝑥1) =
+D
+∑︁
+𝑑=1
+𝛿𝑥\𝑑(𝑧\𝑑)𝑄𝑑
+𝑡(𝑥𝑑, 𝑧𝑑|𝑥𝑑
+1),
+(2)
+where we use the notation 𝑥\𝑑to denote the vector obtained by removing the 𝑑-th coordinate of 𝑥,
+i.e., 𝑥\𝑑:= (𝑥1, . . . , 𝑥𝑑−1, 𝑥𝑑+1, . . . , 𝑥D), 𝑄𝑑
+𝑡(𝑥𝑑, 𝑧𝑑|𝑥𝑑
+1) is the conditional transition rate that generates
+the conditional probability path 𝑝𝑑
+𝑡|1, and 𝛿𝑥(𝑧) the Kronecker delta satisfying 𝛿𝑥(𝑧) = 1 if 𝑥= 𝑧and
+𝛿𝑥(𝑧) = 0 if 𝑥≠𝑧. A popular choice of probability path and the associated conditional transition rate
+used in the previous works (Campbell et al., 2024; Gat et al., 2024) is
+𝑝𝑑
+𝑡|1(𝑥𝑑|𝑥𝑑
+1) = (1 −𝜅𝑡)𝑝𝑑
+0(𝑥𝑑) + 𝜅𝑡𝛿𝑥𝑑
+1 (𝑥𝑑),
+𝑄𝑑
+𝑡(𝑥𝑑, 𝑧𝑑|𝑥𝑑
+1) = 𝜆𝑡
+ 𝛿𝑥𝑑
+1 (𝑧𝑑) −𝛿𝑥𝑑(𝑧𝑑)
+,
+(3)
+where 𝜅𝑡: [0, 1] →[0, 1] is a non-decreasing function satisfying 𝜅0 = 0 and 𝜅1 = 1, and 𝜆𝑡≜
+¤𝜅𝑡
+1−𝜅𝑡.
+Common sources are the uniform distribution 𝑝𝑑
+0 = Unif(S) and the masked source 𝑝𝑑
+0 = 𝛿m, which
+puts all mass on a mask token m. After defining the conditional path and rate, the marginal transition
+rate is given by
+𝑄𝑡(𝑥, 𝑧) =
+∑︁
+𝑥1
+𝑄𝑡(𝑥, 𝑧|𝑥1)𝑝1|𝑡(𝑥1|𝑥) =
+D
+∑︁
+𝑑=1
+𝛿𝑥\𝑑(𝑧\𝑑)
+∑︁
+𝑥𝑑
+1
+𝑄𝑑
+𝑡(𝑥𝑑, 𝑧𝑑|𝑥𝑑
+1)𝑝𝑑
+1|𝑡(𝑥𝑑
+1|𝑥)
+△=
+D
+∑︁
+𝑑=1
+𝛿𝑥\𝑑(𝑧\𝑑)𝑄𝑑
+𝑡(𝑥, 𝑧𝑑),
+where 𝑝𝑑
+1|𝑡(𝑥𝑑
+1|𝑥) = Í
+𝑥\𝑑
+1 𝑝1|𝑡(𝑥1|𝑥) is the posterior. When the coordinate is clear from the argument we
+drop the superscript and write 𝑝1|𝑡(𝑧𝑑|𝑥) for 𝑝𝑑
+1|𝑡(𝑧𝑑|𝑥); for the mixture path, 𝑄𝑑
+𝑡(𝑥, 𝑧𝑑) = 𝜆𝑡𝑝1|𝑡(𝑧𝑑|𝑥)
+for 𝑧𝑑≠𝑥𝑑.
+Training objective
+To learn the transition rate, a common approach is to minimize the Bregman
+divergence between the conditional generator and the estimated generator (Holderrieth et al., 2025;
+Lipman et al., 2024; Shaul et al., 2025; Wan et al., 2025):
+𝔼𝑥1,𝑡,𝑥𝑡∼𝑝𝑡|1(𝑥𝑡|𝑥1)
+h ∑︁
+𝑧≠𝑥𝑡
+𝐷𝐹
+
+𝑄𝑡(𝑥𝑡, 𝑧|𝑥1)
+𝑄𝑡(𝑥𝑡, 𝑧)
+i
+,
+where 𝐷𝐹denotes the Bregman divergence induced by 𝐹(𝑥) = 𝑥log 𝑥, 𝐷𝐹(𝑎∥𝑏) ≜𝐹(𝑎) −𝐹(𝑏) −𝐹′(𝑏)(𝑎−
+𝑏) = 𝑎log 𝑎
+𝑏−𝑎+ 𝑏, which is defined for 𝑎≥0 and 𝑏> 0 and vanishes if and only if 𝑎= 𝑏. After
+some derivation in Appendix B.1, it is equivalent to learn the posterior network 𝑝1|𝑡(𝑥𝑑
+1|𝑥𝑡) under the
+generalized Kullback–Leibler (KL) divergence:
+𝔼𝑥1,𝑡,𝑥𝑡∼𝑝𝑡|1(𝑥𝑡|𝑥1)
+h
+𝜆𝑡
+D
+∑︁
+𝑑=1
+n
+−
+
+1 −𝛿𝑥𝑑
+1 (𝑥𝑑
+𝑡)
+
+log 𝑝𝑑
+1|𝑡(𝑥𝑑
+1|𝑥𝑡) + 𝛿𝑥𝑑
+1 (𝑥𝑑
+𝑡) −𝑝𝑑
+1|𝑡(𝑥𝑑
+𝑡|𝑥𝑡)
+oi
+,
+(4)
+which is equivalent to Equation 37 of Shaul et al. (2025). If we use the masked source with the
+mixture path, then Equation 4 recovers the training objective for masked diffusion models (Nie et al.,
+2025; Ou et al., 2025; Sahoo et al., 2024; Shi et al., 2024).
+3
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+2.2. MeanFlow
+In MeanFlow (Geng et al., 2025a), the authors define the average velocity field in continuous space
+as the displacement from time 𝑡to 𝑟divided by 𝑟−𝑡(0 < 𝑡< 𝑟< 1) as
+𝑢(𝑥𝑡, 𝑡, 𝑟) ≜
+1
+𝑟−𝑡
+∫
+𝑟
+𝑡
+𝑣(𝑥𝑠, 𝑠) 𝑑𝑠,
+where 𝑣(𝑥𝑠, 𝑠) denotes the instantaneous velocity, 𝑡= 0 corresponds to the noise, and 𝑡= 1 corresponds
+to the data. Then, the MeanFlow identity can be derived (see Appendix B.3):
+𝑢(𝑥𝑡, 𝑡, 𝑟) = 𝑣(𝑥𝑡, 𝑡) −(𝑡−𝑟)[𝜕𝑡𝑢(𝑥𝑡, 𝑡, 𝑟) + 𝑣(𝑥𝑡, 𝑡) · ∇𝑥𝑡𝑢(𝑥𝑡, 𝑡, 𝑟)].
+Therefore, the training objective for MeanFlow can be formulated as the following fixed-point
+optimization problem:
+L(𝜃) = 𝔼𝑥1,𝑡,𝑟,𝑥𝑡∼𝑝𝑡|1(𝑥𝑡|𝑥1)
+𝑢𝜃(𝑥𝑡, 𝑡, 𝑟) −sg  𝑢tgt(𝑥𝑡, 𝑡, 𝑟)2
+2 ,
+where 𝑢tgt(𝑥𝑡, 𝑡, 𝑟) = 𝑣(𝑥𝑡, 𝑡) −(𝑡−𝑟) (𝑣(𝑥𝑡, 𝑡) · ∇𝑥𝑢𝜃(𝑥𝑡, 𝑡, 𝑟) + 𝜕𝑡𝑢𝜃(𝑥𝑡, 𝑡, 𝑟)) and sg(·) denotes the stop-
+gradient operator.
+𝑣-prediction parameterization
+Geng et al. (2025b) identify an underlying limitation of MeanFlow,
+i.e., the target 𝑢tgt(𝑥𝑡, 𝑡, 𝑟) depends on the unknown oracle 𝑢(𝑥𝑡, 𝑡, 𝑟), and is therefore approximated
+using the network prediction 𝑢𝜃(𝑥𝑡, 𝑡, 𝑟). This self-referential construction introduces bias and leads to
+unstable training.
+To address this issue, they propose a velocity-based reparameterization derived from the MeanFlow
+identity:
+𝑉(𝑥𝑡, 𝑡) = 𝑢𝜃(𝑥𝑡, 𝑡, 𝑟) + (𝑡−𝑟) (𝑣(𝑥𝑡, 𝑡) · ∇𝑥𝑢𝜃(𝑥𝑡, 𝑡, 𝑟) + 𝜕𝑡𝑢𝜃(𝑥𝑡, 𝑡, 𝑟)) .
+(5)
+Instead of directly regressing 𝑢, the model is trained via a standard velocity regression objective:
+𝔼𝑥1,𝑟,𝑡,𝑥𝑡∼𝑝𝑡|1(𝑥𝑡|𝑥1)
+𝑉(𝑥𝑡, 𝑡) −𝑣oracle(𝑥𝑡, 𝑡)
+2
+2.
+(6)
+In practice, 𝑣(𝑥𝑡, 𝑡) can be obtained either via the boundary condition 𝑣(𝑥𝑡, 𝑡) = 𝑢𝜃(𝑥𝑡, 𝑡, 𝑡) or via
+an auxiliary prediction head. This improved reparameterization significantly reduces variance in
+calculating the Jacobian-vector product, leading to more stable optimization.
+𝑥-prediction parameterization
+Beyond velocity prediction, an alternative parameterization is to
+directly model the clean data. As observed by Lu et al. (2026), predicting 𝑥1 instead of the velocity field
+better preserves the data manifold and improves training stability. Therefore, they reparameterize
+the MeanFlow as
+𝑢𝜃(𝑥𝑡, 𝑡, 𝑟) = 𝑥𝜃(𝑥𝑡, 𝑡, 𝑟) −𝑥𝑡
+1 −𝑡
+.
+Substituting this into Equation 5 and Equation 6, we obtain the training objective for MeanFlow
+under the 𝑥-prediction parameterization. This formulation further improves empirical stability.
+4
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Table 1 | Conceptual and mathematical comparison between MeanFlow and the proposed Discrete
+Average Generator.
+Property
+MeanFlow
+Discrete Average Generator
+State Space
+Continuous domain (ℝ𝑑)
+Discrete space (SD) via CTMCs
+Instantaneous Mea-
+sure
+Velocity field 𝑣(𝑥𝑡, 𝑡)
+Transition rate generator 𝑄𝑡(𝑥, 𝑧)
+Average Measure
+Average Velocity:
+𝑢(𝑥𝑡, 𝑡, 𝑟) =
+1
+𝑟−𝑡
+∫𝑟
+𝑡𝑣(𝑥𝑠, 𝑠)𝑑𝑠
+Average Generator:
+𝑈𝑡,𝑟= 𝑃𝑡→𝑟−𝐼
+𝑟−𝑡
+Material Derivative
+Spatial gradient used:
+𝑑
+𝑑𝑡𝑢= 𝜕𝑡𝑢+ 𝑣· ∇𝑥𝑢
+Dynkin’s formula used:
+𝐷
+𝐷𝑡𝑈= 𝜕𝑡𝑈+ 𝑄𝑡𝑈
+Fixed-Point Identity
+𝑢= 𝑣−(𝑡−𝑟)(𝜕𝑡𝑢+ 𝑣· ∇𝑥𝑢)
+𝑈𝑡,𝑟= 𝑄𝑡−(𝑡−𝑟)(𝜕𝑡𝑈𝑡,𝑟+ 𝑄𝑡𝑈𝑡,𝑟)
+Stable Target
+Parameterization
+𝑥-prediction
+(predicting clean data 𝑥1)
+˜𝑝-prediction
+(predicting
+a
+per-coordinate
+distribution
+˜𝑝𝑡,𝑟(·|𝑥𝑡))
+3. Proposed Method
+3.1. Average Generator
+In continuous MeanFlow, acceleration is enabled by integrating the instantaneous velocity field, where
+a single Euler step of size 𝑟−𝑡reproduces the endpoint of the flow exactly. We define the analogue
+CTMC generator for discrete spaces. Let 𝑃𝑡→𝑟denote the transition kernel of the CTMC from time 𝑡to
+𝑟, i.e., 𝑃𝑡→𝑟(𝑥, 𝑧) = 𝑝𝑟|𝑡(𝑧| 𝑥). We define the average generator over [𝑡, 𝑟] as
+𝑈𝑡,𝑟≜𝑃𝑡→𝑟−𝐼
+𝑟−𝑡
+,
+and
+𝑈𝑡,𝑡≜𝑄𝑡,
+(7)
+so that a single Euler step is exact, 𝛿⊤
+𝑥
+ 𝐼+ (𝑟−𝑡)𝑈𝑡,𝑟
+ = 𝑝𝑟|𝑡(·|𝑥) for every 𝑥. By Proposition 2 in
+Appendix C.2, 𝑈𝑡,𝑟is itself a valid generator (nonnegative off-diagonal entries, zero row sums) and
+satisfies 𝑈𝑡,𝑟→𝑄𝑡as 𝑟→𝑡. We derive the following identity for the transition rate in a discrete state
+space, with the proof provided in Appendix C.2.
+Proposition 1 (Average Generator Identity). For a sufficiently smooth generator 𝑄𝑡, the average
+generator satisfies:
+𝑈𝑡,𝑟= 𝑄𝑡−(𝑡−𝑟)  𝜕𝑡𝑈𝑡,𝑟+ 𝑄𝑡𝑈𝑡,𝑟
+
+.
+(8)
+Equation 8 expresses the average generator as a self-consistent correction of the instantaneous
+generator. We call 𝑄𝑡𝑈𝑡,𝑟the transport term. We compare the proposed framework with its continuous
+counterpart in Table 1. This identity forms the basis for a fixed-point training objective described in
+the following section.
+3.2. Training Objective of Discrete Average Generator
+𝑈-prediction objective.
+Equation 8 motivates directly regressing 𝑈𝜃
+𝑡,𝑟against the stop-gradient
+target constructed from the right-hand side, where sg(·) denotes the stop-gradient operator. With
+b𝑈𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑) ≜𝑄𝑡(𝑥𝑡, 𝑧𝑑) −(𝑡−𝑟) 𝜕𝑡𝑈𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑) + (𝑄𝑡𝑈𝜃
+𝑡,𝑟)(𝑥𝑡, 𝑧𝑑), the 𝑈-prediction objective is
+L𝑈(𝜃) = 𝔼𝑥1,(𝑡,𝑟),𝑥𝑡∼𝑝𝑡|1(𝑥𝑡|𝑥1)
+" D
+∑︁
+𝑑=1
+∑︁
+𝑧𝑑≠𝑥𝑑
+𝑡
+𝐷𝐹
+
+sg
+
+b𝑈𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑)
+  𝑈𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑)
+#
+,
+(9)
+5
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+with (𝑡, 𝑟), 0 ≤𝑡≤𝑟≤1, drawn from the design of Appendix D.2. However, analogously to the
+continuous setting (Geng et al., 2025a), the target in Equation 9 depends on 𝑈𝜃
+𝑡,𝑟itself, introduc-
+ing a self-referential bias that can destabilize training; moreover, unlike 𝑈𝑡,𝑟(𝑥𝑡, 𝑧𝑑), it need not be
+nonnegative, as 𝐷𝐹requires.
+𝑄-prediction objective.
+To resolve this issue, we follow the reparameterization strategy of Geng
+et al. (2025b) and express 𝑄𝑡directly in terms of 𝑈𝜃
+𝑡,𝑟via the Average Generator Identity:
+𝑄𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑) ≜𝑈𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑) + sg
+
+(𝑡−𝑟)
+
+𝜕𝑡𝑈𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑) +  𝑄𝑡𝑈𝜃
+𝑡,𝑟
+(𝑥𝑡, 𝑧𝑑)
+
+.
+(10)
+Instead of regressing 𝑈𝜃
+𝑡,𝑟directly, we train by regressing the reparameterized instantaneous generator
+𝑄𝜃
+𝑡,𝑟against the conditional rate 𝑄𝑡(𝑥𝑡, 𝑧𝑑|𝑥1):
+L𝑄(𝜃) = 𝔼𝑥1,(𝑡,𝑟),𝑥𝑡∼𝑝𝑡|1(𝑥𝑡|𝑥1)
+" D
+∑︁
+𝑑=1
+∑︁
+𝑧𝑑≠𝑥𝑑
+𝑡
+𝐷𝐹
+
+𝑄𝑡(𝑥𝑡, 𝑧𝑑|𝑥1)
+ 𝑄𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑)
+#
+.
+(11)
+This eliminates the self-referential dependence in the target, which in the continuous case yields
+markedly more stable optimization (Geng et al., 2025b).
+˜𝑝-prediction objective.
+Analogously to the 𝑥-prediction parameterization in the continuous set-
+ting (Lu et al., 2026), we further reparameterize 𝑈𝜃
+𝑡,𝑟through a distribution ˜𝑝𝑡,𝑟(·|𝑥) over S for
+each coordinate, state 𝑥and pair (𝑡, 𝑟), whose dependence on 𝜃we leave implicit. Starting from
+𝑄𝑑
+𝑡(𝑥, 𝑧𝑑) = Í
+𝑥𝑑
+1 𝑝𝑑
+1|𝑡(𝑥𝑑
+1|𝑥) 𝑄𝑑
+𝑡(𝑥𝑑, 𝑧𝑑|𝑥𝑑
+1) = 𝜆𝑡𝑝1|𝑡(𝑧𝑑|𝑥) for 𝑧𝑑≠𝑥𝑑and modeling 𝑈𝜃
+𝑡,𝑟as a generator
+with the same single-coordinate structure, we set
+𝑈𝜃
+𝑡,𝑟(𝑥, 𝑧) = 𝜇𝑡,𝑟˜𝑝𝑡,𝑟(𝑧𝑑|𝑥),
+𝑥\𝑑= 𝑧\𝑑, 𝑧𝑑≠𝑥𝑑,
+𝜇𝑡,𝑟≜
+𝜅𝑟−𝜅𝑡
+(𝑟−𝑡)(1 −𝜅𝑡) ,
+(12)
+where 𝜅𝑟denotes the schedule of Equation 3 evaluated at 𝑟. The scale 𝜇𝑡,𝑟makes the one-step kernel of
+a coordinate, 𝛿𝑥𝑑+(𝑟−𝑡)𝑈𝜃
+𝑡,𝑟(𝑥, ·), equal to (1−𝜔𝑡,𝑟)𝛿𝑥𝑑+𝜔𝑡,𝑟˜𝑝𝑑
+𝑡,𝑟(·|𝑥) with 𝜔𝑡,𝑟≜(𝑟−𝑡)𝜇𝑡,𝑟= 𝜅𝑟−𝜅𝑡
+1−𝜅𝑡∈[0, 1],
+the probability that a coordinate jumps to 𝑥𝑑
+1 on [𝑡, 𝑟] under the conditional path. It satisfies 𝜇𝑡,𝑟→𝜆𝑡as
+𝑟→𝑡, so the boundary condition 𝑈𝜃
+𝑡,𝑡= 𝑄𝑡holds whenever ˜𝑝𝑡,𝑡= 𝑝1|𝑡. Directly substituting Equation 12
+into Equation 10 formally gives an objective in ˜𝑝𝑡,𝑟, but its transport term (𝑄𝑡𝑈𝜃
+𝑡,𝑟)(𝑥𝑡, 𝑧𝑑) poses several
+obstacles. In Section 3.3, we first project the transport term onto per-coordinate marginals and adopt
+a closed-form expression and a one-pass unbiased estimator to reduce the computational costs.
+3.3. Tractable Training Objective of Discrete Average Generator
+Under the coordinate-wise construction Equation 2, 𝑄𝑡(𝑥, 𝑦) = 0 unless 𝑥and 𝑦differ in exactly one
+coordinate, so 𝑄𝑡is determined by the D × |S| numbers 𝜆𝑡𝑝1|𝑡(𝑧𝑑|𝑥) per state, which we obtain from
+a frozen pretrained denoiser, and 𝑈𝜃
+𝑡,𝑟has the same structure by Equation 12. We therefore model ˜𝑝𝑡,𝑟
+with a network 𝐻𝜃that maps (𝑥, 𝑡, 𝑟) to D distributions over S, ˜𝑝𝑡,𝑟(𝑧𝑑|𝑥) = [𝐻𝜃(𝑥, 𝑡, 𝑟)]𝑑,𝑧𝑑, so that a
+single forward pass gives every entry of 𝑈𝜃
+𝑡,𝑟at the current state.
+Per-coordinate projection.
+Let 𝑥𝑑→𝑠denote the state 𝑥with its 𝑑-th coordinate replaced by 𝑠. For
+each coordinate 𝑑, the per-coordinate projection Π𝑑is the linear map that marginalizes the target state
+6
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+of a matrix onto its 𝑑-th coordinate: it takes a matrix 𝑀indexed by pairs of states (𝑥, 𝑦) ∈SD × SD
+and returns the matrix Π𝑑[𝑀] indexed by (𝑥, 𝑧𝑑) ∈SD × S,
+Π𝑑[𝑀](𝑥, 𝑧𝑑) ≜
+∑︁
+𝑦∈SD: 𝑦𝑑=𝑧𝑑
+𝑀(𝑥, 𝑦),
+𝑧𝑑≠𝑥𝑑,
+(13)
+i.e. Π𝑑[𝑀] = 𝑀𝐸𝑑with 𝐸𝑑(𝑦, 𝑧𝑑) ≜1[𝑦𝑑= 𝑧𝑑], which sums the row 𝑀(𝑥, ·) over all target states whose
+𝑑-th coordinate equals 𝑧𝑑, whatever the other coordinates are. For a transition kernel, Π𝑑[𝑀](𝑥, ·)
+is the law of the 𝑑-th coordinate after the transition. For a generator, Π𝑑[𝑀](𝑥, 𝑧𝑑) is the total rate
+at which coordinate 𝑑moves to 𝑧𝑑. For a generator that changes only one coordinate at a time, the
+d-th coordinate transition is given by a single matrix entry, Π𝑑[𝑄𝑡](𝑥, 𝑧𝑑) = 𝑄𝑡(𝑥, 𝑥𝑑→𝑧𝑑) = 𝜆𝑡𝑝1|𝑡(𝑧𝑑|𝑥)
+and Π𝑑[𝑈𝜃
+𝑡,𝑟](𝑥, 𝑧𝑑) = 𝜇𝑡,𝑟˜𝑝𝑡,𝑟(𝑧𝑑|𝑥). For the exact average generator, however, the d-th coordinate
+transition is given by the d-th marginal of the jump kernel: Π𝑑[𝑈𝑡,𝑟](𝑥, 𝑧𝑑) = 𝑝𝑑
+𝑟|𝑡(𝑧𝑑|𝑥)/(𝑟−𝑡), which is
+exactly the quantity required by a coordinate-factorized sampler. In contrast, the entry 𝑈𝑡,𝑟(𝑥, 𝑥𝑑→𝑧𝑑)
+is proportional to the probability that coordinate 𝑑jumps to 𝑧𝑑while all other coordinates remain
+unchanged, with proportionality factor 1/(𝑟−𝑡). Applying Π𝑑to Equation 8 gives, for every 𝑑and
+𝑧𝑑≠𝑥𝑑, the projected identity underlying Section 3.2,
+Π𝑑[𝑈𝑡,𝑟](𝑥, 𝑧𝑑) = Π𝑑[𝑄𝑡](𝑥, 𝑧𝑑) −(𝑡−𝑟)
+
+𝜕𝑡Π𝑑[𝑈𝑡,𝑟](𝑥, 𝑧𝑑) + Π𝑑[𝑄𝑡𝑈𝑡,𝑟](𝑥, 𝑧𝑑)
+
+(14)
+= Π𝑑[𝑄𝑡](𝑥, 𝑧𝑑) −(𝑡−𝑟)
+
+𝜕𝑡Π𝑑[𝑈𝑡,𝑟](𝑥, 𝑧𝑑) +
+∑︁
+𝑥′
+𝑄𝑡(𝑥, 𝑥′) Π𝑑[𝑈𝑡,𝑟](𝑥′, 𝑧𝑑)
+
+.
+Here we use that Π𝑑is linear and commutes with 𝜕𝑡, and that Π𝑑[𝑄𝑡𝑀](𝑥, 𝑧𝑑) = Í
+𝑥′ 𝑄𝑡(𝑥, 𝑥′) Π𝑑[𝑀](𝑥′, 𝑧𝑑).
+The right-hand side involves 𝑈𝑡,𝑟only through Π𝑑[𝑈𝑡,𝑟] at 𝑥and at its single-coordinate neighbors.
+The projection therefore gives the transport term a well-defined per-coordinate entry and absorbs the
+two-coordinate moves by summing over them. We call Π𝑑[𝑄𝑡𝑈𝑡,𝑟] the projected transport term.
+Tractable projected transport term.
+The projected identity Equation 14 is a closed equation for the
+per-coordinate marginals: the unique solution of Equation 14 is the exact marginal Π𝑑[𝑈𝑡,𝑟], which is
+proved in Proposition 5. A sufficiently expressive model trained with Equation 11 therefore learns the
+per-coordinate marginals of the finite-step kernel, using only the instantaneous rate and quantities
+at the current state, without simulating the kernel over [𝑡, 𝑟]. It remains to evaluate the projected
+transport term for the parameterization Equation 12. We show in Proposition 4 that
+Π𝑑
+𝑄𝑡𝑈𝜃
+𝑡,𝑟
+
+(𝑥𝑡, 𝑧𝑑) = 𝜆𝑡𝜇𝑡,𝑟
+h
+𝐶𝑑
+𝜃(𝑥𝑡, 𝑧𝑑) −𝑝1|𝑡(𝑧𝑑| 𝑥𝑡)
+i
+,
+(15)
+where
+𝐶𝑑
+𝜃(𝑥𝑡, 𝑧𝑑) ≜
+D
+∑︁
+𝑒=1
+
+𝔼𝑠∼𝑝𝑒
+1|𝑡(·|𝑥𝑡)
+
+˜𝑝𝑡,𝑟
+ 𝑧𝑑| 𝑥𝑒→𝑠
+𝑡
+
+−˜𝑝𝑡,𝑟
+ 𝑧𝑑| 𝑥𝑡
+
+(16)
+measures how the prediction at coordinate 𝑑moves when a single coordinate of 𝑥𝑡jumps according
+to 𝑄𝑡. Each summand requires evaluating the network at a state that differs from 𝑥𝑡in a single
+coordinate, producing an output of size D × |S|. Thus, evaluating the sum exactly requires one
+forward pass for each such state, motivating the estimator introduced below. Substituting Equation 15
+and 𝜕𝑡𝜇𝑡,𝑟= 𝜇𝑡,𝑟−𝜆𝑡
+𝑟−𝑡
++ 𝜆𝑡𝜇𝑡,𝑟into Equation 10, the purely local terms combine and the reparameterized
+instantaneous rate becomes
+𝑄𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑) = 𝜆𝑡˜𝑝𝑡,𝑟(𝑧𝑑| 𝑥𝑡) + sg
+n
+(𝑡−𝑟) 𝜇𝑡,𝑟
+h
+𝜕𝑡˜𝑝𝑡,𝑟(𝑧𝑑| 𝑥𝑡) + 𝜆𝑡Γ𝑑
+𝜃(𝑥𝑡, 𝑧𝑑)
+io
+,
+(17)
+with
+Γ𝑑
+𝜃(𝑥𝑡, 𝑧𝑑) ≜𝐶𝑑
+𝜃(𝑥𝑡, 𝑧𝑑) + ˜𝑝𝑡,𝑟(𝑧𝑑| 𝑥𝑡) −𝑝1|𝑡(𝑧𝑑| 𝑥𝑡).
+(18)
+7
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Algorithm 1 Training of Discrete Average Generator
+Require: Network 𝐻𝜃, schedule 𝜅𝑡, data distribution 𝑝1, frozen denoiser 𝐻, boundary fraction 1 −𝜌
+1: repeat
+2:
+Sample 𝑥1 ∼𝑝1, (𝑡, 𝑟) with 𝑡≤𝑟from the logit-normal; set 𝑟←𝑡with probability 1 −𝜌
+3:
+Sample 𝑥𝑡∼𝑝𝑡|1(· | 𝑥1)
+⊲mixture path
+4:
+Compute ˜𝑝𝑡,𝑟(· | 𝑥𝑡) ←𝐻𝜃(𝑥𝑡, 𝑡, 𝑟), 𝜕𝑡˜𝑝𝑡,𝑟(𝑧𝑑| 𝑥𝑡) at fixed 𝑟
+⊲D × |S|
+5:
+Compute 𝑝1|𝑡(· | 𝑥𝑡) ←𝐻(𝑥𝑡, 𝑡)
+⊲frozen, stop-gradient
+6:
+Sample 𝑒∼Unif({1, . . . , D}), 𝑠∼𝑝𝑒
+1|𝑡(· | 𝑥𝑡); evaluate ˜𝑝𝑡,𝑟(· | 𝑥𝑒→𝑠
+𝑡
+)
+7:
+Compute b
+𝐶𝑑
+𝜃via Equation 19 and Γ𝑑
+𝜃via Equation 18
+8:
+Compute the shifted probability ˆ𝑞𝑑
+𝜃with stop-gradient via Equation 20
+9:
+Compute L˜𝑝(𝜃) via Equation 21
+10:
+Update 𝜃←𝜃−𝜂∇𝜃L˜𝑝(𝜃)
+11: until converged
+Writing Equation 17 with 𝜆𝑡˜𝑝𝑡,𝑟outside the stop-gradient rescales the gradient at each (𝑡, 𝑟) by
+𝜆𝑡/𝜇𝑡,𝑟relative to Equation 10, which leaves the fixed point unchanged. For the linear schedule
+𝜅𝑡= 𝑡the two coincide, since 𝜇𝑡,𝑟= 𝜆𝑡. The correction therefore consists of exactly two terms: the
+partial time derivative of the network at fixed 𝑟and 𝜆𝑡Γ𝑑
+𝜃, which contains the projected transport
+term: by Equation 15 and Equation 18, 𝜆𝑡𝜇𝑡,𝑟Γ𝑑
+𝜃= Π𝑑[𝑄𝑡𝑈𝜃
+𝑡,𝑟](𝑥𝑡, 𝑧𝑑) + 𝜆𝑡𝜇𝑡,𝑟˜𝑝𝑡,𝑟(𝑧𝑑| 𝑥𝑡), where the
+last term comes from 𝜕𝑡𝜇𝑡,𝑟. At 𝑟= 𝑡both vanish and Equation 17 reduces to the instantaneous
+rate 𝑄𝜃
+𝑡,𝑡(𝑥𝑡, 𝑧𝑑) = 𝜆𝑡˜𝑝𝑡,𝑡(𝑧𝑑| 𝑥𝑡), which equals 𝑄𝑡(𝑥𝑡, 𝑧𝑑) when ˜𝑝𝑡,𝑡= 𝑝1|𝑡, so the objective is a strict
+generalization of Equation 4.
+𝐶𝑑
+𝜃is estimated without bias by a single forward pass shared across all coordinates: draw 𝑒∼
+Unif({1, . . . , D}) and 𝑠∼𝑝𝑒
+1|𝑡(·|𝑥𝑡), evaluate ˜𝑝𝑡,𝑟(· | 𝑥𝑒→𝑠
+𝑡
+) once, and set
+b
+𝐶𝑑
+𝜃(𝑥𝑡, 𝑧𝑑) = D
+
+˜𝑝𝑡,𝑟
+ 𝑧𝑑| 𝑥𝑒→𝑠
+𝑡
+ −˜𝑝𝑡,𝑟
+ 𝑧𝑑| 𝑥𝑡
+
+.
+(19)
+Every summand of 𝐶𝑑
+𝜃, as well as ˜𝑝𝑡,𝑟−𝑝1|𝑡and 𝜕𝑡˜𝑝𝑡,𝑟sums to zero over 𝑧𝑑. Therefore, the shifted
+probability
+ˆ𝑞𝑑
+𝜃(𝑧𝑑|𝑥𝑡) ≜˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑡) + sg{ (𝑡−𝑟)𝜇𝑡,𝑟
+𝜆𝑡
+[𝜕𝑡˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑡) + 𝜆𝑡Γ𝑑
+𝜃(𝑥𝑡, 𝑧𝑑)]},
+(20)
+defined for all 𝑧𝑑∈S, satisfies Í
+𝑧𝑑∈S ˆ𝑞𝑑
+𝜃(𝑧𝑑| 𝑥𝑡) = 1. Moreover, for 𝑧𝑑≠𝑥𝑑
+𝑡, ˆ𝑞𝑑
+𝜃(𝑧𝑑|𝑥𝑡) = 𝑄𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑)/𝜆𝑡.
+Expanding 𝐷𝐹in Equation 11 (Appendix C.7), its linear part becomes 𝜆𝑡(1 −ˆ𝑞𝑑
+𝜃(𝑥𝑑
+𝑡|𝑥𝑡)), and the
+objective takes the form of Equation 4 with the posterior replaced by the shifted probability ˆ𝑞𝑑
+𝜃,
+L˜𝑝(𝜃) = 𝔼𝑥1,(𝑡,𝑟),𝑥𝑡
+"
+𝜆𝑡
+D
+∑︁
+𝑑=1
+n
+− 1 −𝛿𝑥𝑑
+1 (𝑥𝑑
+𝑡) log ˆ𝑞𝑑
+𝜃(𝑥𝑑
+1|𝑥𝑡) −ˆ𝑞𝑑
+𝜃(𝑥𝑑
+𝑡|𝑥𝑡)
+o#
++ const.
+(21)
+Algorithm 1 summarizes training algorithm. The instantaneous posterior 𝑝1|𝑡is supplied by a
+frozen pretrained denoiser, which is also the model the network is initialized from; the boundary
+condition 𝑈𝜃
+𝑡,𝑡= 𝑄𝑡gives the same quantity when no pretrained model is available, since a fraction
+1 −𝜌of the training pairs are drawn with 𝑟= 𝑡.
+Sampling.
+Sampling takes one Euler step of the learned per-coordinate average generator Π𝑑[𝑈𝜃
+𝑡,𝑟]
+independently for every coordinate per interval. On a grid 0 = 𝜏0 < · · · < 𝜏𝐾= 1, each step queries
+the network once at (𝑥𝑡, 𝑡, 𝑟) = (𝑥𝜏𝑘, 𝜏𝑘, 𝜏𝑘+1) and, independently for every coordinate, replaces it by a
+draw from ˜𝑝𝑑
+𝑡,𝑟(· | 𝑥𝑡) with probability 𝜔𝑡,𝑟= (𝑟−𝑡)𝜇𝑡,𝑟= 𝜅𝑟−𝜅𝑡
+1−𝜅𝑡. The detailed sampling procedure is
+given in Algorithm 2.
+8
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Figure 1 | Exact total variation between the tar-
+get and the law of the 𝐾-step sampler on the
+Potts simulation. Values in Table 2.
+Figure 2 | Experimental results on the ImageNet
+dataset for image generation. Values in Table 4.
+4. Experimental Results
+4.1. Experimental Setup
+Datasets.
+We evaluate our method on simulated data and two standard benchmarks: OpenWeb-
+Text (Gokaslan and Cohen, 2019) for text generation and ImageNet (Deng et al., 2009) for image
+generation. For the simulations, we use a Potts target on SD with |S| = D = 4, a state space small
+enough to be enumerated exactly. This allows us to evaluate the sampler against the exact ground
+truth in terms of total variation distance. Details of the data generation procedure are provided
+in Appendix D.1. For text generation, we use sequences of length 1024, tokenized with the GPT-2
+tokenizer (Radford et al., 2019), which has a vocabulary size of 50,257. For image generation,
+following prior work (Chang et al., 2022; Hayakawa et al., 2025), we tokenize 256 × 256 images into
+16 × 16 discrete latent codes using a pretrained VQGAN (Esser et al., 2020), resulting in sequences of
+length 256 with a vocabulary size of 1,024.
+Baselines.
+We compare with SDTT (Deschenaux and Gulcehre, 2025) and Di4C (Hayakawa et al.,
+2025), which distill a multi-step teacher and, for Di4C, model the correlations between dimensions,
+and with ReDi (Yoo et al., 2025), which iteratively rectifies the source–data coupling (ReDi𝑘: 𝑘rounds;
+Di4C+ReDi1 combines both). Our method does not distill a student from a teacher trajectory.
+Implementation.
+On OpenWebText, we train the model initialized from Di4C+ReDi1 with Equa-
+tion 11 under the parameterization Equation 34 and the estimator of Equation 35 (Appendix C.6)
+for 1k iterations. On ImageNet, we train the model initialized from ReDi2 with Equation 31 and the
+single-draw estimator Equation 30 (Appendix C.4) for 3 epochs. Further details can be found in
+Appendix D.2.
+Metrics.
+For simulated data, we report the total variation distance between the generated distribu-
+tion and the ground-truth distribution. For text generation, we measure generative perplexity using
+LLaMA 3.1-8B (Grattafiori et al., 2024) and report entropy to assess diversity and degeneration. For
+image generation, we generate 50k samples and report Fréchet Inception Distance (FID) (Heusel
+et al., 2017) and Inception Score (IS) (Salimans et al., 2016).
+9
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Figure 3 | Generative perplexity and entropy on OpenWebText. The dashed horizontal line indicates
+the PPL of Di4C + ReDi1 at 𝐾= 1024 (18.44). Values in Table 3.
+4.2. Experimental Results
+Simulations
+Figure 1 compares a network trained with the baseline objective Equation 4 with one
+trained with Equation 21. The correction reduces the total variation for every number of sampling
+steps 𝐾, by 21% at 𝐾= 4, 43% at 𝐾= 8 and 67% at 𝐾= 16, with the same ordering for all three
+seeds.
+Text Generation
+Figure 3 reports generative perplexity and entropy on OpenWebText. From 𝐾= 8
+on, our method improves on the strongest baseline, Di4C+ReDi1: 27.59 vs. 30.92 at 𝐾= 8, 22.92
+vs. 24.81 at 𝐾= 16, 21.35 vs. 21.88 at 𝐾= 32, and 16.97 vs. 20.32 at 𝐾= 64. Most importantly,
+our method achieves a lower generative perplexity with 𝐾= 64 than Di4C+ReDi1 with 𝐾= 1024,
+demonstrating a 16× acceleration. Qualitative inspection of unconditional samples generated at
+𝐾= 64 (Appendix E) further suggests that our method produces fluent, topically coherent text at this
+reduced step budget, without the repetitive degeneration that can mask a low generative perplexity.
+Image Generation
+Figure 2 compares the methods on ImageNet 256 × 256 with four network
+evaluations. Our method attains the highest Inception Score, 250, 4% above the next best (ReDi2,
+240), at a comparable FID (7.81 vs. 7.86). The ablation of classifier-free guidance can be found in
+Appendix E.1 and qualitative comparisons are provided in Appendix E.2.
+5. Related Work
+In continuous spaces, sampling is accelerated by higher-order solvers (Lu et al., 2022; Song et al.,
+2020), caching (Ma et al., 2024), distillation (Salimans and Ho, 2022; Zhou et al., 2024), consistency
+models (Song et al., 2023), rectified flow (Liu et al., 2022), and methods that learn the solution
+operator over an interval, including shortcut models (Frans et al., 2025), MeanFlow (Geng et al.,
+2025a,b; Lu et al., 2026). For discrete diffusion, SDTT (Deschenaux and Gulcehre, 2025) and
+Di4C (Hayakawa et al., 2025) distill multi-step samplers, ReDi (Yoo et al., 2025) rectifies the coupling,
+Di[M]O (Zhu et al., 2025) distills a one-step generator by distribution matching, and Fast-dLLM (Wu
+et al., 2026) and Jacobi Forcing (Hu et al., 2026) accelerate inference. Closest to our work, Categorical
+10
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Flow Maps (Roos et al., 2026) and Discrete Flow Maps (Potaptchik et al., 2026) learn flow maps
+of a continuous interpolant on the probability simplex. We instead stay on the discrete state space
+and learn the average generator of a CTMC, so that the transport term is left multiplication by the
+generator rather than a Jacobian–vector product along a drift, and the construction applies to any
+CTMC with coordinate-wise rates. Appendix A provides a more detailed discussion of related work.
+6. Conclusion
+We have introduced the Discrete Average Generator, a principled extension of MeanFlow to discrete
+state spaces governed by CTMCs. By defining the average generator as the normalized increment
+of the transition kernel, we derived the Discrete Average Generator Identity and the corresponding
+training objective. Projected onto per-coordinate marginals, the identity becomes a closed equation
+whose transport term can be estimated without bias with one additional forward pass. Our method
+reduces the total variation of the 𝐾-step sampler by up to 67% in simulations, attains the lowest
+generative perplexity of all compared methods on OpenWebText for every budget of 8 to 64 steps
+with 16 × acceleration, and on ImageNet with the highest Inception Score.
+References
+A. Campbell, J. Yim, R. Barzilay, T. Rainforth, and T. Jaakkola. Generative flows on discrete state-
+spaces: Enabling multimodal flows with applications to protein co-design. In International Conference
+on Machine Learning, 2024.
+H. Chang, H. Zhang, L. Jiang, C. Liu, and W. T. Freeman. Maskgit: Masked generative image
+transformer. In The IEEE Conference on Computer Vision and Pattern Recognition (CVPR), June 2022.
+J. Deng, W. Dong, R. Socher, L.-J. Li, K. Li, and L. Fei-Fei. Imagenet: A large-scale hierarchical image
+database. In 2009 IEEE conference on computer vision and pattern recognition, pages 248–255. Ieee,
+2009.
+J. Deschenaux and C. Gulcehre. Beyond autoregression: Fast llms via self-distillation through time.
+In International Conference on Learning Representations, 2025.
+P. Esser, R. Rombach, and B. Ommer. Taming transformers for high-resolution image synthesis. 2021
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 12868–12878,
+2020.
+K. Frans, D. Hafner, S. Levine, and P. Abbeel. One step diffusion via shortcut models. International
+Conference on Learning Representations, 2025.
+I. Gat, T. Remez, N. Shaul, F. Kreuk, R. T. Chen, G. Synnaeve, Y. Adi, and Y. Lipman. Discrete flow
+matching. In Advances in Neural Information Processing Systems, volume 37, pages 133345–133385,
+2024.
+Z. Geng, M. Deng, X. Bai, J. Z. Kolter, and K. He. Mean flows for one-step generative modeling. ArXiv,
+abs/2505.13447, 2025a.
+Z. Geng, Y. Lu, Z. Wu, E. Shechtman, J. Z. Kolter, and K. He. Improved mean flows: On the challenges
+of fastforward generative models. ArXiv, abs/2512.02012, 2025b.
+A. Gokaslan and V. Cohen.
+Openwebtext corpus.
+http://Skylion007.github.io/
+OpenWebTextCorpus, 2019.
+11
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten,
+A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev,
+A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron, B. Tang,
+B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu,
+C. Wong, C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Wyatt, D. Esiobu,
+D. Choudhary, D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy,
+E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Guzmán, F. Zhang, G. Synnaeve, G. Lee, G. L.
+Anderson, G. Thattai, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu,
+H. Touvron, I. Zarov, I. A. Ibarra, I. Kloumann, I. Misra, I. Evtimov, J. Zhang, J. Copet, J. Lee, J. Geffert,
+J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi,
+J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V.
+Alwala, K. Prasad, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, K. El-Arini, K. Iyer, K. Malik,
+K. Chiu, K. Bhalla, K. Lakhotia, L. Rantala-Yeary, L. van der Maaten, L. Chen, L. Tan, L. Jenkins,
+L. Martin, L. Madaan, L. Malo, L. Blecher, L. Landzaat, L. de Oliveira, M. Muzzi, M. Pasupuleti,
+M. Singh, M. Paluri, M. Kardas, M. Tsimpoukelli, M. Oldham, M. Rita, M. Pavlova, M. Kambadur,
+M. Lewis, M. Si, M. K. Singh, M. Hassan, N. Goyal, N. Torabi, N. Bashlykov, N. Bogoychev, N. Chatterji,
+N. Zhang, O. Duchenne, O. Çelebi, P. Alrassy, P. Zhang, P. Li, P. Vasic, P. Weng, P. Bhargava, P. Dubal,
+P. Krishnan, P. S. Koura, P. Xu, Q. He, Q. Dong, R. Srinivasan, R. Ganapathy, R. Calderer, R. S.
+Cabral, R. Stojnic, R. Raileanu, R. Maheswari, R. Girdhar, R. Patel, R. Sauvestre, R. Polidoro,
+R. Sumbaly, R. Taylor, R. Silva, R. Hou, R. Wang, S. Hosseini, S. Chennabasappa, S. Singh, S. Bell,
+S. S. Kim, S. Edunov, S. Nie, S. Narang, S. Raparthy, S. Shen, S. Wan, S. Bhosale, S. Zhang,
+S. Vandenhende, S. Batra, S. Whitman, S. Sootla, S. Collot, S. Gururangan, S. Borodinsky, T. Herman,
+T. Fowler, T. Sheasha, T. Georgiou, T. Scialom, T. Speckbacher, T. Mihaylov, T. Xiao, U. Karn,
+V. Goswami, V. Gupta, V. Ramanathan, V. Kerkez, V. Gonguet, V. Do, V. Vogeti, V. Albiero, V. Petrovic,
+W. Chu, W. Xiong, W. Fu, W. Meers, X. Martinet, X. Wang, X. Wang, X. E. Tan, X. Xia, X. Xie,
+X. Jia, X. Wang, Y. Goldschlag, Y. Gaur, Y. Babaei, Y. Wen, Y. Song, Y. Zhang, Y. Li, Y. Mao, Z. D.
+Coudert, Z. Yan, Z. Chen, Z. Papakipos, A. Singh, A. Srivastava, A. Jain, A. Kelsey, A. Shajnfeld,
+A. Gangidi, A. Victoria, A. Goldstand, A. Menon, A. Sharma, A. Boesenberg, A. Baevski, A. Feinstein,
+A. Kallet, A. Sangani, A. Teo, A. Yunus, A. Lupu, A. Alvarado, A. Caples, A. Gu, A. Ho, A. Poulton,
+A. Ryan, A. Ramchandani, A. Dong, A. Franco, A. Goyal, A. Saraf, A. Chowdhury, A. Gabriel,
+A. Bharambe, A. Eisenman, A. Yazdan, B. James, B. Maurer, B. Leonhardi, B. Huang, B. Loyd,
+B. D. Paola, B. Paranjape, B. Liu, B. Wu, B. Ni, B. Hancock, B. Wasti, B. Spence, B. Stojkovic,
+B. Gamido, B. Montalvo, C. Parker, C. Burton, C. Mejia, C. Liu, C. Wang, C. Kim, C. Zhou, C. Hu,
+C.-H. Chu, C. Cai, C. Tindal, C. Feichtenhofer, C. Gao, D. Civin, D. Beaty, D. Kreymer, D. Li,
+D. Adkins, D. Xu, D. Testuggine, D. David, D. Parikh, D. Liskovich, D. Foss, D. Wang, D. Le,
+D. Holland, E. Dowling, E. Jamil, E. Montgomery, E. Presani, E. Hahn, E. Wood, E.-T. Le, E. Brinkman,
+E. Arcaute, E. Dunbar, E. Smothers, F. Sun, F. Kreuk, F. Tian, F. Kokkinos, F. Ozgenel, F. Caggioni,
+F. Kanayet, F. Seide, G. M. Florez, G. Schwarz, G. Badeer, G. Swee, G. Halpern, G. Herman,
+G. Sizov, Guangyi, Zhang, G. Lakshminarayanan, H. Inan, H. Shojanazeri, H. Zou, H. Wang,
+H. Zha, H. Habeeb, H. Rudolph, H. Suk, H. Aspegren, H. Goldman, H. Zhan, I. Damlaj, I. Molybog,
+I. Tufanov, I. Leontiadis, I.-E. Veliche, I. Gat, J. Weissman, J. Geboski, J. Kohli, J. Lam, J. Asher,
+J.-B. Gaya, J. Marcus, J. Tang, J. Chan, J. Zhen, J. Reizenstein, J. Teboul, J. Zhong, J. Jin, J. Yang,
+J. Cummings, J. Carvill, J. Shepard, J. McPhie, J. Torres, J. Ginsburg, J. Wang, K. Wu, K. H. U,
+K. Saxena, K. Khandelwal, K. Zand, K. Matosich, K. Veeraraghavan, K. Michelena, K. Li, K. Jagadeesh,
+K. Huang, K. Chawla, K. Huang, L. Chen, L. Garg, L. A, L. Silva, L. Bell, L. Zhang, L. Guo, L. Yu,
+L. Moshkovich, L. Wehrstedt, M. Khabsa, M. Avalani, M. Bhatt, M. Mankus, M. Hasson, M. Lennie,
+M. Reso, M. Groshev, M. Naumov, M. Lathi, M. Keneally, M. Liu, M. L. Seltzer, M. Valko, M. Restrepo,
+M. Patel, M. Vyatskov, M. Samvelyan, M. Clark, M. Macey, M. Wang, M. J. Hermoso, M. Metanat,
+M. Rastegari, M. Bansal, N. Santhanam, N. Parks, N. White, N. Bawa, N. Singhal, N. Egebo, N. Usunier,
+12
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+N. Mehta, N. P. Laptev, N. Dong, N. Cheng, O. Chernoguz, O. Hart, O. Salpekar, O. Kalinli, P. Kent,
+P. Parekh, P. Saab, P. Balaji, P. Rittner, P. Bontrager, P. Roux, P. Dollar, P. Zvyagina, P. Ratanchandani,
+P. Yuvraj, Q. Liang, R. Alao, R. Rodriguez, R. Ayub, R. Murthy, R. Nayani, R. Mitra, R. Parthasarathy,
+R. Li, R. Hogan, R. Battey, R. Wang, R. Howes, R. Rinott, S. Mehta, S. Siby, S. J. Bondu, S. Datta,
+S. Chugh, S. Hunt, S. Dhillon, S. Sidorov, S. Pan, S. Mahajan, S. Verma, S. Yamamoto, S. Ramaswamy,
+S. Lindsay, S. Lindsay, S. Feng, S. Lin, S. C. Zha, S. Patil, S. Shankar, S. Zhang, S. Zhang, S. Wang,
+S. Agarwal, S. Sajuyigbe, S. Chintala, S. Max, S. Chen, S. Kehoe, S. Satterfield, S. Govindaprasad,
+S. Gupta, S. Deng, S. Cho, S. Virk, S. Subramanian, S. Choudhury, S. Goldman, T. Remez, T. Glaser,
+T. Best, T. Koehler, T. Robinson, T. Li, T. Zhang, T. Matthews, T. Chou, T. Shaked, V. Vontimitta,
+V. Ajayi, V. Montanez, V. Mohan, V. S. Kumar, V. Mangla, V. Ionescu, V. Poenaru, V. T. Mihailescu,
+V. Ivanov, W. Li, W. Wang, W. Jiang, W. Bouaziz, W. Constable, X. Tang, X. Wu, X. Wang, X. Wu,
+X. Gao, Y. Kleinman, Y. Chen, Y. Hu, Y. Jia, Y. Qi, Y. Li, Y. Zhang, Y. Zhang, Y. Adi, Y. Nam, Yu, Wang,
+Y. Zhao, Y. Hao, Y. Qian, Y. Li, Y. He, Z. Rait, Z. DeVito, Z. Rosnbrick, Z. Wen, Z. Yang, Z. Zhao, and
+Z. Ma. The llama 3 herd of models. arXiv preprint arXiv: 2407.21783, 2024.
+S. Hayakawa, Y. Takida, M. Imaizumi, H. Wakaki, and Y. Mitsufuji. Distillation of discrete diffusion
+through dimensional correlations. In Proceedings of the 42nd International Conference on Machine
+Learning, pages 22259–22297, 2025.
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter. Gans trained by a two time-scale
+update rule converge to a local nash equilibrium. In Advances in Neural Information Processing
+Systems, 2017.
+P. Holderrieth, M. Havasi, J. Yim, N. Shaul, I. Gat, T. Jaakkola, B. Karrer, R. T. Chen, and Y. Lipman.
+Generator matching: Generative modeling with arbitrary markov processes. In International
+Conference on Learning Representations, 2025.
+L. Hu, S. Kou, Y. Fu, S. Rajbhandari, T. Simunic, Y. He, Z. Deng, and H. Zhang. Fast and accurate
+causal parallel decoding using jacobi forcing. International Conference on Machine Learning, 2026.
+Y. Lipman, M. Havasi, P. Holderrieth, N. Shaul, M. Le, B. Karrer, R. T. Chen, D. Lopez-Paz, H. Ben-Hamu,
+and I. Gat. Flow matching guide and code. arXiv preprint arXiv:2412.06264, 2024.
+X. Liu, C. Gong, and Q. Liu. Flow straight and fast: Learning to generate and transfer data with
+rectified flow. ArXiv, abs/2209.03003, 2022.
+C. Lu, Y. Zhou, F. Bao, J. Chen, C. Li, and J. Zhu. Dpm-solver: A fast ode solver for diffusion
+probabilistic model sampling in around 10 steps. ArXiv, abs/2206.00927, 2022.
+Y. Lu, S. Lu, Q. Sun, H. Zhao, Z. Jiang, X. Wang, T. Li, Z. Geng, and K. He. One-step latent-free image
+generation with pixel mean flows, 2026.
+X. Ma, G. Fang, and X. Wang. Deepcache: Accelerating diffusion models for free. In The IEEE/CVF
+Conference on Computer Vision and Pattern Recognition, 2024.
+S. Nie, F. Zhu, Z. You, X. Zhang, J. Ou, J. Hu, J. Zhou, Y. Lin, J.-R. Wen, and C. Li. Large language
+diffusion models. In International Conference on Learning Representations, 2025.
+J. Ou, S. Nie, K. Xue, F. Zhu, J. Sun, Z. Li, and C. Li. Your absorbing discrete diffusion secretly models
+the conditional distributions of clean data. In International Conference on Learning Representations,
+2025.
+P. Potaptchik, J. Yim, A. Saravanan, P. Holderrieth, E. Vanden-Eijnden, and M. S. Albergo. Discrete
+flow maps. ArXiv, 2026.
+13
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever. Language models are unsupervised
+multitask learners. Technical report, OpenAI, 2019.
+D. Roos, O. Davis, F. Eijkelboom, M. M. Bronstein, M. Welling, I. I. Ceylan, L. Ambrogioni, and J.-W.
+van de Meent. Categorical flow maps. ICML, 2026.
+S. Sahoo, M. Arriola, Y. Schiff, A. Gokaslan, E. Marroquin, J. Chiu, A. Rush, and V. Kuleshov. Simple
+and effective masked diffusion language models. In Advances in Neural Information Processing
+Systems, volume 37, pages 130136–130184, 2024.
+S. S. Sahoo, J. Deschenaux, A. Gokaslan, G. Wang, J. T. Chiu, and V. Kuleshov. The diffusion duality.
+In International Conference on Machine Learning, 2025.
+T. Salimans and J. Ho. Progressive distillation for fast sampling of diffusion models. arXiv preprint
+arXiv:2202.00512, 2022.
+T. Salimans, I. J. Goodfellow, W. Zaremba, V. Cheung, A. Radford, and X. Chen. Improved techniques
+for training gans. In Advances in Neural Information Processing Systems, 2016.
+N. Shaul, I. Gat, M. Havasi, D. Severo, A. Sriram, P. Holderrieth, B. Karrer, Y. Lipman, and R. T. Q.
+Chen. Flow matching with general discrete paths: a kinetic-optimal perspective. In International
+Conference on Learning Representations, 2025.
+J. Shi, K. Han, Z. Wang, A. Doucet, and M. Titsias. Simplified and generalized masked diffusion for
+discrete data. In Advances in Neural Information Processing Systems, volume 37, pages 103131–
+103167, 2024.
+J. Song, C. Meng, and S. Ermon. Denoising diffusion implicit models. ArXiv, abs/2010.02502, 2020.
+Y. Song, P. Dhariwal, M. Chen, and I. Sutskever. Consistency models. In International Conference on
+Machine Learning, 2023.
+Z. Wan, Y. Ouyang, Q. Yao, L. Xie, F. Fang, H. Zha, and G. Cheng. Error analysis of discrete flow with
+generator matching. arXiv preprint arXiv:2509.21906, 2025.
+C. Wu, H. Zhang, S. Xue, Z. Liu, S. Diao, L. Zhu, P. Luo, S. Han, and E. Xie. Fast-dllm: Training-free
+acceleration of diffusion llm by enabling kv cache and parallel decoding. International Conference
+on Learning Representations, 2026.
+J. Yoo, W. Kim, and S. Hong. Redi: Rectified discrete flow. Advances in Neural Information Processing
+Systems, 2025.
+M. Zhou, H. Zheng, Z. Wang, M. Yin, and H. Huang. Score identity distillation: Exponentially fast
+distillation of pretrained diffusion models for one-step generation. In International Conference on
+Machine Learning, 2024.
+Y. Zhu, X. Wang, S. Lathuilière, and V. Kalogeiton. Di[m]o: Distilling masked diffusion models into
+one-step generator. 2025 IEEE/CVF International Conference on Computer Vision (ICCV), pages
+18606–18618, 2025.
+14
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+A. Detailed Discussion of Related Work
+Acceleration for Continuous Diffusion Models and Flow Matching.
+DDIM (Song et al., 2020)
+and DPM-Solver (Lu et al., 2022) leverage deterministic or higher-order ODE solvers to speed up
+sampling of diffusion models and flow matching. Caching-based methods, such as DeepCache (Ma
+et al., 2024), reuse intermediate computations across timesteps to further improve efficiency. Another
+line of approaches focuses on distilling the original multi-step generation process into fewer steps.
+Progressive distillation (Salimans and Ho, 2022) iteratively compresses the sampling trajectory,
+while score identity distillation (Zhou et al., 2024) and consistency models (Song et al., 2023)
+enforce consistency across different noise levels to enable one- or few-step generation. Rectified
+flow (Liu et al., 2022) provides another perspective by reformulating the generative process as a
+straightened flow, which naturally reduces the complexity of sampling. Shortcut models (Frans et al.,
+2025) and MeanFlow (Geng et al., 2025a) introduce tailored modifications to the flow formulation
+to achieve faster generation. In particular, MeanFlow defines an average velocity field over time
+intervals and derives a self-consistent fixed-point identity, which is the direct inspiration for our
+work. Improved MeanFlow (Geng et al., 2025b) further addresses training instability through a
+velocity-based reparameterization, and pixel MeanFlow (Lu et al., 2026) proposes an 𝑥-prediction
+parameterization that improves empirical stability by directly supervising the clean data prediction.
+Acceleration of Diffusion Language Models.
+Extending acceleration techniques to discrete diffu-
+sion models and diffusion language models has attracted increasing attention. SDTT (Deschenaux
+and Gulcehre, 2025) and Di4C (Hayakawa et al., 2025) accelerate discrete diffusion by distilling
+multi-step trajectories into fewer steps, where Di4C additionally exploits dimensional correlations to
+improve distillation quality. ReDi (Yoo et al., 2025) iteratively rectifies the coupling between source
+and target distributions to reduce the factorization error of discrete flow models, enabling efficient
+few-step generation. Di[M]O (Zhu et al., 2025) proposes to distill masked diffusion models into a
+one-step generator via token-level distribution matching in an on-policy framework, and introduces a
+token initialization strategy to inject stochasticity into the otherwise deterministic initial distribution.
+On the inference side, Fast-dLLM (Wu et al., 2026) accelerates diffusion LLM inference without
+additional training by introducing a block-wise approximate KV cache mechanism for bidirectional
+diffusion models and a confidence-aware parallel decoding strategy. Jacobi Forcing (Hu et al., 2026)
+takes a complementary approach by converting autoregressive LLMs into causal parallel decoders
+through progressive distillation on the model’s own Jacobi decoding trajectories, preserving the causal
+backbone and KV cache compatibility while achieving significant wall-clock speedup. In contrast to
+these approaches, our method directly learns an average generator for CTMCs without multi-step
+distillation, and addresses the discrete analogue of the MeanFlow fixed-point identity at the level of
+the transition rate operator.
+B. Theoretical Details for Section 2
+B.1. Proof of Training Objective for Discrete Flow Matching
+Proof. We show how the Bregman divergence-based training objective
+𝔼
+h ∑︁
+𝑧≠𝑥𝑡
+𝐷𝐹
+ 𝑄𝑡(𝑥𝑡, 𝑧|𝑥1) ∥𝑄𝑡(𝑥𝑡, 𝑧)i
+,
+𝐹(𝑥) = 𝑥log 𝑥,
+reduces to a cross-entropy loss with respect to the posterior 𝑝1|𝑡when using the coordinate-wise
+mixture path.
+15
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Step 0: Off-diagonal restriction. The generator 𝑄𝑡(𝑥, 𝑧|𝑥1) contains a negative diagonal term
+−𝛿𝑥(𝑧) and is therefore a signed measure. Since the objective only sums over 𝑧≠𝑥, we restrict both
+conditional and marginal generators to their off-diagonal parts:
+𝑄off
+𝑡(𝑥, 𝑧|𝑥1) := 𝑄𝑡(𝑥, 𝑧|𝑥1)1𝑧≠𝑥.
+Under this restriction, all quantities are non-negative and the Bregman divergence is well-defined.
+Step 1: Bregman divergence. For 𝐹(𝑥) = 𝑥log 𝑥, the Bregman divergence is
+𝐷𝐹(𝑎∥𝑏) = 𝑎log 𝑎
+𝑏−𝑎+ 𝑏.
+Step 2: Conditional and oracle rates. From the coordinate-wise mixture path, for a single
+coordinate 𝑑,
+𝑄cond(𝑧𝑑) = 𝑄𝑑
+𝑡(𝑥𝑑
+𝑡, 𝑧𝑑|𝑥𝑑
+1)1𝑧𝑑≠𝑥𝑑
+𝑡= 𝜆𝑡1{𝑥𝑑
+1≠𝑥𝑑
+𝑡} 𝛿𝑥𝑑
+1 (𝑧𝑑),
+where we used that the original generator contains an additional diagonal term −𝛿𝑥𝑑
+𝑡(𝑧𝑑), which
+vanishes after restricting to 𝑧𝑑≠𝑥𝑑
+𝑡. The corresponding oracle rate is
+𝑄oracle(𝑧𝑑) = 𝑄𝑑
+𝑡(𝑥𝑑
+𝑡, 𝑧𝑑) = 𝜆𝑡𝑝𝑑
+1|𝑡(𝑧𝑑|𝑥𝑡),
+𝑧𝑑≠𝑥𝑑
+𝑡.
+Step 3: Support of the conditional rate. The conditional rate has support only at 𝑧𝑑= 𝑥𝑑
+1 when
+𝑥𝑑
+1 ≠𝑥𝑑
+𝑡, and is identically zero otherwise. Hence the analysis splits into two cases.
+Step 4: KL term at the target jump (𝑥𝑑
+1 ≠𝑥𝑑
+𝑡). For 𝑧𝑑= 𝑥𝑑
+1:
+𝑄cond(𝑥𝑑
+1) log
+𝑄cond(𝑥𝑑
+1)
+𝑄oracle(𝑥𝑑
+1) = 𝜆𝑡log
+𝜆𝑡
+𝜆𝑡𝑝𝑑
+1|𝑡(𝑥𝑑
+1|𝑥𝑡) = 𝜆𝑡
+  −log 𝑝𝑑
+1|𝑡(𝑥𝑑
+1|𝑥𝑡)
+.
+Step 5: Linear terms. The remaining terms in 𝐷𝐹give
+−𝑄cond(𝑥𝑑
+1) +
+∑︁
+𝑧𝑑≠𝑥𝑑
+𝑡
+𝑄oracle(𝑧𝑑) = −𝜆𝑡+ 𝜆𝑡
+ 1 −𝑝𝑑
+1|𝑡(𝑥𝑑
+𝑡|𝑥𝑡)
+.
+Step 6: Case 𝑥𝑑
+1 = 𝑥𝑑
+𝑡. In this case, 𝑄cond(𝑧𝑑) = 0 for all 𝑧𝑑≠𝑥𝑑
+𝑡. Hence
+𝐷𝐹(0∥𝑄oracle(𝑧𝑑)) = 𝑄oracle(𝑧𝑑),
+and summing over 𝑧𝑑≠𝑥𝑑
+𝑡yields
+𝜆𝑡(1 −𝑝𝑑
+1|𝑡(𝑥𝑑
+𝑡|𝑥𝑡)).
+Step 7: Combine terms. Combining both cases using the indicator 𝛿𝑥𝑑
+1 (𝑥𝑑
+𝑡), the Bregman diver-
+gence reduces to
+𝜆𝑡
+n
+−(1 −𝛿𝑥𝑑
+1 (𝑥𝑑
+𝑡)) log 𝑝𝑑
+1|𝑡(𝑥𝑑
+1|𝑥𝑡) + 𝛿𝑥𝑑
+1 (𝑥𝑑
+𝑡) −𝑝𝑑
+1|𝑡(𝑥𝑑
+𝑡|𝑥𝑡)
+o
+.
+Summing over all coordinates 𝑑= 1, . . . , D, we obtain exactly the training objective
+𝔼
+h
+𝜆𝑡
+D
+∑︁
+𝑑=1
+n
+−(1 −𝛿𝑥𝑑
+1 (𝑥𝑑
+𝑡)) log 𝑝𝑑
+1|𝑡(𝑥𝑑
+1|𝑥𝑡) + 𝛿𝑥𝑑
+1 (𝑥𝑑
+𝑡) −𝑝𝑑
+1|𝑡(𝑥𝑑
+𝑡|𝑥𝑡)
+oi
+.
+This completes the proof.
+□
+16
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+B.2. Proof of Proposition 3.1 of Campbell et al. (2024)
+We include the proof of Proposition 3.1 of Campbell et al. (2024) here for completeness. Let 𝑄𝑡(𝑥, 𝑧|𝑥1)
+denote the conditional transition rate from state 𝑥to 𝑧that generates the conditional probability path
+𝑝𝑡|1(·|𝑥1), i.e., it satisfies the Kolmogorov forward equation
+𝜕𝑡𝑝𝑡|1(𝑥|𝑥1) =
+∑︁
+𝑧
+𝑄𝑡(𝑧, 𝑥|𝑥1) 𝑝𝑡|1(𝑧|𝑥1).
+Taking expectation over 𝑥1 ∼𝑝1, we obtain
+𝜕𝑡𝑝𝑡(𝑥) = 𝔼𝑥1∼𝑝1(𝑥1)
+
+𝜕𝑡𝑝𝑡|1(𝑥|𝑥1)
+
+(definition of 𝑝𝑡)
+= 𝔼𝑥1∼𝑝1(𝑥1)
+ ∑︁
+𝑧
+𝑄𝑡(𝑧, 𝑥|𝑥1) 𝑝𝑡|1(𝑧|𝑥1)
+
+=
+∑︁
+𝑧
+∑︁
+𝑥1
+𝑝1(𝑥1) 𝑝𝑡|1(𝑧|𝑥1) 𝑄𝑡(𝑧, 𝑥|𝑥1)
+=
+∑︁
+𝑧
+∑︁
+𝑥1
+𝑝𝑡(𝑧) 𝑝1|𝑡(𝑥1|𝑧) 𝑄𝑡(𝑧, 𝑥|𝑥1)
+(Bayes’ rule)
+=
+∑︁
+𝑧
+𝔼𝑥1∼𝑝1|𝑡(·|𝑧)
+
+𝑄𝑡(𝑧, 𝑥|𝑥1)
+
+𝑝𝑡(𝑧).
+Comparing with the Kolmogorov forward equation
+𝜕𝑡𝑝𝑡(𝑥) =
+∑︁
+𝑧
+𝑄𝑡(𝑧, 𝑥) 𝑝𝑡(𝑧),
+we identify the marginal transition rate as
+𝑄𝑡(𝑧, 𝑥) = 𝔼𝑥1∼𝑝1|𝑡(·|𝑧)
+
+𝑄𝑡(𝑧, 𝑥|𝑥1)
+
+.
+Equivalently, reparameterizing the indices to express the transition rate from 𝑥to 𝑧, we obtain
+𝑄𝑡(𝑥, 𝑧) = 𝔼𝑥1∼𝑝1|𝑡(·|𝑥)
+
+𝑄𝑡(𝑥, 𝑧|𝑥1)
+
+.
+This shows that 𝑄𝑡(𝑥, 𝑧) generates the marginal probability path 𝑝𝑡(𝑥).
+B.3. Proof of the MeanFlow Identity
+The MeanFlow identity was originally proved by Geng et al. (2025a). We reproduce the proof here
+for completeness.
+Let 𝑥𝑡follow the flow defined by 𝑑
+𝑑𝑡𝑥𝑡= 𝑣(𝑥𝑡, 𝑡). By definition, the MeanFlow velocity is
+𝑢(𝑥𝑡, 𝑡, 𝑟) =
+1
+𝑟−𝑡
+∫
+𝑟
+𝑡
+𝑣(𝑥𝑠, 𝑠) 𝑑𝑠.
+Multiplying both sides by (𝑟−𝑡) gives
+(𝑟−𝑡) 𝑢(𝑥𝑡, 𝑡, 𝑟) =
+∫
+𝑟
+𝑡
+𝑣(𝑥𝑠, 𝑠) 𝑑𝑠.
+Taking the total derivative with respect to 𝑡and applying the fundamental theorem of calculus yields
+𝑑
+𝑑𝑡
+
+(𝑡−𝑟) 𝑢(𝑥𝑡, 𝑡, 𝑟)
+
+= 𝑣(𝑥𝑡, 𝑡).
+17
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Expanding the left-hand side using the product rule, we obtain
+(𝑡−𝑟) 𝑑
+𝑑𝑡𝑢(𝑥𝑡, 𝑡, 𝑟) + 𝑢(𝑥𝑡, 𝑡, 𝑟) = 𝑣(𝑥𝑡, 𝑡).
+Rearranging terms leads to the MeanFlow identity
+𝑢(𝑥𝑡, 𝑡, 𝑟) = 𝑣(𝑥𝑡, 𝑡) −(𝑡−𝑟) 𝑑
+𝑑𝑡𝑢(𝑥𝑡, 𝑡, 𝑟).
+Here, the total derivative is given by
+𝑑
+𝑑𝑡𝑢(𝑥𝑡, 𝑡, 𝑟) = 𝜕𝑡𝑢(𝑥𝑡, 𝑡, 𝑟) + 𝑣(𝑥𝑡, 𝑡) · ∇𝑥𝑡𝑢(𝑥𝑡, 𝑡, 𝑟).
+C. Theoretical Details
+C.1. Notation and the material derivative of a CTMC
+Throughout this appendix, 𝑥𝑑→𝑠denotes the state obtained from 𝑥by replacing its 𝑑-th coordinate
+with 𝑠, matrices are indexed by states and act on the right on row-vectors of probabilities, and 𝑃𝑡→𝑟
+denotes the propagator of the CTMC, 𝑃𝑡→𝑟(𝑥, 𝑦) = 𝑝𝑟|𝑡(𝑦|𝑥), which is the unique solution of
+𝜕𝑟𝑃𝑡→𝑟= 𝑃𝑡→𝑟𝑄𝑟
+|                {z                }
+forward
+,
+𝜕𝑡𝑃𝑡→𝑟= −𝑄𝑡𝑃𝑡→𝑟
+|                  {z                  }
+backward
+,
+𝑃𝑡→𝑡= 𝐼.
+(22)
+For each coordinate 𝑒define the row-stochastic matrix 𝑃𝑒
+𝑡that resamples coordinate 𝑒from the
+posterior, 𝑃𝑒
+𝑡(𝑥, 𝑥𝑒→𝑠) ≜𝑝𝑒
+1|𝑡(𝑠|𝑥) for all 𝑠∈S (the diagonal 𝑠= 𝑥𝑒included) and 𝑃𝑒
+𝑡(𝑥, 𝑦) = 0 otherwise.
+The coordinate-wise marginal generator of Section 3 is then exactly
+𝑄𝑡= 𝜆𝑡
+D
+∑︁
+𝑒=1
+ 𝑃𝑒
+𝑡−𝐼
+,
+𝑈𝜃
+𝑡,𝑟= 𝜇𝑡,𝑟
+D
+∑︁
+𝑑=1
+ ˜𝑃𝑑,𝜃
+𝑡,𝑟−𝐼
+,
+(23)
+with ˜𝑃𝑑,𝜃
+𝑡,𝑟(𝑥, 𝑥𝑑→𝑠) = ˜𝑝𝑑
+𝑡,𝑟(𝑠|𝑥). Indeed, for 𝑧𝑑≠𝑥𝑑the (𝑥, 𝑥𝑑→𝑧𝑑) entry of Equation 23 is 𝜆𝑡𝑝1|𝑡(𝑧𝑑|𝑥),
+the diagonal is 𝜆𝑡
+Í
+𝑒(𝑝𝑒
+1|𝑡(𝑥𝑒|𝑥) −1), and all entries at Hamming distance ≥2 vanish; in particular 𝑄𝑡
+is single-site supported.
+MeanFlow’s identity is obtained by differentiating (𝑡−𝑟)𝑢(𝑥𝑡, 𝑡, 𝑟) along the flow, which produces
+the material derivative
+𝑑
+𝑑𝑡= 𝜕𝑡+ 𝑣· ∇𝑥. The correct discrete counterpart is supplied by Dynkin’s
+formula. Let (𝑋𝑡) be the CTMC with generator 𝑄𝑡and let 𝑓𝑡be a time-dependent function on SD,
+viewed as a column vector, which is 𝐶1 in 𝑡. Then
+𝑀𝑡≜𝑓𝑡(𝑋𝑡) −
+∫
+𝑡
+0
+ 𝜕𝑠𝑓𝑠+ 𝑄𝑠𝑓𝑠
+(𝑋𝑠) 𝑑𝑠
+is a martingale, and consequently 𝑑
+𝑑𝑡𝔼[ 𝑓𝑡(𝑋𝑡)] = 𝔼[(𝜕𝑡𝑓𝑡+ 𝑄𝑡𝑓𝑡)(𝑋𝑡)]. We therefore define the material
+derivative along the CTMC as
+𝐷
+𝐷𝑡≜𝜕𝑡+ 𝑄𝑡·,
+(24)
+where 𝑄𝑡· denotes left multiplication (applied columnwise for matrix-valued fields). This is the
+discrete analogue of 𝑣· ∇𝑥: the generator is the directional derivative along the process.
+18
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+C.2. Proof of Proposition 1
+We first record the basic properties of 𝑈𝑡,𝑟= 𝑃𝑡→𝑟−𝐼
+𝑟−𝑡
+defined in Equation 7.
+Proposition 2 (Basic properties of the average generator). For 0 ≤𝑡< 𝑟≤1: (a) 𝑈𝑡,𝑟(𝑥, 𝑧) ≥0 for all
+𝑧≠𝑥and Í
+𝑧𝑈𝑡,𝑟(𝑥, 𝑧) = 0, i.e. 𝑈𝑡,𝑟is itself a valid generator; (b) 𝛿⊤
+𝑥(𝐼+ (𝑟−𝑡)𝑈𝑡,𝑟) = 𝑝𝑟|𝑡(·|𝑥) for every
+𝑥, i.e. a single Euler step of size 𝑟−𝑡reproduces the exact transition law; (c) lim𝑟→𝑡𝑈𝑡,𝑟= 𝑄𝑡.
+Proof. (a) 𝑃𝑡→𝑟is row-stochastic, so its off-diagonal entries are nonnegative and its rows sum to one;
+subtracting 𝐼and dividing by 𝑟−𝑡> 0 preserves nonnegativity off the diagonal and yields zero row
+sums. (b) Immediate from 𝛿⊤
+𝑥𝑃𝑡→𝑟= 𝑝𝑟|𝑡(·|𝑥). (c) lim𝑟→𝑡
+𝑃𝑡→𝑟−𝐼
+𝑟−𝑡
+= 𝜕𝑟𝑃𝑡→𝑟|𝑟=𝑡= 𝑄𝑡by Equation 22.
+□
+Proof of Proposition 1. Let Ω𝑡,𝑟≜(𝑡−𝑟) 𝑈𝑡,𝑟= 𝐼−𝑃𝑡→𝑟. By the backward equation in Equation 22,
+𝜕𝑡Ω𝑡,𝑟= −𝜕𝑡𝑃𝑡→𝑟= 𝑄𝑡𝑃𝑡→𝑟= 𝑄𝑡
+ 𝐼−Ω𝑡,𝑟
+ = 𝑄𝑡−𝑄𝑡Ω𝑡,𝑟,
+that is 𝜕𝑡Ω𝑡,𝑟+𝑄𝑡Ω𝑡,𝑟= 𝑄𝑡, which is exactly 𝐷
+𝐷𝑡[(𝑡−𝑟)𝑈𝑡,𝑟] = 𝑄𝑡with the material derivative Equation 24.
+Expanding the left-hand side with the product rule,
+𝜕𝑡Ω𝑡,𝑟= 𝑈𝑡,𝑟+ (𝑡−𝑟) 𝜕𝑡𝑈𝑡,𝑟,
+𝑄𝑡Ω𝑡,𝑟= (𝑡−𝑟) 𝑄𝑡𝑈𝑡,𝑟,
+and substituting gives 𝑈𝑡,𝑟+ (𝑡−𝑟)(𝜕𝑡𝑈𝑡,𝑟+ 𝑄𝑡𝑈𝑡,𝑟) = 𝑄𝑡, i.e. Equation 8. The boundary case 𝑟= 𝑡
+reduces to 𝑈𝑡,𝑡= 𝑄𝑡, consistent with Proposition 2(c).
+□
+C.3. Marginal projection and the tractable projected transport term
+The exact 𝑈𝑡,𝑟of Equation 7 is not single-site supported (a finite-time propagator moves many coordi-
+nates at once), whereas the model Equation 23 is. We therefore enforce Equation 8 after projecting
+onto per-coordinate marginals with Π𝑑of Equation 13, which is precisely the information a coordinate-
+factorized sampler consumes.
+Proposition 3 (Properties of Π𝑑). Let 𝑧𝑑≠𝑥𝑑. Then (a) Π𝑑is linear and commutes with 𝜕𝑡; (b) if 𝑀
+is single-site supported then Π𝑑[𝑀](𝑥, 𝑧𝑑) = 𝑀(𝑥, 𝑥𝑑→𝑧𝑑), in particular Π𝑑[𝑄𝑡](𝑥, 𝑧𝑑) = 𝜆𝑡𝑝1|𝑡(𝑧𝑑|𝑥) and
+Π𝑑[𝑈𝜃
+𝑡,𝑟](𝑥, 𝑧𝑑) = 𝜇𝑡,𝑟˜𝑝𝑡,𝑟(𝑧𝑑|𝑥); (c) Π𝑑[𝐼](𝑥, 𝑧𝑑) = 0 and Π𝑑[𝑃𝑒
+𝑡](𝑥, 𝑧𝑑) = 𝛿𝑒𝑑𝑝1|𝑡(𝑧𝑑|𝑥); (d) Π𝑑[𝑈𝑡,𝑟](𝑥, 𝑧𝑑) =
+𝑝𝑑
+𝑟|𝑡(𝑧𝑑|𝑥)/(𝑟−𝑡), so that matching Π𝑑[𝑈𝜃
+𝑡,𝑟] = Π𝑑[𝑈𝑡,𝑟] is exactly the condition that the coordinate-
+factorized one-step sampler reproduce the correct per-coordinate marginals of the true jump kernel.
+Proof. (a) is immediate. (b) The only 𝑦within Hamming distance one of 𝑥with 𝑦𝑑= 𝑧𝑑≠𝑥𝑑is
+𝑦= 𝑥𝑑→𝑧𝑑. (c) Apply (b) to 𝐼(supported on 𝑦= 𝑥, which has 𝑦𝑑= 𝑥𝑑≠𝑧𝑑) and to 𝑃𝑒
+𝑡(supported on
+𝑦= 𝑥𝑒→𝑠, which requires 𝑒= 𝑑and 𝑠= 𝑧𝑑). (d) Follows from Equation 7 and Equation 13.
+□
+Applying Π𝑑to Equation 8 and using Proposition 3(a)–(b) gives the projected identity we train
+against: for every 𝑑and every 𝑧𝑑≠𝑥𝑑,
+Π𝑑
+𝑈𝑡,𝑟
+
+(𝑥, 𝑧𝑑) = 𝜆𝑡𝑝1|𝑡(𝑧𝑑|𝑥) −(𝑡−𝑟)
+
+𝜕𝑡Π𝑑
+𝑈𝑡,𝑟
+
+(𝑥, 𝑧𝑑) + Π𝑑
+𝑄𝑡𝑈𝑡,𝑟
+
+(𝑥, 𝑧𝑑)
+
+.
+(25)
+Only the projected transport term couples different coordinates. This is not because Π𝑑fails to
+commute with 𝑄𝑡: since Π𝑑[𝑀] = 𝑀𝐸𝑑acts on the target state, it commutes with left multiplication,
+Π𝑑[𝑄𝑡𝑀] = 𝑄𝑡Π𝑑[𝑀], as made explicit in Equation 26. Rather, 𝑄𝑡acts on the source state, so
+𝑄𝑡Π𝑑[𝑈𝑡,𝑟] evaluates Π𝑑[𝑈𝑡,𝑟] at the states 𝑥𝑒→𝑠reached by a jump of any coordinate 𝑒, not only of 𝑑.
+The next proposition evaluates it in closed-form for the single-site model, which is what makes the
+objective tractable and proves Equation 15.
+19
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Proposition 4 (Tractable projected transport term). Let 𝑄𝑡and 𝑈𝜃
+𝑡,𝑟be as in Equation 23. Then for
+every 𝑑and every 𝑧𝑑≠𝑥𝑑,
+Π𝑑
+𝑄𝑡𝑈𝜃
+𝑡,𝑟
+
+(𝑥, 𝑧𝑑) = 𝜆𝑡𝜇𝑡,𝑟
+h
+𝐶𝑑
+𝜃(𝑥, 𝑧𝑑) −𝑝1|𝑡(𝑧𝑑| 𝑥)
+i
+,
+with 𝐶𝑑
+𝜃as in Equation 16.
+Proof. Expanding the product of the two expressions in Equation 23,
+𝑄𝑡𝑈𝜃
+𝑡,𝑟= 𝜆𝑡𝜇𝑡,𝑟
+D
+∑︁
+𝑒=1
+D
+∑︁
+𝑑′=1
+
+𝑃𝑒˜𝑃𝑑′ −𝑃𝑒−˜𝑃𝑑′ + 𝐼
+
+,
+where we drop the sub/superscripts 𝑡, 𝑟, 𝜃for readability. Fix 𝑑and 𝑧𝑑≠𝑥𝑑and apply Π𝑑term by
+term.
+Step 1. By Proposition 3(c), Π𝑑[𝐼] = 0, Í
+𝑒,𝑑′ Π𝑑[𝑃𝑒](𝑥, 𝑧𝑑) = D 𝑝1|𝑡(𝑧𝑑|𝑥) and Í
+𝑒,𝑑′ Π𝑑[˜𝑃𝑑′](𝑥, 𝑧𝑑) =
+D ˜𝑝𝑡,𝑟(𝑧𝑑|𝑥), each sum contributing a factor D from the free index.
+Step 2. For the products, write (𝑃𝑒˜𝑃𝑑′)(𝑥, 𝑦) = Í
+𝑠𝑃𝑒(𝑥, 𝑥𝑒→𝑠) ˜𝑃𝑑′(𝑥𝑒→𝑠, 𝑦), so that 𝑦must be of the
+form 𝑦= 𝑥𝑒→𝑠, 𝑑′→𝑠′. Requiring 𝑦𝑑= 𝑧𝑑≠𝑥𝑑forces 𝑑∈{𝑒, 𝑑′} with the corresponding new symbol
+equal to 𝑧𝑑. Two cases: (i) 𝑑′ = 𝑑: then 𝑠′ = 𝑧𝑑and the remaining index 𝑠is free and summed over
+by Π𝑑, giving, for every 𝑒(including 𝑒= 𝑑), Í
+𝑠𝑝𝑒
+1|𝑡(𝑠|𝑥)˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑒→𝑠) = 𝔼𝑠∼𝑝𝑒
+1|𝑡(·|𝑥) [˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑒→𝑠)]. (ii)
+𝑑′ ≠𝑑: then coordinate 𝑑can only be set by the first factor, so 𝑒= 𝑑and 𝑠= 𝑧𝑑; the index 𝑠′ is free
+and summed by Π𝑑, and since ˜𝑃𝑑′ is row-stochastic, Í
+𝑠′ ˜𝑝𝑡,𝑟(𝑠′|𝑥𝑑→𝑧𝑑) = 1. Each of the D −1 values of
+𝑑′ contributes 𝑝1|𝑡(𝑧𝑑|𝑥). Summing,
+∑︁
+𝑒,𝑑′
+Π𝑑
+𝑃𝑒˜𝑃𝑑′
+(𝑥, 𝑧𝑑) =
+∑︁
+𝑒
+𝔼𝑠∼𝑝𝑒
+1|𝑡(·|𝑥)
+
+˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑒→𝑠)
+
++ (D −1) 𝑝1|𝑡(𝑧𝑑|𝑥).
+Step 3. Combining Steps 1 and 2,
+Π𝑑
+𝑄𝑡𝑈𝜃
+(𝑥, 𝑧𝑑) = 𝜆𝑡𝜇𝑡,𝑟
+h ∑︁
+𝑒
+𝔼𝑠∼𝑝𝑒
+1|𝑡(·|𝑥)
+
+˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑒→𝑠)
+
+−D ˜𝑝𝑡,𝑟(𝑧𝑑|𝑥) −𝑝1|𝑡(𝑧𝑑|𝑥)
+i
+,
+which is the claim after grouping the D copies of ˜𝑝𝑡,𝑟(𝑧𝑑|𝑥) into the D summands of Equation 16.
+□
+What the objective learns.
+The projected identity Equation 25 is closed in the per-coordinate
+marginals. For a matrix 𝑀with zero row sums, extend Π𝑑[𝑀](𝑥, ·) to 𝑧𝑑= 𝑥𝑑by Π𝑑[𝑀](𝑥, 𝑥𝑑) ≜
+Í
+𝑦: 𝑦𝑑=𝑥𝑑𝑀(𝑥, 𝑦) = −Í
+𝑠≠𝑥𝑑Π𝑑[𝑀](𝑥, 𝑠). Exchanging the sums in Equation 13 gives
+Π𝑑
+𝑄𝑡𝑀
+
+(𝑥, 𝑧𝑑) =
+∑︁
+𝑦: 𝑦𝑑=𝑧𝑑
+∑︁
+𝑥′
+𝑄𝑡(𝑥, 𝑥′) 𝑀(𝑥′, 𝑦) =
+∑︁
+𝑥′
+𝑄𝑡(𝑥, 𝑥′) Π𝑑[𝑀](𝑥′, 𝑧𝑑),
+(26)
+so the projected transport term depends on 𝑀only through its off-diagonal per-coordinate marginals
+at the states 𝑥′ reachable from 𝑥in one jump; Equation 35 is Equation 26 written out for a single-site
+𝑀. In particular Π𝑑[𝑄𝑡𝑈𝜃
+𝑡,𝑟] = Π𝑑[𝑄𝑡𝑈𝑡,𝑟] whenever Π𝑑[𝑈𝜃
+𝑡,𝑟] = Π𝑑[𝑈𝑡,𝑟] for all 𝑑and all states, so
+replacing 𝑈𝑡,𝑟by the single-site model in the projected transport term is not an approximation.
+Proposition 5 (Fixed point of the projected identity). Fix 𝑟and assume that 𝑡↦→𝑄𝑡is continuous on
+[𝑡0, 𝑟]. Let 𝑉𝑡(𝑥, 𝑧𝑑), 𝑧𝑑≠𝑥𝑑, be per-coordinate rates that are 𝐶1 in 𝑡and bounded on [𝑡0, 𝑟), extended to
+𝑧𝑑= 𝑥𝑑by zero row sums, and suppose that for all 𝑡∈[𝑡0, 𝑟), 𝑥, 𝑑and 𝑧𝑑≠𝑥𝑑,
+𝑉𝑡(𝑥, 𝑧𝑑) = Π𝑑[𝑄𝑡](𝑥, 𝑧𝑑) −(𝑡−𝑟)
+
+𝜕𝑡𝑉𝑡(𝑥, 𝑧𝑑) +
+∑︁
+𝑥′
+𝑄𝑡(𝑥, 𝑥′) 𝑉𝑡(𝑥′, 𝑧𝑑)
+
+.
+(27)
+Then 𝑉𝑡= Π𝑑[𝑈𝑡,𝑟], i.e. 𝑉𝑡(𝑥, 𝑧𝑑) = 𝑝𝑑
+𝑟|𝑡(𝑧𝑑|𝑥)/(𝑟−𝑡).
+20
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Proof. By Equation 26, Equation 25 states that Π𝑑[𝑈𝑡,𝑟], which is bounded by Proposition 2(c), satisfies
+Equation 27. For uniqueness, let 𝑊𝑡≜(𝑡−𝑟)𝑉𝑡. Since 𝜕𝑡𝑊𝑡= 𝑉𝑡+ (𝑡−𝑟)𝜕𝑡𝑉𝑡, Equation 27 is equivalent
+to the linear system 𝜕𝑡𝑊𝑡= Π𝑑[𝑄𝑡] −Q𝑡𝑊𝑡with (Q𝑡𝑊)(𝑥, 𝑧𝑑) ≜Í
+𝑥′ 𝑄𝑡(𝑥, 𝑥′)𝑊(𝑥′, 𝑧𝑑), in the finitely
+many off-diagonal entries of 𝑊𝑡(the diagonal ones being fixed by zero row sums). Boundedness of
+𝑉𝑡gives 𝑊𝑡→0 as 𝑡→𝑟. A linear ODE with continuous coefficients has a unique solution with a
+prescribed terminal value, so 𝑊𝑡, and hence 𝑉𝑡, is unique.
+□
+At the population optimum of Equation 11, a model that can match the marginal rate satisfies
+𝑄𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑) = Π𝑑[𝑄𝑡](𝑥𝑡, 𝑧𝑑), the minimizer of the Bregman divergence to the conditional rate. By
+Equation 10 and Equation 26 this is Equation 27 for 𝑉𝑡= Π𝑑[𝑈𝜃
+𝑡,𝑟], so Π𝑑[𝑈𝜃
+𝑡,𝑟] = Π𝑑[𝑈𝑡,𝑟]: the objective
+learns the per-coordinate marginals of the exact finite-step kernel. Regressing Π𝑑[𝑈𝜃
+𝑡,𝑟] directly onto
+Π𝑑[𝑈𝑡,𝑟] has the same solution, but requires samples of the kernel over [𝑡, 𝑟], i.e. multi-step trajectories
+of a teacher; the projected identity only requires the instantaneous rate and single-coordinate
+perturbations of the current state.
+C.4. The masked path
+For the masked source 𝑝𝑑
+0 = 𝛿m, with m the mask token and M(𝑥) the set of masked coordinates of 𝑥,
+the posterior and the network satisfy the carry-over property 𝑝𝑒
+1|𝑡(·|𝑥) = ˜𝑝𝑒
+𝑡,𝑟(·|𝑥) = 𝛿𝑥𝑒for 𝑒∉M(𝑥),
+and neither predicts m. If 𝑒∉M(𝑥) then 𝑥𝑒→𝑠= 𝑥almost surely and the 𝑒-th summand of Equation 16
+vanishes; if 𝑒= 𝑑∈M(𝑥), carry-over gives ˜𝑝𝑑
+𝑡,𝑟(·|𝑥𝑑→𝑠) = 𝛿𝑠and 𝔼𝑠[𝛿𝑠(𝑧𝑑)] = 𝑝1|𝑡(𝑧𝑑|𝑥). Hence
+𝐶𝑑
+𝜃(𝑥𝑡, 𝑧𝑑) =  𝑝1|𝑡(𝑧𝑑|𝑥𝑡) −˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑡) + 𝐶𝑑
+cross(𝑥𝑡, 𝑧𝑑),
+(28)
+with 𝐶𝑑
+cross(𝑥𝑡, 𝑧𝑑) ≜Í
+𝑒∈M(𝑥𝑡)\{𝑑}
+ 𝔼𝑠∼𝑝𝑒
+1|𝑡(·|𝑥𝑡) [˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑒→𝑠
+𝑡
+)] −˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑡), so that Γ𝑑
+𝜃of Equation 18,
+which contains the projected transport term, reduces to 𝐶𝑑
+cross and Equation 17 becomes
+𝑄𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑) = 𝜆𝑡˜𝑝𝑡,𝑟(𝑧𝑑| 𝑥𝑡) + sg
+n
+(𝑡−𝑟) 𝜇𝑡,𝑟
+h
+𝜕𝑡˜𝑝𝑡,𝑟(𝑧𝑑| 𝑥𝑡) + 𝜆𝑡𝐶𝑑
+cross(𝑥𝑡, 𝑧𝑑)
+io
+.
+(29)
+Since unmasked coordinates contribute nothing, 𝐶𝑑
+cross is estimated with a lower variance than
+Equation 19 by drawing 𝑒∼Unif(M(𝑥𝑡)) and 𝑠∼𝑝𝑒
+1|𝑡(·|𝑥𝑡) and setting
+b
+𝐶𝑑
+cross(𝑥𝑡, 𝑧𝑑) =
+M(𝑥𝑡)
+ · 1[𝑒≠𝑑] ·
+
+˜𝑝𝑡,𝑟
+ 𝑧𝑑| 𝑥𝑒→𝑠
+𝑡
+ −˜𝑝𝑡,𝑟
+ 𝑧𝑑| 𝑥𝑡
+
+.
+(30)
+For an unmasked 𝑑the shifted probability is ˆ𝑞𝑑
+𝜃= 𝛿𝑥𝑑
+𝑡, and for a masked 𝑑it satisfies ˆ𝑞𝑑
+𝜃(m|𝑥𝑡) = 0, so
+Equation 21 reduces to a weighted cross-entropy over the masked coordinates,
+L˜𝑝(𝜃) = 𝔼𝑥1,(𝑡,𝑟),𝑥𝑡
+"
+𝜆𝑡
+∑︁
+𝑑∈M(𝑥𝑡)
+−log
+
+˜𝑝𝑡,𝑟(𝑥𝑑
+1 | 𝑥𝑡) + sg
+n (𝑡−𝑟)𝜇𝑡,𝑟
+𝜆𝑡
+h
+𝜕𝑡˜𝑝𝑡,𝑟(𝑥𝑑
+1 | 𝑥𝑡) + 𝜆𝑡𝐶𝑑
+cross(𝑥𝑡, 𝑥𝑑
+1)
+io#
++ const.
+(31)
+This is the objective we use on ImageNet.
+C.5. Sampling with the Discrete Average Generator
+Sampling.
+Algorithm 2 takes, independently for every coordinate, one Euler step of the learned
+per-coordinate average generator; its one-step kernel is the product
+𝐾𝜃
+𝑡,𝑟(𝑥𝑡, 𝑦) =
+D
+Ö
+𝑑=1
+h
+𝛿𝑥𝑑
+𝑡(𝑦𝑑) + (𝑟−𝑡) Π𝑑
+𝑈𝜃
+𝑡,𝑟
+
+(𝑥𝑡, 𝑦𝑑)
+i
+,
+(32)
+21
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Algorithm 2 Sampling with the Discrete Average Generator
+Require: Network 𝐻𝜃, schedule 𝜅𝑡, step count 𝐾, grid 0 = 𝜏0 < 𝜏1 < · · · < 𝜏𝐾= 1
+1: 𝑥𝜏0 ∼𝑝0
+⊲uniform noise; all-mask state for the masked source
+2: for 𝑘= 0, . . . , 𝐾−1 do
+3:
+𝑡←𝜏𝑘,
+𝑟←𝜏𝑘+1
+⊲a single jump of size 𝑟−𝑡
+4:
+˜𝑝𝑡,𝑟(· | 𝑥𝑡) ←𝐻𝜃(𝑥𝑡, 𝑡, 𝑟)
+⊲one NFE, D × |S|
+5:
+𝜔𝑡,𝑟←(𝑟−𝑡) 𝜇𝑡,𝑟= 𝜅𝑟−𝜅𝑡
+1 −𝜅𝑡
+⊲𝜔𝑡,𝑟∈[0, 1] by monotonicity of 𝜅
+6:
+for each coordinate 𝑑= 1, . . . , D independently do
+7:
+𝑥𝑑
+𝑟←𝑧𝑑∼˜𝑝𝑑
+𝑡,𝑟(· | 𝑥𝑡) with probability 𝜔𝑡,𝑟, else 𝑥𝑑
+𝑟←𝑥𝑑
+𝑡
+⊲masked source: unmasked 𝑥𝑑
+𝑡
+carried over
+8:
+end for
+9: end for
+10: return 𝑥𝜏𝐾
+whose 𝑑-th factor is a distribution over S, its entry at 𝑦𝑑= 𝑥𝑑
+𝑡being fixed by the zero row sum of
+Π𝑑[𝑈𝜃
+𝑡,𝑟]. This is not the full Euler step 𝛿⊤
+𝑥𝑡(𝐼+ (𝑟−𝑡)𝑈𝜃
+𝑡,𝑟): since 𝑈𝜃
+𝑡,𝑟is single-site supported, the latter
+moves at most one coordinate and, for large 𝜔𝑡,𝑟, has a negative diagonal entry. In Equation 32 the
+per-coordinate jump probability is (𝑟−𝑡) Π𝑑[𝑈𝜃
+𝑡,𝑟](𝑥𝑡, 𝑧𝑑) = (𝑟−𝑡) 𝜇𝑡,𝑟˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑡) = 𝜔𝑡,𝑟˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑡). Three
+properties follow directly from Section 3 and are worth making explicit.
+(i) Exact marginals. By Proposition 3(d), if Π𝑑[𝑈𝜃
+𝑡,𝑟] = Π𝑑[𝑈𝑡,𝑟] for every 𝑑, then the 𝑑-th factor
+of Equation 32 is exactly the 𝑑-th marginal of 𝑝𝑟|𝑡(·|𝑥𝑡), for any step size: no discretisation error is
+incurred by the per-coordinate jump. The remaining error of a single step is the dependence between
+the coordinates under 𝑝𝑟|𝑡(·|𝑥𝑡), which a product kernel cannot represent. Proposition 5 shows that
+these exact marginals are the population target of our objective.
+(ii) Train/test consistency. The factor 𝜇𝑡,𝑟appearing in the sampler is the same one used to
+parameterise 𝑈𝜃
+𝑡,𝑟during training, so the jump probability 𝜔𝑡,𝑟is by construction the quantity the
+training objective was written for. Had we instead kept the instantaneous scale, 𝑈𝜃= 𝜆𝑡˜𝑝1|𝑡, the
+sampler would use (𝑟−𝑡)𝜆𝑡while the conditional path jumps with probability 𝜅𝑟−𝜅𝑡
+1−𝜅𝑡; these agree only
+for the linear schedule 𝜅𝑡= 𝑡, and diverge as 𝑂((𝑟−𝑡)2¥𝜅𝑡) otherwise. Carrying 𝜇𝑡,𝑟explicitly removes
+this mismatch for any schedule.
+(iii) Where the learning shows up. The product in Equation 32 is over coordinates, so a single step
+cannot reproduce the correlations of the true kernel 𝑃𝑡→𝑟. What the objective can improve is therefore
+the per-coordinate marginals. We do not claim a guarantee on how much exact marginals reduce
+the error of a 𝐾-step sampler; we measure this exactly in Section 4.2. Setting 𝑟= 𝑡makes 𝜔𝑡,𝑟→0
+and recovers the instantaneous rate, so Algorithm 2 degenerates gracefully to the standard ancestral
+sampler as 𝐾grows.
+Finally, the network must be queried with the same (𝑡, 𝑟) conditioning it saw in training: a 𝐾-step
+run with a uniform grid only ever presents step sizes 𝑟−𝑡= 1/𝐾, so the training distribution over
+(𝑡, 𝑟) has to place mass on the step sizes that will actually be used at test time.
+C.6. The uniform-state (DUO) process
+Everything above is stated for the mixture path of Equation 2, whose conditional rate 𝑄𝑑
+𝑡(𝑥𝑑, 𝑧𝑑|𝑥𝑑
+1) =
+𝜆𝑡(𝛿𝑥𝑑
+1 (𝑧𝑑) −𝛿𝑥𝑑(𝑧𝑑)) does not depend on the source 𝑝0. For a uniform source this is the CTMC in
+which a single noise sample 𝑥0 is drawn once and each coordinate either still shows 𝑥0 or has already
+22
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+switched to 𝑥1. Uniform-state models in the DUO family (Sahoo et al., 2025) use a different CTMC
+with the same marginals 𝑝𝑡|1: the noise is re-randomised at every step, as in D3PM. This appendix
+records the parameterization we use on top of the uniform-state checkpoints of our text experiments.
+Throughout this subsection we follow the convention of DUO, in which 𝛼𝑡decreases with 𝑡, 𝑡= 0
+is data, a step goes from 𝑡to 𝑟< 𝑡, and 𝑐′ ≜(1 −𝛼𝑡)/|S|. Write 𝛼𝑡|𝑠= 𝛼𝑡/𝛼𝑠.
+Conditional and marginal rates.
+The conditional rate is obtained by differentiating the bridge
+𝑞(𝑥𝑠|𝑥𝑡, 𝑥1) ∝
+
+𝛼𝑡|𝑠𝛿𝑥𝑠(𝑥𝑡) +
+1−𝛼𝑡|𝑠
+|S|
+ 
+𝛼𝑠𝛿𝑥1(𝑥𝑠) + 1−𝛼𝑠
+|S|
+
+at 𝑠= 𝑡:
+𝑄𝑡(𝑥𝑡, 𝑧| 𝑥1) = −¤𝛼𝑡
+𝛼𝑡|S| · 𝛼𝑡1[𝑧= 𝑥1] + 𝑐′
+𝛼𝑡1[𝑥1 = 𝑥𝑡] + 𝑐′ ,
+𝑧≠𝑥𝑡.
+(33)
+Averaging Equation 33 over 𝑥1 ∼𝑝1|𝑡(·|𝑥𝑡) — which by Proposition 3.1 of Campbell et al. (2024) is the
+marginal generator — splits on 𝑥1 ∈{𝑧, 𝑥𝑡, other} and yields the closed-form
+−¤𝛼𝑡
+𝛼𝑡|S|
+
+𝑝𝑧
+𝛼𝑡+𝑐′
+𝑐′
++ 𝑝𝑥𝑡
+𝑐′
+𝛼𝑡+𝑐′ +
+(1 −𝑝𝑧−𝑝𝑥𝑡)
+
+. Unlike on the mixture path, this rate is not proportional to the posterior mass 𝑝𝑧of 𝑧,
+so the parameterization 𝑈𝜃
+𝑡,𝑟= 𝜇𝑡,𝑟˜𝑝𝑡,𝑟does not carry over.
+Parameterisation.
+We take 𝑈𝜃
+𝑡,𝑟from the exact marginalization of the bridge,
+Π𝑑
+𝑈𝜃
+𝑡,𝑟
+
+(𝑥𝑡, 𝑧𝑑) =
+1
+𝑡−𝑟𝔼𝑣∼˜𝑝𝑑
+𝑡,𝑟(·|𝑥𝑡)
+
+𝑞(𝑥𝑑
+𝑟= 𝑧𝑑| 𝑥𝑑
+𝑡, 𝑥𝑑
+1 = 𝑣)
+
+,
+𝑧𝑑≠𝑥𝑑
+𝑡,
+(34)
+which, because the bridge is a ratio of two functions affine in the one-hot encoding of 𝑣whose
+denominator takes only two values, has a closed-form costing 𝑂(|S|) per coordinate. The sampler
+draws each coordinate from the same kernel, so a single per-coordinate Euler step of Equation 34 is
+exactly the sampler step.
+The projected transport term in general form.
+Proposition 4 is a special case of an identity that
+holds for any pair of single-site matrices. Let 𝑞𝑒(𝑥, ·) and 𝑢𝑑(𝑥, ·) denote the coordinate-𝑒row of 𝑄𝑡
+and the coordinate-𝑑row of 𝑈𝜃
+𝑡,𝑟, both with zero row sum. Then
+Π𝑑
+𝑄𝑡𝑈𝜃
+𝑡,𝑟
+
+(𝑥, 𝑧𝑑) =
+D
+∑︁
+𝑒=1
+∑︁
+𝑠
+𝑞𝑒(𝑥, 𝑠) 𝑢𝑑 𝑥𝑒→𝑠, 𝑧𝑑
+=
+D
+∑︁
+𝑒=1
+Λ𝑒(𝑥)
+
+𝔼𝑠∼𝜈𝑒
+𝑢𝑑(𝑥𝑒→𝑠, 𝑧𝑑)
+
+−𝑢𝑑(𝑥, 𝑧𝑑)
+
+,
+(35)
+with Λ𝑒(𝑥) = Í
+𝑠≠𝑥𝑒𝑞𝑒(𝑥, 𝑠) the total outflow rate at coordinate 𝑒and 𝜈𝑒= 𝑞𝑒/Λ𝑒the normalised jump
+law. The terms with 𝑑′ ≠𝑑in the expansion vanish because 𝑢𝑑′ has zero row sum. Substituting the
+mixture-path rows recovers 𝜆𝑡𝜇𝑡,𝑟(𝐶𝑑
+𝜃−𝑝1|𝑡) of Equation 15; with the uniform-state rows, one draw
+𝑒∼Unif({1, . . . , D}), 𝑠∼𝜈𝑒gives the unbiased estimate D Λ𝑒(𝑥) 𝑢𝑑(𝑥𝑒→𝑠, 𝑧𝑑) −𝑢𝑑(𝑥, 𝑧𝑑) at the cost
+of a single forward pass. The objective is the Bregman divergence Equation 11 between Equation 33
+and the reparameterized rate, summed over all 𝑧𝑑≠𝑥𝑑
+𝑡.
+Sampling.
+The sampler draws each coordinate from the kernel Equation 34, i.e. it takes one per-
+coordinate Euler step of the learned average generator. Two conditioning details matter for a model
+trained this way. First, the final noise-removal step sets 𝛼𝑟= 1, i.e. 𝑟= 0, so its effective step size is
+the whole of 𝑡rather than the grid spacing; passing no step size at all there queries a conditioning
+23
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+path the network never sees in training. Second, a 𝐾-step run on a uniform grid only ever presents
+𝑡−𝑟= 1/𝐾, so the training distribution over (𝑡, 𝑟) must place mass there; the logit-normal design
+over (𝑡, 𝑟) used in our experiments places mass on the step sizes 1/𝐾of all budgets 𝐾≤64 that we
+evaluate.
+Finally, nucleus filtering and softmax temperature must be left at their neutral settings: both
+reshape the kernel after the fact and would break the calibration that Equation 34 relies on.
+C.7. Proof of Training Objective for Discrete Average Generator
+Proof. We show how the objective
+L(𝜃) = 𝔼
+" D
+∑︁
+𝑑=1
+∑︁
+𝑧𝑑≠𝑥𝑑
+𝑡
+𝐷𝐹
+
+𝑄𝑡(𝑥𝑡, 𝑧𝑑|𝑥1)
+ Π𝑑
+𝑈𝜃
+𝑡,𝑟
+
+(𝑥𝑡, 𝑧𝑑)+sg
+
+(𝑡−𝑟)
+
+𝜕𝑡Π𝑑
+𝑈𝜃
+𝑡,𝑟
+
+(𝑥𝑡, 𝑧𝑑)+Π𝑑
+𝑄𝑡𝑈𝜃
+𝑡,𝑟
+
+(𝑥𝑡, 𝑧𝑑)
+#
+,
+with Π𝑑[𝑈𝜃
+𝑡,𝑟](𝑥𝑡, 𝑧𝑑) = 𝜇𝑡,𝑟˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑡), reduces to Equation 36 and then to Equation 21.
+Step 1: Bregman divergence. For 𝐹(𝑥) = 𝑥log 𝑥, the Bregman divergence is
+𝐷𝐹(𝑎∥𝑏) = 𝑎log 𝑎
+𝑏−𝑎+ 𝑏.
+Step 2: Conditional and target rates. For a single coordinate 𝑑, restricting to off-diagonal entries
+𝑧𝑑≠𝑥𝑑
+𝑡, the conditional rate is
+𝑄cond(𝑧𝑑) = 𝑄𝑑
+𝑡(𝑥𝑑
+𝑡, 𝑧𝑑|𝑥𝑑
+1) 1𝑧𝑑≠𝑥𝑑
+𝑡= 𝜆𝑡1{𝑥𝑑
+1≠𝑥𝑑
+𝑡} 𝛿𝑥𝑑
+1 (𝑧𝑑).
+The target rate is
+𝑄𝜃(𝑧𝑑) = Π𝑑
+𝑈𝜃
+𝑡,𝑟
+
+(𝑥𝑡, 𝑧𝑑) + 𝐴𝑡(𝑥𝑡, 𝑧𝑑) = 𝜇𝑡,𝑟˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑡) + 𝐴𝑡(𝑥𝑡, 𝑧𝑑),
+where
+𝐴𝑡(𝑥𝑡, 𝑧𝑑) ≜sg
+
+(𝑡−𝑟)
+
+𝜕𝑡Π𝑑
+𝑈𝜃
+𝑡,𝑟
+
+(𝑥𝑡, 𝑧𝑑) + Π𝑑
+𝑄𝑡𝑈𝜃
+𝑡,𝑟
+
+(𝑥𝑡, 𝑧𝑑)
+
+.
+Step 3: Support of the conditional rate. The conditional rate has support only at 𝑧𝑑= 𝑥𝑑
+1 when
+𝑥𝑑
+1 ≠𝑥𝑑
+𝑡, and is identically zero otherwise. The analysis splits into two cases.
+Step 4: Log term (𝑥𝑑
+1 ≠𝑥𝑑
+𝑡). At 𝑧𝑑= 𝑥𝑑
+1:
+𝑄cond(𝑥𝑑
+1) log
+𝑄cond(𝑥𝑑
+1)
+𝑄𝜃(𝑥𝑑
+1)
+= 𝜆𝑡log 𝜆𝑡−𝜆𝑡log 𝑄𝜃(𝑥𝑑
+1),
+whose first term does not depend on 𝜃.
+Step 5: Linear terms (𝑥𝑑
+1 ≠𝑥𝑑
+𝑡). The linear terms from 𝐷𝐹at 𝑧𝑑= 𝑥𝑑
+1 are
+−𝑄cond(𝑥𝑑
+1) + 𝑄𝜃(𝑥𝑑
+1) = −𝜆𝑡+ 𝑄𝜃(𝑥𝑑
+1).
+For all 𝑧𝑑≠𝑥𝑑
+1 (and 𝑧𝑑≠𝑥𝑑
+𝑡), 𝑄cond(𝑧𝑑) = 0, so 𝐷𝐹(0∥𝑄𝜃(𝑧𝑑)) = 𝑄𝜃(𝑧𝑑). Summing over all 𝑧𝑑≠𝑥𝑑
+𝑡
+gives
+∑︁
+𝑧𝑑≠𝑥𝑑
+𝑡
+𝑄𝜃(𝑧𝑑) = 𝜇𝑡,𝑟
+ 1 −˜𝑝𝑡,𝑟(𝑥𝑑
+𝑡|𝑥𝑡) +
+∑︁
+𝑧𝑑≠𝑥𝑑
+𝑡
+𝐴𝑡(𝑥𝑡, 𝑧𝑑).
+24
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+The last term cannot in general be rewritten as −𝐴𝑡(𝑥𝑡, 𝑥𝑑
+𝑡): that step would require Í
+𝑧𝑑𝐴𝑡(𝑥𝑡, 𝑧𝑑) = 0,
+whereas Í
+𝑧𝑑𝜕𝑡Π𝑑[𝑈𝜃
+𝑡,𝑟](𝑥𝑡, 𝑧𝑑) = 𝜕𝑡𝜇𝑡,𝑟≠0. We therefore keep the linear contribution as Í
+𝑧𝑑≠𝑥𝑑
+𝑡𝑄𝜃(𝑧𝑑).
+For the rate Equation 17 with a normalized ˜𝑝𝑡,𝑟it takes a simple form: since Í
+𝑧𝑑˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑡) = 1 for all
+𝑡implies Í
+𝑧𝑑𝜕𝑡˜𝑝𝑡,𝑟(𝑧𝑑|𝑥𝑡) = 0, and each summand of 𝐶𝑑
+𝜃, as well as ˜𝑝𝑡,𝑟−𝑝1|𝑡, is a difference of two
+normalized distributions, the correction sums to zero over 𝑧𝑑∈S and
+∑︁
+𝑧𝑑≠𝑥𝑑
+𝑡
+𝑄𝜃(𝑧𝑑) = 𝜆𝑡
+∑︁
+𝑧𝑑≠𝑥𝑑
+𝑡
+ˆ𝑞𝑑
+𝜃(𝑧𝑑|𝑥𝑡) = 𝜆𝑡
+ 1 −ˆ𝑞𝑑
+𝜃(𝑥𝑑
+𝑡|𝑥𝑡)
+,
+with ˆ𝑞𝑑
+𝜃the shifted probability of Section 3.3. On the masked path, ˆ𝑞𝑑
+𝜃(m|𝑥𝑡) = 0 for masked 𝑑, so this
+is the constant 𝜆𝑡.
+Combining the linear contributions in this case gives
+−𝑄cond(𝑥𝑑
+1) +
+∑︁
+𝑧𝑑≠𝑥𝑑
+𝑡
+𝑄𝜃(𝑧𝑑) = −𝜆𝑡+
+∑︁
+𝑧𝑑≠𝑥𝑑
+𝑡
+𝑄𝜃(𝑧𝑑),
+where the leading −𝜆𝑡is independent of 𝜃and is absorbed into the additive constant of the loss.
+Step 6: Case 𝑥𝑑
+1 = 𝑥𝑑
+𝑡. In this case 𝑄cond(𝑧𝑑) = 0 for all 𝑧𝑑≠𝑥𝑑
+𝑡, so 𝐷𝐹(0∥𝑄𝜃(𝑧𝑑)) = 𝑄𝜃(𝑧𝑑) and the
+total contribution is Í
+𝑧𝑑≠𝑥𝑑
+𝑡𝑄𝜃(𝑧𝑑), i.e. the same linear expression as in Step 5 with the logarithmic
+term absent and without the −𝜆𝑡offset.
+Step 7: Combine terms. Combining both cases using the indicator 𝛿𝑥𝑑
+1 (𝑥𝑑
+𝑡), dropping the 𝜃-
+independent terms (the 𝑎log 𝑎part of 𝐷𝐹and the offset −𝜆𝑡(1 −𝛿𝑥𝑑
+1 (𝑥𝑑
+𝑡))), and summing over all
+coordinates 𝑑= 1, . . . , D, we obtain
+L𝑄(𝜃) = 𝔼𝑥1,(𝑡,𝑟),𝑥𝑡
+" D
+∑︁
+𝑑=1
+
+− 1 −𝛿𝑥𝑑
+1 (𝑥𝑑
+𝑡)
+𝜆𝑡log 𝑄𝜃
+𝑡,𝑟(𝑥𝑡, 𝑥𝑑
+1) +
+∑︁
+𝑧𝑑≠𝑥𝑑
+𝑡
+𝑄𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑)
+#
++ const,
+(36)
+where 𝑄𝜃
+𝑡,𝑟(𝑥𝑡, 𝑧𝑑) = 𝑄𝜃(𝑧𝑑) is the reparameterized instantaneous rate of Equation 10. Substituting
+Equation 17, writing log 𝑄𝜃
+𝑡,𝑟(𝑥𝑡, 𝑥𝑑
+1) = log 𝜆𝑡+ log ˆ𝑞𝑑
+𝜃(𝑥𝑑
+1|𝑥𝑡) and using the linear term above yields
+Equation 21, and on the masked path Equation 31. This completes the proof.
+□
+D. Experimental Details
+D.1. Experimental Setup of Simulations
+Data distribution
+We consider a data distribution in which every pair of coordinates is coupled, i.e.
+we take the Potts law
+𝑞(𝑥) ∝exp
+
+𝛽
+∑︁
+1≤𝑖< 𝑗≤D
+1
+
+𝑥𝑖= 𝑥𝑗
++ 𝜀𝑥
+
+,
+𝜀𝑥∼0.3 N (0, 1),
+where 𝛽≥0 controls how strongly the coordinates are coupled, and the perturbations 𝜀𝑥are drawn
+once and then held fixed so as to break the permutation symmetry of the energy. We use 𝛽= 1.5 and
+dimension D = 4. The vocabulary size is 4.
+Experimental setup and implementation details.
+The state space has |S|D = 256 elements, so
+the target 𝑞, the posterior 𝑝1|𝑡, the projected transport term Equation 15 and the law of the 𝐾-step
+sampler are all obtained by enumeration, i.e., no quantity we report is estimated from samples. We
+25
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+parameterize the network as MLPs with SiLU activation functions, consisting of four hidden layers
+with hidden dimension 256, conditioned on Fourier features of 𝑡, 𝑟, 𝑟−𝑡and −log(1−𝑡). We first train
+the base denoiser with Equation 4 using the Adam optimizer with a learning rate of 2e-3 for 1.2e4
+steps, and then train only the correction head with Equation 21 for 3e3 steps with the base frozen, so
+that every objective we compare shares an identical base denoiser. The pairs (𝑡, 𝑟) are drawn from
+the evaluation grids, with 25% of the draws at 𝑟= 𝑡; the instantaneous posterior 𝑝𝑒
+1|𝑡is supplied by
+the frozen base denoiser. In the sampling stage, we evaluate the trained network at every state and
+propagate the law of the sampler exactly, for a number of steps 𝐾∈{2, 3, 4, 6, 8, 12, 16, 24, 32}, and
+record the total variation between 𝑞and that law. We run each setting with 3 seeds and report the
+mean.
+D.2. Implementation Details of OpenWebText and ImageNet
+The network is conditioned on 𝑡and on the step size 𝑟−𝑡. On OpenWebText, 𝜏𝑡and 𝜏𝑟are the
+larger and the smaller of two logit-normal draws 𝜎(N (𝑃mean, 𝑃2
+std)) with (𝑃mean, 𝑃std) = (0, 1.5) and
+(−1.0, 1.5); on ImageNet, 𝜏𝑡is the arccos mask ratio and 𝜏𝑟is a logit-normal draw with (−3.0, 2.0)
+clipped to 𝜏𝑟≤𝜏𝑡, which places more mass on the large steps of the 1–4 step regime. A fraction
+1−𝜌= 0.25 of the pairs is drawn with 𝑟= 𝑡, where the correction vanishes and the objective reduces to
+Equation 4; this is what keeps the boundary calibrated. On ImageNet the sampling hyperparameters
+of every method, ours and the baselines, are selected by a sweep and we report the best configuration
+of each method; on OpenWebText the baseline numbers are taken from Yoo et al. (2025).
+D.3. Detailed values for Section 4
+Detailed values for simulations, OpenWebText, and ImageNet can be found in Tables 2, 3, and 4,
+respectively.
+Table 2 | Total variation Potts model simulations. Mean over three seeds. These are the values plotted
+in Figure 1.
+𝐾
+2
+3
+4
+6
+8
+12
+16
+24
+32
+Baseline
+0.6020
+0.3707
+0.2456
+0.1351
+0.0907
+0.0508
+0.0356
+0.0225
+0.0136
+Ours
+0.5381 0.3170 0.1934
+0.0957
+0.0517
+0.0181
+0.0116
+0.0080
+0.0053
+E. Unconditional Text Generation Samples (𝐾= 64)
+Below we provide unconditional 1,024-token text samples generated by our OpenWebText model
+using the exact-marginalization sampler of Equation 34–Equation 32 at 𝐾= 64 sampling steps and
+temperature 𝑇= 1.0. Across the evaluation batch, this configuration achieves the generative perplexity
+and entropy reported for “Ours” at 𝐾= 64 in Table 3 (LLaMA-3.1-8B generative perplexity 16.97,
+entropy 5.02).
+Sample 1: Energy Policy & Regulatory Hearing (𝐾= 64, 𝑇= 1.0)
+<|endoftext|> statement that he was "deeply disappointed" that the company’s
+actions were "not in line with our public policy" during the regulatory
+process.
+"Everyone have a right to have concerns about energy security, and we do not
+believe that actions like this are in the vital national interest," Price
+26
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Table 3 | OpenWebText results for Figure 3: generative perplexity measured with LLaMA 3.1-8B and
+entropy, as a function of the number of sampling steps 𝐾. Baseline numbers are taken from Yoo et al.
+(2025). Best perplexity per column in bold.
+Sampling steps 𝐾
+Model
+4
+8
+16
+32
+64
+Generative perplexity
+DUO+DCD
+97.22
+72.18
+54.82
+46.05
+42.38
+ReDi1
+79.35
+48.53
+37.13
+31.21
+29.12
+ReDi2
+69.01
+45.11
+36.42
+31.56
+29.85
+ReDi3
+53.24
+36.33
+30.34
+27.75
+26.78
+Di4C
+55.42
+36.52
+27.66
+23.04
+21.54
+Di4C + ReDi1
+47.50
+30.92
+24.81
+21.88
+20.32
+Ours
+56.08
+27.59
+22.92
+21.35
+16.97
+Entropy
+DUO+DCD
+4.82
+5.25
+5.35
+5.36
+5.35
+ReDi1
+5.43
+5.49
+5.48
+5.44
+5.42
+ReDi2
+5.43
+5.44
+5.44
+5.41
+5.39
+ReDi3
+5.33
+5.30
+5.28
+5.26
+5.25
+Di4C
+4.81
+5.02
+5.07
+5.05
+5.03
+Di4C + ReDi1
+4.96
+5.07
+5.08
+5.09
+5.07
+Ours
+4.96
+5.06
+5.09
+5.18
+5.02
+Table 4 | ImageNet 256 × 256 with four network evaluations. Every method is reported at the best
+sampling configuration found by a sweep. Best value per column in bold.
+Model
+FID ↓
+IS ↑
+MaskGIT (Chang et al., 2022)
+10.90
+184
+SDTT (Deschenaux and Gulcehre, 2025)
+8.97
+205
+Di4C (Hayakawa et al., 2025)
+6.20
+216
+ReDi1 (Yoo et al., 2025)
+7.58
+228
+ReDi2 (Yoo et al., 2025)
+7.86
+240
+Ours
+7.81
+250
+said in the statement.
+Pamper E. Price said that the firm paid roughly $14.1 million to lobbying
+groups in 2013, but a lawsuit filed by the Institute for Energy Policy
+Studies, the Washington-based Ceres’ think group, that it won’t be any more
+attention from the government.
+The company is expected to go before the House Committee on Commerce and
+Transportation before joining the House of Representatives this fall and
+hold a hearing.
+The White House said in a statement on Friday that it would
+continue to get the company’s representatives to investigate its activities.
+"We are very disappointed this firm played an important role in efforts
+to implement critical energy security in our region and look forward to
+continuing to improve the decision being made to the American people of our
+region," the company said in the statement.
+27
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+The firms ties to politics have raised questions about the effectiveness
+of the Obama administration’s political attacks on the industry, including
+the closure of a variety of plants in the United States and the hiring of
+about 1,200 employees from 35 individuals and nonprofit groups, including
+fossil fuel firms and environmental groups.
+The industry is heavily backed
+by special interests.
+One August, the firm’s actions were part of the efforts to block the
+construction of the Dakota Access pipeline through Minnesota, the project
+being planned up in North Dakota carrying coal and crude oil.
+The Trump administration said the actions were related a March 2015 rule,
+which temporarily halted efforts to save large sections of the proposed
+pipeline.
+Protesters repeatedly blocked a portion of the proposed pipeline.
+“We look forward to hearing before the House today whether a few of these
+actions are in line with our national policy,” Price said.
+“There is
+no evidence, in fact, that these actions involving Goldstone Perkins
+are politically motivated and are not the policies we should be guided
+by.”<|endoftext|>
+Sample 2: Public Health Study & International News (𝐾= 64, 𝑇= 1.0)
+<|endoftext|> by reducing their daily intake of nutrients, such as fruits,
+vegetables, and nuts, could contribute to a large decrease in the number of
+displaced in China.
+The report, on the issue of food insecurity in China during the growing
+season, was authored by researchers from the Federal Institute of Public
+Affairs and the Department of Public Health of the University of Shanghai.
+The team, led by professors Zhou, U.S. Department of Agriculture, and Liu,
+also focused on the issue of the National Food Standards, which are mostly
+designed to combat the problem of hunger and food insecurity in China.
+A Professor of Public Health at the University, Wei Mao, who not involved
+as a senior author of the report, said that the administration decided not
+to enforce the National Standards "due to the misinformation or distortion
+of information that is currently available.
+Our results that excessively
+high-fat foods such as fruits, vegetables, can lead to high levels of blood
+sugar.
+These foods have increase the risk of heart disease and increase the
+risk of diabetes."
+The consumption of sugary drinks contributes to a high risk of food
+insecurity.
+Tens of thousand of the people currently without food in China
+is associated with the risk of diabetes mellitus which has nearly doubled
+in the past 25 years.
+And according to a UN monitor, the majority of the
+citizens of the world, Southeast Asia and East Asia, live on poor quality
+food conditions.
+Earlier this month, Shanghai Municipal Commission for Food Safety and
+Integrity, maker of the Standards, said that the government was carrying
+out an effort to improve the use of fresh vegetables in Beijing during
+the growing season.
+It’s critical to understand different varieties of
+vegetables offer, such as fresh varieties, to encourage people to eat more
+vegetables, according to the report.
+The authors also explained that the global problem of food insecurity is
+that the government’s largely neglected for decades, and which has hampered
+the efforts to combat the situation in China.
+As a result, they said, the
+28
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+need to reduce over-consumption and use of fresh food is a top priority in
+China.<|endoftext|>
+By James Mayr
+London - World News staff
+British military and intelligence agencies on Friday called on the
+international community to prosecute the extremist organisations and
+anti-government forces to defeat in the name of peace and stability.
+The calls were made by at least two thirds of the leading members of British
+military, for the restoration of peace talks between Turkey and the rebels
+in northern Syria, and for an end to the war in Syria, which has left
+250,000 people fleeing the country from abroad.<|endoftext|>
+Sample 3: International Diplomacy & Economic Aid (𝐾= 64, 𝑇= 1.0)
+<|endoftext|>United States has spoken out against what critics say is a
+poverty-ridden, expansionary and precarious economic situation in Egypt.
+Deputy Foreign Minister Rafa Mansour-Hahallah told reporters on Saturday
+the United States was “aware of a serious crisis with the country’s
+dire situation.” “The U.S. is actively in the process to overcome this
+humanitarian crisis,” she said, after releasing a report saying that the
+Egyptian economy is in a “grave state of stagnation in the country.”
+The report said that the focus was on strengthening the security of the
+people and distributing programs to boost growth to end financial hardships
+for those living below the poverty level.
+She added that the situation
+of country is in a difficult position that any growth in activity could
+jeopardizing its security.
+Total oil production was cut by 5.2 million
+people in 2009 to just 3.1 million, according to the report.
+To mitigate the effects of the cuts, the federal subsidy is to freeze until
+the end of March.
+The proposed cuts, which will be needed to remove 3.5
+million from the budget, where the central government has reserves, are
+only temporary.
+However, according to the report, the important thing is
+to improve the quality of life in the United States and “to restore job
+security and life changing services through the government’s ambitious
+infrastructure plan,” administration officials said on Saturday.
+The plan is focused on creating jobs by 2011 and is meant to provide
+relief to the tens of millions of women, children and people living past
+the retirement age by bringing in full-time jobs.
+The State Department
+spokesman, Jay Carney, said that the federal government was focusing mainly
+to poverty-era programs and measures to help the affected people, most
+of whom are still facing job insecurity.
+“The government working hard
+on words, speaking by themselves.” Carney said, referring to comments
+published in The Washington Post.
+The U.S. government is determined to
+play a leading role in addressing this humanitarian situation, the official
+said.
+In addition to the call on the central government to take no further
+restrictions on oil and gas production, the United States however made it
+clear that the government would not place further restrictions.
+“The United
+States continues engaging with the people, and encouraging businesses to
+do as much as they can help restore the security of the people, as soon as
+now.” the United States Department said in a statement.<|endoftext|>
+29
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Sample 4: Internet Openness, Privacy Law & Climate Study (𝐾= 64, 𝑇= 1.0)
+<|endoftext|> on June 7, 2011, in the city of Seattle, the US and Russia
+agreed to collaborate on three projects proposed by Russia, with the goal
+of protecting personal information and then they stole this information from
+the United States for the past 15 years.
+The most pressing thing they have
+to do is put pressure on the US government to pay for these projects because
+their practices have changed, and the peasants affected by this pipeline
+project are now before the eyes of the world," he said<|endoftext|>
+Turkey
+In January 2015, a citizen of Iran is six months pregnant in Turkey
+allegedly find themselves attempting to collect personal information of the
+Turkish government during a meeting of parliament of Turkey March 7, 2015.
+The Iranian was attempting to collect information about patient behavior,
+health and safety, and national security, breaking Turkish privacy laws and
+attempting to co-operate with Turkish authorities.
+No criminal charge was
+committed.
+The fine imposed on the person was determined by international
+law.
+Germany
+The United States, the United Kingdom, and the Netherlands support a variety
+of scientific, technological and social programs which benefit the people
+and environment of the world, and serve to be the engine of the global
+economy.
+This support is supported by the National Institutes of Health
+Sciences, the National Institutes of Health, the National Institute of
+Science and Technology, the Medical School of the University of Maryland,
+the School of Medicine and Public Health, the Massachusetts Institute of
+Technology, Energy and Environment, and Harvard University’s School of
+Science, Space and Public Policy, and the Center for Environmental Science
+and Data Analysis at the University of Maryland.
+United States
+The United Nations Security Council reached an agreement on the openness of
+the Internet on July 11, 2011.
+One of the goals was to protecting national
+security and the openness of the Internet.
+On a global level, the Internet
+is probably one of the largest ecosystems in the world today.
+For example,
+the size of the web today is about 2.5 billion, the nature of the content
+has slightly through a variety of events, including melting Arctic sea
+ice.
+But over the course of the year, the surface extent of Arctic sea
+ice, increased steadily worldwide.
+A new study, shows glaciers now for
+about 55 percent of the world’s surface ice, and about one-to-third of it
+is sea ice.
+(Changes to address climate change adaptation were made by
+three international experts, from the Institute for Media, Policy and Media
+Research, and from the World Economic Forum-WHO.)
+In June 2011, under Barack Obama, the United States and Russia reached a
+series of agreement which is designed to promote greater online openness on
+the Internet.
+The elements of this agreement:
+an international commitment
+to Internet openness, every online form of communication, full Web-wide
+Internet access, formal reviews, and certifying Internet providers for
+computers, mobile phones, and other forms of information.<|endoftext|>
+30
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Sample 5: Sports Journalism: NHL & Preseason Coverage (𝐾= 64, 𝑇= 1.0)
+<|endoftext|>Yes.
+Muthyomun is an important member of the Chicago side which went through the
+very well and ended up in a third position in the W-L playoffs.
+The club had a favorable relationship with the Philadelphia Eagles and took
+over under the direction of Muthyomun in January.
+At the same time, the
+club now looking to reach at least 10th in W-L playoffs.
+Chicago head coach Antoine Bouchard is expected to visit the Chicago
+Blackhawks and make his preseason debut Wednesday, March 14 at the Chicago
+Blackhawks.
+In the past few months, he has been able to play as a key part
+of the lineup for the Chicago Blackhawks, according to the English-language
+website.
+Antoine Brouwer is a key part of the lineup for the Blackhawks and has
+already signed with the club most recently from the Anaheim Ducks.
+Anaheim
+had a great team last season to make the Stanley Cup Playoffs, and he is
+expected to be a part of the lineup for the first time since his injury in
+the Eastern Conference Playoffs.
+The Chicago Blackhawks had a great 2016 season and have a real chance at
+making another playoff run in the Eastern Conference.
+The club finished
+23-16 in the regular season and was able to earn a third place spot in the
+WHLs first bid for the Stanley Cup by making a powerful shot that passed
+of his hand and his right foot bounced to the back of the net.
+Following
+hot start to the season he then scored 2 beautiful third and 2 goals in the
+third period against the Dallas Stars (4-2-1) and he was able to capitalize
+on it.
+He is considered one of the best players in the league and he has developed
+a good amount of confidence in his game.
+His right hand gives him good
+opportunities to make plays and boost his acceleration, for him to be able
+to hold on to his feet.
+While playing with his left foot down, he will have
+to make sure to find some movement at the end of the season with the Chicago
+Blackhawks.
+Brouwer returned to the Blackhawks after playing well in the American Hockey
+League.
+He was named the American Hockey League Most Outstanding Player of
+the Year and played a key part in the Chicago Blackhawks’ victory over the
+Los Angeles Kings in the playoffs.<|endoftext|>
+Sample 6: US Politics & Election Coverage (𝐾= 64, 𝑇= 1.0)
+<|endoftext|> the most dangerous people in the federal government in 2016.
+The FBI confirmed they only interviewed Flynn on January 20.
+Washington (CNN) Matt Flynn reportedly not been interviewed by the FBI
+after the call was held, Director Comey reportedly chose not to answer all
+questions about it.
+Senate Democratic leaders said the action was the effective result of the
+official action and viewed the actions of President Trump as "a coup."
+"In order to keep Russia out of our country, we must continue to rely on the
+resolve of all members of Congress and support the American people," said
+Baucus, D-Mont., chairman of the council of The Church of Jesus Christ of
+Latter-day Saints.
+31
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Figure 4 | Ablation on the classifier-free guidance weight 𝑤used to sample the training pairs, evaluated
+at 4- and 8-step generation on ImageNet 256 × 256 (50k samples). (a) Precision and recall vs. 𝑤. (b)
+FID vs. 𝑤, with the best configuration at each step budget annotated. (c) Inception score and density
+vs. 𝑤.
+Vice President Joe Biden, at the center of hacking, said in a State of the
+Union address that he didn’t immediately follow the department’s emergency
+proclamation but it was an "appropriate decision."
+The accusations made their way through White House channels Saturday, said
+Frank Reich, a senior fellow at the liberal Center for American Progress and
+a member of the White House under President Donald Trump.
+"We have repeatedly repeated in the last days about the Trump campaign’s
+contradictory statements about the use of chemical weapons against
+civilians," Reich told The New York Times.
+"Now, Mr.
+Biden’s e-mails are a
+very damaging line of attack for the incoming administration."
+Senate Majority Whip Max Baucus, D-Mont., declined to comment about the
+allegations.
+On Saturday, he said, "We just have to see the results of the
+investigation conducted by prosecutors in our community."
+Former Attorney General Scott Baquet, who served under Robert M. Mueller as
+attorney general of the White House, has condemned the accusations.
+"It’s difficult to say whether there’s nothing else, but they certainly are
+there, and it’s highly subjectively concluded that there’s no merit in this
+case," he said.<|endoftext|>
+E.1. CFG Ablation on ImageNet
+Ablation Studies
+Sweeping classifier-free guidance (CFG) weight 𝑤∈{1.5, 2.0, 3.0, 4.0, 5.0} at 4
+and 8 sampling steps (Figure 4), we find that precision increases and recall decreases monotonically
+with 𝑤at both step budgets, that the best 4-step FID (7.81) is attained at 𝑤= 3.0, and that the
+optimal guidance weight shifts down to 𝑤= 1.5 (FID 6.90) once step budget increases to 8, where
+iterative refinement already improves fidelity so a lower guidance weight suffices to preserve diversity.
+Figure 5 shows the corresponding 4-step samples across 𝑤, with the random seed held fixed per class.
+E.2. Additional Qualitative Samples on ImageNet
+Figure 6 demonstrates the 4-step qualitative comparison to four ImageNet classes (goldfinch, sea
+anemone, cheeseburger, spotted salamander) following Yoo et al. (2025).
+32
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Figure 5 | Qualitative effect of the CFG weight 𝑤used to sample the training pairs, at 4-step generation
+on ImageNet 256 × 256, for nine classes: goldfish, ostrich, hourglass, racer, volcano, goldfinch, sea
+anemone, cheeseburger and spotted salamander. The random seed is held fixed per class across
+𝑤∈{1.0, 1.5, 2.0, 3.0, 4.0, 5.0}, so only the effect of 𝑤varies; the optimal 4-step setting (𝑤= 3.0,
+FID 7.81) is highlighted.
+33
+
+
+Acceleration of Diffusion Language Model through Discrete Average Generator
+Figure 6 | 4-step generation results on ImageNet (classes goldfinch, sea anemone, cheeseburger,
+spotted salamander), two samples per class and model. Our method (bottom row, FID 7.81) is
+appended below the baselines.
+34

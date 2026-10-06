@@ -1,0 +1,2746 @@
+Preprint
+LEARNING CONDITIONAL SOURCE DISTRIBUTION VIA
+FLOW REVERSAL FOR TEMPORAL FLOW MATCHING
+Kuan-Hsun Tu∗, Hsuan-Chi Liu∗†, Jia-Wei Liao∗, Chien-Sheng Chiang & Tsung-Wei Ke
+National Taiwan University
+{khtu, hhhhhsuan, d11922016, b10902063, ccf, twke}@csie.ntu.edu.tw
+FM
+CNP-Flow (Ours)
+Motion Planning
+CNP-Flow
+MPD
+Collision
+Goal
+Video Prediction
+Temporally inconsistent 
+RIVER
+CNP-Flow
+time
+Initial frame
+Figure 1: CNP-Flow learns condition-dependent source distributions for temporal generation. CNP-Flow
+uses a Conditional Noise Predictor (CNP) to predict a source distribution for each condition. This source-side
+conditioning reduces FVD by up to 75% over RIVER on video prediction, and yields more precise motion-
+planning trajectories with fewer collisions.
+ABSTRACT
+We introduce CNP-Flow, a flow matching framework for temporal generation that
+learns conditional source distributions through flow reversal. Whereas standard
+conditional flow matching (FM) incorporates conditioning through the vector field
+and draws source samples from a standard Gaussian, CNP-Flow uses a conditional
+noise predictor (CNP) to produce an isotropic Gaussian source for each temporal
+condition. The CNP is supervised by source samples obtained through flow reversal,
+which maps observed targets backward through a pretrained FM model. A three-
+stage pipeline pretrains the FM model, trains the CNP, and fine-tunes the FM
+model using the learned source distribution, while preserving the FM backbone
+architecture. Across video prediction, video interpolation, and 7-DoF Franka
+robot motion planning, CNP-Flow consistently improves generation quality. It
+also matches baseline performance with fewer function evaluations. Project page:
+https://embodiedai-ntu.github.io/cnpflow
+1
+INTRODUCTION
+Generative modeling is typically framed as drawing samples from a learned data distribution, where
+each generation is independent of the others. However, applications such as video generation (Ho
+*Equal contribution.
+†Corresponding author.
+1
+arXiv:2610.05349v1  [cs.CV]  4 Oct 2026
+
+
+Preprint
+et al., 2022; Ge et al., 2023) and robotic control (Janner et al., 2022; Carvalho et al., 2023) require
+a more challenging and constrained setup: they must generate a sequence of temporally correlated
+samples conditioned on past or future data. This defines the task of temporal generation, which
+imposes two requirements: the transitions between samples must follow those of the data distribution,
+and each sample must remain structurally consistent with the conditional inputs (Lai et al., 2018;
+Ge et al., 2023). Depending on the conditioning, temporal generation can be further divided into
+extrapolation and interpolation. Extrapolation predicts future samples given the past (Voleti et al.,
+2022; Davtyan et al., 2023), while interpolation generates intermediate trajectories given the start and
+end of a sequence (Janner et al., 2022; Carvalho et al., 2023; Reda et al., 2022).
+Flow Matching (FM) (Lipman et al., 2023) is an effective framework for generative modeling: a neural
+network regresses a deterministic vector field that transports samples from a source distribution to the
+target distribution. The source is typically chosen to be simple, such as a standard Gaussian. Thanks
+to this general formulation, FM models extend naturally to temporal generation by treating temporal
+conditions as additional inputs (Esser et al., 2024; Gkanatsios et al., 2025). While conceptually
+simple, their performance depends heavily on the quantity and quality of the conditions injected
+into the model (Peebles and Xie, 2023). Existing approaches, therefore, focus on improving the
+conditioning mechanism through various inductive biases: randomly masking conditional inputs as a
+form of regularization (Voleti et al., 2022; Davtyan et al., 2023) or biasing generated samples toward
+conditional data via gradient methods (Ho et al., 2022). However, the former sacrifices fidelity, while
+the latter cannot handle multiple conditions simultaneously.
+These approaches all target the conditioning mechanism. A separate line of work, however, takes
+a different angle: modulating the source distribution itself. Recent studies show that FM models
+can be steered toward higher-quality outputs by selecting more suitable source samples (Pooladian
+et al., 2023; Tong et al., 2024; Chiang et al., 2026). A common approach in image editing (Meng
+et al., 2022; Song et al., 2021) replaces the standard Gaussian noise with a noised version of the
+original image, thereby preserving its spatial structure. In text-to-video generation (Ge et al., 2023)
+and video editing (Chang et al., 2024), drawing source samples in a directionally correlated manner
+across frames improves temporal coherence over drawing them independently per frame. Pushing
+this further, recent video prediction methods (Shrivastava and Shrivastava, 2024b;a) replace the
+standard Gaussian source with the previous frame. In robotic manipulation, action generation is
+largely determined by the source samples, so training a dedicated noise sampler enables adaptation
+of pretrained robot policies (Wagenmaker et al., 2025). Together, these results suggest that source
+samples themselves carry rich conditional information, which motivates us to ask: can a learned
+source distribution also benefit temporal generation?
+We introduce Conditional Noise Predictor for Flow Matching (CNP-Flow), a flow matching frame-
+work for temporal generation. The core idea is to learn a noise predictor that takes the current
+condition as input and outputs a source distribution suited to downstream FM models under that
+condition. This formulation naturally encompasses both interpolation and extrapolation (see Fig. 1).
+To supervise the noise predictor, we construct pseudo-ground-truth source distributions by retriev-
+ing source samples for each condition through flow reversal of a pretrained FM model. A recent
+study (Chiang et al., 2026) shows that pretrained FM models map similar target data to nearby source
+samples through flow reversal. Motivated by this, we parameterize these distributions as a family of
+isotropic Gaussians, with the conditional noise predictor (CNP) outputting their mean and standard
+deviation. This sidesteps the exact search for optimal source distributions, which is intractable, while
+still providing effective surrogates that substantially improve temporal generation in our experiments.
+CNP-Flow consists of a CNP and an FM model, trained via a three-stage pipeline that bootstraps each
+model from the other. First, we pretrain an FM model with a standard Gaussian source; flow reversal
+through the pretrained model then retrieves surrogate source samples for each condition. Next, we
+train the noise predictor by maximizing the likelihood of these source samples under each condition,
+enabling it to predict source distributions at test time. Finally, we fine-tune the FM model with the
+predicted distributions, refining its vector field. Fig. 2 illustrates this on a toy example: compared
+to a vanilla FM, CNP-Flow draws temporally correlated source samples and produces temporally
+coherent sequences.
+CNP-Flow shows empirical gains along three independent axes. On video benchmarks, distribution-
+level alignment improves, with FVD on KTH dropping from 180.00 to 44.76 and comparable margins
+on CLEVRER and BAIR (see Fig. 1). Inference becomes far more efficient: with only 5 function
+2
+
+
+Preprint
+(a) FM (Standard Gaussian)
+(b) CNP-Flow (Ours)
+Figure 2: 2D toy example of temporal generation. Colors indicate temporal phase along the target circular
+trajectory. (a) Vanilla FM draws source samples from a standard Gaussian. Samples associated with neighboring
+temporal conditions can be widely separated, and the generated sequence deviates from the target trajectory.
+(b) CNP-Flow learns a conditional source distribution with a smoother arrangement of samples by temporal
+phase (see the zoomed region), and the generated sequence follows the target trajectory more closely. Detailed
+experimental settings are provided in Appendix F.
+evaluations, CNP-Flow surpasses what the standard Gaussian baseline achieves at 50. The same
+formulation transfers beyond video to a 7-DoF Franka motion planning task, where the fraction of
+valid trajectories rises from 84.9% to 88.5%, and end-effector position error drops from 1.6 cm to
+0.8 cm (see Fig. 1). These results point to the same mechanism: conditioning the source improves
+source–target alignment and straightens the transport path, without modality-specific structure.
+2
+RELATED WORK
+Temporal conditions. Generating temporally coherent samples is a central challenge in video
+prediction and motion planning. Early approaches based on recurrent networks (Graves, 2012;
+Babaeizadeh et al., 2021) and autoregressive models (Vaswani et al., 2017; Le Moing et al., 2021;
+Ma et al., 2025) struggle with long-term temporal consistency or computational cost. Recently,
+diffusion (Ho et al., 2020; Dhariwal and Nichol, 2021; Song et al., 2021) and flow models (Lipman
+et al., 2023), driven by their success in high-fidelity image synthesis, have been extended to video
+generation, prediction (Ho et al., 2022; Voleti et al., 2022; Höppe et al., 2022; Yang et al., 2023;
+Davtyan et al., 2023) and motion planning (Janner et al., 2022; Carvalho et al., 2023; 2025), exploring
+the strategies to inject temporal conditions into the model. More specifically, Voleti et al. (2022)
+condition on all past and future frames but randomly mask them during training, enabling a single
+model to handle prediction, generation, and interpolation. Davtyan et al. (2023) instead condition
+on a reference frame and one past frame to reduce training cost. Janner et al. (2022) condition on
+the first frame and last frame to generate a feasible trajectory. Alternatively, Ho et al. (2022) bias
+the sampling trajectory toward conditioning frames via gradient-based reconstruction guidance, but
+the per-condition gradient pass scales poorly when multiple temporal conditions must be satisfied at
+once. Despite their differences, these methods all focus on how the condition enters the generation
+process, while assuming the source distribution is a fixed standard Gaussian.
+Optimized noise prior. A separate line of work shapes the source distribution. In image genera-
+tion, noise priors have been optimized through reward functions (Eyring et al., 2024), structured
+patterns (Samuel et al., 2024; Mao et al., 2024), pre-collected databases (Mao et al., 2023), or
+condition-dependent shifts (Chen et al., 2025). For video synthesis, Ge et al. (2023) introduce tempo-
+rally correlated noise across frames, while Luo et al. (2023) and Zhang et al. (2024) model residual
+noise between consecutive frames. In video-to-video settings, Chang et al. (2024); Burgert et al.
+(2025); Liu and Vahdat (2025) warp the noise to align with the target motion. For video prediction,
+Shrivastava and Shrivastava (2024b) and Chen et al. (2024) bypass the standard Gaussian noise by
+modeling frame transitions as continuous interpolation. Despite their variety, these methods each
+impose a specific noise structure, such as temporal correlations, geometric warping, or frame-wise
+residuals, that either degrades over long horizons or sacrifices multimodality (Kim et al., 2026; Lee
+et al., 2025; Sadat et al., 2024). In robotic manipulation, Wagenmaker et al. (2025) train a dedicated
+noise sampler to adapt a pretrained diffusion policy to new tasks, though their approach operates in
+low-dimensional action spaces and its scalability to high-dimensional settings, such as video, remains
+unclear. Chiang et al. (2026) show that pretrained flow-matching models map similar targets to nearby
+source regions, but their focus is on image generation and optimal transport rather than temporal
+3
+
+
+Preprint
+ϕ
+Stage 2: Training the CNP
+Retrieved Source Samples
+Data samples
+θ
+Pretrained FM
+Stage 1: Pretrain FM
+θ
+FM Model
+σ
+μ
+𝓛NLL
++
+𝓛KL
+CNP
+𝒩(0,1)
+˜p0( ⋅∣CT)
+C3
+T
+C5
+T
+C4
+T
+x3
+x5
+x4
+˜p0( ⋅∣CT)
+Stage 3: Fine-tune FM with CNP
+ϕ
+σ
+μ
+Condition
+θ
+Target samples
+x3
+x4
+x5
+x6
+C3
+T
+C5
+T
+C4
+T
+C6
+T
+Figure 3: Overview of the proposed three-stage training pipeline. Stage 1: A pretrained FM is used to obtain
+flow-reversal-induced source samples, defining a source distribution aligned with the target data. Stage 2: The
+CNP is trained to model this distribution by predicting a conditional Gaussian prior via NLL and KL objectives.
+Stage 3: The FM model is fine-tuned using source samples drawn from the learned conditional prior, resulting in
+more coherent and target-aligned transport trajectories.
+generation. To our knowledge, no prior work has learned a condition-dependent source distribution
+that generalizes across temporal generation tasks while preserving stochasticity.
+3
+PRELIMINARY
+Flow matching (FM) is a generative framework that learns to transport samples from a source
+distribution p0 to a target distribution p1. A neural network with parameters θ is trained to regress
+a time-varying vector field vθ, which defines an ordinary differential equation (ODE): dxt =
+vθ(xt, t) dt. Integrating this ODE from t = 0 to t = 1 transports a source sample x0 to a target
+sample x1. FM extends naturally to conditional generation by conditioning both the vector field
+vθ(xt, t | C) and the target distribution p1(· | C) on a conditioning input C.
+A standard training procedure pairs a source sample x0 with a target sample x1, samples a timestep
+t ∼U(0, 1), and constructs an intermediate sample by linear interpolation: xt = (1 −t)x0 + tx1.
+The model is then optimized with the following objective (Lipman et al., 2023):
+LFM(θ) = EC,x0∼p0,x1∼p1(·|C),t∼U(0,1)
+
+∥vθ(xt, t | C) −(x1 −x0)∥2
+2
+
+.
+(1)
+At inference time, generation proceeds by integrating the learned vector field from a source sample:
+ˆx1 := x0 +
+Z 1
+0
+vθ(xt, t | C) dt.
+(2)
+Eqn. 2 shows that the generated sample depends on both the condition C and the source sample
+x0. This observation motivates us to investigate whether more suitable source samples can improve
+generation quality under each condition.
+4
+METHOD
+We propose CNP-Flow, a temporal generation framework that augments FM with a learned conditional
+source prior. Standard FM models draw source samples from a standard Gaussian and take the
+condition as an additional input. However, they often fail to generate high-quality data that faithfully
+follows the condition. CNP-Flow reinforces the conditioning mechanism by using a conditional
+4
+
+
+Preprint
+noise predictor (CNP) that seeks a source distribution suitable for generating target data under each
+condition. Our design is general in two ways: (1) the noise predictor handles different types of
+conditioning, including both interpolation and extrapolation, allowing CNP-Flow to unify these tasks
+in a single framework; and (2) CNP-Flow only modulates the source distribution supplied to the FM
+model without changing its architecture, so it can be integrated into existing FM frameworks.
+In the following, we describe the training and inference procedure of CNP-Flow in Sec. 4.1, and its
+application to downstream temporal generation tasks in Sec. 4.2.
+4.1
+TRAINING AND INFERENCE
+CNP-Flow is trained in three stages: we first pretrain the FM, then train the CNP from the pretrained
+FM, and finally fine-tune the FM under the learned CNP. An overview of the staged training pipeline
+is illustrated in Fig. 3. Generation itself is straightforward: CNP-Flow draws a source sample from
+the predicted source distribution and transforms it into a target sample via the learned vector field.
+Stage 1: Pretraining the FM model. We pretrain the FM model in the standard manner for
+conditional generation, using a standard Gaussian N(0, I) as its source distribution. The model
+takes the temporal condition CT as an additional input and outputs a deterministic vector field
+vθ(xt, t | CT ). In temporal generation tasks, target samples under similar temporal conditions often
+share similar structures and dynamics. Since the learned ODE flow is continuous, flow reversal
+maps nearby targets to nearby regions in source space, yielding source samples that are clustered by
+the temporal condition rather than spread as a standard Gaussian. This suggests a feasible recipe:
+construct surrogate per-condition source distributions through flow reversal of the pretrained FM
+model, and train a model to predict them.
+Stage 2: Training the conditional noise predictor. We train the CNP using source samples obtained
+through flow reversal of the pretrained FM model. For each temporal condition CT , the CNP
+parameterizes an isotropic Gaussian source distribution:
+pϕ(x0 | CT ) := N
+ x0; µϕ(CT ), σ2
+ϕ(CT )I
+
+,
+(3)
+where ϕ denotes the CNP parameters, µϕ(CT ) denotes the predicted mean, and σϕ(CT ) denotes the
+standard deviation. Given a target sample x1 ∼p1(· | CT ), we retrieve its corresponding source
+sample ˜x0 through flow reversal:
+˜x0 = ˜Φθ,1→0(x1 | CT ) := x1 −
+Z 1
+0
+vθ (xτ, τ | CT ) dτ,
+(4)
+This mapping induces the conditional source distribution ˜p0(·
+|
+CT ).
+The CNP model
+is trained to minimize two losses:
+(1) a negative log-likelihood (NLL) loss:
+LNLL(ϕ) =
+−ECT ,˜x0∼˜p0(·|CT ) [log pϕ(˜x0 | CT )] that trains the CNP to approximate the flow-reversal-induced
+source distribution; and (2) a KL regularization loss: LKL(ϕ) = DKL(pϕ(· | CT )∥N(0, I)) that
+regularizes the learned conditional source distribution toward the standard Gaussian prior. The total
+objective is:
+LCNP(ϕ) = LNLL(ϕ) + λLKL(ϕ),
+(5)
+where λ > 0 controls the strength of regularization. Our choice of loss objectives is justified by the
+following propositions. In Prop. 4.1, we show that, with the NLL loss, the optimal output mean and
+output variance of the CNP model coincide with the mean and the scaled second central moment of
+the source distribution induced by flow reversal.
+Proposition 4.1 ((Informal) Population minimizer of NLL objective).
+Let the CNP model the
+isotropic Gaussians pϕ(x0 | CT ) = N(x0; µϕ(CT ), σ2
+ϕ(CT )I). Then the population minimizer
+of LNLL over the isotropic Gaussian family is p∗
+ϕ(x0 | CT ) = N(x0; ˜µ0(CT ), ˜σ2
+0(CT )I), whose
+parameters satisfy
+˜µ0(CT ) = Ex1∼p1(·|CT )[˜Φθ,1→0(x1 | CT )], and
+˜σ2
+0(CT ) = 1
+dEx1∼p1(·|CT )∥˜Φθ,1→0(x1 | CT ) −˜µ0∥2
+2.
+(6)
+The propositions covering more general cases, along with their proofs, are provided in Appendix B.
+In particular, Prop. B.1 establishes the results considering both the NLL and the KL divergence
+5
+
+
+Preprint
+loss, while Cor. B.2 characterizes the limiting behavior of the distribution in extreme cases. We also
+summarize the entire training procedure of the CNP model in Algo. 1 in Appendix A.
+Stage 3: Fine-tuning the FM model with predicted conditional source distributions. Lastly, we
+fine-tune the FM model with the per-condition source distribution predicted by the CNP model. This
+allows us to refine its underlying vector field and further improve generation performance. Following
+the same training procedure as in the first stage, we replace the standard Gaussian with the predicted
+distributions for each condition.
+LFT−FM(θ) = ECT ,x0∼pϕ(·|CT ),x1∼p1(·|CT ),t∼U(0,1)
+
+∥vθ(xt, t | CT ) −(x1 −x0)∥2
+2
+
+.
+(7)
+We summarize the fine-tuning procedure in Algo. 2 in Appendix A.
+Inference with CNP-Flow. During inference, we first draw source samples with the CNP model
+x0 ∼pϕ(· | CT ), and transform them into target data with the FM model (Eqn. 2).
+Theorem 4.2 ((Informal) Conditional source locality). Suppose the predicted source mean µ∗
+ϕ(·) is
+Lµ-Lipschitz continuous in the temporal condition. For two conditions CT and C′
+T , independently
+drawn CNP source samples satisfy, with high probability,
+∥x0 −x′
+0∥2 ≤Lµ∥CT −C′
+T ∥2 + O
+q
+d
+ σ∗2
+ϕ (CT ) + σ∗2
+ϕ (C′
+T )
+
+.
+(8)
+This theorem characterizes locality in the learned source space. Under a Lipschitz condition on
+the predicted mean, nearby temporal conditions yield nearby source centers, while the predicted
+variances control stochastic dispersion around these centers. The formal statement and proof are
+provided in Appendix B.
+4.2
+APPLICATION TO TEMPORAL GENERATION TASKS
+We consider a series of temporal generation tasks that progressively generate sequential observations
+given temporal conditions. This formulation covers video prediction, video interpolation, and motion
+planning, which differ primarily in how the temporal condition is constructed.
+Video Prediction. Given initial frames x0 and x1, the goal is to autoregressively predict future
+frames xi for i = 2, . . . , N. At step i, the preceding frame xi−1 serves as the reference frame, while
+a context frame xc is sampled from earlier observations with c ∼U({0, 1, . . . , i −2}), yielding
+the temporal condition Ci
+T = (xi−1, xc, i −c) that captures both recent dynamics and longer-range
+temporal structure.
+Video Interpolation. Given boundary frames x0 and xN, the goal is to progressively predict
+intermediate frames xi for i = 1, . . . , N −1. At step i, the previously generated frame xi−1 serves
+as the reference, while xN provides a fixed future context, giving Ci
+T = (xi−1, xN, N −i), where
+N −i denotes the remaining temporal distance to the endpoint.
+Motion Planning. Given an initial state x0 and a target end-effector pose xN, the objective is to
+generate a feasible trajectory that reaches the target pose from the initial state. The model generates
+the entire trajectory jointly, conditioned on CT = (x0, xN).
+Detailed sampling procedures and algorithms are provided in Appendix A.
+5
+EXPERIMENTS
+5.1
+EXPERIMENTAL SETUP
+We evaluate CNP-Flow across two modalities: video generation, comprising prediction and interpo-
+lation, where output quality emphasizes visual coherence; and motion planning, where the learned,
+condition-dependent source is expected to generalize from pixels to robot trajectories.
+Video generation. We evaluate on BAIR Robot Pushing (Ebert et al., 2017) (64 × 64), KTH
+actions (Schüldt et al., 2004) (64 × 64), and CLEVRER (Yi et al., 2020) (128 × 128), spanning
+stochastic manipulation, structured human movement, and deterministic object dynamics. Following
+RIVER (Davtyan et al., 2023), we use the SRVP splits (Franceschi et al., 2020) and report PSNR,
+6
+
+
+Preprint
+Table 1: Results on video prediction. CNP-Flow improves over the fixed-source RIVER baseline and remains
+competitive with recent source-learning methods. CNP-Flow results are averaged over three seeds.
+Dataset
+p →k
+Method
+PSNR ↑
+SSIM ↑
+FVD ↓
+BAIR64
+1 →15
+RIVER (Davtyan et al., 2023)
+–
+–
+73.50
+MAGVIT (Yu et al., 2023)
+19.30
+0.787
+62.00
+iVideoGPT (Wu et al., 2024)
+20.40
+0.823
+75.00
+CAR-Flow (Chen et al., 2025)
+20.08
+0.836
+71.37
+PYoCo (Ge et al., 2023)
+20.13
+0.837
+61.88
+CSFM (Kim et al., 2026)
+20.16
+0.836
+64.20
+CNP-Flow (Ours)
+20.15
+0.839
+61.17
+KTH
+10 →30
+RIVER (Davtyan et al., 2023)
+30.40
+0.860
+180.00
+CVF (Shrivastava and Shrivastava, 2024a)
+30.60
+0.891
+108.60
+CAR-Flow (Chen et al., 2025)
+29.25
+0.897
+126.64
+PYoCo (Ge et al., 2023)
+31.14
+0.903
+82.32
+CSFM (Kim et al., 2026)
+31.64
+0.915
+69.00
+CNP-Flow (Ours)
+34.25
+0.943
+44.76
+KTH
+10 →40
+RIVER (Davtyan et al., 2023)
+29.00
+0.820
+170.50
+CVF (Shrivastava and Shrivastava, 2024a)
+29.70
+0.852
+100.80
+CNP-Flow (Ours)
+32.69
+0.930
+54.88
+CLEVRER
+2 →14
+RIVER (Davtyan et al., 2023)
+–
+–
+48.96
+PFI (Chen et al., 2024)
+–
+–
+39.31
+CNP-Flow (Ours)
+42.23
+0.994
+24.18
+Table 2: Results on video interpolation. CNP-Flow improves all metrics over RIVER on both datasets.
+Dataset
+p+f →k
+Method
+PSNR ↑
+SSIM ↑
+FVD ↓
+KTH
+2 →14
+RIVER (Davtyan et al., 2023)
+35.65
+0.9627
+38.28
+CNP-Flow (Ours)
+36.07
+0.9634
+36.81
+CLEVRER
+2 →14
+RIVER (Davtyan et al., 2023)
+43.79
+0.9949
+16.01
+CNP-Flow (Ours)
+45.68
+0.9954
+10.77
+SSIM (Wang et al., 2004), and FVD (Unterthiner et al., 2019) under the SRVP/RIVER protocol.
+We define prediction as p →k, where p observed frames are used to autoregressively generate
+k future frames. For interpolation, p + f →k denotes using p initial and f terminal observed
+frames to generate k intermediate frames; for brevity we write 2 →14 for the two-endpoint case
+1+1→14. Our primary baseline is RIVER, the fixed-source FM backbone we replace, providing
+a direct comparison between the standard Gaussian source and our learned, condition-dependent
+source. For other video-generation baselines, including MAGVIT (Yu et al., 2023), iVideoGPT (Wu
+et al., 2024), CVF (Shrivastava and Shrivastava, 2024a), and PFI (Chen et al., 2024), we report results
+from the original papers. We further compare with recent methods that modify or learn the source
+distribution, including CAR-Flow (Chen et al., 2025), PYoCo (Ge et al., 2023), and CSFM (Kim et al.,
+2026). Since directly comparable results are not available under our BAIR and KTH settings, we
+reimplement these methods following their original formulations and evaluate them under matched
+backbone, training-budget, and evaluation settings. Complete implementation and evaluation details
+are provided in Appendix C.
+Motion planning. For cross-modality transfer, we evaluate on the 7-DoF Franka Panda benchmark
+from MPD (Carvalho et al., 2025): each sample is a joint-space trajectory conditioned on start
+and goal configurations. We compare CNP-Flow against MPD (a diffusion-based planner) and a
+fixed-source FM, all trained on identical trajectory data. Following MPD, we report success, valid
+fraction, end-effector position/orientation error, and collision intensity. FM-based methods use a
+15-step Euler ODE sampler followed by MPD post-hoc cost refinement; details are provided in
+Appendix C.
+5.2
+MAIN RESULTS
+Video generation. CNP-Flow achieves the best FVD and SSIM across all prediction settings (Tab. 1),
+consistently improving over the fixed-source RIVER backbone and the strongest competing baselines.
+The gain is particularly large on KTH 10→30, where FVD decreases from 180.00 with RIVER to
+44.76 with CNP-Flow, compared with 126.64, 82.32, and 69.00 for CAR-Flow, PYoCo, and CSFM,
+respectively, while the gap is much smaller on BAIR. These methods either use predefined source
+7
+
+
+Preprint
+Table 3: Results on motion planning. All methods use a matched 15-step sampling budget, and results are
+averaged over three seeds.
+Method
+Success ↑
+Valid (%) ↑
+EE pos (cm) ↓
+EE ori (◦) ↓
+Collision ↓
+MPD (Carvalho et al., 2025)
+97%
+86.6
+1.9
+1.2
+0.0030
+Fixed-source FM
+96%
+84.9
+1.6
+1.1
+0.0038
+CNP-Flow (Ours)
+97%
+88.5
+0.8
+0.5
+0.0023
+structures or learn the source jointly with the flow using regularization or alignment. In contrast,
+CNP-Flow learns its conditional source from condition-specific source samples obtained through
+flow reversal, providing explicit supervision rather than relying on predefined structure or indirect
+joint optimization.
+The same trend holds for 2 →14 interpolation (Tab. 2), with consistent gains on all metrics over
+RIVER. Interpolation gains are smaller in absolute terms, as both endpoints constrain the rollout and
+reduce the burden on the source distribution.
+2
+3
+4 5
+10
+20
+50
+NFE
+20.0
+22.5
+25.0
+27.5
+30.0
+PSNR 
+Standard Gaussian
+CNP-Flow
+2
+3
+4 5
+10
+20
+50
+NFE
+0.6
+0.7
+0.8
+0.9
+SSIM 
+Standard Gaussian
+CNP-Flow
+Figure 4: Inference efficiency on KTH prediction. Curves show PSNR/SSIM averaged across generated
+samples per video. CNP-Flow reaches the standard Gaussian PSNR plateau (≈26.5) at NFE = 5 and converges
+higher (≈28.2) by NFE = 10; SSIM shows a similar trend. The crossover point is highlighted on each panel.
+Motion planning. The learned source is modality-agnostic: it parameterizes an isotropic Gaussian
+over latents conditioned on the temporal condition, regardless of what those latents represent. On
+the 7-DoF Franka Panda benchmark (Tab. 3), replacing diffusion (MPD) with a standard Gaussian
+source FM of similar capacity changes no metric outside noise. This rules out the generator family as
+the active variable. Adding the learned source to the same FM raises Valid from 84.9% to 88.5%,
+halves both end-effector errors, and cuts collision intensity by about 40%. Success rate moves only
+96% →97% because this metric ("at least one valid trajectory in the batch") is already saturated.
+Valid counts the fraction of sampled trajectories that are feasible, which is precisely what a better
+source distribution should improve. The mechanism matches the video case: the learned source
+places the integration start aligned with the manifold of valid outputs. The modality, dimension, and
+failure mode (a robot collision rather than low SSIM) are different.
+Inference efficiency. Because µϕ(Ci) is already aligned with the data manifold, the ODE no longer
+needs to first traverse the gap from a standard Gaussian before refining—each step is local refinement,
+so coarse solvers suffice. Fig. 4 substantiates this on the KTH prediction. Standard Gaussian source
+baseline plateaus at PSNR ≈26.5 from NFE = 10 onward; CNP-Flow attains and surpasses that
+plateau at NFE = 5 (PSNR 27.48, SSIM 0.86) and continues rising to PSNR ≈28.2 at NFE = 10.
+CNP-Flow at NFE = 5 already exceeds the baseline at NFE = 50, an order-of-magnitude reduction
+in solver budget; the final quality is superior, so the gain is both efficiency and endpoint improvement.
+5.3
+ANALYSIS
+Qualitative comparison. Fig. 5 shows the effect of the learned source. On CLEVRER interpolation,
+the fixed-source FM baseline incurs appearance drift and ghosting, while CNP-Flow maintains object
+identity and tracks the ground truth. On Franka Panda, MPD and fixed-source FM produce numerous
+colliding trajectories, whereas CNP-Flow produces a denser set of valid, collision-free plans. The
+visual failure modes reflect the metric results: a condition-dependent source improves temporal
+consistency in video and trajectory validity in motion planning.
+Ablation studies. We ablate two design choices of CNP-Flow in Tab. 4: the parameterization of
+the learned source for video prediction, and whether the FM backbone should be fine-tuned after
+8
+
+
+Preprint
+Initial frame
+time  →
+CNP-Flow
+Standard FM
+Temporally inconsistent
+FM
+MPD
+Target frame
+GT
+CNP-Flow
+Figure 5: Qualitative comparison. Left: CLEVRER interpolation. Fixed-source FM drifts at the highlighted
+frames, while CNP-Flow matches the ground truth. Right: Franka Panda motion planning. Each panel overlays
+50 sampled trajectories (red: colliding, green: collision-free). CNP-Flow produces more collision-free plans
+than MPD and fixed-source FM.
+Table 4: Ablation studies. Left: source parameterization on KTH 10 →30 video prediction, isolating the
+contribution of the learned mean and learned variance. Right: source learning and backbone fine-tuning (FT) on
+Franka Panda motion planning. In both tasks, metrics improve as the source better matches the condition.
+Video prediction (KTH)
+Source x0
+PSNR ↑
+SSIM ↑
+FVD ↓
+N(0, I)
+30.40
+0.860
+180.00
+µϕ(Ci)
+31.46
+0.908
+83.82
+N(µϕ(Ci), σ2
+ϕ(Ci)I)
+34.25
+0.943
+44.76
+Motion planning (Franka Panda)
+Variant
+Valid (%) ↑
+EE pos (cm) ↓
+EE ori (◦) ↓
+Coll. ↓
+Standard Gaussian
+84.9
+1.6
+1.1
+0.0038
+CNP-Flow w/o FT
+87.5
+1.0
+0.7
+0.0024
+CNP-Flow w/ FT
+88.5
+0.8
+0.5
+0.0023
+introducing the learned source. On KTH 10→30, replacing the standard Gaussian source with the
+deterministic learned mean µϕ(Ci) improves FVD from 180.00 to 83.82, showing that adapting the
+source to the temporal condition already provides a large gain over an unconditional source. However,
+the deterministic mean restricts each condition to a single source point. Adding the learned variance
+to form the full source µϕ(Ci) + σϕ(Ci)ϵ improves FVD to 44.76, PSNR from 31.46 to 34.25, and
+SSIM from 0.908 to 0.943. This shows that stochasticity remains important for video prediction,
+as multiple plausible futures can exist under the same temporal conditions. Additional controls
+in Appendix E show that, with the FM frozen, a CNP without flow reversal supervision performs
+similarly to the standard Gaussian source, whereas flow reversal supervision substantially improves
+FVD, isolating its contribution to source learning.
+For motion planning, the right side of Tab. 4 isolates two effects. Replacing the standard Gaussian
+source with a learned source (rows 1 →2) yields the larger effect: Valid jumps from 84.9% to
+87.5%, end-effector position error drops from 1.6 cm to 1.0 cm, and collision intensity drops by
+about 37%. All of this occurs without touching the FM backbone. Fine-tuning the backbone
+on the new source (rows 2 →3) closes the remaining gap: Valid 87.5% →88.5%, orientation
+0.7◦→0.5◦, collision 0.0024 →0.0023. This suggests that re-aligning the velocity field with the
+learned, condition-dependent source distribution adds refinement.
+Limitations and future work. While CNP-Flow improves generation quality and sampling efficiency
+across video prediction, video interpolation, and motion planning, one key limitation remains: the
+CNP uses a fixed form of temporal condition per task, limiting its use of richer contexts such as
+longer-horizon histories. A natural extension is to pair more expressive conditional source families
+with a flexible context encoder that absorbs longer-range, task-dependent structure. More broadly,
+treating the source distribution as a learnable conditioning channel is orthogonal to vector-field
+conditioning and applicable to any conditional FM task.
+9
+
+
+Preprint
+6
+CONCLUSION
+We presented CNP-Flow, a framework for learning conditional source distributions through flow
+reversal for temporal generation. By using a pretrained flow model to provide source supervision,
+CNP-Flow learns a source distribution adapted to each temporal condition while preserving the FM
+backbone architecture. Experiments across video prediction, video interpolation, and 7-DoF Franka
+motion planning demonstrate improved generation quality, alongside gains in sampling efficiency.
+ACKNOWLEDGMENT
+This work was supported by the AMD University Program AI & HPC Cluster. We further acknowl-
+edge Kuo-Guang Tsai for his technical support on the AMD system cluster infrastructure. This
+research was also supported by the National Science and Technology Council (NSTC), Taiwan, under
+Grants 115-2222-E-002-006-, 115-2634-F-002-001-, 115-2218-E-002-026-, and 115-2634-F-002-
+012-.
+AI USE DISCLOSURE STATEMENT
+Large language models were used to assist with language editing and improve the clarity of the
+manuscript. Claude Code was also used to support software development, including implementation
+and debugging. All AI-generated text and code were reviewed, revised as needed, and validated by
+the authors, who take full responsibility for the final manuscript and code.
+REPRODUCIBILITY STATEMENT
+We provide the details necessary to reproduce our results in the main paper and appendix. The
+complete training and inference procedures of CNP-Flow are provided in Appendix A, with additional
+mathematical details in Appendix B. Appendix C specifies the experimental setup, model architectures,
+training hyperparameters, flow reversal configurations, computational resources, and evaluation
+protocols for both video generation and motion planning. We also report results over multiple
+independent random seeds where applicable and provide additional analyses and generated results in
+Appendices E and G.
+REFERENCES
+Mohammad Babaeizadeh, Mohammad Taghi Saffar, Suraj Nair, Sergey Levine, Chelsea Finn, and Dumitru
+Erhan. Fitvid: Overfitting in pixel-level video prediction. arXiv preprint arXiv:2106.13195, 2021.
+Ryan Burgert, Yuancheng Xu, Wenqi Xian, Oliver Pilarski, Pascal Clausen, Mingming He, Li Ma, Yitong
+Deng, Lingxiao Li, Mohsen Mousavi, et al. Go-with-the-flow: Motion-controllable video diffusion models
+using real-time warped noise. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), 2025.
+Joao Carvalho, An T Le, Mark Baierl, Dorothea Koert, and Jan Peters. Motion planning diffusion: Learning and
+planning of robot motions with diffusion models. In 2023 IEEE/RSJ International Conference on Intelligent
+Robots and Systems (IROS), 2023.
+Joao Carvalho, An T Le, Piotr Kicki, Dorothea Koert, and Jan Peters. Motion planning diffusion: Learning and
+adapting robot motion planning with diffusion models. IEEE Transactions on Robotics, 2025.
+Pascal Chang, Jingwei Tang, Markus Gross, and Vinicius C Azevedo. How i warped your noise: a temporally-
+correlated noise prior for diffusion models. In International Conference on Learning Representations (ICLR),
+2024.
+Chen Chen, Pengsheng Guo, Liangchen Song, Jiasen Lu, Rui Qian, Xinze Wang, Tsu-Jui Fu, Wei Liu, Yinfei
+Yang, and Alex Schwing. Car-flow: Condition-aware reparameterization aligns source and target for better
+flow matching. In Advances in Neural Information Processing Systems (NeurIPS), 2025.
+Yifan Chen, Mark Goldstein, Mengjian Hua, Michael Samuel Albergo, Nicholas Matthew Boffi, and Eric
+Vanden-Eijnden. Probabilistic forecasting with stochastic interpolants and föllmer processes. In International
+Conference on Machine Learning (ICML), 2024.
+10
+
+
+Preprint
+Chiensheng Chiang, Kuan-Hsun Tu, Jia-Wei Liao, Cheng-Fu Chou, and Tsung-Wei Ke. Cot-fm: Cluster-wise
+optimal transport flow matching. arXiv preprint arXiv:2603.13395, 2026.
+Aram Davtyan, Sepehr Sameni, and Paolo Favaro. Efficient video prediction via sparsely conditioned flow
+matching. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV), 2023.
+Prafulla Dhariwal and Alexander Nichol. Diffusion models beat gans on image synthesis. In Advances in Neural
+Information Processing Systems (NeurIPS), 2021.
+Frederik Ebert, Chelsea Finn, Alex X. Lee, and Sergey Levine. Self-supervised visual planning with temporal
+skip connections. In Conference on Robot Learning (CoRL), 2017.
+Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik
+Lorenz, Axel Sauer, Frederic Boesel, Dustin Podell, Tim Dockhorn, Zion English, and Robin Rombach.
+Scaling rectified flow transformers for high-resolution image synthesis. In International Conference on
+Machine Learning (ICML), 2024.
+Luca Eyring, Shyamgopal Karthik, Karsten Roth, Alexey Dosovitskiy, and Zeynep Akata. Reno: Enhancing
+one-step text-to-image models through reward-based noise optimization. In Advances in Neural Information
+Processing Systems (NeurIPS), 2024.
+Jean-Yves Franceschi, Edouard Delasalles, Mickaël Chen, Sylvain Lamprier, and Patrick Gallinari. Stochastic
+latent residual video prediction. In International Conference on Machine Learning (ICML), 2020.
+Songwei Ge, Seungjun Nah, Guilin Liu, Tyler Poon, Andrew Tao, Bryan Catanzaro, David Jacobs, Jia-Bin
+Huang, Ming-Yu Liu, and Yogesh Balaji. Preserve your own correlation: A noise prior for video diffusion
+models. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV), 2023.
+Nikolaos Gkanatsios, Jiahe Xu, Matthew Bronars, Arsalan Mousavian, Tsung-Wei Ke, and Katerina Fragki-
+adaki. 3d flowmatch actor: Unified 3d policy for single- and dual-arm manipulation. In arXiv preprint
+arXiv:2508.11002, 2025.
+Alex Graves. Long short-term memory. Supervised sequence labelling with recurrent neural networks, 2012.
+Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. In Advances in Neural
+Information Processing Systems (NeurIPS), 2020.
+Jonathan Ho, Tim Salimans, Alexey Gritsenko, William Chan, Mohammad Norouzi, and David J Fleet. Video
+diffusion models. In Advances in Neural Information Processing Systems (NeurIPS), 2022.
+Tobias Höppe, Arash Mehrjou, Stefan Bauer, Didrik Nielsen, and Andrea Dittadi. Diffusion models for video
+prediction and infilling. Transactions on Machine Learning Research (TMLR), 2022.
+Michael Janner, Yilun Du, Joshua Tenenbaum, and Sergey Levine. Planning with diffusion for flexible behavior
+synthesis. In International Conference on Machine Learning (ICML), 2022.
+Junwan Kim, Jiho Park, Seonghu Jeon, and Seungryong Kim. Better source, better flow: Learning condition-
+dependent source distribution for flow matching. arXiv preprint arXiv:2602.05951, 2026.
+Wei-Sheng Lai, Jia-Bin Huang, Oliver Wang, Eli Shechtman, Ersin Yumer, and Ming-Hsuan Yang. Learning
+blind video temporal consistency. In Proceedings of the European Conference on Computer Vision (ECCV),
+2018.
+Guillaume Le Moing, Jean Ponce, and Cordelia Schmid. Ccvs: Context-aware controllable video synthesis. In
+Advances in Neural Information Processing Systems (NeurIPS), 2021.
+Junho Lee, Kwanseok Kim, and Joonseok Lee. Is there a better source distribution than gaussian? exploring
+source distributions for image flow matching. Transactions on Machine Learning Research (TMLR), 2025.
+Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow matching for
+generative modeling. In International Conference on Learning Representations (ICLR), 2023.
+Chao Liu and Arash Vahdat. Equivdm: Equivariant video diffusion models with temporally consistent noise.
+arXiv preprint arXiv:2504.09789, 2025.
+Zhengxiong Luo, Dayou Chen, Yingya Zhang, Yan Huang, Liang Wang, Yujun Shen, Deli Zhao, Jingren
+Zhou, and Tieniu Tan. Videofusion: Decomposed diffusion models for high-quality video generation. In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2023.
+11
+
+
+Preprint
+Xin Ma, Yaohui Wang, Xinyuan Chen, Gengyun Jia, Ziwei Liu, Yuan-Fang Li, Cunjian Chen, and Yu Qiao. Latte:
+Latent diffusion transformer for video generation. Transactions on Machine Learning Research (TMLR),
+2025.
+Jiafeng Mao, Xueting Wang, and Kiyoharu Aizawa. Semantic-driven initial image construction for guided image
+synthesis in diffusion model. arXiv preprint arXiv:2312.08872, 2023.
+Jiafeng Mao, Xueting Wang, and Kiyoharu Aizawa. The lottery ticket hypothesis in denoising: Towards
+semantic-driven initialization. In Proceedings of the European Conference on Computer Vision (ECCV),
+2024.
+Chenlin Meng, Yutong He, Yang Song, Jiaming Song, Jiajun Wu, Jun-Yan Zhu, and Stefano Ermon. Sdedit:
+Guided image synthesis and editing with stochastic differential equations. In International Conference on
+Learning Representations (ICLR), 2022.
+William Peebles and Saining Xie. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF
+International Conference on Computer Vision (ICCV), 2023.
+Aram-Alexandre Pooladian, Heli Ben-Hamu, Carles Domingo-Enrich, Brandon Amos, Yaron Lipman, and Ricky
+T. Q. Chen. Multisample flow matching: Straightening flows with minibatch couplings. In International
+Conference on Machine Learning (ICML), 2023.
+Fitsum Reda, Janne Kontkanen, Eric Tabellion, Deqing Sun, Caroline Pantofaru, and Brian Curless. Film: Frame
+interpolation for large motion. In Proceedings of the European Conference on Computer Vision (ECCV),
+2022.
+Seyedmorteza Sadat, Jakob Buhmann, Derek Bradley, Otmar Hilliges, and Romann M Weber. Cads: Unleashing
+the diversity of diffusion models through condition-annealed sampling. In International Conference on
+Learning Representations (ICLR), 2024.
+Dvir Samuel, Rami Ben-Ari, Simon Raviv, Nir Darshan, and Gal Chechik. Generating images of rare concepts
+using pre-trained diffusion models. In Association for the Advancement of Artificial Intelligence (AAAI),
+2024.
+Christian Schüldt, Ivan Laptev, and Barbara Caputo. Recognizing human actions: A local SVM approach. In
+Proceedings of the 17th International Conference on Pattern Recognition (ICPR), 2004.
+Gaurav Shrivastava and Abhinav Shrivastava. Efficient continuous video flow model for video prediction. arXiv
+preprint arXiv:2412.05633, 2024a.
+Gaurav Shrivastava and Abhinav Shrivastava. Video prediction by modeling videos as continuous multi-
+dimensional processes. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), 2024b.
+Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+Score-based generative modeling through stochastic differential equations. In International Conference on
+Learning Representations (ICLR), 2021.
+Alexander Tong, Kilian Fatras, Nikolay Malkin, Guillaume Huguet, Yanlei Zhang, Jarrid Rector-Brooks, Guy
+Wolf, and Yoshua Bengio. Improving and generalizing flow-based generative models with minibatch optimal
+transport. Transactions on Machine Learning Research (TMLR), 2024.
+Thomas Unterthiner, Sjoerd van Steenkiste, Karol Kurach, Raphaël Marinier, Marcin Michalski, and Sylvain
+Gelly. FVD: A new metric for video generation. ICLR Workshop on Deep Generative Models for Highly
+Structured Data, 2019.
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser,
+and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems
+(NIPS), 2017.
+Vikram Voleti, Alexia Jolicoeur-Martineau, and Chris Pal. Mcvd-masked conditional video diffusion for
+prediction, generation, and interpolation. In Advances in Neural Information Processing Systems (NeurIPS),
+2022.
+Andrew Wagenmaker, Mitsuhiko Nakamoto, Yunchu Zhang, Seohong Park, Waleed Yagoub, Anusha Nagabandi,
+Abhishek Gupta, and Sergey Levine. Steering your diffusion policy with latent space reinforcement learning.
+In Conference on Robot Learning (CoRL), 2025.
+12
+
+
+Preprint
+Zhou Wang, Alan C. Bovik, Hamid R. Sheikh, and Eero P. Simoncelli. Image quality assessment: From error
+visibility to structural similarity. IEEE Transactions on Image Processing, 2004.
+Jialong Wu, Shaofeng Yin, Ningya Feng, Xu He, Dong Li, Jianye Hao, and Mingsheng Long. ivideogpt:
+Interactive videogpts are scalable world models. In Advances in Neural Information Processing Systems
+(NeurIPS), 2024.
+Haotian Xue, Yipu Chen, Liqian Ma, Zelin Zhao, Lama Moukheiber, Yuchen Zhu, and Yongxin Chen. Acwm-
+phys: Investigating generalized physical interaction in action-conditioned video world models. arXiv preprint
+arXiv:2605.08567, 2026.
+Ruihan Yang, Prakhar Srivastava, and Stephan Mandt. Diffusion probabilistic modeling for video generation.
+Entropy, 2023.
+Kexin Yi, Chuang Gan, Yunzhu Li, Pushmeet Kohli, Jiajun Wu, Antonio Torralba, and Joshua B. Tenenbaum.
+CLEVRER: Collision events for video representation and reasoning. In International Conference on Learning
+Representations (ICLR), 2020.
+Lijun Yu, Yong Cheng, Kihyuk Sohn, José Lezama, Han Zhang, Huiwen Chang, Alexander G Hauptmann,
+Ming-Hsuan Yang, Yuan Hao, Irfan Essa, et al. Magvit: Masked generative video transformer. In Proceedings
+of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2023.
+Zhongwei Zhang, Fuchen Long, Yingwei Pan, Zhaofan Qiu, Ting Yao, Yang Cao, and Tao Mei. Trip: Temporal
+residual learning with image noise prior for image-to-video diffusion models. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition (CVPR), 2024.
+13
+
+
+Preprint
+Appendix
+A
+ALGORITHMS OF CNP-FLOW
+The training procedures of CNP-Flow are summarized in Algo. 1 and Algo. 2. The inference
+procedures for video prediction are provided in Algo. 3, while the inference procedures for video
+interpolation are provided in Algo. 4.
+Algorithm 1 Training the CNP
+Input: Temporal dataset DT , pretrained FM θ, KL
+weight λ, learning rate γ
+1: repeat
+2:
+Sample (xi
+1, Ci
+T ) ∼DT
+3:
+Flow reversal: ˜xi
+0 = eΦθ,1→0(xi
+1 | Ci
+T )
+4:
+LNLL(ϕ) = −E[log pϕ(˜xi
+0 | Ci
+T )]
+5:
+LKL(ϕ) = DKL
+ pϕ(· | Ci
+T )∥N(0, I)
+
+6:
+LCNP = LNLL + λLKL
+7:
+ϕ ←ϕ −γ∇ϕLCNP
+8: until convergence
+Return: Optimized CNP ϕ
+Algorithm 2 Fine-Tuning FM
+Input: Temporal dataset DT , CNP ϕ, FM θ, learning
+rate γ
+1: repeat
+2:
+Sample (xi
+1, Ci
+T ) ∼DT
+3:
+ϵ ∼N(0, I); xi
+0 = µϕ(Ci
+T ) + σϕ(Ci
+T ) ϵ
+4:
+t ∼U(0, 1); xi
+t = (1 −t)xi
+0 + txi
+1
+5:
+vi
+t = xi
+1 −xi
+0
+6:
+LFT-FM(θ) = E
+
+∥vθ(xi
+t, t | Ci
+T ) −vi
+t∥2
+2
+
+7:
+θ ←θ −γ∇θLFT-FM
+8: until convergence
+Return: Optimized FM θ
+Algorithm 3 Video Prediction with CNP-Flow
+Input: Initial x0, x1, CNP ϕ, FM θ, timesteps 0 =
+t0 < · · · < tK = 1
+1: x0
+1 ←x0, x1
+1 ←x1
+2: for i = 2 to N do
+3:
+VP condition: Ci
+T = (xi−1
+1
+, xc
+1, i −c)
+4:
+ϵ ∼N(0, I); xi
+0 = µϕ(Ci
+T ) + σϕ(Ci
+T ) ϵ
+5:
+for k = 0 to K −1 do
+6:
+∆tk = tk+1 −tk
+7:
+xi
+tk+1 = xi
+tk + vθ(xi
+tk, tk | Ci
+T )∆tk
+8:
+end for
+9:
+xi ←xi
+1
+10: end for
+Return: Temporal predictions {xi}N
+i=0
+Algorithm 4 Video Interpolation with CNP-Flow
+Input: Initial x0, xN, CNP ϕ, FM θ, timesteps 0 =
+t0 < · · · < tK = 1
+1: x0
+1 ←x0, xN
+1 ←xN
+2: for i = 1 to N −1 do
+3:
+VI condition: Ci
+T = (xi−1
+1
+, xN
+1 , N −i)
+4:
+ϵ ∼N(0, I); xi
+0 = µϕ(Ci
+T ) + σϕ(Ci
+T ) ϵ
+5:
+for k = 0 to K −1 do
+6:
+∆tk = tk+1 −tk
+7:
+xi
+tk+1 = xi
+tk + vθ(xi
+tk, tk | Ci
+T )∆tk
+8:
+end for
+9:
+xi ←xi
+1
+10: end for
+Return: Temporal predictions {xi}N
+i=0
+B
+MATHEMATICAL DETAILS
+We consider the general form of the CNP objective and derive the equations satisfied by the corre-
+sponding optimal CNP parameters.
+Proposition B.1 (Population minimizer of CNP objective). Consider the CNP objective LCNP(ϕ) =
+αLNLL(ϕ) + βLKL(ϕ), with α > 0, β ≥0. Let the CNP family be the isotropic Gaussians
+pϕ(x0|CT ) = N(x0; µϕ(CT ), σ2
+ϕ(CT )I). For each condition CT , assume the flow-reversal-induced
+source distribution has finite second moments, and denote its mean and variance by
+˜µ0(CT ) = Ex1∼p1(·|CT )[˜Φθ,1→0(x1 | CT )],
+˜σ2
+0(CT ) = 1
+dEx1∼p1(·|CT )∥˜Φθ,1→0(x1 | CT )−˜µ0∥2
+2.
+Then for each CT , the population minimizer of LCNP over the isotropic Gaussian family is
+p∗
+ϕ(x0 | CT ) = N(x0; µ∗
+ϕ(CT ), σ∗
+ϕ
+2(CT )I),
+(9)
+whose parameters (µ∗
+ϕ, σ∗
+ϕ
+2) satisfy
+µ∗
+ϕ =
+α
+α + βσ∗
+ϕ
+2 ˜µ0, and
+β(σ∗
+ϕ
+2)2 + (α −β)σ∗
+ϕ
+2 −α˜σ2
+0 −
+αβ2(σ∗
+ϕ
+2)2
+d(α + βσ∗
+ϕ
+2)2 ∥˜µ0∥2
+2 = 0.
+(10)
+14
+
+
+Preprint
+Proof. Given a condition CT , let the flow-reversal-induced source distribution be p0(· | CT ) =
+(˜Φ1→0(· | CT ))#pDT . The negative log-likelihood (NLL) of pϕ(x0 | CT ) is
+LNLL(ϕ) = −Ex0∼p0 log N(x0; µϕ, σ2
+ϕI) = d
+2 log(2πσ2
+ϕ) +
+1
+2σ2
+ϕ
+Ex0∼p0∥x0 −µϕ∥2
+2.
+By the second-moment decomposition Ex0∼p0∥x0 −µϕ∥2
+2 = d˜σ2
+0 + ∥µϕ −˜µ0∥2
+2, we obtain
+LNLL(ϕ) = d
+2 log(2πσ2
+ϕ) +
+1
+2σ2
+ϕ
+ d˜σ2
+0 + ∥µϕ −˜µ0∥2
+2
+
+.
+Moreover, the KL term against the standard Gaussian has the closed form
+LKL(ϕ) = 1
+2
+ ∥µϕ∥2
+2 + dσ2
+ϕ −d −d log σ2
+ϕ
+
+.
+Therefore, the CNP objective becomes
+LCNP(ϕ) =
+α
+2σ2
+ϕ
+∥µϕ −˜µ0∥2
+2 + β
+2 ∥µϕ∥2
+2 + αd
+2 log σ2
+ϕ + αd˜σ2
+0
+2σ2
+ϕ
++ βd
+2 σ2
+ϕ −βd
+2 log σ2
+ϕ + αd
+2 log 2π −βd
+2 .
+At a stationary point (µ∗
+ϕ, σ∗
+ϕ
+2), the first-order optimality conditions satisfy
+∇ϕLCNP =
+
+∇µϕL⊤
+CNP(µ∗
+ϕ, σ∗
+ϕ
+2)
+∂LCNP
+∂σ2
+ϕ
+(µ∗
+ϕ, σ∗
+ϕ
+2)
+⊤
+=
+
+0⊤
+d
+0
+⊤.
+Differentiating LCNP with respect to µϕ yields
+∇µϕLCNP(µ∗
+ϕ, σ∗
+ϕ
+2) = α
+σ2
+ϕ
+(µ∗
+ϕ −˜µ0) + βµ∗
+ϕ.
+Setting this gradient to zero gives
+µ∗
+ϕ =
+α
+α + βσ∗
+ϕ
+2 ˜µ0.
+Substituting the optimal mean µ∗
+ϕ into ∂LCNP
+∂σ2
+ϕ (µ∗
+ϕ, σ∗
+ϕ
+2) = 0, we obtain
+β(σ∗
+ϕ
+2)2 + (α −β)σ∗
+ϕ
+2 −α˜σ2
+0 −
+αβ2(σ∗
+ϕ
+2)2
+d(α + βσ∗
+ϕ
+2)2 ∥˜µ0∥2
+2 = 0.
+The proof is complete.
+Next, we consider the limiting behavior of the optimal parameters when the two loss terms dominate
+under extreme coefficient settings.
+Corollary B.2. Under the setting of Prop. B.1, let p∗
+ϕ(x0 | CT ) = N(x0; µ∗
+ϕ(CT ), σ∗
+ϕ
+2(CT )I) be the
+population minimizer of LCNP over the isotropic Gaussian family. Then
+1. If β/α →0+, then the population minimizer reduces to the moment-matching optimum,
+µ∗
+ϕ →˜µ0, and σ∗
+ϕ
+2 →˜σ2
+0.
+2. If α/β →0+, then the population minimizer reduces to the standard Gaussian distribution,
+µ∗
+ϕ →0d, and σ∗
+ϕ
+2 →1.
+15
+
+
+Preprint
+Proof. For the first limiting regime, let η = β/α. Then
+µ∗
+ϕ =
+1
+1 + ησ∗
+ϕ
+2 ˜µ0,
+and the variance equation becomes
+η(σ∗
+ϕ
+2)2 + (1 −η)σ∗
+ϕ
+2 −˜σ2
+0 −
+η2(σ∗
+ϕ
+2)2
+d(1 + ησ∗
+ϕ
+2)2 ∥˜µ0∥2
+2 = 0.
+Letting η →0+, the nonlinear correction term vanishes, and the equation reduces to σ∗
+ϕ
+2 −˜σ2
+0 = 0.
+Hence σ∗
+ϕ
+2 →˜σ2
+0 and consequently µ∗
+ϕ →˜µ0 .
+For the second limiting regime, let τ = α/β. Then
+µ∗
+ϕ =
+τ
+τ + σ∗
+ϕ
+2 ˜µ0,
+and the variance equation becomes
+(σ∗
+ϕ
+2)2 + (τ −1)σ∗
+ϕ
+2 −τ ˜σ2
+0 −
+τ(σ∗
+ϕ
+2)2
+d(τ + σ∗
+ϕ
+2)2 ∥˜µ0∥2
+2 = 0.
+Letting τ →0+, the equation reduces to (σ∗
+ϕ
+2)2 −σ∗
+ϕ
+2 = 0. Since σ∗
+ϕ
+2 > 0, thus σ∗
+ϕ
+2 →1 and
+µ∗
+ϕ →0d. The proof is complete.
+Prop. B.1 shows that, after introducing the KL regularization term, the optimal mean and standard
+deviation become coupled and jointly influence each other. In particular, increasing the KL regular-
+ization strength pulls the mean toward zero while simultaneously constraining the variance toward the
+standard Gaussian prior. Cor. B.2 further analyzes the limiting regimes of this objective. When the KL
+coefficient dominates the NLL term, the learned distribution converges toward N(0, I); conversely,
+when the KL regularization becomes negligible, the solution reduces to the setting characterized in
+Prop. 4.1 in the main paper.
+Lemma B.3 (Lipschitz continuity of the conditional flow reversal map). Suppose that vθ(xt, t | CT )
+is Lipschitz continuous in (xt, CT ) on Xt × XCT , uniformly over t ∈[0, 1]. Then ˜Φθ,1→0(x1 | CT ) is
+Lipschitz continuous on X1 × XCT .
+Proof. For any x1, x′
+1 ∈X1 and CT , C′
+T ∈XCT , since vθ(xt, t | CT ) is Lipschitz continuous on
+Xt × XCT , there exist Lx, LC > 0, independent of t, such that for all t ∈[0, 1],
+∥vθ(xt, t | CT ) −vθ(x′
+t, t | C′
+T )∥2 ≤Lx∥xt −x′
+t∥2 + LC∥CT −C′
+T ∥2.
+Define the reverse-time trajectories zτ := x1−τ and z′
+τ := x′
+1−τ for τ ∈[0, 1]. By definition,
+z1 = x0 = ˜Φθ,1→0(x1 | CT )
+and
+z′
+1 = x′
+0 = ˜Φθ,1→0(x′
+1 | C′
+T ),
+and the reverse ODEs are given by
+dzτ
+dτ = −vθ(zτ, 1 −τ | CT )
+and
+dz′
+τ
+dτ = −vθ(z′
+τ, 1 −τ | C′
+T ).
+It follows that
+d
+dτ ∥zτ −z′
+τ∥2 ≤
+
+dzτ
+dτ −dz′
+τ
+dτ
+
+2
+= ∥−vθ(zτ, 1 −τ | CT ) −[−vθ(z′
+τ, 1 −τ | C′
+T )]∥2
+≤Lx∥zτ −z′
+τ∥2 + LC∥CT −C′
+T ∥2.
+16
+
+
+Preprint
+By Grönwall’s inequality, we have
+∥z1 −z′
+1∥2 ≤eLx∥z0 −z′
+0∥2 +
+Z 1
+0
+eLx(1−τ)LC∥CT −C′
+T ∥2dτ
+= eLx∥z0 −z′
+0∥2 + LC∥CT −C′
+T ∥2
+Z 1
+0
+eLx(1−τ)dτ
+= eLx∥z0 −z′
+0∥2 + LC∥CT −C′
+T ∥2
+eLx −1
+Lx
+
+= eLx∥z0 −z′
+0∥2 + LC
+Lx
+(eLx −1)∥CT −C′
+T ∥2.
+Since z0 = x1, z′
+0 = x′
+1, z1 = ˜Φθ,1→0(x1 | CT ) and z′
+1 = ˜Φθ,1→0(x′
+1 | C′
+T ), we obtain
+˜Φθ,1→0(x1 | CT ) −˜Φθ,1→0(x′
+1 | C′
+T )
+
+2 ≤LΦ∥x1 −x′
+1∥2 + LΦ∥CT −C′
+T ∥2,
+where LΦ = max{eLx, LC
+Lx (eLx −1)}.
+Proposition B.4 (Lipschitz continuity of the NLL objective population minimizer). Suppose that
+˜Φθ,1→0(x1 | CT ) is Lipschitz continuous in (x1, CT ) on X1 × XCT , CT 7→p1(· | CT ) is Lip-
+schitz continuous on XCT with respect to the W2-distance, and there exists M > 0 such that
+Ex1∼p1(·|CT )∥˜Φθ,1→0(x1 | CT )∥2
+2 ≤M for all CT ∈XCT . Then ˜µ0(CT ) and ˜σ2
+0(CT ) are Lipschitz
+continuous on XCT .
+Proof. Step 1: Lipschitz continuity of the optimal mean.
+For any C′
+T , CT
+∈XCT , since
+˜Φθ,1→0(x1 | CT ) is Lipschitz continuous on X1 × XCT , there exists LΦ > 0 such that
+˜Φθ,1→0(x′
+1 | C′
+T ) −˜Φθ,1→0(x1 | CT )
+
+2 ≤LΦ (∥x′
+1 −x1∥2 + ∥C′
+T −CT ∥2) for all x′
+1, x1 ∈X1.
+Moreover, since CT 7→p1(· | CT ) is Lipschitz continuous on XCT with respect to the W2-distance,
+there exists Lp1 > 0 such that
+W2(p1(· | C′
+T ), p1(· | CT )) ≤Lp1∥C′
+T −CT ∥2.
+Furthermore, there exists γ1 ∈Π(p1(· | C′
+T ), p1(· | CT )) such that
+E(x′
+1,x1)∼γ1∥x′
+1 −x1∥2
+2 ≤
+inf
+γ∗∈Π(p1(·|C′
+T ),p1(·|CT )) E(x′
+1,x1)∼γ∗∥x′
+1 −x1∥2
+2 + ∥C′
+T −CT ∥2
+2.
+Then we obtain
+E(x′
+1,x1)∼γ1∥x′
+1 −x1∥2 ≤
+ E(x′
+1,x1)∼γ1∥x′
+1 −x1∥2
+2
+ 1
+2 (by Jensen’s inequality)
+≤W2(p1(· | C′
+T ), p1(· | CT )) + ∥C′
+T −CT ∥2 ≤(Lp1 + 1)∥C′
+T −CT ∥2.
+Therefore, we have
+∥˜µ0(C′
+T ) −˜µ0(CT )∥2 =
+Ex′
+1∼p1(·|C′
+T )[˜Φθ,1→0(x′
+1 | C′
+T )] −Ex1∼p1(·|CT )[˜Φθ,1→0(x1 | CT )]
+
+2
+=
+E(x′
+1,x1)∼γ1[˜Φθ,1→0(x′
+1 | C′
+T )] −E(x′
+1,x1)∼γ1[˜Φθ,1→0(x1 | CT )]
+
+2
+≤E(x′
+1,x1)∼γ1
+˜Φθ,1→0(x′
+1 | C′
+T ) −˜Φθ,1→0(x1 | CT )
+
+2 (by the triangle inequality)
+≤LΦ
+
+E(x′
+1,x1)∼γ1∥x′
+1 −x1∥2 + ∥C′
+T −CT ∥2
+
+≤L˜µ0∥C′
+T −CT ∥2.
+where L˜µ0 := LΦ(Lp1 + 2).
+Step 2: Lipschitz continuity of the optimal variance. Recall that
+˜σ2
+0(CT ) = 1
+dEx1∼p1(·|CT )
+˜Φθ,1→0(x1 | CT ) −˜µ0(CT )
+
+2
+2 .
+17
+
+
+Preprint
+Equivalently,
+˜σ2
+0(CT ) = 1
+d
+
+Ex1∼p1(·|CT )
+˜Φθ,1→0(x1 | CT )
+
+2
+2 −∥˜µ0(CT )∥2
+2
+
+.
+For any C′
+T , CT ∈XCT , choose a coupling γ2 ∈Π(p1(· | C′
+T ), p1(· | CT )) such that
+E(x′
+1,x1)∼γ2∥x′
+1 −x1∥2
+2 ≤W 2
+2 (p1(· | C′
+T ), p1(· | CT )) + ∥C′
+T −CT ∥2
+2 ≤(L2
+p1 + 1)∥C′
+T −CT ∥2
+2.
+Then we obtain
+Ex′
+1∼p1(·|C′
+T )
+˜Φθ,1→0(x′
+1 | C′
+T )
+
+2
+2 −Ex1∼p1(·|CT )
+˜Φθ,1→0(x1 | CT )
+
+2
+2
+
+=
+E(x′
+1,x1)∼γ2
+˜Φθ,1→0(x′
+1 | C′
+T )
+
+2
+2 −
+˜Φθ,1→0(x1 | CT )
+
+2
+2
+
+≤E(x′
+1,x1)∼γ2
+h ˜Φθ,1→0(x′
+1 | C′
+T )
+
+2 +
+˜Φθ,1→0(x1 | CT )
+
+2
+
+·
+˜Φθ,1→0(x′
+1 | C′
+T ) −˜Φθ,1→0(x1 | CT )
+
+2
+i
+≤2
+√
+M ·
+
+E(x′
+1,x1)∼γ2
+˜Φθ,1→0(x′
+1 | C′
+T ) −˜Φθ,1→0(x1 | CT )
+
+2
+2
+1/2
+(by the Cauchy–Schwarz inequality)
+≤2LΦ
+√
+2M
+ E(x′
+1,x1)∼γ2∥x′
+1 −x1∥2
+2 + ∥C′
+T −CT ∥2
+2
+ 1
+2 (since ˜Φθ,1→0 is Lipschitz continuous).
+≤2LΦ
+q
+2M(L2p1 + 2)∥C′
+T −CT ∥2.
+Next, for any CT ∈XCT ,
+∥˜µ0(CT )∥2 = ∥Ex1∼p1(·|CT )[˜Φθ,1→0(x1 | CT )]∥2
+≤
+
+Ex1∼p1(·|CT )∥˜Φθ,1→0(x1 | CT )∥2
+2
+ 1
+2 (by Jensen’s inequality)
+≤
+√
+M.
+Hence
+∥˜µ0(C′
+T )∥2
+2 −∥˜µ0(CT )∥2
+2
+ ≤(∥˜µ0(C′
+T )∥2 + ∥˜µ0(CT )∥2)∥˜µ0(C′
+T ) −˜µ0(CT )∥2
+≤2
+√
+M∥˜µ0(C′
+T ) −˜µ0(CT )∥2 ≤2LΦ(Lp1 + 2)
+√
+M∥C′
+T −CT ∥2.
+Therefore, we have
+˜σ2
+0(C′
+T ) −˜σ2
+0(CT )
+ ≤1
+d
+Ex′
+1∼p1(·|C′
+T )
+˜Φθ,1→0(x′
+1 | C′
+T )
+
+2
+2 −Ex1∼p1(·|CT )
+˜Φθ,1→0(x1 | CT )
+
+2
+2
+
++ 1
+d
+∥˜µ0(C′
+T )∥2
+2 −∥˜µ0(CT )∥2
+2
+ ≤L˜σ2
+0∥C′
+T −CT ∥2.
+where L˜σ2
+0 := 2LΦ
+d
+hq
+2M(L2p1 + 2) + (Lp1 + 2)
+√
+M
+i
+. The proof is complete.
+Proposition B.5 (Lipschitz continuity of the CNP objective population minimizer). Consider the
+CNP objective LCNP(ϕ) = αLNLL(ϕ) + βLKL(ϕ), α > 0, β ≥0. Let s(CT ) = σ∗2
+ϕ (CT ) denote the
+unique positive solution of F(s, CT ) = 0, where
+F(s, CT ) = βs2 + (α −β)s −α˜σ2
+0(CT ) −
+αβ2s2
+d(α + βs)2 ∥˜µ0(CT )∥2.
+Assume that for all CT ∈XCT ,
+(1) ∥˜µ0(CT )∥2 ≤M˜µ0,
+(2) ˜µ0(·) is L˜µ0-Lipschitz continuous on XCT ,
+(3) ˜σ2
+0(·) is L˜σ2
+0-Lipschitz continuous on XCT ,
+18
+
+
+Preprint
+(4) 0 < smin ≤s(CT ) ≤smax < ∞, and
+(5) there exists κ > 0 such that |∂sF(s, CT )| ≥κ for all s ∈[smin, smax].
+Then µ∗
+ϕ(CT ) and σ∗
+ϕ
+2(CT ) are Lipschitz continuous on XCT .
+Proof. For any two conditions CT , C′
+T ∈XCT , we have
+F(s(CT ), CT ) = F(s(C′
+T ), C′
+T ) = 0.
+Therefore,
+F(s(CT ), CT ) −F(s(C′
+T ), CT ) = F(s(C′
+T ), C′
+T ) −F(s(C′
+T ), CT ).
+By the Mean Value Theorem, there exists ¯s between s(CT ) and s(C′
+T ) such that
+F(s(CT ), CT ) −F(s(C′
+T ), CT ) = ∂sF(¯s, CT )(s(CT ) −s(C′
+T )).
+Since s(CT ) and s(C′
+T ) both lie in [smin, smax], we have ¯s ∈[smin, smax]. Thus,
+κ|s(CT ) −s(C′
+T )| ≤|F(s(C′
+T ), C′
+T ) −F(s(C′
+T ), CT )|.
+For any s ∈[smin, smax], we have
+|F(s, CT ) −F(s, C′
+T )| ≤α|˜σ2
+0(CT ) −˜σ2
+0(C′
+T )| +
+αβ2s2
+d(α + βs)2
+∥˜µ0(CT )∥2
+2 −∥˜µ0(C′
+T )∥2
+2
+
+≤αL˜σ2
+0∥CT −C′
+T ∥2 + β2s2
+max
+dα
+(2M˜µ0L˜µ0)∥CT −C′
+T ∥2
+=
+
+αL˜σ2
+0 + 2β2s2
+maxM ˜µ0L˜µ0
+dα
+
+∥CT −C′
+T ∥2.
+Hence |s(CT ) −s(C′
+T )| ≤Ls∥CT −C′
+T ∥2, where Ls = 1
+κ
+
+αL˜σ2
+0 +
+2β2s2
+maxM ˜
+µ0L ˜
+µ0
+dα
+
+. Therefore,
+σ∗
+ϕ
+2(CT ) is Lipschitz continuous on XCT . Next, by Prop. B.1, the optimal mean satisfies
+µ∗
+ϕ(CT ) =
+α
+α + βs(CT ) ˜µ0(CT ).
+Therefore,
+∥µ∗
+ϕ(CT ) −µ∗
+ϕ(C′
+T )∥2 =
+
+α
+α + βs(CT ) ˜µ0(CT ) −
+α
+α + βs(C′
+T ) ˜µ0(C′
+T )
+
+2
+≤
+α
+α + βs(CT )∥˜µ0(CT ) −˜µ0(C′
+T )∥2 + α
+
+1
+α + βs(CT ) −
+1
+α + βs(C′
+T )
+ ∥˜µ0(C′
+T )∥2.
+Moreover,
+
+1
+α + βs(CT ) −
+1
+α + βs(C′
+T )
+ =
+β|s(CT ) −s(C′
+T )|
+(α + βs(CT ))(α + βs(C′
+T ))
+≤β
+α2 |s(CT ) −s(C′
+T )| ≤βLs
+α2 ∥CT −C′
+T ∥2.
+Hence ∥µ∗
+ϕ(CT )−µ∗
+ϕ(C′
+T )∥2 ≤Lµ∗
+ϕ∥CT −C′
+T ∥2, where Lµ∗
+ϕ = L˜µ0 +
+βLsM ˜
+µ0
+α
+. Therefore, µ∗
+ϕ(CT )
+is Lipschitz continuous on XCT . The proof is complete.
+Lemma B.6 (High-probability two-sided bound for Gaussian sample distance). Let x
+∼
+N(µ, σ2Id), x′ ∼N(µ′, σ′2Id) be independent random vectors in Rd with σ > 0 and σ′ > 0.
+Then, for any δ ∈(0, 1), with probability at least 1 −δ,
+∥µ −µ′∥2 −
+p
+σ2 + σ′2cd,δ ≤∥x −x′∥2 ≤∥µ −µ′∥2 +
+p
+σ2 + σ′2cd,δ,
+where cd,δ =
+r
+d + 2
+q
+d log 1
+δ + 2 log 1
+δ .
+19
+
+
+Preprint
+Proof. Since x and x′ are independent Gaussian random vectors,
+x −x′ ∼N(µ −µ′, (σ2 + σ′2)Id).
+Therefore, we obtain
+
+(x −x′) −(µ −µ′)
+p
+σ2 + σ′2
+
+2
+2
+∼χ2(d).
+By Laurent–Massart bounds of chi-square distribution with degrees of freedom d,
+P
+
+
+
+(x −x′) −(µ −µ′)
+p
+σ2 + σ′2
+
+2
+2
+≤d + 2
+√
+dτ + 2τ
+
+≥1 −e−τ for all τ > 0.
+Setting τ = log 1
+δ > 0 and cd,δ =
+r
+d + 2
+q
+d log 1
+δ + 2 log 1
+δ , then we have
+P
+
+∥(x −x′) −(µ −µ′)∥2 ≤cd,δ
+p
+σ2 + σ′2
+≥1 −δ.
+Hence, with probability at least 1 −δ, by the reverse triangle inequality,
+|∥x −x′∥2 −∥µ −µ′∥2| ≤∥(x −x′) −(µ −µ′)∥2 ≤
+p
+σ2 + σ′2cd,δ.
+Therefore, we have
+∥µ −µ′∥2 −
+p
+σ2 + σ′2cd,δ ≤∥x −x′∥2 ≤∥µ −µ′∥2 +
+p
+σ2 + σ′2cd,δ.
+Lemma B.6 establishes that the distance between two independent Gaussian samples can be bounded
+in terms of the distance between their means and the scale of their standard deviations. Rmk. B.7
+separately examines the implications of this bound for standard Gaussian samples and conditional
+noise prediction (CNP).
+Remark B.7. Given the condition CT , C′
+T ∈XCT and δ ∈(0, 1), with probability at least 1 −δ,
+1. Standard Gaussian: If xSG
+0 , xSG
+0
+′ iid
+∼N(0, Id), then
+∥xSG
+0
+−xSG
+0
+′∥2 = O(
+√
+2cd,δ).
+2. CNP: If xCNP
+0
+∼N(µ∗
+ϕ(CT ), σ∗
+ϕ
+2(CT )Id) and xCNP
+0
+′ ∼N(µ∗
+ϕ(C′
+T ), σ∗
+ϕ
+2(C′
+T )Id) are drawn
+independently, then
+∥xCNP
+0
+−xCNP
+0
+′∥2 = ∥µ∗
+ϕ(CT ) −µ∗
+ϕ(C′
+T )∥2 ± O
+q
+σ∗
+ϕ
+2(CT ) + σ∗
+ϕ
+2(C′
+T )cd,δ
+
+.
+Theorem B.8. Suppose µ∗
+ϕ(·) is Lµ∗
+ϕ-Lipschitz continuous on XCT . Given CT , C′
+T ∈XCT , if
+xCNP
+0
+∼N(µ∗
+ϕ(CT ), σ∗
+ϕ
+2(CT )Id) and xCNP
+0
+′ ∼N(µ∗
+ϕ(C′
+T )), σ∗
+ϕ
+2(C′
+T )Id), then with probability at
+least 1 −δ,
+∥xCNP
+0
+−xCNP
+0
+′∥2 ≤Lµ∗
+ϕ∥CT −C′
+T ∥2 +
+q
+σ∗
+ϕ
+2(CT ) + σ∗
+ϕ
+2(C′
+T )cd,δ.
+Rmk. B.7 reveals that the discrepancy between two CNP samples can be decomposed into two
+components: a deterministic shift induced by the difference between their conditions, and a stochastic
+deviation induced by the predicted uncertainty. In particular, Theorem B.8 shows that when the
+conditional mean predictor is Lipschitz continuous, nearby conditions lead to nearby predicted means.
+Therefore, the sample-level discrepancy remains controlled with high probability as long as the
+conditions are close and the predicted variances are small.
+20
+
+
+Preprint
+Table 5: Inference overhead of CNP-Flow. Latency is measured over 1,000 generated frames under
+matched hardware, batch-size, and solver settings.
+Dataset
+Fixed-source FM
+CNP-Flow
+Latency increase
+Additional memory
+KTH / BAIR64
+207.1 ms/frame
+214.2 ms/frame
+3.43%
+∼15 MB
+CLEVRER
+211.9 ms/frame
+219.1 ms/frame
+3.39%
+Proposition B.9. Given the condition CT , let xSG
+0
+∼N(0, I) and xCNP
+0
+∼p∗
+ϕ(· | CT ), then
+trace(Cov(x1 −xCNP
+0
+| CT )) −trace(Cov(x1 −xSG
+0
+| CT )) = d(σ2
+ϕ(CT ) −1).
+Proof. Since x0 | CT and x1 | CT are independent, we have
+Cov(x1 −x0 | CT ) = Cov(x1 | CT ) + Cov(x0 | CT ).
+Moreover,
+Cov(xCNP
+0
+| CT ) = σ∗
+ϕ
+2(CT )Id,
+Cov(xSG
+0
+| CT ) = Id
+Therefore, the proof is conducted.
+Prop. B.9 shows that replacing the standard Gaussian source with the CNP source directly changes
+the variance of the FM target velocity. In particular, when the learned CNP variance satisfies
+σ2
+ϕ(CT ) < 1, which typically holds when the temporal condition strongly constrains the target sample,
+the covariance trace of the target velocity is reduced compared to standard Gaussian initialization.
+This indicates that CNP provides a more concentrated source distribution, yielding lower-variance
+velocity targets.
+C
+EXPERIMENTAL DETAILS
+C.1
+VIDEO GENERATION
+Compute environment. Video prediction and interpolation experiments are conducted on the AMD
+AI & HPC Clusters Taiwan, equipped with AMD Instinct MI300X GPUs with 192GB HBM3 memory
+and AMD EPYC 9684X 96-Core processors. GPUs within each node are interconnected through
+AMD Infinity Fabric (XGMI). Flow reversal and final evaluation are run on a single 8-GPU MI300X
+node, while CNP training and FM fine-tuning use a single MI300X GPU. All AMD experiments use
+ROCm 7.2.0. Flow matching pretraining and fine-tuning use BF16 mixed precision.
+Training time. The wall-clock runtime varies with dataset size and video resolution. For KTH,
+BAIR64, and CLEVRER, the additional offline cost of the CNP-Flow pipeline is approximately
+5.5, 9.1, and 17 hours, respectively, relative to vanilla fixed-source FM. On CLEVRER, our largest-
+resolution video benchmark, source retrieval via flow reversal takes approximately 3 hours on a single
+8-GPU MI300X node, while CNP training and FM fine-tuning take approximately 14 hours on a
+single MI300X GPU. Including final evaluation, each video dataset/task completes within 24 hours
+on the specified hardware.
+Computational overhead. To quantify the additional cost of CNP-Flow at generation time, we
+measure inference latency, peak memory, and model FLOPs under same hardware, batch-size, and
+ODE-solver settings. As summarized in Tab. 5, CNP-Flow increases inference latency by only about
+3.4%. The CNP is evaluated once per generated frame and requires 0.297 GFLOPs; at NFE=10,
+this corresponds to approximately 0.34% additional model FLOPs, with about 15 MB additional
+peak memory. The 98.08M-parameter FM backbone is augmented with a 47.69M-parameter CNP
+(50.84M on CLEVRER). Source samples are retrieved offline via flow reversal and cached, and flow
+reversal is never invoked during generation.
+Backbone and latent space. All video experiments are performed in the VQ-GAN latent space
+released by RIVER (Davtyan et al., 2023). The latent resolution is 8×8 for BAIR64 and KTH, and
+16×16 for CLEVRER at 128×128. For video prediction, we reuse the released RIVER prediction
+21
+
+
+Preprint
+Table 6: Video prediction fixed-source FM and flow reversal configuration. Source samples obtained
+through flow reversal are cached only for CNP supervision and are not used at inference time.
+Component
+KTH
+CLEVRER
+BAIR64
+Flow reversal steps
+100
+20
+50
+FM fine-tune length
+200k steps
+20k steps
+50k steps
+FM fine-tune batch
+64
+128
+64
+FM fine-tune LR
+5×10−5
+5×10−5
+5×10−5
+Table 7: Video interpolation fixed-source FM and flow reversal configuration. Since no compatible
+interpolation checkpoint is available, the fixed-source CFM backbone is trained from scratch.
+Component
+KTH
+CLEVRER
+FM pretrain steps
+300k
+300k
+FM pretrain batch
+32
+16
+Flow reversal steps
+100
+40
+FM fine-tune steps
+200k
+200k
+FM fine-tune batch
+32
+16
+FM fine-tune LR
+1×10−4
+1×10−4
+checkpoints for KTH and CLEVRER, while retraining the BAIR64 fixed-source FM backbone due to
+checkpoint incompatibility with our evaluation setup. For video interpolation, since no compatible
+pretrained interpolation checkpoints are provided, we train the fixed-source FM backbone from
+scratch. Detailed FM fine-tuning and flow reversal configurations are given in Tab. 6 and 7.
+Source samples obtained through flow reversal are cached only for CNP supervision and are not
+used at inference time. FM fine-tuning uses Adam with β1 = 0.9, β2 = 0.999, no weight decay, and
+gradient clipping with maximum norm 1.0.
+CNP architecture and training. The video CNP is a convolutional encoder over latent feature grids.
+It predicts the mean and log-variance of an isotropic Gaussian source distribution. For prediction, the
+CNP conditions on the available context latents and temporal-distance embedding. For interpolation,
+the CNP conditions on the local reference latent, the endpoint latent, and the temporal-distance
+embedding. The shared architecture is summarized in Tab. 8. All video CNPs are trained with Adam
+using a learning rate of 1×10−4 and a KL weight of λKL = 1×10−4. Task-specific training lengths,
+batch sizes, and KL warm-up schedules are listed in Tab. 9.
+Source-learning baselines. For CAR-Flow (Chen et al., 2025), we use its source-only variant, which
+modifies the source while leaving the target unchanged. For CSFM (Kim et al., 2026), we adapt
+its source predictor to the same temporal condition used by the RIVER backbone and retain its
+original regularization and source–target alignment objectives. All source-learning baselines use
+the same FM backbone, training data, pretrained FM initialization, fine-tuning budget, sampling
+NFE, and evaluation protocol as CNP-Flow. Method-specific hyperparameters follow the original
+recommendations or are selected on validation data without using test-set performance.
+Evaluation. For both video prediction and video interpolation, we evaluate 256 videos and generate
+100 samples per video. PSNR and SSIM are reported as best-of-100 scores, while FVD is computed
+over the full generated sample pool using the same I3D feature extractor as RIVER (Davtyan et al.,
+2023). Unless otherwise stated, all main-text results in Tab. 1 and 2 use a 10-step Euler solver
+(NFE=10); Fig. 4 sweeps NFE separately to characterize inference efficiency.
+Variability across runs. To evaluate run-to-run variability, we run the complete pipeline with three
+independent random seeds for each setting and report mean ± standard deviation. Tab. 10 provides the
+complete three-seed results for both video prediction and interpolation across all evaluated datasets.
+22
+
+
+Preprint
+Table 8: Video CNP architecture. The same architecture is used for video prediction and video
+interpolation.
+Component
+Setting
+Backbone
+Convolutional encoder
+Input
+Conditional latents + temporal-distance embedding
+Output
+µ, log σ2
+Base channels
+64
+Channel multipliers
+(1, 2, 4, 8)
+Residual blocks per resolution
+2
+Attention resolution
+Middle latent resolution
+Dropout
+0.1
+Latent grid
+8×8 or 16×16
+Table 9: Video CNP training configuration. All video CNPs are trained with Adam using learning
+rate 1×10−4 and KL weight λKL = 1×10−4.
+Task
+Dataset
+Length
+Batch
+KL warm-up
+Prediction
+KTH
+50 epochs
+64
+10 epochs
+Prediction
+CLEVRER
+15 epochs
+1024
+10 epochs
+Prediction
+BAIR64
+15 epochs
+64
+5 epochs
+Interpolation
+KTH
+200k steps
+32
+5 epochs
+Interpolation
+CLEVRER
+200k steps
+16
+2 epochs
+C.2
+MOTION PLANNING
+Compute environment. Motion planning experiments are conducted on a workstation equipped
+with NVIDIA RTX 6000 Ada generation GPUs with 48GB memory. Each training, flow reversal,
+and evaluation run uses a single GPU. We build on the public MPD implementation (Carvalho et al.,
+2025) with PyTorch and CUDA. Training uses EMA weights and BF16 automatic mixed precision,
+while flow reversal and evaluation are performed in FP32.
+Training time. The complete CNP-Flow pipeline completes within 12 hours on this workstation:
+fixed-source FM pretraining (∼4 hours), source retrieval and caching via flow reversal (∼1 hour,
+run once), CNP training (∼2 hours), and FM fine-tuning (∼4 hours), with the remaining time spent
+on final evaluation. The cost of source retrieval and caching is amortized across all subsequent CNP
+epochs, and the overall pipeline takes roughly 3× the training time of a vanilla fixed-source FM.
+Task and trajectory representation. We evaluate on the Panda Warehouse benchmark from
+MPD (Carvalho et al., 2025), which considers 7-DoF Franka Panda joint-space planning with end-
+effector pose goals. We use the same demonstration dataset, robot model, collision environment,
+and evaluation protocol as MPD. Trajectories are parameterized as cubic B-splines with 22 desired
+control points along the trajectory, together with 2 phantom control points used to enforce boundary
+conditions, giving 24 learnable control points in total. The spline is evaluated at 128 time samples
+over a 10-second horizon.
+Backbone architecture. The diffusion baseline and the fixed-source flow matching backbone share
+the same temporal U-Net and conditioning architecture. The trajectory backbone predicts 24 learnable
+B-spline control points. The U-Net uses a base channel size of 32 with channel multipliers (1, 2, 4, 8).
+The start state and goal pose are encoded by separate 2-layer MLPs, and both are projected into a
+128-dimensional context embedding.
+Motion planning CNP. The motion planning CNP is a residual MLP over vectorized B-spline
+trajectory control points. It predicts the mean and log-variance of an isotropic Gaussian source
+distribution over the learnable control-point noise. The architecture is summarized in Tab. 11.
+We train the CNP for 2000 epochs with batch size 512, learning rate 1×10−4, and KL weight
+λKL = 1×10−6. The KL weight is linearly warmed up for the first 50 epochs. Optimization uses
+23
+
+
+Preprint
+Table 10: Variability across runs for CNP-Flow. Results are reported as mean ± standard deviation
+over three independent runs for video prediction and interpolation.
+Dataset
+PSNR ↑
+SSIM ↑
+FVD ↓
+Video prediction
+BAIR64 1→15
+20.15 ± 0.13
+0.8390 ± 0.0021
+61.17 ± 1.58
+KTH 10→30
+34.25 ± 0.26
+0.9432 ± 0.0025
+44.76 ± 1.53
+KTH 10→40
+32.69 ± 0.22
+0.9303 ± 0.0040
+54.88 ± 3.85
+CLEVRER 2→14
+42.23 ± 0.19
+0.9935 ± 0.0002
+24.18 ± 2.46
+Video interpolation
+KTH
+36.07 ± 0.54
+0.9634 ± 0.0021
+36.81 ± 2.65
+CLEVRER
+45.68 ± 0.01
+0.9954 ± 0.0001
+10.77 ± 0.02
+Table 11: Motion planning CNP architecture. The CNP predicts an isotropic Gaussian source
+distribution over the learnable B-spline control-point noise.
+Component
+Setting
+Backbone
+Residual MLP
+Input
+Start state + EE goal pose + context embedding
+Raw condition dimension
+26
+Context embedding dimension
+128
+Output
+µ, log σ2
+Hidden dimension
+1024
+Residual blocks
+6
+Activation
+GELU
+Output initialization
+Zero-initialized head
+EMA decay
+0.995
+Adam with β1 = 0.9, β2 = 0.999, no weight decay, gradient clipping with maximum norm 1.0, and
+FP32 precision.
+Training configuration. For the diffusion baseline, we use the released MPD checkpoint. The
+fixed-source flow matching model is pretrained for 6.0×105 steps with batch size 512, learning rate
+3×10−4, EMA weights, and BF16 automatic mixed precision. Source samples obtained through flow
+reversal are then cached once for CNP supervision using 200 Euler steps with batch size 1024 in
+FP32; these cached targets are not used during inference. After CNP training, we freeze the CNP and
+fine-tune the flow matching backbone for 200k steps using CNP-sampled source noise instead of the
+standard Gaussian source, with batch size 512, learning rate 1.5×10−4, EMA weights, and BF16
+automatic mixed precision.
+Evaluation. For evaluation, we follow the MPD inference protocol. All methods are evaluated
+on the same 100 test start-goal pairs, and results are averaged over three independent seeds. For
+each pair, we generate N = 50 candidate trajectories and select the shortest valid trajectory. The
+MPD baseline uses its cost-guided DDIM sampler, which interleaves denoising with cost-gradient
+updates: we follow the paper and use 15 DDIM steps, activate guidance during the final 20% of
+the denoising process. Specifically, the last 3 denoising steps each perform nguide = 4 cost-gradient
+updates, resulting in 12 gradient updates in total.
+For CNP-Flow, we use a 15-step Euler ODE sampler followed by 12 post-hoc cost-gradient refinement
+steps, using the same cost terms and weights as MPD. Thus, both methods use 15 generative steps
+and 12 cost-gradient updates.
+Specifically, after ODE sampling, we run 12 refinement steps with learning rate 0.01, maximum
+perturbation 0.15, and value clipping at 1.0, using the same cost terms and weights as MPD. This
+keeps the cost-refinement stage matched to the released MPD configuration, while replacing the
+diffusion prior with our learned-source flow matching sampler. Flow reversal is used only to construct
+CNP supervision and is not invoked during sampling or evaluation. We report the same evaluation
+metrics as MPD: Success, Valid fraction, end-effector position/orientation error, and collision intensity.
+24
+
+
+Preprint
+Table 12: Motion-planning performance without post-hoc refinement. Results are reported as
+mean ± standard deviation over three independent runs.
+Method
+Valid (%) ↑
+EE pos. (cm) ↓
+EE ori. (◦) ↓
+Collision ↓
+Diffusion prior
+64.3 ± 1.5
+5.3 ± 0.1
+7.5 ± 0.5
+0.0402 ± 0.0013
+Fixed-source FM
+61.1 ± 3.8
+3.8 ± 0.2
+5.6 ± 0.5
+0.0445 ± 0.0034
+CNP-Flow
+64.3 ± 4.6
+2.1 ± 0.2
+2.9 ± 0.3
+0.0366 ± 0.0045
+We use Valid fraction as the primary metric, as Success saturates with N = 50 candidates per task.
+Following MPD, collision intensity is computed as the fraction of evaluated trajectory waypoints that
+are in collision.
+Performance without post-hoc refinement. To verify that the gains of CNP-Flow are not limited to
+settings with post-hoc refinement, we additionally evaluate trajectories without the refinement stage.
+As shown in Tab. 12, CNP-Flow reduces the end-effector position and orientation errors from 3.8 cm
+and 5.6◦with fixed-source FM to 2.1 cm and 2.9◦, respectively. This indicates that the improvement
+is already present before the post-hoc optimization stage.
+D
+LARGE-SCALE PHYSICAL WORLD-MODEL BENCHMARK
+To evaluate whether the benefit of CNP-Flow extends beyond the low-resolution video benchmarks
+and RIVER backbone used in the main experiments, we further evaluate on ACWM-Phys (Xue
+et al., 2026), a recent action-conditioned physical world-model benchmark. We use ACWM-DiT-S, a
+205M-parameter flow-matching DiT with a frozen Wan2.1 causal video VAE, operating on 240×240
+videos.
+ACWM-Phys covers four distinct physical regimes: rigid-body dynamics, deformable objects, particle-
+based dynamics, and kinematic systems. We select one task from each regime and evaluate both
+the in-distribution (IND) and out-of-distribution (OOD) splits. Specifically, we consider push_cube,
+push_rope, pour_water, and robot_arm. We compare the standard Gaussian source against CNP-Flow
+under the same flow-matching backbone and evaluation protocol. Results are averaged over three
+independent seeds and reported using MSE, masked MSE (M-MSE), PSNR, and SSIM.
+As shown in Tab. 13, CNP-Flow improves all four reported metrics across every physical regime
+on both IND and OOD splits. The improvement varies with the underlying dynamics: the gains
+are modest on push_rope, while substantially larger improvements are observed on pour_water and
+robot_arm. In particular, on the OOD robot_arm split, CNP-Flow improves PSNR from 22.12 to
+24.39 and SSIM from 0.9021 to 0.9511. These results show that the benefit of condition-dependent
+source modeling is not specific to the RIVER backbone or 64×64 video generation, and transfers to
+a substantially larger flow-matching DiT under distribution shift.
+E
+ADDITIONAL ANALYSIS
+Source-learning controls. To verify that the gains of CNP-Flow arise from meaningful source
+learning rather than additional model parameters, we freeze the Stage-1 FM and compare the
+same CNP architecture with and without flow reversal supervision. As shown in Tab. 14, without
+this supervision, CNP performs similarly to the standard Gaussian source, whereas flow reversal
+supervision substantially reduces FVD. This isolates the contribution of the supervision signal from
+the additional CNP parameters.
+Prediction diversity. To verify that conditioning the source distribution does not reduce intra-
+condition diversity, we measure the average pairwise LPIPS among predictions generated from the
+same condition on BAIR64. As shown in Tab. 15, CNP-Flow achieves comparable diversity to the
+standard Gaussian source, indicating that stochastic prediction diversity is preserved.
+Iterative source and flow refinement. To investigate whether further alternating source learning
+and FM refinement continues to improve performance, we repeat Stages 2–3 for multiple rounds. As
+shown in Tab. 16, a second round improves FVD on both BAIR64 and KTH, whereas an additional
+25
+
+
+Preprint
+Table 13: Results on the ACWM-Phys physical world-model benchmark at 240×240 resolution.
+We evaluate one task from each physical regime on both in-distribution (IND) and out-of-distribution
+(OOD) splits. All results are averaged over three independent seeds.
+Regime
+Task
+Split
+Method
+MSE ↓
+M-MSE ↓
+PSNR ↑
+SSIM ↑
+Rigid
+push_cube
+IND
+Vanilla FM
+0.002886
+0.017354
+26.29
+0.9546
+CNP-Flow (Ours)
+0.002192
+0.013373
+27.80
+0.9647
+OOD
+Vanilla FM
+0.002977
+0.016039
+26.78
+0.9539
+CNP-Flow (Ours)
+0.002338
+0.012326
+28.13
+0.9629
+Deformable
+push_rope
+IND
+Vanilla FM
+0.000213
+0.002708
+36.75
+0.9878
+CNP-Flow (Ours)
+0.000207
+0.002608
+36.88
+0.9889
+OOD
+Vanilla FM
+0.000331
+0.004163
+35.34
+0.9848
+CNP-Flow (Ours)
+0.000326
+0.004054
+35.46
+0.9859
+Particle
+pour_water
+IND
+Vanilla FM
+0.002630
+0.012214
+26.03
+0.9107
+CNP-Flow (Ours)
+0.001742
+0.007419
+27.90
+0.9292
+OOD
+Vanilla FM
+0.003425
+0.013788
+25.02
+0.8748
+CNP-Flow (Ours)
+0.002514
+0.009194
+26.47
+0.8930
+Kinematics
+robot_arm
+IND
+Vanilla FM
+0.001441
+0.015606
+28.70
+0.9689
+CNP-Flow (Ours)
+0.000286
+0.003000
+35.70
+0.9892
+OOD
+Vanilla FM
+0.006552
+0.050357
+22.12
+0.9021
+CNP-Flow (Ours)
+0.003854
+0.036716
+24.39
+0.9511
+Table 14: Effect of flow reversal supervision on source learning. The Stage-1 FM is frozen for all
+variants.
+Source, frozen FM
+PSNR ↑
+SSIM ↑
+FVD ↓
+Standard Gaussian
+30.29
+0.8591
+179.97
+CNP w/o flow reversal supervision
+30.46
+0.8612
+179.54
+CNP w/ flow reversal supervision
+30.85
+0.9008
+100.91
+round provides no consistent further gain. We therefore use the single-round pipeline in the main
+experiments for simplicity and efficiency.
+Robustness of source retrieval via flow reversal. To verify that flow reversal supervision is
+insensitive to the numerical solver used for retrieval, we construct CNP supervision using Dopri,
+Heun-100, and Euler-100 on BAIR64 1→15. As shown in Tab. 17, all three solvers yield similar
+downstream FVD, indicating that the observed improvement is robust to the choice of numerical
+solver for flow reversal.
+Transport geometry. To directly examine whether the learned source provides better source–target
+alignment, we evaluate 256 BAIR64 condition–target pairs using Euler-100. As shown in Tab. 18,
+CNP-Flow reduces source–target distance, path length, cumulative turning, and endpoint deviation by
+9.19%, 8.94%, 8.51%, and 9.69%, respectively. These results indicate that the learned source is better
+aligned with the conditional target region, leading to shorter and less curved transport trajectories.
+Alternative Stage-3 couplings. We further compare alternative couplings for Stage-3 fine-tuning.
+As shown in Tab. 19, direct pairing via flow reversal achieves the shortest transport geometry, but
+requires the target sample and therefore has no inference-time counterpart. Conditional OT also
+shortens the path relative to CNP-Flow, yet increases turning and endpoint deviation and substantially
+degrades generation quality. These results indicate that minimizing per-sample transport distance
+alone is insufficient; the training coupling should remain compatible with the condition-dependent
+source available at inference.
+26
+
+
+Preprint
+Table 15: Prediction diversity on BAIR64. We report the average pairwise LPIPS among predictions
+generated from the same condition.
+Source
+Pairwise LPIPS ↑
+Standard Gaussian
+0.0666
+CNP-Flow
+0.0686
+Table 16: Iterative Stage-2/Stage-3 refinement. FVD is reported after each round of source learning
+and FM refinement.
+Dataset
+Round 1
+Round 2
+Round 3
+BAIR64
+61.17
+60.48
+67.07
+KTH
+44.76
+35.04
+36.37
+Table 17: Robustness to the numerical solver used for flow reversal on BAIR64 prediction.
+Values are mean ± standard deviation over three seeds.
+Flow reversal solver
+FVD ↓
+Dopri
+61.73 ± 1.47
+Heun-100
+61.16 ± 0.99
+Euler-100
+61.17 ± 1.56
+Table 18: Transport geometry on BAIR64. Both methods are evaluated on the same 256 condition–
+target pairs using Euler-100.
+Method
+∥x0 −x1∥2 ↓
+Path length ↓
+Turning (rad) ↓
+Endpoint dev. ↓
+Standard Gaussian
+19.1715
+18.6780
+0.8292
+2.7362
+CNP-Flow (Ours)
+17.4091
+17.0088
+0.7586
+2.4710
+Table 19: Alternative Stage-3 couplings on BAIR64 prediction. Left: transport geometry on 256
+condition–target pairs using Euler-100. Right: downstream generation quality. Direct pairing via flow
+reversal requires the target and is therefore reported only as a training-time geometry reference.
+Coupling
+Distance ↓
+Path ↓
+Turning ↓Endpoint dev. ↓
+Flow reversal pair
+15.7342
+15.7185
+0.2261
+0.4913
+Conditional OT
+17.3715
+16.2187
+1.0610
+3.9173
+CNP-Flow (Ours)
+17.4091
+17.0088
+0.7586
+2.4710
+Method
+PSNR ↑SSIM ↑FVD ↓
+Conditional OT
+18.68
+0.7828
+101.43
+Standard Gaussian
+20.01
+0.8121
+70.16
+CNP-Flow (Ours)
+20.15
+0.8390
+61.17
+F
+TEMPORAL PHASE 2D TOY EXAMPLE
+Dataset. Our 2D toy experiment is designed to faithfully mirror the full three-stage pipeline of
+conditional generative modeling for temporal sequential data rather than serving as a generic trajectory
+forecasting benchmark. Each 2D trajectory point is treated as a temporally ordered observation, while
+temporal conditioning is constructed from the two preceding observations to capture both short-term
+and longer-range sequential dependencies. The dataset consists of parameterized circular trajectories
+generated as
+xα
+1 = [10 + cos α, 10 + sin α]⊤,
+(11)
+where α ranges from π/180 to 2π with ∆α = π/360. For each target point xα
+1 , the condition is
+defined as Cα
+T = [xα−2∆α
+1
+, xα−∆α
+1
+].
+Implementation Details. All networks are implemented as multi-layer perceptrons (MLPs) with
+SiLU activation functions. FM model parameterizes the velocity field vθ, taking as input (xα
+t , t, Cα
+T )
+and outputting vθ, using a 4-layer architecture with hidden dimension 128. The CNP model takes the
+condition Cα
+T as input and predicts the parameters of a conditional isotropic Gaussian distribution
+27
+
+
+Preprint
+t = 1
+t = 0
+(a) Flow reversal trajectories.
+0
+2
+4
+6
+8
+10
+12
+14
+x1
+x0
+0
+5
+10
+15
+20
+25
+Count
+FM (Standard Gaussian)
+CNP-Flow (Ours)
+(b) Transport distance.
+Figure 6: Toy example visualization of the flow reversal mapping and transport distance analysis.
+(µϕ(Cα
+T ), σϕ(Cα
+T )), defining pϕ(xα
+0 | Cα
+T ) = N(xα
+0 ; µϕ(Cα
+T ), σ2
+ϕ(Cα
+T )I), where σϕ is constrained via
+a sigmoid activation to lie in (0, 1). The CNP consists of 10 layers with a hidden dimension of 128.
+Our FM shares the same architecture as the baseline but replaces the standard Gaussian source with
+samples drawn from the learned conditional prior and is initialized from the pretrained baseline FM.
+Analysis. This behavior can be understood from three observations: (1) As illustrated in Fig. 2,
+vanilla FM transports samples from a standard Gaussian prior to the target distribution. Under
+neighboring conditions, the corresponding source samples can nevertheless be widely separated,
+which may lead to intersecting ODE trajectories across timesteps and accumulated deviation from
+the target distribution in long-horizon generation. (2) Fig. 6(a) shows that flow reversal maps nearby
+target samples back to nearby source samples, indicating that the pretrained flow preserves local
+temporal correspondence in the source space. This motivates learning a conditional source prior
+that preserves proximity among source samples under similar conditions, resulting in more coherent
+ODE trajectories that better capture the temporal structure of the data. (3) As shown in Fig. 6(b),
+CNP-Flow produces a more concentrated source distribution with reduced variance compared to FM,
+which contributes to improved stability and accuracy in temporal generation.
+G
+ADDITIONAL GENERATED RESULTS
+We provide additional qualitative examples for video prediction and interpolation.
+Initial frames
+GT
+Predicted
+GT
+Predicted
+time → 
+Figure 7: Additional qualitative results on BAIR video prediction.
+28
+
+
+Preprint
+Initial frames
+GT
+Predicted
+GT
+Predicted
+time → 
+Figure 8: Additional qualitative results on KTH video prediction.
+Initial frames
+GT
+Predicted
+GT
+Predicted
+time → 
+Figure 9: Additional qualitative results on CLEVRER video prediction.
+Initial frame
+GT
+Predicted
+GT
+Predicted
+time → 
+Target frame
+Figure 10: Additional qualitative results on KTH video interpolation.
+29
+
+
+Preprint
+Initial frame
+GT
+Predicted
+GT
+Predicted
+time → 
+Target frame
+Figure 11: Additional qualitative results on CLEVRER video interpolation.
+30
