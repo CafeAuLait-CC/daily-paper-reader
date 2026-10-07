@@ -1,0 +1,3445 @@
+Published as a conference paper at ICLR 2027
+BILINEAR FLOW POLICY:
+DISTRIBUTIONAL EXTRAPOLATION FOR
+GOAL-CONDITIONED VISUOMOTOR IMITATION
+Wonsuhk Jung1
+Sundhar Vinodh Sangeetha1
+Chen Xu2
+Abhishek Gupta3
+Masha Itkina2
+Shreyas Kousik1
+Haruki Nishimura2
+1Georgia Institute of Technology
+2Toyota Research Institute
+3University of Washington
+https://bilinearflow.netlify.app
+ABSTRACT
+Goal-conditioned imitation learning (GCIL) with flow matching is a promising
+framework that can represent multimodal behaviors while adapting to diverse,
+user-specified goals, yet often fails when goals lie outside the demonstration sup-
+port. To extrapolate to such unseen goals without collapsing multimodality—a
+problem we call distributional extrapolation—we introduce Bilinear Flow Policy
+(BFP), a generative visuomotor policy that combines transductive retrieval with
+a bilinear conditional flow. Given an unseen observation-goal pair, BFP retrieves
+an “anchor” training example and transductively reformulates the unseen pair as
+this familiar anchor plus a residual term. For this decomposition to guide action
+prediction, the residual must compactly encode how the current observation-goal
+pair differs from the anchor, and the anchor must be chosen so that this differ-
+ence is predictive of the corresponding action distribution. BFP achieves this with
+pretrained visual features and a novel learned anchor-selection algorithm. The
+novel bilinear flow then models how the anchor and the residual jointly deter-
+mine the multimodal action distribution. We prove that, for bilinear flow under
+suitable assumptions, action distribution error at unseen goals is bounded by the
+in-distribution flow-matching error up to problem-dependent factors. Across five
+manipulation tasks in simulation, BFP achieves 2.63× the out-of-distribution suc-
+cess rate of a GCIL policy and 1.36× that of the strongest extrapolation-targeted
+baseline. On two real-world tasks, BFP improves over GCIL by 32%. Finally, our
+theory yields practical, pre-deployment diagnostics for predicting which trained
+policies will extrapolate well and to which unseen goals.
+1
+INTRODUCTION
+Goal-conditioned imitation learning (GCIL) is a promising framework to learn versatile visuomotor
+behavior: a single policy can adapt to diverse, user-specified goals at deployment (Ding et al., 2019;
+Park et al., 2025). Conditional flow matching further makes this framework expressive by modeling
+multimodal distributions of actions, allowing the policy to represent multiple behavior modes to
+achieve the same goal (Reuss et al., 2023; 2024). Nevertheless, deployment may require the policy
+to act toward unseen goals, where it encounters observation–goal pairs not seen during training.
+Standard GCIL policies, including generative variants, can become unreliable on such unseen inputs
+(Yang et al., 2023; Urain et al., 2024). This motivates distributional extrapolation: extending goal-
+conditioned behavior to unseen goals while preserving multimodality.
+One natural route to extrapolation is to identify how behavior should change as the policy input
+(i.e., current observation and goal) changes, then reuse the same rule to infer behavior for a new
+input by comparing it with a training example (Ousherovitch & Wang, 2026). When this relation is
+known, it can be encoded directly into the policy; for instance, the behavior should remain invariant
+to task-irrelevant perceptual perturbations (Zhu et al., 2023b), transform equivariantly under known
+geometric changes (Wang et al., 2024a), or be composed of reusable policy components (Mishra
+et al., 2023). These methods generalize by encoding a particular, known deployment shift as an
+inductive bias. They are effective when this prescribed relation matches the nature of the shift, but
+require the relevant task-specific semantics or transformation laws to be specified a priori.
+1
+arXiv:2610.05765v1  [cs.RO]  5 Oct 2026
+
+
+Published as a conference paper at ICLR 2027
+Figure 1: BFP Overview. BFP learns how changes across observation-goal conditions affect be-
+havior and reuses this relation to extrapolate from a demonstrated anchor to an unseen goal. A
+bilinear conditional flow generates the resulting multimodal action distribution, while the explicit
+extrapolation rule enables theoretical guarantees and practical diagnostics.
+When the underlying observation-goal-action relation is unknown, an attractive alternative is to
+learn it from comparisons among demonstrations. Bilinear transduction (Netanyahu et al., 2023)
+achieves this by decomposing an observation-goal condition x into an “anchor” training example a
+and a residual δ = x −a, then constrains the predictor to a low-rank interaction between features
+of the two factors. Thus, rather than specifying a task-specific transformation explicitly, the model
+learns from the data how the anchor and the residual jointly determine behaviors within a generic
+low-rank relationship. This reparameterization converts an out-of-support query into a potentially
+unseen combination of individually familiar factors; under low-rank, coverage, and conditioning
+assumptions, prediction error at unsupported queries is provably bounded by the training error (Shah
+et al., 2020; Simchowitz et al., 2023). Existing robotic instantiations, however, are state-based and
+deterministic, leaving open how to construct this decomposition from visuomotor demonstrations
+and how to extrapolate a multimodal action distribution.
+In this work, we ask whether this relational formulation can support generative goal-conditioned vi-
+suomotor policies. We introduce Bilinear Flow Policy (BFP), which extrapolates to unseen goals by
+transductively relating novel observation-goal conditions to demonstrated examples in the training
+data. BFP applies bilinear transduction to a conditional flow field, extending relational extrapola-
+tion from deterministic actions to multimodal action distributions. It also combines a compact visual
+representation with a learned anchor policy to find generalizable relations in visuomotor settings.
+We also derive an end-to-end distributional extrapolation bound that relates in-distribution flow-
+matching error to the Wasserstein error of the generated action distribution at unseen goals. The
+bound’s training-error and coverage terms further motivate two pre-deployment diagnostics: held-
+out flow loss for selecting among trained policies, and anchor–residual coverage for identifying
+unseen-goal queries on which a selected policy is likely to remain reliable.
+We evaluate BFP on five goal-conditioned visuomotor manipulation tasks across three simulation
+benchmarks. On the simulation tasks, BFP achieves 79% average out-of-distribution (OOD) success
+(2.63× that of matched GCIL and 1.36× that of the strongest extrapolation-targeted baseline) while
+retaining comparable in-distribution performance, across 4,200 rollouts. On the two real-world
+robotics tasks, BFP improves over the matched GCIL baseline by 32 percentage points on average.
+In summary, our contributions are threefold.
+• We introduce BFP, a generative goal-conditioned visuomotor imitation policy learning
+framework that extrapolates to unseen goals preserving behavior multimodality.
+• We derive an end-to-end bound relating in-distribution flow error to unseen-goal action-
+distribution error. The theorem motivates practical pre-deployment diagnostics for select-
+ing trained policies and assessing their reliability on specific unseen goals.
+• Across controlled multimodal regression, five simulated manipulation tasks, and two real-
+world tasks, BFP substantially improves OOD performance over matched generative GCIL
+and extrapolation-targeted baselines.
+2
+
+
+Published as a conference paper at ICLR 2027
+2
+RELATED WORK
+We first situate our work within the generalization regimes studied in goal-conditioned policies.
+We then categorize extrapolation methods by how they map changes in policy inputs into behavior
+changes and reuse that rule beyond training support. Prior work either hand-crafts this rule or use
+demonstration data to learn it. BFP follows the latter approach.
+Generalization Regimes of Goal-Conditioned Policies. Goal-conditioned policies use a single
+policy across many desired outcomes (Gupta et al., 2019; Park et al., 2025), while generative vari-
+ants model multimodal action distributions for a given goal (Reuss et al., 2023; 2024). Their gen-
+eralization beyond training state–goal combinations has been studied under two distinct regimes. In
+stitching, where both the state and goal have been seen during training, but not together, the policy
+must recombine familiar transitions or trajectory segments to connect them (Lawson et al., 2026;
+Luo et al., 2026). Another studies unseen-goal generalization, where the desired goal itself lies
+outside the training support and pursuing it requires the policy to act at out-of-distribution state–
+goal inputs (Hong et al., 2022; Yang et al., 2023). We study this regime in generative visuomotor
+imitation, where policies must generalize from visual inputs while preserving multimodal behavior.
+Hand-crafted Extrapolation Rules. Some approaches extrapolate through hand-specified rules for
+how behavior changes with the policy input (Urain et al., 2024). Representation-based methods seek
+invariance to task-irrelevant variation by reducing observations to task-relevant objects, regions,
+keypoints, or geometry (Zhu et al., 2023b; Manuelli et al., 2019; Zhu et al., 2023a). Equivariant
+policies prescribe how known scene transformations should transform actions or action distributions
+(Wang et al., 2024a; Funk et al., 2024). Compositional methods define reusable factors (e.g., skills,
+objectives, or sensor modalities) and prescribe how they may be recombined (Mishra et al., 2023;
+Urain et al., 2023; Wang et al., 2024b). Their representations and components may be learned, but
+the rule is fixed a priori; this is effective when relevant structure is known, but restrictive otherwise.
+We instead study settings where this rule is not obvious and must be inferred from demonstrations.
+Learning Extrapolation Rules from Demonstrations. When no rule is known a priori, some prior
+works learn it by predicting a desired action from training examples and residuals that quantify the
+input change from each example to the query. DARP (Pfeifer et al., 2026) instantiates this locally
+by retrieving the k nearest examples, predicting from each example and its residual, and aggregating
+the results. Bilinear transduction (BT) (Netanyahu et al., 2023) instead assumes that a suitable an-
+chor and compact residual induce a low-rank action-prediction problem, and uses a bilinear model
+to predict actions for unseen anchor–residual combinations. Subsequent work extends this principle
+to offline RL and task-level extrapolation (Kim et al., 2026; Ousherovitch & Wang, 2026). Robotic
+applications, however, have considered state inputs, where residuals are directly defined in compact
+coordinates and anchors are chosen using task-specific heuristics. We study whether the same prin-
+ciple extends to generative visuomotor imitation, where defining a compact residual, selecting an
+anchor that exposes the low-rank relation, and preserving multiple valid actions are all nontrivial.
+3
+PROBLEM FORMULATION AND PRELIMINARIES
+Problem Formulation: Distributional Extrapolation.
+Let A ⊂Rda be the primitive action
+space and AH := AH ⊂RdA, dA = Hda be the action-chunk space. We are given expert demon-
+strations: D = {τ (i)}N
+i=1, τ (i) = {(x(i)
+t , a(i)
+t )}Ti
+t=1, where a(i)
+t
+∈A is a primitive action, and
+x(i)
+t
+= (o(i)
+t , g(i)) ∈X is the policy condition. Here o(i)
+t
+is a state or visuomotor observation,
+and g(i) is a compact, explicitly specified episode goal (e.g., target object pose; See Fig. 1). Each
+timestep defines an H-step action-chunk target A(i)
+t
+:= (a(i)
+t , . . . , a(i)
+t+H−1) ∈AH.
+Let P X
+tr and P X
+te denote the marginal distribution of policy conditions under training and evaluation,
+respectively; we refer to conditions within the demonstrated support as in-distribution (ID) and those
+outside it as out-of-distribution (OOD). We assume the same expert conditional q⋆(· | x) in both
+regimes, while P X
+te may include conditions induced by unseen goals outside supp(P X
+tr ). Given only
+D, we seek a policy πθ with small test distributional risk
+Rdist
+te (πθ) := Ex∼P X
+te
+
+W 2
+2 (πθ(· | x), q⋆(· | x))
+
+.
+(1)
+where W 2
+2 is the squared 2-Wasserstein distance (Peyr´e & Cuturi, 2019).
+3
+
+
+Published as a conference paper at ICLR 2027
+Figure 2: Distributional extrapolation. The ex-
+pert conditional distribution q⋆(y | x) is a mixture
+of two modes (grey), evaluated outside supp(P X
+tr )
+(shaded red). BT averages the modes (orange),
+while CFM captures multimodality but not extrap-
+olation (purple). BFP achieves both (red).
+We call this problem distributional extrapola-
+tion; a policy learned from demonstrated con-
+ditions must match the full expert action distri-
+bution at unseen conditions. This matters when
+a condition admits multiple action chunks: as
+illustrated in Fig. 2, mean regression is vul-
+nerable to mode-averaging, while distributional
+modeling alone does not specify how the expert
+modes should extend beyond training support.
+Conditional Flow Matching. Conditional flow
+matching (CFM) (Lipman et al., 2024) trans-
+ports a simple prior A0 ∼p0 (e.g., Gaussian) to
+the expert action chunk A1 = A ∼q⋆(· | x).
+For a conditional probability path pτ(Aτ | A)
+with corresponding velocity field uτ(Aτ | A),
+CFM minimizes
+LCFM(θ) := E(x,A)∼D,τ∼U[0,1],Aτ ∼pτ (·|A)
+h
+∥vθ(Aτ, τ | x) −uτ(Aτ | A)∥2
+2
+i
+.
+(2)
+Under squared loss, the regression target is the marginal velocity field
+u⋆
+τ(y | x) := E[uτ(Aτ | A) | Aτ = y, x] .
+(3)
+At test-time, integrating ˙Aτ = vθ(Aτ, τ | x) from A0 ∼p0 generates an action chunk.
+Bilinear Transduction (BT). To extrapolate, BT (Netanyahu et al., 2023) selects a training example
+x† ∈D as an anchor for a query condition x, defines the residual δ := x −x†, and predicts
+the target through a low-rank bilinear interaction between the anchor and residual. Specifically, it
+reparameterizes a regression target h⋆(x) ∈RdA as eh⋆(δ, x†) := h⋆(x† + δ) and models
+ehθ(δ, x†) =
+
+fθ,k(δ), gθ,k(x†)
+
+r
+dA
+k=1
+fθ,k(δ), gθ,k(x†) ∈Rr,
+(4)
+where ⟨·, ·⟩r denotes an inner product over a low-dimensional rank-r latent space. Together with
+the anchor-selection rule, this predictor induces training and test risks Rtr and Rte, measured by the
+squared prediction error ∥ehθ −eh⋆∥2
+2. Under the assumptions in Appx. C.1.2 and sufficiently small
+training error, BT admits the following extrapolation bound:
+Rte(ehθ) ≤CBT Rtr(ehθ),
+(5)
+where CBT is a problem-dependent factor. We highlight two of these assumptions for practical
+relevance: (S) Bilinear Structure the anchor must be selected, and the residual defined, so that
+the resulting anchor–residual-to-action prediction problem has a well-conditioned low-rank bilinear
+structure. (C) Residual Coverage a test-time anchor should yield a residual covered by the training
+residual distribution.
+Limitations. BT addresses (C) Residual Coverage through test-time anchor filtering, but largely
+takes (S) Bilinear Structure for granted. Consequently, prior demonstrations are limited to spe-
+cific tasks in low-dimensional state spaces, where residuals are meaningful and anchor selection
+rules can be hand-designed. Real-world visuomotor imitation introduces two hurdles. First, induc-
+ing (S) Bilinear Structure requires finding both a representation with meaningful residuals and a
+retrieval policy that yields a simple prediction problem. Second, expert actions may be multimodal,
+whereas BT predicts deterministically. BFP addresses both challenges in the next section.
+4
+METHOD
+Overview. Fig. 3 illustrates our proposed Bilinear Flow Policy (BFP), a generative goal-conditioned
+visuomotor policy that extrapolates to unseen goals while preserving behavior multimodality. BFP
+addresses the two challenges through a pretrained representation, learned anchor retrieval, and a
+bilinear conditional flow model. Formally, given a query x = (o, g), BFP retrieves an anchor x†
+from the demonstrations, encodes both conditions with a latent representation ϕ, then forms
+z = ϕ(x),
+z† = ϕ(x†),
+δ = z −z†.
+(6)
+4
+
+
+Published as a conference paper at ICLR 2027
+Figure 3: Overview of BFP. Given an unseen observation–goal condition x, BFP retrieves an
+anchor x† and predicts from the resulting anchor–residual pair. The novel retrieval policy (Sec. 4.2)
+uses a phase estimator to form a phase-compatible candidate set and a learned scorer sψ, trained
+from held-out BFP loss, to select x†. A frozen visual encoder computes z = ϕ(x) and z† = ϕ(x†),
+with residual δ = z −z†. The novel bilinear conditional-flow predictor (Sec. 4.1) predicts the CFM
+velocity through the low rank-r interaction; flow integration then generates the action chunk.
+The goal is to choose a representation and anchor policy so that the retrieved anchor and its residual
+make the required action at query straightforward to predict; concretely, we seek an induced anchor–
+residual–action prediction problem with low-rank bilinear structure (i.e., (S) Bilinear Structure ).
+Sec. 4.1 first establishes our main distributional extrapolation theorem, assuming this structure holds
+in the CFM marginal velocity field. Sec. 4.2 then constructs ϕ and ρψ to make this structure plausible
+in visuomotor demonstrations.
+4.1
+BILINEAR CONDITIONAL FLOW HEAD
+We first isolate the predictor question. Given a representation ϕ and retrieval policy ρψ, how can we
+use bilinear structure to achieve distributional extrapolation?
+The representation ϕ and anchor policy ρψ induce a conditional action distribution q⋆(· | δ, z†)
+from the expert conditional q⋆(· | x) using the anchor–residual coordinates in Eq. (6). Together
+with the conditional probability path pτ(Aτ | A), this defines the corresponding marginal velocity
+field u⋆
+τ(Aτ | δ, z†), whose flow generates this induced action distribution.
+BFP approximates this field with the coordinate-wise bilinear model
+vθ,k(Aτ, τ | δ, z†) =
+
+fθ,k(δ; Aτ, τ), gθ,k(z†; Aτ, τ)
+
+r ,
+k ∈[dA].
+(7)
+For each fixed flow context c = (Aτ, τ) and action coordinate k, this assumes that the marginal
+velocity field is approximated by a rank-r bilinear function of the residual and anchor.
+Thus,
+(S) Bilinear Structure is imposed on the velocity field rather than directly on the action.
+We train this predictor with the CFM objective. For a demonstration (x, A) and retrieved anchor x†,
+ℓBFP(θ; x, x†, A) := E τ∼U[0,1]
+Aτ ∼pτ (·|A)
+hvθ(Aτ, τ | δ, z†) −uτ(Aτ | A)
+2
+2
+i
+.
+(8)
+We also define Eflow
+s
+(θ) := Es
+h
+∥vθ −u⋆∥2
+2
+i
+for s ∈[tr, te]. We now present our main result:
+Theorem 1 (Distributional extrapolation of BFP, informal). Suppose that the representation ϕ sat-
+isfies Definition 5 in Sec. C.2.1, the marginal velocity field satisfies (S) Bilinear Structure , and
+test-time anchor selection satisfies (C) Residual Coverage . Under the remaining technical condi-
+tions detailed in Sec. C.3.2, sufficiently small context-wise training flow error implies
+Rdist
+te (πθ) ≤CODE Eflow
+te (θ) ≤CODECBFP Eflow
+tr
+(θ).
+(9)
+Proof. Deferred to Sec. C.3.2.
+Practical interpretation. Under the theorem’s assumptions, in-distribution flow error controls the
+error in the full generated action distribution at unseen goals. The theorem motivates the prac-
+tical diagnostics for assessing extrapolation performance based on (S) Bilinear Structure and
+(C) Residual Coverage , which we evaluate in Sec. 5.3.
+5
+
+
+Published as a conference paper at ICLR 2027
+4.2
+LEARNING BFP FROM DEMONSTRATIONS
+We now instantiate the representation and anchor policies left abstract in Sec. 4.1: training-time re-
+trieval aims to induce a simple low-rank relation ( (S) Bilinear Structure ), while test-time retrieval
+aims to keep the required residual covered by training ( (C) Residual Coverage ).
+Representation. Let x = (I1:V , p, g) contain images, proprioception, and the goal. BFP uses
+ϕ(x) =
+
+Evis(I1); . . . ; Evis(IV ); p; g
+
+,
+(10)
+where Evis is a frozen pretrained visual representation such as R3M (Nair et al., 2022) or DINOv3
+(Sim´eoni et al., 2025). Applying the same encoder to query and anchor provides a shared compact
+space for defining δ = ϕ(x) −ϕ(x†). As it is pretrained independent to demonstrations, they
+provide a common train–test coordinate system.
+Learning train-time anchor retrieval. Anchors at similar task phases are more likely to induce
+simple residuals, but phase compatibility alone does not guarantee bilinear predictability. For each
+query x, a coarse phase estimator therefore forms a candidate window C(x) = {x†
+m}K
+m=1 from
+demonstrations at similar task progress. We use a simple hand-designed estimator, although learned
+temporal-alignment methods could be used instead (Dwibedi et al., 2019; Memmel et al., 2025).
+For each candidate, let z†
+m = ϕ(x†
+m) and δm = ϕ(x) −z†
+m. A learned scorer defines
+pψ(m | x, C(x)) =
+exp
+ sψ(δm, z†
+m)/τρ
+
+PK
+n=1 exp
+
+sψ(δn, z†
+n)/τρ
+.
+(11)
+We alternate predictor and scorer updates so that each provides the learning signal for the other.
+With the scorer fixed, the predictor learns primarily from anchors assigned high probability:
+Lpred(θ) = E(x,A)∼D
+" K
+X
+m=1
+sg[pψ(m | x, C(x))]ℓBFP(θ; x, x†
+m, A)
+#
+.
+(12)
+Conversely, with the predictor fixed, the scorer favors anchors with low held-out BFP loss:
+Lret(ψ) = E(x,A)∼Dval
+" K
+X
+m=1
+pψ(m | x, C(x))sg[eℓm]
+#
+,
+(13)
+where eℓm is the normalized held-out BFP loss. Thus, retrieval favors anchor–residual pairs that the
+shared rank-r predictor can explain well. Algorithm and details are given in Sec. D.
+Test-time anchor selection. At test time, motivated by (C) Residual Coverage , we prioritize goal-
+residual coverage when selecting anchors. Following BT, we first select demonstrations whose goal
+residual is closest to the empirical training goal-delta set bG∆,
+j⋆∈arg min
+j
+min
+∆g∈bG∆
+(gq −g(j)) −∆g
+
+2
+2 .
+(14)
+We apply the learned scorer from Eq. (11) over Cte(x) and sample M ∼Cat(pψ(· | x, Cte(x))) .
+With the sampled anchor fixed, we form z†
+M = ϕ(x†
+M) and δM = ϕ(x) −z†
+M, sample A0 ∼p0,
+and integrate
+˙Aτ = vθ(Aτ, τ | δM, z†
+M),
+τ ∈[0, 1].
+(15)
+The terminal state A1 is the generated action chunk. Algorithm and details are given in Sec. D.
+5
+EXPERIMENTS
+We organize our experiments around three questions that follow the claims of the method. First
+(Sec. 5.1), can BFP solve distributional extrapolation given oracle representation and retrieval?
+Second (Sec. 5.2), does BFP generalize to unseen goals and transfer to real-world deployment?
+Third (Sec. 5.3), can theory-motivated signals identify which trained policies and unseen queries
+are likely to extrapolate reliably without performing OOD rollouts? We additionally ablate core
+components of BFP (Sec. 5.4). Full results are reported in Secs. A and B.
+5.1
+CAN BFP SOLVE DISTRIBUTIONAL EXTRAPOLATION?
+6
+
+
+Published as a conference paper at ICLR 2027
+Method
+NW2 ID ↓
+NW2 OOD ↓
+Balance OOD ↓
+Oracle
+0.078
+0.086
+0.019
+FLOW
+0.221
+0.506
+0.160
+BT
+0.726
+0.763
+0.500
+BFP
+0.224
+0.321
+0.103
+Table 1: BFP distributionally extrapolates. Re-
+sults averaged over three problems and three
+seeds. Lower is better for all metrics. Oracle sam-
+ples directly from the expert conditional and gives
+the Monte Carlo floor.
+Setting.
+We first isolate the predictor from
+the representation and anchor-retrieval chal-
+lenges studied later.
+We consider three one-
+dimensional analytical problems that instanti-
+ate the bimodal setting in Fig. 2, where in-
+puts are already compact and random anchor
+retrieval suffices.
+In each problem, the ex-
+pert conditional is an equal mixture of two an-
+alytical modes.
+This setting lets us quantify
+directly whether the predictor can extrapolate
+both modes beyond the training support. Each
+method is trained on 20,000 input–output pairs with three seeds and evaluated from 500 samples
+per input. NW2 measures overall mismatch to the expert conditional, normalized by the distance
+between its modes, while balance error, measures deviation from the prescribed 50/50 mode mass;
+formal definitions are given in Sec. E.
+Hypothesis. We expect FLOW to preserve multimodality but extrapolate it unreliably, and determin-
+istic BT to extrapolate structurally but fail to represent both modes.
+Result. BFP and FLOW show similar ID NW2, but BFP reduces OOD NW2 from 0.506 to 0.321
+(36.6%) and improves mode balance from 0.160 to 0.103. BT has the highest OOD distribution
+error and the maximal balance error of 0.500, reflecting its inability to represent both modes with
+deterministic regression. Thus, when representation and retrieval are controlled, only BFP achieves
+the lowest average OOD distributional error. Per-problem results are provided in Sec. E.
+5.2
+DOES BFP IMPROVE UNSEEN GOAL GENERALIZATION?
+Setting.
+We evaluate seven simulation settings spanning the five manipulation tasks shown in
+Fig. 11, together with two real-world tasks in Fig. 6. Exact demonstration, ID, and OOD supports
+are provided in Secs. A and B. We report results under state-domain and visuomotor observations.
+State uses simulator states. Visuomotor uses frozen R3M features (Nair et al., 2022), proprioception,
+and the explicit goal. We study other pretrained visual features (e.g., DINO-v3) in Sec. 5.4.
+We compare the following: FLOW (Lipman et al., 2024), a standard generative GCIL policy, and four
+extrapolation-targeted baselines. EQUIDP (Wang et al., 2024a) represents prespecified extrapolation
+by encoding a known geometric equivariance into a generative policy. DARP (Pfeifer et al., 2026)
+retrieves the k nearest anchors and predicts from each anchor and its residual using a local, non-
+bilinear model. BT (Netanyahu et al., 2023) uses a hand-crafted time-synchronized anchor policy
+and deterministic low-rank bilinear regression; for visuomotor tasks, we equip BT with the same
+frozen pretrained visual representation as BFP. CTA (Kim et al., 2026) learns a task-endogenous
+analogy and uses it as the residual in hierarchical bilinear transduction; a high-level policy predicts
+an analogy, and a low-level policy maps it to primitive actions. See Sec. F for details.
+For each pair of task and observation space in simulation, every training seed is evaluated on fixed
+100 ID and 100 OOD initial conditions. We train 3 training seeds and report the mean and standard
+error of the mean (SEM) across the seeds. We use statistical hypothesis testing for policy comparison
+with 5% family-wise error rate (FWER) control within each task (Snyder et al., 2025; 2026).
+Simulation Result. As shown in Fig. 4a, BFP achieves the highest OOD success on all seven
+settings, averaging 79%, compared with 58% for BT and 30% for FLOW. The normalized dense-
+reward analysis shows the same ordering, with BFP forming the top FWER-controlled statistical
+group as indicated by the Compact Letter Display (CLD) (Piepho, 2004) shown on top of each sub-
+plot. Columns not sharing the same alphabet are significantly different with 5% FWER, verifying
+that BFP outperforms all the baselines. ID success remains high at 97%, indicating that the OOD
+gains do not come from sacrificing performance within demonstration support. Same trend holds
+for state-space result. Detailed analysis and per-task results are provided in Sec. B.
+The baselines clarify where the gain comes from. BFP outperforms EQUIDP despite its carefully
+tuned (see Sec. F), task-specific geometric rule, showing the benefit of learning the extrapolation
+relation from demonstrations rather than prescribing it a priori. Its gains over DARP and CTA
+show that local retrieval or learned analogy alone does not match the proposed structured predictor,
+7
+
+
+Published as a conference paper at ICLR 2027
+(a) OOD performance in simulation.
+(b) OOD performance in real-world.
+Figure 4: BFP generalizes in visuomotor manipulation. (a) Success rate / Normalized reward av-
+eraged across seven simulation settings (b) Same across hardware tasks. Success rate violins show
+Bayesian posterior estimates under a uniform Beta prior. Normalized reward violins illustrate em-
+pirical distributions of the results. Dots represent sample means and horizontal lines show posterior
+means (success-rate only). Letters on top of the plots show statistical comparison, where columns
+not sharing the same alphabet are significantly different under 5% FWER control.
+while the 21% gain over BT indicates that learned anchor retrieval and generative bilinear-flow
+prediction add to the fixed-anchor deterministic bilinear recipe.
+Real-world Result. We evaluate generalization to unseen goals on a real-world robot in a pick-and-
+place task (PnPMug) and a pipette insertion task (InsertPipette) the latter requiring within
+2cm precision. As shown in Fig. 4b, empirical results in this setting show the same trends observed
+in simulation. BFP achieves 50% average OOD success rate across the two tasks, compared with
+18% for FLOW and 39% for BT. These results suggest that BFP’s generalization to unseen goals
+through extrapolation holds under real-world conditions including perception and goal estimation
+error. We report experimental setup and discuss results further in Sec. A.
+5.3
+IN-DISTRIBUTION DIAGNOSTICS OF EXTRAPOLATION
+Setting. We ask whether theory-motivated diagnostics can help assess extrapolation before closed-
+loop OOD rollout. Our bound motivates two empirical proxies: held-out ID CFM loss to represent
+(S) Bilinear Structure and a residual-coverage score for (C) Residual Coverage . We measure
+coverage using the realism metric (Kynk¨a¨anniemi et al., 2019) against a bank of training residuals,
+with higher scores indicating better coverage. We evaluate whether these proxies predict open-loop
+OOD CFM loss on expert observation–action pairs. For checkpoint selection, we rank checkpoints
+within each task by held-out ID CFM loss and compare their OOD-error percentile ranks. For query-
+level diagnosis, we group OOD queries within each checkpoint into residual-coverage percentile and
+compare their OOD-error percentile ranks. Full evaluation details are provided in Sec. F.3.
+Result. FLOW shows the failure first: lower held-out ID CFM loss does not consistently correspond
+to lower OOD error. For BFP, however, the checkpoints in the highest ID error quintile have a mean
+OOD-error rank approximately 48 percentile points higher than those in the lowest quintile. These
+results suggest that held-out ID CFM loss can guide checkpoint selection and hyperparameter search
+for BFP without OOD rollout.
+Residual coverage provides a complementary query-level signal. In the within-checkpoint analysis,
+queries in the lowest-coverage quintile have higher OOD-error percentile ranks than those in the
+highest-coverage quintile. Residual coverage therefore serves as a query-level predictor of perfor-
+mance on unseen goals and motivates test-time retrieval that favors anchors inducing residuals well
+covered by training.
+5.4
+ABLATIONS
+We ablate the visual representation, anchor retrieval, flow predictor backbone, and bilinear rank
+in Fig. 5b. A frozen pretrained visual representation and phase-conditioned retrieval are the most
+consequential components: BFP with a frozen R3M or DINOv3 encoder reaches both 76% OOD
+8
+
+
+Published as a conference paper at ICLR 2027
+(a) Diagnostics.
+(b) Ablations.
+Figure 5: Pre-rollout diagnostics and BFP ablations. (a) Held-out ID flow error ranks OOD error
+for BFP but not for FLOW; within a fixed BFP checkpoint, better residual coverage is associated
+with lower extrapolation error. (b) Ablations of the visual encoder, anchor policy, backbone, and
+bilinear rank. Frozen pretrained features and phase-conditioned retrieval both lead to better perfor-
+mance; BFP can exploit stronger sequence backbones and performs similarly across the ranks.
+success, +31% over jointly training the encoder from scratch (45%), and learned phase-conditioned
+retrieval reaches 81% versus 67% and 66% for time-synchronized (as in BT) and random retrieval.
+One concern is that BFP’s low-rank structure makes the model simpler and more prone to under-
+fitting. Perhaps this underfitting, rather than bilinear interaction itself, explains the extrapolation
+gain. If so, a more expressive backbone would erase the gain by allowing the model to overfit.
+We observe the opposite: replacing the MLP with a sequence-aware Transformer raises BFP from
+59% to 69% OOD success, while lowering FLOW from 30% to 20%, despite 94–99% ID success
+across trained variants. These results suggest that BFP’s gains are not merely a consequence of an
+underpowered backbone: BFP can benefit from greater backbone expressiveness while retaining its
+bilinear anchor–residual structure. Finally, performance is similar across the tested bilinear ranks.
+6
+CONCLUSION
+We introduce BFP, a generative goal-conditioned visuomotor policy that extrapolates to unseen
+goals by learning generalizable observation-goal-action relations among demonstrated conditions.
+BFP extends bilinear transduction to conditional flow matching and combines it with compact repre-
+sentations and learned anchor selection to generate multimodal action distributions beyond demon-
+stration support. Across five simulation manipulation tasks and two real-world tasks, BFP sub-
+stantially improves OOD success over competing methods, while providing practical signals for
+checkpoint selection and for identifying unseen conditions where extrapolation is better supported.
+Limitations and Future Work. BFP currently assumes compact goal representations. Extending
+BFP to image- or language-conditioned goals remains an important direction for future work.
+AI USE STATEMENT
+We used generative AI tools to assist with literature review, experiment analysis, implementation
+of baseline methods, and editing and organization of manuscript text. AI-assisted literature review
+was verified against the original sources, baseline implementations were reviewed and tested by the
+authors, and all AI-assisted writing was manually reviewed and revised. We take responsibility for
+the final content of this work, including text, claims, code, and artifacts produced with the aid of
+generative AI.
+9
+
+
+Published as a conference paper at ICLR 2027
+REPRODUCIBILITY STATEMENT
+We are committed to making our results reproducible. The main paper specifies the BFP architec-
+ture, and pseudocode details provided in the Sec. D. Sec. A documents the real-world task setups.
+We release the implementation, experiment configurations, and supporting materials through our
+project website: https://bilinearflow.netlify.app.
+ACKNOWLEDGMENTS
+This work was supported in part by Toyota Research Institute.
+REFERENCES
+Nicolas Carion, Laura Gustafson, Yuan-Ting Hu, Shoubhik Debnath, Ronghang Hu, Didac Suris
+Coll-Vinent, Chaitanya Ryali, Kalyan Vasudev Alwala, Haitham Khedr, Andrew Huang, et al.
+Sam 3: Segment anything with concepts. In International conference on learning representations,
+volume 2026, pp. 138846–138923, 2026.
+Yiming Ding, Carlos Florensa, Pieter Abbeel, and Mariano Phielipp. Goal-conditioned imitation
+learning. Advances in neural information processing systems, 32, 2019.
+Debidatta Dwibedi, Yusuf Aytar, Jonathan Tompson, Pierre Sermanet, and Andrew Zisserman. Tem-
+poral cycle-consistency learning. In 2019 IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), pp. 1801–1810. IEEE, 2019.
+Niklas Funk, Julen Urain, Joao Carvalho, Vignesh Prasad, Georgia Chalvatzaki, and Jan Peters.
+Actionflow: Equivariant, accurate, and efficient policies with spatially symmetric flow matching.
+arXiv preprint arXiv:2409.04576, 2024.
+Abhishek Gupta, Vikash Kumar, Corey Lynch, Sergey Levine, and Karol Hausman. Relay policy
+learning: Solving long-horizon tasks via imitation and reinforcement learning. arXiv preprint
+arXiv:1910.11956, 2019.
+Zhang-Wei Hong, Ge Yang, and Pulkit Agrawal.
+Bilinear value networks.
+arXiv preprint
+arXiv:2204.13695, 2022.
+Junseok Kim, Dohyeong Kim, Mineui Hong, and Songhwai Oh.
+Compositional transduc-
+tion with latent analogies for offline goal-conditioned reinforcement learning.
+arXiv preprint
+arXiv:2605.20609, 2026.
+Tuomas Kynk¨a¨anniemi, Tero Karras, Samuli Laine, Jaakko Lehtinen, and Timo Aila. Improved
+precision and recall metric for assessing generative models.
+Advances in neural information
+processing systems, 32, 2019.
+Daniel Lawson, Adriana Hugessen, Charlotte Cloutier, Glen Berseth, and Khimya Khetarpal. Self-
+predictive representations for combinatorial generalization in behavioral cloning. In International
+Conference on Learning Representations, volume 2026, pp. 101559–101586, 2026.
+Yaron Lipman, Marton Havasi, Peter Holderrieth, Neta Shaul, Matt Le, Brian Karrer, Ricky T. Q.
+Chen, David Lopez-Paz, Heli Ben-Hamu, and Itai Gat. Flow Matching Guide and Code, Decem-
+ber 2024. URL http://arxiv.org/abs/2412.06264. arXiv:2412.06264 [cs].
+Yunhao Luo, Utkarsh Mishra, Yilun Du, and Danfei Xu. Generative trajectory stitching through
+diffusion composition. Advances in Neural Information Processing Systems, 38:37809–37843,
+2026.
+Lucas Manuelli, Wei Gao, Peter Florence, and Russ Tedrake.
+kpam: Keypoint affordances for
+category-level robotic manipulation. In The International Symposium of Robotics Research, pp.
+132–157. Springer, 2019.
+Marius Memmel, Jacob Berg, Bingqing Chen, Abhishek Gupta, and Jonathan Francis. Strap: Robot
+sub-trajectory retrieval for augmented policy learning. In International Conference on Learning
+Representations, volume 2025, pp. 63813–63832, 2025.
+10
+
+
+Published as a conference paper at ICLR 2027
+Utkarsh Aashu Mishra, Shangjie Xue, Yongxin Chen, and Danfei Xu. Generative skill chaining:
+Long-horizon skill planning with diffusion models. In Conference on Robot Learning, pp. 2905–
+2925. PMLR, 2023.
+Suraj Nair, Aravind Rajeswaran, Vikash Kumar, Chelsea Finn, and Abhinav Gupta. R3m: A univer-
+sal visual representation for robot manipulation. arXiv preprint arXiv:2203.12601, 2022.
+Aviv Netanyahu, Abhishek Gupta, Max Simchowitz, Kaiqing Zhang, and Pulkit Agrawal. Learning
+to extrapolate: A transductive approach. arXiv preprint arXiv:2304.14329, 2023.
+Adam Ousherovitch and Yixin Wang. Learning to extrapolate to new tasks: A relational approach
+to task extrapolation. In Forty-third International Conference on Machine Learning, 2026.
+Seohong Park, Kevin Frans, Benjamin Eysenbach, and Sergey Levine. Ogbench: Benchmarking
+offline goal-conditioned rl. In International Conference on Learning Representations, volume
+2025, pp. 94937–94982, 2025.
+Gabriel Peyr´e and Marco Cuturi. Computational optimal transport: With applications to data sci-
+ence. Now Foundations and Trends, 2019.
+Quinn Pfeifer, Ethan Pronovost, Paarth Shah, Khimya Khetarpal, Siddhartha Srinivasa, and Ab-
+hishek Gupta.
+Difference-aware retrieval policies for imitation learning.
+arXiv preprint
+arXiv:2606.09758, 2026.
+Hans-Peter Piepho.
+An algorithm for a letter-based representation of all-pairwise comparisons.
+Journal of Computational and Graphical Statistics, 13(2):456–466, 2004.
+Moritz Reuss, Maximilian Li, Xiaogang Jia, and Rudolf Lioutikov.
+Goal-conditioned imitation
+learning using score-based diffusion policies. arXiv preprint arXiv:2304.02532, 2023.
+Moritz Reuss, ¨Omer Erdinc¸ Ya˘gmurlu, Fabian Wenzel, and Rudolf Lioutikov.
+Multimodal
+diffusion transformer: Learning versatile behavior from multimodal goals.
+arXiv preprint
+arXiv:2407.05996, 2024.
+Devavrat Shah, Dogyoon Song, Zhi Xu, and Yuzhe Yang. Sample efficient reinforcement learning
+via low-rank matrix estimation. Advances in Neural Information Processing Systems, 33:12092–
+12103, 2020.
+Max Simchowitz, Abhishek Gupta, and Kaiqing Zhang. Tackling combinatorial distribution shift:
+A matrix completion perspective. In The Thirty Sixth Annual Conference on Learning Theory,
+pp. 3356–3468. PMLR, 2023.
+Oriane Sim´eoni, Huy V Vo, Maximilian Seitzer, Federico Baldassarre, Maxime Oquab, Cijo Jose,
+Vasil Khalidov, Marc Szafraniec, Seungeun Yi, Micha¨el Ramamonjisoa, et al. Dinov3. arXiv
+preprint arXiv:2508.10104, 2025.
+David Snyder, Asher James Hancock, Apurva Badithela, Emma Dixon, Patrick Miller, Rares Andrei
+Ambrus, Anirudha Majumdar, Masha Itkina, and Haruki Nishimura. Is your imitation learn-
+ing policy better than mine? policy comparison with near-optimal stopping.
+arXiv preprint
+arXiv:2503.10966, 2025.
+David Snyder, Apurva Badithela, Nikolai Matni, George Pappas, Anirudha Majumdar, Masha Itkina,
+and Haruki Nishimura. Beyond binary success: Sample-efficient and statistically rigorous robot
+policy comparison. arXiv preprint arXiv:2603.13616, 2026.
+Julen Urain, Niklas Funk, Jan Peters, and Georgia Chalvatzaki. Se (3)-diffusionfields: Learning
+smooth cost functions for joint grasp and motion optimization through diffusion. In 2023 IEEE
+international conference on robotics and automation (ICRA), pp. 5923–5930. IEEE, 2023.
+Julen Urain, Ajay Mandlekar, Yilun Du, Mahi Shafiullah, Danfei Xu, Katerina Fragkiadaki, Georgia
+Chalvatzaki, and Jan Peters. Deep generative models in robotics: A survey on learning from
+multimodal demonstrations. arXiv preprint arXiv:2408.04380, 2024.
+11
+
+
+Published as a conference paper at ICLR 2027
+Dian Wang, Stephen Hart, David Surovik, Tarik Kelestemur, Haojie Huang, Haibo Zhao, Mark
+Yeatman, Jiuguang Wang, Robin Walters, and Robert Platt. Equivariant diffusion policy. arXiv
+preprint arXiv:2407.01812, 2024a.
+Lirui Wang, Jialiang Zhao, Yilun Du, Edward H Adelson, and Russ Tedrake. Poco: Policy compo-
+sition from and for heterogeneous robot learning. arXiv preprint arXiv:2402.02511, 2024b.
+Bowen Wen, Wei Yang, Jan Kautz, and Stan Birchfield. Foundationpose: Unified 6d pose estimation
+and tracking of novel objects. In 2024 IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), pp. 17868–17879. IEEE, 2024.
+Rui Yang, Lin Yong, Xiaoteng Ma, Hao Hu, Chongjie Zhang, and Tong Zhang. What is essential
+for unseen goal generalization of offline goal-conditioned rl?
+In International Conference on
+Machine Learning, pp. 39543–39571. PMLR, 2023.
+Tony Z Zhao, Vikash Kumar, Sergey Levine, and Chelsea Finn. Learning fine-grained bimanual
+manipulation with low-cost hardware. arXiv preprint arXiv:2304.13705, 2023.
+Yifeng Zhu, Zhenyu Jiang, Peter Stone, and Yuke Zhu. Learning generalizable manipulation policies
+with object-centric 3d representations. arXiv preprint arXiv:2310.14386, 2023a.
+Yifeng Zhu, Abhishek Joshi, Peter Stone, and Yuke Zhu. Viola: Imitation learning for vision-based
+manipulation with object proposal priors. In Conference on Robot Learning, pp. 1199–1210.
+PMLR, 2023b.
+12
+
+
+Published as a conference paper at ICLR 2027
+APPENDIX
+We include several appendices with additional details, derivations, and results:
+• Sec. A describes the real-world robot setup, tasks, and additional hardware results.
+• Sec. B details the simulation benchmark, including tasks, goal splits, evaluation protocol,
+and additional results.
+• Sec. C develops the theory: Sec. C.1 reviews the prior low-rank bilinear extrapolation
+result, Sec. C.2 shows that BFP conditional flow matching induces exactly such a bivariate
+regression problem, and Sec. C.3 proves the distributional extrapolation guarantee and its
+multi-anchor corollary.
+• Sec. D gives the train- and test-time anchor-policy instantiations and their training and
+inference algorithms.
+• Sec. E reports a controlled numerical study of distributional extrapolation.
+• Sec. F describes how each baseline is instantiated, reports encoder and baseline sensitivity
+studies, and evaluates the pre-rollout extrapolation diagnostics.
+13
+
+
+Published as a conference paper at ICLR 2027
+A
+REAL-WORLD EXPERIMENT DETAILS & ANALYSIS
+Figure 6: Task Setup. (Left) InsertPipette (Right) PnPMug
+Hardware Setup. We conduct all real-world experiments on a 7-DoF Kinova Gen3 arm with a
+Robotiq 2F-85 parallel-jaw gripper; the full setup is shown in Fig. 6. We use two RGB-D cameras:
+a ZED 2i as a scene camera, and an OAK-D Pro as a wrist camera. Depth information is only used
+to extract the goal and not used for policy learning. The controller operates at 20 Hz. Inference runs
+on a single NVIDIA RTX 4090 Laptop GPU with 16 GB of memory. We use a Meta Quest 3 VR
+headset to collect teleoperated demonstrations.
+The explicit task goal is extracted from the ZED RGB-D stream and represented in the robot base
+frame using hand–eye calibration. SAM 3 (Carion et al., 2026) segments the target plate and Foun-
+dationPose (Wen et al., 2024) registers and tracks its 6-DoF pose.
+Task and Distribution Shift. We evaluate two goal-conditioned manipulation tasks, shown in
+Fig. 6. In PnPMug, the robot picks up a black mug and places it on a green plate. We use the
+3D position of the plate as the policy goal. We collect 127 teleoperated demonstrations for policy
+training with the plate restricted to y > 0 and x < 0.7. For OOD evaluation, the plate is placed ex-
+clusively in the held-out region, such that no goal lies within the bounding box of the demonstrated
+goals. We evaluate 50 OOD initial conditions (ICs) with 2 trials per IC and 50 ID initial conditions
+with 1 trial per IC, with a maximum episode length of 30 s (1.5× average human demo duration).
+InsertPipette evaluates more precise goal extrapolation. We use the discrete coordinate of
+test tube as the policy goal. The robot picks up a pipette from a cradle and inserts it into a test
+tube positioned in one of the holes of a 4 × 8 rack, whose hole pitch is 36 mm. The demonstration
+set for policy training contains 133 trajectories spanning 10 training holes in a 2 × 5 region. OOD
+evaluation uses the remaining 22 held-out holes, with five trials per hole. Each policy is evaluated
+in-distribution with 3 trials per hole. Maximum episode length is set to 60 s (1.5× average human
+demo duration).
+Policy Training. All policies use the same frozen, pretrained R3M ResNet-34 visual encoder (Nair
+et al., 2022). The policy input consists of both camera views, a 10-dimensional proprioceptive state
+containing the end-effector position, 6-D rotation representation, and gripper state, together with
+the explicit task goal. Policies output absolute end-effector poses and gripper commands as 16-
+step action chunks using a 1-D U-Net backbone. We use prediction horizon and execution horizon
+(Tp, Ta) = (16, 8). We train all policies with a batch size of 32 and a learning rate of 10−4. Flow-
+14
+
+
+Published as a conference paper at ICLR 2027
+Table 2: Performance in- and out-of-distribution on real-world robot hardware. Success rate (SR,
+%), our primary metric, is highlighted in blue. Reward denotes normalized dense reward (×100).
+Higher is better for both metrics. Values are means ± standard error over trials: PnPMug 50 ID /
+100 OOD trials, InsertPipette 30 ID / 110 OOD trials per method. Bold and underlined values
+indicate the best and second-best means, respectively, including ties.
+Method Metric
+PnPMug InsertPipette Avg.
+(a) In-distribution (ID)
+FLOW
+SR
+86 ± 5
+83 ± 7
+85
+Reward
+95 ± 2
+92 ± 3
+93
+BT
+SR
+100 ± 0
+100 ± 0
+100
+Reward
+97 ± 1
+99 ± 1
+98
+BFP
+SR
+98 ± 2
+97 ± 3
+97
+Reward
+99 ± 1
+99 ± 1
+99
+(b) Out-of-distribution (OOD)
+FLOW
+SR
+18 ± 4
+18 ± 4
+18
+Reward
+35 ± 3
+61 ± 2
+48
+BT
+SR
+45 ± 5
+34 ± 5
+39
+Reward
+62 ± 4
+70 ± 2
+66
+BFP
+SR
+51 ± 5
+50 ± 5
+50
+Reward
+66 ± 4
+79 ± 2
+73
+based policies use 10 integration steps at inference. All hardware results use a single trained seed
+per method.
+Baselines and Evaluation. We compare BFP with two baselines. FLOW (Lipman et al., 2024)
+is a goal-conditioned flow-matching policy that uses the same visual encoder and action-generation
+backbone as BFP, but removes the anchor–residual decomposition and bilinear interaction. BT uses
+bilinear action regression, but replaces our learned candidate-set anchor scorer with synchronized,
+phase-based anchor selection. We use temporal ensemble technique (Zhao et al., 2023).
+A human evaluator determines binary task success. We additionally report a normalized dense
+reward in [0, 1] based on sequential task progress. For PnPMug, the progress sequence is reach →
+grasp →lift →release →place on plate →retreat. For InsertPipette, it is reach →grasp-
+and-lift →align →insert →retreat, where alignment requires the pipette to come within 2 cm of the
+target hole. A stage contributes to the reward only after all preceding stages have been completed,
+while partial progress toward the next stage is credited fractionally.
+Results. Tab. 2 reports the complete task-level OOD and ID results. We report both success rate
+and normalized dense reward; the corresponding task-averaged comparison is discussed in the main
+text. Figs. 8 and 9 visualize the full per-task spatial distributions of successes and failures for both
+tasks. Fig. 10 visualizes the per-task distribution of dense reward for both tasks. Finally, Fig. 7
+shows time-lapse strips with progress phase labels on successful BFP rollouts for both tasks. This
+figure also shows failed BT and FLOW rollouts which exhibit the common failure modes of these
+baselines.
+15
+
+
+Published as a conference paper at ICLR 2027
+4.1 s
+5.9 s
+8.5 s
+11.2 s
+13.8 s
+10.2 s
+5.3 s
+10.8 s
+16.3 s
+21.7 s
+30.0 s
+9.5 s
+12.5 s
+16.5 s
+19.3 s
+23.6 s
+30.0 s
+30.0 s
+8.0 s
+13.9 s
+20.8 s
+23.8 s
+25.5 s
+24.7 s
+12.0 s
+18.7 s
+29.2 s
+41.6 s
+59.9 s
+59.9 s
+16.2 s
+20.0 s
+26.6 s
+33.2 s
+43.2 s
+19.8 s
+(a) PnPMug
+Reach
+Grasp
+Lift
+Place on plate
+Retreat
+Wrist View
+BFP (ours)
+✓ Success
+BT
+× No grasp:  hovers over the mug, never closes, until timeout
+Flow
+× Loose grasp:  grasps the rim, the mug tilts in hand and is never placed
+(b) InsertPipette
+Reach
+Grasp-and-lift
+Align
+Insert
+Retreat
+Wrist View
+BFP (ours)
+✓ Success
+BT
+× Freeze:  carries the pipette to two holes off the tube and freezes there
+Flow
+× Wrong grasp:  grasps the holder instead of the pipette and carries it off
+Figure 7: OOD Rollout Strips. Successful BFP rollouts in OOD labeled with the progress phase
+used to compute dense reward. BT and FLOW failure rollouts in OOD exhibit common failure
+modes. In PnPMug and InsertPipette, FLOW often fails early in the task in grasping the
+manipuland despite its unchanging pose in the scene between ID training demonstrations and OOD
+rollouts. BT’s time-synchronized anchor cannot re-synchronize once the robot lags behind it, so
+the residual drifts off support and leads to a freezing failure mode where the policy fails to make
+further progress. In PnPMug this often occurs in the grasping phase, and in InsertPipette
+often occurs during the alignment phase.
+16
+
+
+Published as a conference paper at ICLR 2027
+0.5
+0.6
+0.7
+0.8
+x (m)
+−0.2
+−0.1
+0.0
+0.1
+0.2
+0.3
+y (m)
+BFP (ours)
+ID 49/50    OOD 51/100
+0.5
+0.6
+0.7
+0.8
+x (m)
+BT
+ID 50/50    OOD 45/100
+0.5
+0.6
+0.7
+0.8
+x (m)
+Flow
+ID 43/50    OOD 18/100
+PnPMug
+Training goals (convex hull)
+Success
+1 of 2 OOD trials
+Failure
+Figure 8: PnPMug spatial distribution of successes and failures. Each dot represents a goal object
+(plate) IC used in evaluation. Failures increase as the goal object is moved further from the training
+data distribution (ID). BFP achieves successful generalization to these OOD conditions more often
+and further away from the training data goal pose distribution compared to FLOW.
+0/5
+0/5
+0/5
+0/5
+2/5
+3/5
+1/5
+2/5
+4/5
+5/5
+2/5
+1/5
+3/3
+3/3
+3/5
+2/5
+3/3
+3/3
+5/5
+2/5
+3/3
+3/3
+4/5
+4/5
+3/3
+2/3
+4/5
+4/5
+3/3
+3/3
+5/5
+2/5
+BFP (ours)
+ID 29/30    OOD 55/110
+0/5
+0/5
+0/5
+0/5
+0/5
+1/5
+1/5
+0/5
+3/5
+5/5
+3/5
+0/5
+3/3
+3/3
+2/5
+0/5
+3/3
+3/3
+1/5
+1/5
+3/3
+3/3
+5/5
+2/5
+3/3
+3/3
+4/5
+0/5
+3/3
+3/3
+5/5
+4/5
+BT
+ID 30/30    OOD 37/110
+0/5
+0/5
+0/5
+0/5
+1/5
+0/5
+0/5
+0/5
+3/5
+5/5
+0/5
+0/5
+3/3
+2/3
+0/5
+0/5
+3/3
+2/3
+1/5
+0/5
+3/3
+1/3
+2/5
+0/5
+2/3
+3/3
+2/5
+4/5
+3/3
+3/3
+2/5
+0/5
+Flow
+ID 25/30    OOD 20/110
+InsertPipette
+ID (training holes)
+OOD
+Figure 9: InsertPipette spatial distribution of successes and failures. Each circle represents
+a test-tube IC used for evaluation in a 4 × 8 test-tube tray. Generalization to unseen, OOD goals is
+substantially improved with BFP.
+17
+
+
+Published as a conference paper at ICLR 2027
+Figure 10: Success rate and Dense reward under OOD evaluation on real-world robot hard-
+ware.
+18
+
+
+Published as a conference paper at ICLR 2027
+B
+SIMULATION BENCHMARK DETAILS AND ADDITIONAL RESULTS
+Tasks and goals. We evaluate five manipulation tasks across seven settings: PushCube-D0/D1,
+Relocate-D0/D1, RotatePen, StackCube, and PickCube (Fig. 11). The tasks span versa-
+tile skills including planar pushing, dexterous relocation and rotation, pick-and-place, and stacking.
+Each policy is conditioned on an explicit task goal; the goal definition, success criterion, and dense
+reward for each task are summarized in Tab. 3.
+Distribution shifts. We evaluate extrapolation by holding out goal conditions from the training
+support (Fig. 12). The D0 settings isolate goal extrapolation under a restricted initial-condition
+distribution, whereas D1 evaluates the same goal shift with increased initial-condition variation. For
+tasks without a D0/D1 suffix, we use a D1 setting. Exact demonstration counts and train, ID, and
+OOD supports are reported in Tab. 4.
+Training Details. All methods use the same demonstration set for each task and observation regime.
+5% of demonstrations is held out for validation and is not used for policy training, as specified in
+Tab. 4. Method-specific architectures, extrapolation rules, and optimization details are provided in
+Sec. F.1.
+Evaluation protocol and metrics. For each task–observation pair, each of three independently
+trained seeds is evaluated on the same 100 ID and 100 OOD initial conditions, yielding 200 evalu-
+ation rollouts per seed. We report the mean and standard error of the mean (SEM) across training
+seeds. Our primary metric is binary task success. We additionally report normalized dense reward,
+which measures partial task progress when the binary success criterion is not reached.
+Results. Tab. 6 reports the complete task-level OOD results under state and visuomotor observa-
+tions. We report both success rate and normalized dense reward; the corresponding task-averaged
+comparison is discussed in the main text. Figs. 13 and 14 visualize the full per-task distributions.
+Tab. 5 reports the corresponding ID results. Across methods, ID performance is generally high
+relative to OOD performance, indicating that the primary differences between extrapolation methods
+emerge outside the demonstrated goal support. Figs. 15 and 16 provide the complete per-task ID
+distributions.
+19
+
+
+Published as a conference paper at ICLR 2027
+Table 3: Simulation task definitions. Goal denotes the compact representation used for policy
+conditioning. Success is evaluated at the final step of the episode. Dense reward is the environment’s
+task-progress reward, normalized by the maximum episode return for each task.
+Task (Benchmark)
+Goal
+Success criterion
+Dense reward
+PushCube (MetaWorld)
+2D target position
+target dist. < 5 cm
+reach, grasp, and target
+progress
+Relocate (Adroit)
+3D target position
+target dist. < 10 cm
+reach,
+lift,
+and
+target
+progress
+RotatePen (Adroit)
+target orientation
+ori. cos. > 0.95, pos. err.
+< 7.5 cm
+orientation and position
+progress
+StackCube (ManiSkill3)
+target cube position
+stacked, released, static
+reach, grasp, stack, and
+release progress
+PickCube (ManiSkill3)
+3D target position
+target dist. < 2.5 cm
+reach, grasp, and place
+progress
+Table 4: Simulation data and evaluation splits. ID goals are sampled from the training goal
+support while OOD goals are held out. D0 fixes the object initial-state variation. Positions and
+angles are reported in meters and radians, respectively.
+Setting
+Demos
+ID goal support
+OOD goal support
+Object initial condition
+PushCube-D0
+200
+x ∈[0, 0.3]
+y ∈[0.5, 0.7]
+x ∈[−0.3, 0]
+y ∈[0.5, 0.7]
+fixed
+PushCube-D1
+200
+x ∈[0, 0.3]
+y ∈[0.5, 0.7]
+x ∈[−0.3, 0]
+y ∈[0.5, 0.7]
+puck x ∈[−0.06, 0.06]
+Relocate-D0
+100
+x, y ∈[0, 0.3]
+z ∈[0.15, 0.35]
+x, y ∈[−0.3, 0]
+z ∈[0.15, 0.35]
+fixed
+Relocate-D1
+250
+x, y ∈[0, 0.3]
+z ∈[0.15, 0.35]
+x, y ∈[−0.3, 0]
+z ∈[0.15, 0.35]
+ball x ∈[−0.1, 0.1]
+RotatePen
+187
+roll ∈[0.2, 1.0]
+pitch ∈[−0.2, 0.6]
+roll ∈[−0.3, 0]
+pitch ∈[−0.2, 0.6]
+fixed
+StackCube
+200
+x ∈[0, 0.2]
+y ∈[0, 0.27]
+x ∈[−0.19, 0]
+y ∈[−0.25, 0]
+x ∈[−0.19, 0.19]
+y ∈[−0.29, 0.30]
+PickCube
+200
+x, y ∈(0, 0.1]
+x, y ∈[−0.1, 0)
+cube x, y ∈[−0.1, 0.1]
+(a) PushCube
+(b) Relocate
+(c) RotatePen
+(d) StackCube
+(e) PickCube
+Figure 11: Evaluation Tasks. (a) PushCube, (b) Relocate, (c) RotatePen, (d) StackCube,
+(e) PickCube. The suite spans pushing, dexterous object relocation and rotation, pick-and-place,
+stacking, and insertion. For definition of ID/OOD per task, please see Fig. 12.
+20
+
+
+Published as a conference paper at ICLR 2027
+(a) PushCube-D1
+(b) Relocate-D1
+(c) RotatePen
+(d) StackCube
+(e) PickCube
+Figure 12: Distribution Shift. Each task panel visualizes the support of the training conditions (ID,
+left) and the held-out evaluation conditions (OOD, right). The paired views use the same camera
+and scene configuration so that the corresponding distribution shift is directly visible.
+Table 5: In-distribution performance with state and visuomotor observations. Success rate (SR,
+%), our primary metric, is highlighted in blue. Reward denotes normalized dense reward (×100).
+Higher is better for both metrics. Bold and underlined values indicate the best and second-best
+means, respectively, including ties. Mean ± standard error over three training seeds.
+Method
+Metric
+PushCube-D0 PushCube-D1 Relocate-D0 Relocate-D1 RotatePen StackCube PickCube Avg.
+(a) State
+FLOW
+SR
+100 ± 0
+100 ± 0
+98 ± 1
+100 ± 0
+97 ± 1
+62 ± 3
+96 ± 1
+93
+Reward
+89 ± 0
+88 ± 0
+81 ± 1
+80 ± 1
+87 ± 0
+64 ± 0
+63 ± 0
+79
+DARP
+SR
+100 ± 0
+100 ± 0
+100 ± 0
+100 ± 0
+97 ± 0
+75 ± 0
+87 ± 1
+94
+Reward
+89 ± 0
+88 ± 0
+84 ± 1
+82 ± 1
+87 ± 0
+67 ± 0
+64 ± 0
+80
+CTA
+SR
+100 ± 0
+96 ± 3
+100 ± 0
+100 ± 0
+97 ± 0
+52 ± 2
+82 ± 2
+89
+Reward
+89 ± 0
+86 ± 2
+78 ± 1
+81 ± 1
+87 ± 0
+58 ± 0
+62 ± 0
+77
+EQUIDP SR
+100 ± 0
+100 ± 0
+99 ± 0
+100 ± 0
+98 ± 1
+58 ± 2
+90 ± 1
+92
+Reward
+89 ± 0
+88 ± 0
+82 ± 1
+83 ± 1
+88 ± 0
+63 ± 0
+62 ± 0
+79
+BT
+SR
+100 ± 0
+100 ± 0
+100 ± 0
+99 ± 0
+97 ± 0
+74 ± 3
+100 ± 0
+96
+Reward
+89 ± 0
+88 ± 0
+80 ± 0
+81 ± 1
+87 ± 0
+66 ± 1
+67 ± 0
+80
+BFP
+SR
+100 ± 0
+100 ± 0
+100 ± 0
+100 ± 0
+96 ± 0
+89 ± 1
+100 ± 0
+98
+Reward
+87 ± 0
+88 ± 0
+82 ± 1
+81 ± 0
+87 ± 0
+71 ± 1
+65 ± 0
+80
+(b) Visuomotor
+FLOW
+SR
+100 ± 0
+94 ± 1
+94 ± 2
+95 ± 2
+99 ± 1
+60 ± 1
+94 ± 1
+91
+Reward
+89 ± 0
+83 ± 1
+77 ± 1
+79 ± 2
+89 ± 0
+60 ± 1
+65 ± 0
+77
+DARP
+SR
+100 ± 0
+97 ± 0
+100 ± 0
+89 ± 1
+99 ± 1
+77 ± 1
+90 ± 1
+93
+Reward
+89 ± 0
+86 ± 0
+81 ± 0
+75 ± 1
+89 ± 0
+68 ± 0
+68 ± 0
+79
+CTA
+SR
+98 ± 0
+75 ± 4
+90 ± 2
+74 ± 3
+96 ± 2
+55 ± 7
+11 ± 0
+71
+Reward
+64 ± 8
+43 ± 5
+41 ± 1
+36 ± 4
+85 ± 0
+58 ± 3
+38 ± 1
+52
+EQUIDP SR
+100 ± 0
+100 ± 0
+100 ± 0
+100 ± 0
+97 ± 0
+83 ± 3
+94 ± 1
+96
+Reward
+89 ± 0
+88 ± 0
+80 ± 1
+83 ± 1
+87 ± 0
+69 ± 2
+68 ± 1
+81
+BT
+SR
+100 ± 0
+97 ± 1
+100 ± 0
+100 ± 0
+97 ± 0
+83 ± 2
+97 ± 1
+96
+Reward
+89 ± 0
+86 ± 1
+80 ± 0
+80 ± 0
+86 ± 0
+68 ± 1
+67 ± 0
+79
+BFP
+SR
+100 ± 0
+99 ± 1
+100 ± 0
+99 ± 0
+98 ± 0
+88 ± 0
+96 ± 1
+97
+Reward
+87 ± 0
+87 ± 1
+80 ± 1
+81 ± 0
+87 ± 0
+70 ± 0
+66 ± 1
+80
+21
+
+
+Published as a conference paper at ICLR 2027
+Table 6: OOD performance with state and visuomotor observations. Success rate (SR, %), our
+primary metric, is highlighted in blue. Reward denotes normalized dense reward (×100). Higher
+is better for both metrics. Bold and underlined values indicate the best and second-best means,
+respectively, including ties.
+Method
+Metric
+PushCube-D0 PushCube-D1 Relocate-D0 Relocate-D1 RotatePen StackCube PickCube Avg.
+(a) State
+FLOW
+SR
+31 ± 4
+49 ± 2
+26 ± 7
+24 ± 2
+52 ± 5
+41 ± 1
+80 ± 2
+43
+Reward
+27 ± 4
+42 ± 1
+18 ± 5
+22 ± 2
+49 ± 5
+55 ± 0
+50 ± 3
+38
+DARP
+SR
+36 ± 1
+45 ± 1
+43 ± 11
+47 ± 8
+75 ± 10
+2 ± 1
+5 ± 1
+36
+Reward
+31 ± 1
+40 ± 1
+29 ± 7
+36 ± 6
+65 ± 8
+38 ± 1
+40 ± 0
+40
+CTA
+SR
+36 ± 8
+48 ± 9
+15 ± 4
+24 ± 4
+77 ± 12
+12 ± 3
+25 ± 3
+34
+Reward
+49 ± 4
+45 ± 7
+10 ± 2
+16 ± 1
+70 ± 10
+35 ± 2
+45 ± 2
+39
+EQUIDP SR
+100 ± 0
+100 ± 0
+27 ± 4
+85 ± 2
+88 ± 1
+61 ± 2
+85 ± 1
+78
+Reward
+88 ± 0
+88 ± 0
+22 ± 4
+53 ± 2
+76 ± 1
+60 ± 2
+59 ± 0
+64
+BT
+SR
+100 ± 0
+94 ± 2
+76 ± 9
+99 ± 1
+86 ± 1
+51 ± 1
+99 ± 0
+86
+Reward
+85 ± 0
+77 ± 1
+47 ± 3
+72 ± 2
+78 ± 1
+57 ± 1
+62 ± 0
+68
+BFP
+SR
+100 ± 0
+100 ± 0
+100 ± 0
+100 ± 0
+96 ± 1
+78 ± 9
+100 ± 0
+96
+Reward
+83 ± 0
+83 ± 0
+67 ± 1
+81 ± 1
+81 ± 2
+68 ± 3
+61 ± 1
+75
+(b) Visuomotor
+FLOW
+SR
+28 ± 0
+34 ± 1
+21 ± 3
+17 ± 2
+50 ± 4
+11 ± 3
+45 ± 6
+30
+Reward
+26 ± 0
+31 ± 1
+13 ± 1
+14 ± 2
+68 ± 3
+34 ± 1
+43 ± 2
+33
+DARP
+SR
+31 ± 3
+23 ± 1
+33 ± 8
+32 ± 12
+57 ± 7
+16 ± 1
+0 ± 0
+28
+Reward
+28 ± 2
+21 ± 1
+20 ± 5
+24 ± 8
+69 ± 4
+43 ± 1
+45 ± 0
+36
+CTA
+SR
+11 ± 1
+8 ± 2
+1 ± 0
+0 ± 0
+23 ± 3
+1 ± 0
+0 ± 0
+6
+Reward
+24 ± 2
+12 ± 2
+3 ± 0
+2 ± 0
+29 ± 5
+38 ± 2
+31 ± 1
+20
+EQUIDP SR
+66 ± 11
+59 ± 4
+7 ± 2
+26 ± 4
+14 ± 3
+41 ± 2
+79 ± 2
+42
+Reward
+58 ± 10
+51 ± 3
+6 ± 0
+17 ± 2
+25 ± 3
+47 ± 2
+57 ± 2
+37
+BT
+SR
+99 ± 1
+57 ± 0
+57 ± 3
+29 ± 3
+57 ± 1
+28 ± 1
+79 ± 2
+58
+Reward
+78 ± 1
+50 ± 0
+40 ± 1
+19 ± 2
+60 ± 2
+40 ± 0
+62 ± 0
+50
+BFP
+SR
+100 ± 0
+83 ± 1
+99 ± 1
+54 ± 4
+78 ± 5
+48 ± 5
+88 ± 2
+79
+Reward
+74 ± 1
+72 ± 1
+68 ± 2
+38 ± 1
+80 ± 1
+52 ± 1
+60 ± 0
+63
+22
+
+
+Published as a conference paper at ICLR 2027
+PushCube-D0
+PushCube-D1
+0.0
+0.5
+1.0
+State
+b
+b
+b
+a
+a
+a
+c
+c
+c
+a
+b
+a
+PushCube-D0
+PushCube-D1
+Visuomotor
+c
+c
+d
+b
+a
+a
+c
+c
+d
+b
+b
+a
+Relocate-D0
+Relocate-D1
+0.0
+0.5
+1.0
+de c
+e
+d
+b
+a
+d
+c
+d
+b
+a
+a
+Relocate-D0
+Relocate-D1
+c
+c
+d
+d
+b
+a
+c
+b
+d bc b
+a
+RotatePen
+StackCube
+0.0
+0.5
+1.0
+d
+c
+bc ab b
+a
+c
+e
+d
+b bc a
+RotatePen
+StackCube
+b
+b
+c
+c
+b
+a
+c
+c
+d ab b
+a
+PickCube
+0.0
+0.5
+1.0
+b
+d
+c
+b
+a
+a
+PickCube
+b
+c
+c
+a
+a
+a
+Success Rate
+Flow
+DARP
+CTA
+EquiDP
+BT
+BFP (ours)
+Figure 13: Success rate under OOD evaluation.
+PushCube-D0
+PushCube-D1
+0.0
+0.5
+1.0
+State
+c
+c
+b
+a
+a
+a
+c
+c
+c
+a
+b ab
+PushCube-D0
+PushCube-D1
+Visuomotor
+c
+c
+c
+b
+a
+a
+c
+cd d
+b
+b
+a
+Relocate-D0
+Relocate-D1
+0.0
+0.5
+1.0
+cd
+c
+d cd b
+a
+e
+d
+e
+c
+b
+a
+Relocate-D0
+Relocate-D1
+cd
+c
+e de b
+a
+b
+b
+c
+b
+b
+a
+RotatePen
+StackCube
+0.0
+0.5
+1.0
+d
+c
+bc ab ab a
+b
+c
+c ab b
+a
+RotatePen
+StackCube
+b
+b
+c
+c
+b
+a
+d abccd abbcd a
+PickCube
+0.0
+0.5
+1.0
+b
+c
+bc a
+a
+a
+PickCube
+b
+b
+c
+a
+a
+a
+Normalized Reward
+Flow
+DARP
+CTA
+EquiDP
+BT
+BFP (ours)
+Figure 14: Dense reward under OOD evaluation.
+23
+
+
+Published as a conference paper at ICLR 2027
+PushCube-D0
+PushCube-D1
+0.0
+0.5
+1.0
+State
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+PushCube-D0
+PushCube-D1
+Visuomotor
+a
+a
+a
+a
+a
+a
+b ab c
+a ab a
+Relocate-D0
+Relocate-D1
+0.0
+0.5
+1.0
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+Relocate-D0
+Relocate-D1
+b
+a
+b
+a
+a
+a
+bc
+c
+d
+a
+a ab
+RotatePen
+StackCube
+0.0
+0.5
+1.0
+a
+a
+a
+a
+a
+a
+bc b
+c
+c
+b
+a
+RotatePen
+StackCube
+a
+a
+a
+a
+a
+a
+b
+a
+b
+a
+a
+a
+PickCube
+0.0
+0.5
+1.0
+b
+c
+c
+bc a
+a
+PickCube
+ab b
+c ab a ab
+Success Rate
+Flow
+DARP
+CTA
+EquiDP
+BT
+BFP (ours)
+Figure 15: Success rate under ID evaluation.
+PushCube-D0
+PushCube-D1
+0.0
+0.5
+1.0
+State
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+PushCube-D0
+PushCube-D1
+Visuomotor
+a
+a
+b
+a
+a
+a
+a
+a
+b
+a
+a
+a
+Relocate-D0
+Relocate-D1
+0.0
+0.5
+1.0
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+a
+Relocate-D0
+Relocate-D1
+a
+a
+b
+a
+a
+a
+a
+a
+b
+a
+a
+a
+RotatePen
+StackCube
+0.0
+0.5
+1.0
+a
+a
+a
+a
+a
+a
+ab ab b
+b ab a
+RotatePen
+StackCube
+a
+a
+a
+a
+a
+a
+bc ab c ab ab a
+PickCube
+0.0
+0.5
+1.0
+a
+a
+a
+a
+a
+a
+PickCube
+a
+a
+b
+a
+a
+a
+Normalized Reward
+Flow
+DARP
+CTA
+EquiDP
+BT
+BFP (ours)
+Figure 16: Dense reward under ID evaluation.
+24
+
+
+Published as a conference paper at ICLR 2027
+C
+THEORETICAL RESULT
+C.1
+BACKGROUND: LOW-RANK BILINEAR COMBINATORIAL EXTRAPOLATION
+In this section, we review the prior combinatorial-extrapolation result (Netanyahu et al., 2023; Sim-
+chowitz et al., 2023) used in the proof and analysis of our method. We first formulate the regression
+problem in the anchor–residual notation used by BFP, then state the low-rank bilinear extrapola-
+tion bound and its matrix-completion interpretation. Sec. C.2 shows how the BFP encoder, anchor
+policies, and conditional flow matching instantiate this problem for the velocity field.
+C.1.1
+COMBINATORIAL EXTRAPOLATION
+Consider a regression problem in which a target Y is predicted from a residual feature ∆and an
+anchor feature Z†. For each regime s ∈{tr, te}, let Ds denote the distribution of (∆, Z†), and
+assume that training and test share the same Bayes regression function
+h⋆(δ, z†) := Es
+
+Y | ∆= δ, Z† = z†
+,
+s ∈{tr, te}.
+(16)
+A rank-r bilinear predictor has the form
+hθ(δ, z†) :=
+
+fθ(δ), gθ(z†)
+
+r ,
+fθ(δ), gθ(z†) ∈Rr.
+(17)
+Its squared prediction risk in regime s is
+Rs(hθ) := E(∆,Z†)∼Ds
+h hθ(∆, Z†) −h⋆(∆, Z†)
+2i
+.
+(18)
+Combinatorial extrapolation asks when small training risk implies small test risk even though Dte
+may contain residual–anchor combinations absent from Dtr. Vector-valued targets are handled
+coordinate-wise, and their squared risks are summed over output coordinates.
+Notation. We use the BFP symbols ∆and Z† from the outset. Within this appendix, they simply
+name the two regression features; in BFP, Z† is the encoded anchor and ∆is the encoded query–
+anchor residual. All inner products ⟨·, ·⟩r below are taken in Rr.
+Simchowitz et al. (2023) study this combinatorial-extrapolation problem directly for paired features.
+Bilinear Transduction (Netanyahu et al., 2023) instead constructs it from an ordinary regression
+problem: given a query X, select an anchor X† and define
+∆:= X −X†,
+Z† := X†,
+h⋆(δ, z†) := h⋆
+orig(z† + δ).
+(19)
+BFP uses the same construction in representation space, Z† = ϕ(X†) and ∆= ϕ(X) −ϕ(X†);
+Sec. C.2 derives the resulting train and test laws and identifies the conditional-flow regression target.
+C.1.2
+LOW-RANK BILINEAR COMBINATORIAL EXTRAPOLATION BOUND
+For nonnegative finite measures µ and ν, write µ ⪯κ ν when
+µ(B) ≤κν(B)
+for every measurable set B.
+(20)
+The two assumptions below correspond to (C) Residual Coverage and (S) Bilinear Structure in
+the main text.
+Assumption 2 (Combinatorial coverage). There exist residual marginals D∆,1, D∆,2, anchor
+marginals DZ†,1, DZ†,2, and a constant κ ≥1 such that, with
+Di⊗j := D∆,i ⊗DZ†,j,
+i, j ∈{1, 2},
+(21)
+we have
+X
+(i,j)̸=(2,2)
+Di⊗j ⪯κ Dtr,
+Dte ⪯κ
+X
+i,j∈{1,2}
+Di⊗j.
+(22)
+Definition 2 requires training to cover the three blocks D1⊗1, D1⊗2, and D2⊗1, while evaluation
+may additionally contain the unseen combination D2⊗2.
+25
+
+
+Published as a conference paper at ICLR 2027
+Assumption 3 (Well-conditioned low-rank bilinear structure). There exist feature maps
+f ⋆: Z∆→Rr,
+g⋆: Z† →Rr,
+(23)
+such that, for all residual–anchor pairs,
+h⋆(δ, z†) =
+
+f ⋆(δ), g⋆(z†)
+
+r ,
+h⋆(δ, z†)
+ ≤M.
+(24)
+Furthermore, under D1⊗1, define
+Σ⋆
+∆:= E∆∼D∆,1
+
+f ⋆(∆)f ⋆(∆)⊤
+,
+Σ⋆
+Z† := EZ†∼DZ†,1
+
+g⋆(Z†)g⋆(Z†)⊤
+.
+(25)
+The feature directions are non-degenerate:
+σ2 := λmin(Σ⋆
+∆)λmin(Σ⋆
+Z†) > 0.
+(26)
+For BFP, this assumption becomes central design objective of encoder and retrieval policy. We aim
+to find a representation and retrieval policy that action is a low-rank bilinear product of residual and
+the anchor, while avoiding the collapse.
+Theorem 4 (Low-rank bilinear combinatorial extrapolation bound; prior result). Suppose Defini-
+tion 2 and Definition 3 hold, and let hθ be the rank-r predictor in equation 17. If
+Rtr(hθ) ≤σ2
+4κ,
+(27)
+then
+Rte(hθ) ≤κ2
+
+1 + 64M 4
+σ4
+
+Rtr(hθ).
+(28)
+C.1.3
+MATRIX-COMPLETION INTERPRETATION
+A key proof idea underlying low-rank bilinear combinatorial extrapolation is its reduction to a struc-
+tured missing-not-at-random matrix-completion problem (Shah et al., 2020; Simchowitz et al., 2023;
+Netanyahu et al., 2023). Suppose D∆,i and DZ†,j have probability masses p∆,i and pZ†,j. For rank-
+r factors f and g, define the probability-weighted factor matrices
+[Fi]δ,: :=
+q
+p∆,i(δ) f(δ)⊤,
+[Gj]z†,: :=
+q
+pZ†,j(z†) g(z†)⊤.
+(29)
+Let
+Mi⊗j(f, g) := FiG⊤
+j ,
+[M⋆
+i⊗j]δ,z† :=
+q
+p∆,i(δ)pZ†,j(z†) h⋆(δ, z†).
+(30)
+Then, for every block (i, j),
+E ∆∼D∆,i,
+Z†∼DZ†,j
+h 
+f(∆), g(Z†)
+
+r −h⋆(∆, Z†)
+2i
+=
+Mi⊗j(f, g) −M⋆
+i⊗j
+2
+F .
+(31)
+Notice that, each product-block prediction risk is exactly a probability-weighted Frobenius error.
+BFP applies this trick to Flow Matching loss as a key proof idea to distributional extrapolation.
+C.2
+THE BIVARIATE CONDITIONAL-FLOW PROBLEM INDUCED BY BFP
+This appendix shows how BFP constructs the bivariate regression problem via transductive lens of
+the core modules. We begin with the expert action distribution, re-express it in the anchor–residual
+coordinates induced by the BFP encoder and anchor policies, and then show that conditional flow
+matching turns action generation into regression of a marginal velocity field. After fixing a flow
+state, flow time, and output coordinate, this regression is exactly the combinatorial extrapolation
+problem of Sec. C.1.
+26
+
+
+Published as a conference paper at ICLR 2027
+C.2.1
+BFP-INDUCED ANCHOR–RESIDUAL COORDINATES
+Condition throughout on the realized demonstration dataset D. For each regime s ∈{tr, te}, let
+X ∼P X
+s ,
+A | X = x ∼q⋆(· | x),
+(32)
+where P X
+s is the marginal distribution of policy conditions at s ∈[tr, te] and q⋆(· | x) is the expert
+distribution over action chunks. Training and evaluation may use different condition distributions,
+but they share the same expert conditional q⋆(· | x). The distributional-extrapolation objective is to
+generate from this conditional when x is drawn from P X
+te , including conditions outside the support
+of P X
+tr .
+For a query X, the anchor policy selects an anchor
+X† ∼ρs(· | X, D),
+s ∈{tr, te}.
+(33)
+BFP applies the shared observation encoder ϕ to the query and anchor and forms
+Ξ := ϕ(X),
+Z† := ϕ(X†),
+∆:= Ξ −Z†.
+(34)
+Thus, the encoder and anchor policy define the transformation
+Tϕ(x, x†) :=
+ ϕ(x) −ϕ(x†), ϕ(x†)
+
+.
+(35)
+Together with Eq. (32), this transformation induces a joint law
+P
+ϕ,ρs
+s
+:= Laws(∆, Z†, A),
+(36)
+which is equivalently characterized by
+EP
+ϕ,ρs
+s
+
+F(∆, Z†, A)
+
+= EX∼P X
+s EA∼q⋆(·|X)EX†∼ρs(·|X,D)
+
+F
+ Tϕ(X, X†), A
+
+(37)
+for every bounded measurable F. Let D
+ϕ,ρs
+s
+denote the (∆, Z†) marginal of this law. This is the
+train or test combinatorial-extrapolation distribution constructed by the BFP modules.
+The pair reconstructs the encoded query,
+Ξ = ∆+ Z†,
+(38)
+but it need not reconstruct the raw condition X. We therefore make explicit when the induced train
+and test problems share one expert target.
+Assumption 5 (Policy-sufficient representation). There exists a conditional action law q⋆
+ϕ(· | ξ)
+such that, for both s ∈{tr, te},
+q⋆(· | X) = q⋆
+ϕ(· | ϕ(X))
+P X
+s -almost surely.
+(39)
+Under Definition 5, define the expert action distribution in anchor–residual coordinates by
+q⋆
+pair(da | δ, z†) := q⋆
+ϕ(da | δ + z†).
+(40)
+For reference, an arbitrary encoded conditional q⋆
+ϕ incurs the information loss induced by represen-
+tation
+ε2
+ϕ,s := EX∼P X
+s W 2
+2
+ q⋆(· | X), q⋆
+ϕ(· | ϕ(X))
+
+.
+(41)
+Exact policy sufficiency corresponds to εϕ,tr = εϕ,te = 0. We use exact sufficiency in the main
+theorem; Eq. (41) only records the action-distribution information discarded by an approximate
+representation.
+27
+
+
+Published as a conference paper at ICLR 2027
+C.2.2
+CONDITIONAL FLOW MATCHING IN ANCHOR–RESIDUAL COORDINATES
+The objective at a fixed pair is to sample
+A ∼q⋆
+pair(· | δ, z†).
+(42)
+Let pτ|1(dy | a) be the conditional probability path used by flow matching (Lipman et al., 2024),
+and let uτ|1(y | a) be its conditional vector field. The corresponding marginal path is
+pτ(dy | δ, z†) :=
+Z
+pτ|1(dy | a)q⋆
+pair(da | δ, z†).
+(43)
+with the corresponding marginal vector field:
+u⋆
+τ(y | δ, z†) :=
+R
+uτ|1(y | a)pτ|1(y | a)q⋆
+pair(da | δ, z†)
+pτ(y | δ, z†)
+.
+(44)
+Under the standard flow-matching regularity conditions, this vector field generates the marginal path
+in Eq. (43) and therefore transports the base distribution p0 to the q⋆
+pair(· | δ, z†) at τ = 1. Sec. C.3
+states the precise well-posedness condition used by our guarantee.
+To identify the target optimized by CFM, sample
+(∆, Z†, A) ∼P
+ϕ,ρs
+s
+,
+τ ∼U[0, 1],
+Aτ ∼pτ|1(· | A),
+C := (Aτ, τ),
+U := uτ|1(Aτ | A).
+(45)
+The random variable U is the conditional vector field evaluated at the sampled path state. The CFM
+objective regresses the learned vector field against this quantity.
+Proposition 6 (CFM regression identity). For every square-integrable vector field v(C, ∆, Z†),
+Es
+hv(C, ∆, Z†) −U
+2
+2
+i
+= Es
+hv(C, ∆, Z†) −u⋆(C | ∆, Z†)
+2
+2
+i
++ Vs,
+(46)
+where
+u⋆(C | ∆, Z†) := Es[U | C, ∆, Z†]
+(47)
+and
+Vs := Es
+hU −u⋆(C | ∆, Z†)
+2
+2
+i
+(48)
+is independent of v. Under Definition 5, the conditional expectation in Eq. (47) equals the marginal
+vector field in Eq. (44) evaluated at C = (y, τ).
+Proof. Add and subtract u⋆(C | ∆, Z†) inside the squared norm. The cross term vanishes after
+conditioning on (C, ∆, Z†) because u⋆is the conditional expectation of U. The remaining two
+terms are the squared error to the conditional expectation and the irreducible conditional variance.
+The final statement follows from Eq. (44).
+C.2.3
+FIXED-CONTEXT COMBINATORIAL EXTRAPOLATION
+For compactness, call
+c = (y, τ)
+(49)
+a flow context. Fix a context c and output coordinate k ∈[dA]. The marginal vector field defines the
+scalar target
+h⋆
+k,c(δ, z†) := u⋆
+k(c | δ, z†).
+(50)
+BFP parameterizes the corresponding predictor as
+hθ,k,c(δ, z†) := vθ,k(c | δ, z†)
+:=
+
+fθ,k(δ; c), gθ,k(z†; c)
+
+r .
+(51)
+28
+
+
+Published as a conference paper at ICLR 2027
+Let νs denote the law of C in regime s, and let
+D
+BFP
+s,c
+:= Laws
+ ∆, Z† | C = c
+
+(52)
+be a regular conditional anchor–residual law. For every fixed (c, k), Eqs. (50) to (52) instantiate the
+combinatorial-extrapolation problem of Sec. C.1.1: the train and test covariate laws are D
+BFP
+tr,c and
+D
+BFP
+te,c , the shared regression function is h⋆
+k,c, and the rank-r predictor is hθ,k,c.
+Whenever these conditional laws admit the block decomposition of Definition 2, the matrix-
+completion identity in Eq. (31) applies directly to their coordinate-wise squared error. Thus, after
+fixing (c, k), BFP velocity prediction is the same structured low-rank matrix-completion problem
+reviewed in Sec. C.1.3. Sec. C.3 next states the conditions under which the prior combinatorial-
+extrapolation bound applies to this family of fixed flow-context problems and converts the resulting
+vector-field control into an action-distribution guarantee.
+C.3
+DISTRIBUTIONAL EXTRAPOLATION OF BFP
+We now complete the argument. We first identify the flow risk controlled by CFM, then combine
+per-context bilinear transfer with ODE stability to prove the distributional extrapolation theorem.
+We next state the multi-anchor corollary and conclude by discussing sufficient conditions for the
+theorem assumptions.
+C.3.1
+CFM LOSS INDUCED BY BFP
+For s ∈{tr, te}, define the FM error to the marginal vector field by
+EFM
+s
+(θ) := E(∆,Z†)∼D
+ϕ,ρs
+s
+,
+τ∼U[0,1],
+Aτ ∼pτ (·|∆,Z†)
+hvθ(Aτ, τ | ∆, Z†) −u⋆
+τ(Aτ | ∆, Z†)
+2
+2
+i
+.
+(53)
+By Definition 6, the expected CFM objective in regime s decomposes as
+LCFM
+s
+(θ) = EFM
+s
+(θ) + Vs,
+(54)
+where Vs is independent of θ. The theorem therefore controls the FM error to the marginal vector
+field; the practical CFM objective differs from it only by the irreducible conditional-variance term.
+Recall from Eq. (52) that D
+BFP
+s,c
+is the conditional law of the anchor–residual pair given flow context
+C = c, and let νs denote the marginal law of C. For output coordinate k, define the fixed-context
+error
+Es,k(c; θ) := E(∆,Z†)∼D
+BFP
+s,c
+h vθ,k(c | ∆, Z†) −u⋆
+k(c | ∆, Z†)
+2i
+,
+Es(c; θ) :=
+dA
+X
+k=1
+Es,k(c; θ).
+(55)
+Disintegration of the joint pair–context law gives
+EFM
+s
+(θ) =
+Z
+Es(c; θ) νs(dc).
+(56)
+C.3.2
+MAIN THEOREM: DISTRIBUTIONAL EXTRAPOLATION
+The proof has two steps. First, the prior combinatorial-extrapolation bound transfers the marginal-
+vector-field error from training to evaluation at each fixed flow context. Second, ODE stability
+converts evaluation FM error into Wasserstein error of the generated action distribution.
+Combinatorial extrapolation of the marginal vector field.
+Define the bilinear extrapolation
+factor
+Γbil := κ2
+
+1 + 64M 4
+σ4
+
+.
+(57)
+29
+
+
+Published as a conference paper at ICLR 2027
+Proposition 7 (Marginal-vector-field extrapolation). Assume that, for νtr-almost every flow con-
+text c and every output coordinate k, the train and test problems D
+BFP
+tr,c
+and D
+BFP
+te,c
+satisfy
+(C) Residual Coverage and (S) Bilinear Structure from Appendix C.1.2 with common constants
+(r, M, σ, κ). Assume also that the fixed-context training errors satisfy
+Etr,k(c; θ) ≤σ2
+4κ
+(58)
+for every relevant (c, k), and that the evaluation flow-context law is covered by the training law,
+νte ⪯κC νtr.
+(59)
+Then
+EFM
+te (θ) ≤κCΓbilEFM
+tr (θ).
+(60)
+Proof. Fix c and k. Appendix C.2.3 identifies u⋆
+k(c | δ, z†) as the shared scalar regression function
+and vθ,k(c | δ, z†) as the rank-r bilinear predictor. Theorem 4 and Eq. (58) therefore give
+Ete,k(c; θ) ≤ΓbilEtr,k(c; θ).
+(61)
+Summing over coordinates, integrating with respect to νte, applying Eq. (59), and using Eq. (56)
+prove Eq. (60).
+Eq. (58) is context-wise because the prior theorem is applied separately at each fixed context. A
+small average value of EFM
+tr
+alone does not exclude a large error on a rare training context that
+receives substantial evaluation mass.
+From FM error to action-distribution error.
+Fix an anchor–residual pair p = (δ, z†). Let Y⋆
+τ
+solve the expert ODE driven by the marginal vector field,
+dY⋆
+τ
+dτ
+= u⋆
+τ(Y⋆
+τ | p),
+Y⋆
+0 ∼p0,
+(62)
+and let bYτ solve the learned ODE from the same initial sample,
+d bYτ
+dτ
+= vθ( bYτ, τ | p),
+bY0 = Y⋆
+0.
+(63)
+Proposition 8 (ODE stability). Assume that the expert ODE is well posed and realizes the marginal
+path in Eq. (43),
+Law(Y⋆
+τ) = pτ(· | p)
+for every τ ∈[0, 1].
+(64)
+Assume also that vθ(·, τ | p) is L-Lipschitz in its flow-state argument, uniformly over τ and p. Then
+W 2
+2
+
+Law( bY1), q⋆
+pair(· | p)
+
+≤CODE
+Z 1
+0
+EY⋆τ ∼pτ (·|p)
+h
+∥vθ(Y⋆
+τ, τ | p) −u⋆
+τ(Y⋆
+τ | p)∥2
+2
+i
+dτ,
+CODE := exp(2L + 1).
+(65)
+Proof. Set eτ := bYτ −Y⋆
+τ. Adding and subtracting vθ(Y⋆
+τ, τ | p), using Lipschitzness, and
+applying Young’s inequality yield
+d
+dτ ∥eτ∥2
+2 ≤(2L + 1)∥eτ∥2
+2
++ ∥vθ(Y⋆
+τ, τ | p) −u⋆
+τ(Y⋆
+τ | p)∥2
+2 .
+(66)
+Gronwall’s inequality and e0 = 0 bound the expected terminal coupling cost by the right-hand side
+of Eq. (65). Eq. (64) gives Law(Y⋆
+1) = q⋆
+pair(· | p), so the squared Wasserstein distance is no larger
+than this coupling cost.
+30
+
+
+Published as a conference paper at ICLR 2027
+For a query x and anchor x†, let πθ,x†(· | x) denote the terminal law of Eq. (63) using p = (ϕ(x) −
+ϕ(x†), ϕ(x†)). The test-time BFP policy samples one anchor before integration:
+πθ,ρte(· | x) :=
+Z
+πθ,x†(· | x) ρte(dx† | x, D).
+(67)
+Theorem 9 (Distributional extrapolation of BFP). Suppose Assumption 5 holds, the assumptions of
+Proposition 7 hold, and the ODE assumptions of Proposition 8 hold. Then
+Rdist
+te (πθ,ρte) ≤CODEκCΓbilEFM
+tr (θ).
+(68)
+Proof. Under Assumption 5, every anchor–residual representation of a query x has the same target
+q⋆
+pair(· | p) = q⋆(· | x). Apply Proposition 8 for each test query and sampled anchor, then average
+the resulting coupling over X† ∼ρte(· | X, D) and X ∼P X
+te . This gives
+Rdist
+te (πθ,ρte) ≤CODEEFM
+te (θ).
+(69)
+Proposition 7 then yields Eq. (68).
+C.3.3
+COROLLARY: MULTI-ANCHOR TEST-TIME POLICIES
+Theorem 9 already permits a stochastic test-time anchor policy. The following corollary makes the
+resulting policy distribution explicit.
+Corollary 10 (Mixture over anchors). For a fixed query x, let ρ(da | x) be any anchor policy and
+let πθ,a(· | x) be the terminal distribution obtained by fixing anchor a throughout the ODE solve.
+Then
+πθ,ρ(· | x) =
+Z
+πθ,a(· | x) ρ(da | x),
+(70)
+and, for every target distribution q(· | x),
+W 2
+2 (πθ,ρ(· | x), q(· | x))
+≤
+Z
+W 2
+2 (πθ,a(· | x), q(· | x)) ρ(da | x).
+(71)
+Proof. Sample the anchor from ρ and then sample from the corresponding anchor-conditioned ter-
+minal law, which gives Eq. (70). For each anchor, choose an optimal coupling between πθ,a(· | x)
+and q(· | x). Sampling the anchor first and then sampling from its coupling produces a valid coupling
+for the mixture whose expected transport cost is the right-hand side of Eq. (71).
+The anchor must be sampled before ODE integration and held fixed throughout the solve. Averaging
+the anchor-conditioned vector fields instead defines a different ODE and does not generally produce
+the mixture in Eq. (70).
+C.3.4
+AFFINE-GAUSSIAN INHERITANCE OF BILINEAR STRUCTURE
+The main theorem requires policy sufficiency, context-wise bilinear structure and combinatorial
+coverage, flow-context coverage, and ODE regularity. These conditions concern different parts of
+BFP and should not be conflated.
+The following proposition provides one sufficient setting for the bilinear-realizability part of
+(S) Bilinear Structure . It is an explanatory result and is not required by the implementation.
+Proposition 11 (Affine-Gaussian inheritance of bilinearity). Let p = (δ, z†) and suppose the pair-
+conditioned expert endpoint is
+A | p ∼N(m(p), Σ1),
+(72)
+where Σ1 does not depend on p. Assume an affine Gaussian probability path whose conditional
+vector field has the form
+uτ|1(y | A) = cτ(y) + BτA.
+(73)
+Then there exist matrices Kτ and Lτ, independent of p, such that
+E[A | Aτ = y, p] = Kτy + Lτm(p),
+(74)
+31
+
+
+Published as a conference paper at ICLR 2027
+and therefore
+u⋆
+τ(y | p) = ecτ(y) + eBτm(p).
+(75)
+If every endpoint-mean coordinate has a bilinear realization
+mℓ(p) =
+
+f ⋆
+ℓ(δ), g⋆
+ℓ(z†)
+
+rℓ,
+(76)
+then output coordinate k of the marginal vector field has bilinear rank at most
+1 +
+X
+ℓ:[ e
+Bτ ]kℓ̸=0
+rℓ.
+(77)
+If eBτ is diagonal, the rank is at most rk + 1.
+Proof. Eq. (72) and the affine Gaussian path form a linear-Gaussian model, so the posterior mean
+of the endpoint is affine in the observed path state and in the prior mean, yielding Eq. (74). Taking
+the conditional expectation of Eq. (73) gives Eq. (75). For coordinate k, expand [ eBτm(p)]k over the
+endpoint coordinates, concatenate the scaled bilinear features for every nonzero term, and add one
+constant feature for ecτ,k(y). The resulting inner product has the rank in Eq. (77).
+C.3.5
+WHEN DO THE REMAINING ASSUMPTIONS HOLD?
+Representation sufficiency.
+Assumption 5 holds when ϕ(X) is a sufficient statistic for expert
+behavior: raw conditions mapped to the same encoded query must have the same expert action
+distribution. The representation information loss in Eq. (41) measures violations at the action distri-
+bution.
+Combinatorial coverage and feature excitation.
+These are properties of the anchor–residual
+problems constructed by (ϕ, ρtr, ρte). The train-time policy must expose the three product blocks re-
+quired by Assumption 2 and sufficiently excite every retained residual-side and anchor-side feature
+direction in Assumption 3. The test-time policy must represent an evaluation query using factors
+covered by those training blocks. The learned shortlist, non-collapse regularization, and compact
+representation are mechanisms intended to make these properties plausible; they do not certify them.
+Flow-context coverage.
+A simple sufficient condition follows when training and evaluation use
+the same endpoint-conditioned probability-path kernel. Let
+qs(da) :=
+Z
+q⋆(da | x)P X
+s (dx)
+(78)
+be the aggregate expert endpoint law. If
+qte ⪯κA qtr,
+(79)
+then the common path kernel preserves this domination and implies
+νte ⪯κA νtr.
+(80)
+Indeed, for every measurable context set B, integrating the same conditional probability Pr(C ∈
+B | A = a) against Eq. (79) gives Eq. (80). This is sufficient for Eq. (59), but it is not implied
+merely by bounded actions or by overlapping Gaussian support.
+ODE regularity.
+Proposition 8 uses standard ODE conditions: the expert marginal vector field
+must realize the prescribed path, and the learned vector field must be uniformly Lipschitz in the flow
+state over the relevant domain. These assumptions concern stable flow integration and are separate
+from the combinatorial-extrapolation assumptions on the anchor–residual coordinates.
+32
+
+
+Published as a conference paper at ICLR 2027
+D
+RETRIEVAL POLICY METHOD DETAILS
+Algorithm 1 Training
+Require: D; encoder ϕ; predictor vθ; scorer sψ
+1: repeat
+2:
+sample train queries (x, A) and build C(x)
+3:
+compute pψ by equation 11
+4:
+update θ with equation 12
+5:
+update EMA predictor ¯θ
+6:
+if retrieval-update step then
+7:
+sample held-out queries and rebuild C(x)
+8:
+evaluate candidate losses with ¯θ
+9:
+update ψ with equation 13
+10:
+end if
+11: until convergence
+Algorithm 2 Inference
+Require: query x; D; ϕ, vθ, sψ
+1: retrieve demonstration j⋆using equation 14
+2: build the phase-compatible C(x) within j∗
+3: compute anchor weights ωm(x) from the scorer
+4: sample M ∼Cat(ω(x))
+5: form z†
+M and δM
+6: sample A0 ∼p0
+7: integrate ˙Aτ = vθ(Aτ, τ | δM, z†
+M)
+8: set A = A1 and execute its first Ta actions
+9: re-observe and repeat
+This section specifies the retrieval policy used by BFP, that includes the specific phase-conditioned
+candidate set algorithm, scorer architectures, and predictor–scorer updates.
+Phase-conditioned Candidate Set C(x).
+For query (xt, At) from trajectory i at time t, let ft
+denote its phase, segj(f) = [sj(f), ej(f)] the phase-f segment of demonstration j, and elt =
+t −si(ft) the elapsed time within the current phase. We first select J anchor demonstrations that
+reach phase ft, uniformly sampled phase-compatible demonstrations, excluding trajectory i.
+For each selected demonstration j, we align by elapsed phase time and define
+ρj = sj(ft)+min{elt, ℓj(ft)−1},
+Wj = [ρj−hj, ρj+hj]∩segj(ft),
+hj = ⌊w(ℓj(ft) −1)⌋.
+(81)
+We sample M frames from each Wj, yielding C(xt) = {x†
+tm}K
+m=1 with K = JM.
+Scorer Architecture sψ.
+For candidate x†
+tm ∈C(xt), let
+z†
+tm = ϕ(x†
+tm),
+δtm = ϕ(xt) −z†
+tm.
+MLP scores each candidate from features [δtm/σ, δtm/∥δtm∥2, log ∥δtm∥2, z†
+tm]. The resulting
+responsibility is
+qtm = pψ(m | xt, C(xt)) = softmaxm
+ 
+sψ(δtm, z†
+tm)
+τs
+!
+,
+(82)
+where τs is learned and initialized to 1.
+Predictor update.
+We sample predictor queries from B ∪C, construct C(xi), and compute the
+responsibilities in Eq. (82). With these responsibilities treated as fixed, the predictor minimizes
+Lθ =
+1
+|Bθ|
+X
+i∈Bθ
+K
+X
+m=1
+sg[wim] ℓBFP(θ; xi, x†
+im, Ai),
+(83)
+where wim denotes the responsibility after applying the scheduled predictor-weight floor.
+Scorer update.
+Every Kθ = 5 predictor updates, we draw a fresh batch Bψ of 32 queries from
+the scorer pool A. For each query and candidate, we evaluate the BFP loss using an exponential-
+moving-average predictor ¯θ. We average over Rψ = 4 flow contexts,
+¯ℓim =
+1
+Rψ
+Rψ
+X
+r=1
+ℓ(r)
+BFP(¯θ; xi, x†
+im, Ai),
+(84)
+using the same sampled flow contexts across candidates of a query. This shared sampling makes
+candidate losses directly comparable.
+33
+
+
+Published as a conference paper at ICLR 2027
+Table 7: Key hyperparameters for simulation experiments. Anchor parameters apply only to
+BFP.
+Hyperparameter
+Value
+Optimizer
+Adam, β = (0.9, 0.999)
+Learning rate (BFP predictor/scorer)
+10−4
+Batch size
+32 queries
+Gradient clipping
+Global norm 1.0
+EMA power / maximum decay
+0.75/0.9999
+Training steps
+120k (Relocate-D0), 420k (Relocate-D1)
+300k (remaining tasks)
+ODE solver / integration steps
+Euler / 10
+Action horizon / execution horizon
+MuJoCo: 1/1; ManiSkill: 16/8
+Bilinear rank
+32; ablations: 128, 512
+Anchor demonstrations J
+{1, 4}
+Frames per demonstration M
+16
+Phase window w
+{0.25, 0.5}
+Scorer update interval
+5 predictor steps
+Maximum predictor weight floor
+0.5
+Training seeds
+3
+Evaluation conditions per seed
+100 ID + 100 OOD
+Because the absolute CFM-loss scale varies across queries, candidate losses are robustly normalized
+within each shortlist:
+eℓim =
+¯ℓim −medn(¯ℓin)
+MADn(¯ℓin) + ϵ .
+(85)
+The scorer minimizes
+Lψ =
+1
+|Bψ|
+X
+i∈Bψ
+K
+X
+m=1
+qim sg[eℓim] + λncRnc,
+(86)
+so candidates with lower held-out BFP loss receive higher probability.
+To prevent collapse onto a small number of candidates, we use an entropy hinge
+Rnc =
+1
+|Bψ|
+X
+i∈Bψ
+[η −H(qi)]+ ,
+η = 0.6 log K,
+λnc = 1.
+(87)
+Predictor and scorer parameters are optimized separately, and gradients are not propagated through
+the responsibilities in Eq. (83) or through candidate losses in Eq. (86).
+34
+
+
+Published as a conference paper at ICLR 2027
+E
+NUMERICAL EXAMPLE: DISTRIBUTIONAL EXTRAPOLATION
+Figure 17: Distributional extrapolation sample visualization. Rows correspond to different tasks:
+mm pg sm, mm pg pm, and mm widen, while columns show the samples of training data (gray),
+BFP (red), FLOW (purple), and BT (orange).
+This section specifies the controlled experiment summarized in Fig. 2 and Tab. 8. The figure in the
+main text reports mm pg sm, while we report two additional problems. The experiment separates
+deterministic bilinear extrapolation, conditional generation without a relational extrapolation rule,
+and their combination in BFP.
+E.1
+EXPERT CONDITIONAL DISTRIBUTION
+We define the expert conditional distribution q⋆(· | x) using pairs of analytical mode functions. For
+T > 0, let
+rT (x) := x −T
+j x
+T
+k
+∈[0, T)
+(88)
+denote the remainder of x modulo T. The shared base profile g : [0, 3) →R is
+g(u) :=
+
+
+
+sin(10u),
+0 ≤u < 1,
+sin(10) + (u −1),
+1 ≤u < 2,
+sin(10) + 1 + (u −2)2,
+2 ≤u < 3.
+(89)
+We additionally define the time warp
+w(x) :=
+r9(x),
+r9(x) < 3,
+ r9(x) −3
+
+/2,
+r9(x) ≥3,
+(90)
+and the triangular wave
+tri(x) :=
+r1(x),
+⌊x⌋even,
+1 −r1(x),
+⌊x⌋odd.
+(91)
+35
+
+
+Published as a conference paper at ICLR 2027
+NW2 ↓
+Balance ↓
+Method
+ID
+OOD
+ID
+OOD
+mm pg sm
+Oracle
+0.10±0.01
+0.11±0.01
+0.02±0.00
+0.02±0.00
+Flow
+0.23±0.01
+0.30±0.01
+0.09±0.00
+0.07±0.01
+BT
+0.51±0.00
+0.53±0.00
+0.50±0.00
+0.50±0.00
+BFP
+0.15±0.01
+0.17±0.00
+0.03±0.00
+0.03±0.01
+mm pg pm
+Oracle
+0.07±0.00
+0.06±0.00
+0.02±0.00
+0.02±0.00
+Flow
+0.25±0.00
+0.97±0.01
+0.09±0.00
+0.33±0.00
+BT
+1.13±0.05
+1.24±0.08
+0.50±0.00
+0.50±0.00
+BFP
+0.43±0.01
+0.58±0.03
+0.07±0.01
+0.20±0.00
+mm widen
+Oracle
+0.07±0.00
+0.09±0.01
+0.02±0.00
+0.02±0.00
+Flow
+0.19±0.00
+0.25±0.00
+0.09±0.00
+0.08±0.00
+BT
+0.53±0.00
+0.51±0.00
+0.50±0.00
+0.50±0.00
+BFP
+0.10±0.01
+0.21±0.01
+0.03±0.00
+0.08±0.00
+Table 8: Controlled distributional extrapolation. Mean ± standard deviation over three seeds.
+Bold denotes the best learned method; Oracle is the finite-sampling floor.
+Problem
+f1
+f2
+mm pg sm
+fpg
+fsm
+mm pg pm
+fpg
+fpm
+mm widen
+fsm
+fsbl
+Table 9: Distributional extrapolation problem setting. Each problem combines two mode func-
+tions from equation 92.
+The four mode functions are
+fpg(x) :=
+jx
+3
+k
+g(r3(x)),
+fsm(x) := 3
+jx
+3
+k
++ g(r3(x)),
+fpm(x) :=
+jx
+9
+k
+g(w(x)),
+fsbl(x) := 6 tri(x) + 11.5.
+(92)
+For each problem, the expert conditional distribution is
+q⋆(y | x) = 1
+2N
+ f1(x), σ2
++ 1
+2N
+ f2(x), σ2
+,
+σ = 1,
+(93)
+where f1 and f2 are selected according to Tab. 9.
+The training and OOD condition distributions are
+P X
+tr = Unif([20, 29]),
+P X
+te = Unif([29, 35]).
+(94)
+Thus, evaluation changes only the support of the condition while preserving the same expert condi-
+tional law.
+E.2
+EXPERIMENTAL DETAILS
+Setting. We sample 2, 000 training conditions from P X
+tr and 10 independent targets from q⋆(· | x)
+for each condition, yielding 20, 000 training data. Evaluation uses 100 ID conditions from P X
+tr and
+100 OOD conditions from P X
+te . We compare a standard Flow model, BT, and BFP. All models use
+depth-3, width-1,000 MLPs and are trained for 300 epochs, 3 random seeds. Flow and BFP use 50
+Euler steps for generation. BT and BFP use r = 16 for rank.
+Metric. For each query x, we draw K = 500 samples and form the empirical policy law bqθ,K(· | x).
+Our primary metric is the Wasserstein distance to the true expert conditional, normalized by the
+separation between its two modes:
+NW2(x) := W2(bqθ,K(· | x), q⋆(· | x))
+|f1(x) −f2(x)|
+.
+(95)
+36
+
+
+Published as a conference paper at ICLR 2027
+We also report mode-balance error. Let
+flow(x) := min{f1(x), f2(x)},
+fhigh(x) := max{f1(x), f2(x)},
+and define the empirical probability assigned to the lower mode as
+bplow(x) := 1
+K
+K
+X
+k=1
+1[|byk(x) −flow(x)| ≤|byk(x) −fhigh(x)|] .
+(96)
+The mode-balance error is
+Bal(x) :=
+bplow(x) −1
+2
+ .
+(97)
+Because both metrics have a finite-sample floor, we measure the oracle row by applying the same
+evaluation to samples drawn directly from q⋆(· | x).
+Result. BFP achieves the lowest OOD NW2 on all three problems, with a mean of 0.321 compared
+with 0.506 for Flow, a 36.6% reduction. It also yields better OOD mode balance on two problems
+and ties Flow on the third. In contrast, BT cannot represent both modes and performs worst in
+distributional error. These results show that bilinear structure provides the extrapolation rule, while
+the generative flow head is necessary to preserve the conditional distribution. We visualize the full
+samples at Fig. 17.
+37
+
+
+Published as a conference paper at ICLR 2027
+F
+BASELINE INSTANTIATION AND ABLATION RESULTS
+FLOW
+CTA
+BFP
+Encoder
+ID
+OOD
+ID
+OOD
+ID
+OOD
+Scratch
+96.9
+36.9
+85.4
+9.2
+59.4
+45.0
+R3M-34 (frozen)
+96.3
+30.2
+50.4
+6.8
+99.4
+76.4
+(a) Is PVR sufficient for extrapolation?
+(b) BFP wins hand-specified Extrapolation Rule.
+Figure 18: Sensitivity to representation and prescribed extrapolation rules. (a) ID/OOD success
+rate under visuomotor, averaged over five tasks. Scratch uses a jointly trained ResNet-34 for FLOW
+and BFP and IMPALA encoder for CTA. Bold denotes the best-performing method within each
+encoder setting and split. (b) OOD sensitivity of EQUIDP to the prescribed symmetry and camera
+viewpoint.
+Overview. Our main result (Fig. 4) uses the baseline instantiations we found most appropriate for
+unseen-goal generalization. Because several methods were not originally designed for this setting,
+we validate the implementation choices that affect OOD performance. These studies also show that
+(i) BFP’s gains are not explained by pretrained visual representations alone, and (ii) learning the
+extrapolation rule from demonstrations can be preferable to prescribing it a priori.
+Setup. We match the demonstration data, evaluation episodes, action representation, prediction
+and execution horizons, and policy architecture whenever compatible with the original method. We
+retain method-specific components when they define the baseline’s generalization mechanism, such
+as the equivariant structure of EQUIDP or the learned representation of CTA. Tab. 10 summarizes
+the resulting comparison and the main design axes separating each baseline from BFP.
+F.1
+IMPLEMENTATION DETAILS
+Flow Policy. FLOW uses the same frozen R3M representation, conditional flow-matching objective,
+action parameterization, and policy backbone as BFP, but directly conditions on the observation and
+goal without an anchor–residual extrapolation rule.
+Bilinear Regression Policy. BT uses the same frozen R3M representation and policy backbone as
+BFP, while retaining the synchronized anchor policy of bilinear transduction. It replaces conditional
+flow matching with deterministic squared-loss action regression.
+DARP. We retain DARP’s local anchor retrieval and residual-based extrapolation rule, but use con-
+ditional flow matching for a matched generative comparison. We use the same frozen R3M repre-
+sentation and policy backbone as BFP and tune its method-specific retrieval hyperparameters.
+38
+
+
+Published as a conference paper at ICLR 2027
+Table 10: Design axes of the main baselines. The table separates three components of each method:
+the observation representation, the extrapolation rule used beyond demonstrated goals, and the
+prediction model used to generate actions. This decomposition highlights which components are
+matched to BFP and which define each baseline’s extrapolation mechanism.
+Method
+Representation Extrapolation Rule
+Prediction Model
+BFP
+PVR
+learned anchor–residual bilinear
+conditional flow
+FLOW
+PVR
+none
+conditional flow
+BT
+PVR
+synchronized anchor–residual bilinear
+deterministic regression
+DARP
+PVR
+local retrieved residual
+conditional flow
+EQUIDP
+Unfrozen
+prescribed geometric equivariance
+conditional flow
+CTA
+Unfrozen
+learned temporal-distance analogy
+hierarchical policy
+CTA. We retain CTA’s native hierarchical policy and learned IMPALA representation, which jointly
+define its temporal-distance analogy mechanism. Its low-level policy predicts primitive actions, so
+we evaluate CTA with Tp = 1 in the main comparison. For Tp=16 task, we use Q-chunking.
+Equivariant Policy. EQUIDP uses conditional flow matching while retaining its native equivariant
+architecture and task-specific geometric group action. We use the common benchmark camera in
+the main comparison; the effect of symmetry and viewpoint choice is studied below
+F.2
+ADDITIONAL BASELINE STUDIES
+Is pretrained visual representation sufficient? We test whether BFP’s visuomotor gains can be ex-
+plained by pretrained visual representations (PVRs) alone. As shown in Fig. 18a, frozen R3M does
+not improve FLOW over a jointly trained ResNet-34 (30.2% vs. 36.9% OOD), and degrades CTA
+relative to its from-scratch IMPALA encoder (6.8% vs. 9.2%). In contrast, R3M substantially im-
+proves BFP from 45.0% to 76.4% OOD success. Thus, PVR is not itself sufficient for extrapolation;
+rather, its benefit in BFP appears to come from providing a representation in which anchor–residual
+differences form a useful coordinate system for bilinear extrapolation.
+How sensitive is a prescribed extrapolation rule? Fig. 18 evaluates two choices required by
+EQUIDP: the prescribed symmetry group and the camera viewpoint. On Relocate-D1, chang-
+ing the geometric group reduces OOD success from 26% to 6%, while on PushCube-D1, using a
+symmetry-aligned top-down camera improves OOD success from 59% to 80%. These choices are
+not reliably identified by ID performance. In the same settings, BFP remains competitive or stronger
+without requiring the deployment transformation to be specified in advance. This sensitivity high-
+lights the value of learning the extrapolation rule from demonstrations rather than prescribing it a
+priori.
+F.3
+PRE-ROLLOUT EXTRAPOLATION DIAGNOSIS
+We evaluate whether the two theory-motivated diagnostics in Fig. 5a can anticipate extrapolation
+error without executing the learned policy in closed loop. To do so, we first construct a privileged
+measure of OOD prediction error, which is used only as the response variable for evaluating the
+diagnostics.
+Privileged OOD error. For each task, we collect 8 expert rollouts under held-out goals. These
+rollouts provide OOD observation–action pairs: the observations are those induced by unseen goals,
+while the corresponding actions are labeled by the expert policy. This privileged OOD information
+is not provided to either diagnostic; it is used only to measure whether the diagnostic agrees with
+the error that would be observed if OOD expert labels were available. For each learned check-
+point, we replay the OOD observations open loop and evaluate its flow-matching (FM) loss against
+the expert action targets. The velocity-matching MSE is averaged over the fixed flow-time grid
+τ ∈{0.2, 0.4, 0.6, 0.8, 1.0} and frozen Gaussian noise samples. Averaging this loss over the evalu-
+ated OOD observations gives the checkpoint-level OOD error used in (S) Bilinear Structure ; for
+(C) Residual Coverage , we retain the corresponding FM error for each individual OOD query.
+39
+
+
+Published as a conference paper at ICLR 2027
+(S) Bilinear Structure : validation error for checkpoint selection. The diagnostic available with-
+out OOD labels is the FM error on a held-out in-distribution validation split. We ask whether this
+held-out ID error can identify, among policies trained for the same task, which checkpoint will have
+lower privileged OOD error. To isolate this model-selection question, checkpoints are compared
+only within same pair of the task and observation space. The analysis contains five tasks under state
+and visuomotor observations. We report the result across 180 trained checkpoints in total.
+Within each task, ID and OOD FM errors are independently converted to percentile ranks. For
+visualization in Fig. 5a, the within-pool ID-error ranks are pooled and divided into quintiles, and we
+plot the mean OOD-error percentile rank in each quintile. This evaluation therefore asks whether
+held-out ID error preserves the ordering of checkpoints that would be obtained from privileged OOD
+error, rather than their absolute values.
+(C) Residual Coverage : residual coverage for goal selection. The second diagnostic operates
+within a fixed BFP checkpoint and asks whether the residual induced for a particular OOD query
+is supported by the residuals encountered during training. For each checkpoint, we construct a
+reference bank of 20,000 training residuals. A training query x is paired with an anchor x† sampled
+from the learned train-time anchor policy, and we store
+δ = ϕ(x) −ϕ(x†).
+(98)
+The resulting bank therefore represents the residual distribution induced by the learned anchor policy
+on training data.
+For an OOD query, the deployment-time anchor policy selects x† and forms its query residual δOOD
+in the same representation space. We score the coverage of this residual against the training residual
+bank using the realism metric (Kynk¨a¨anniemi et al., 2019); larger scores indicate that the query
+residual lies more deeply inside the local support of the training residual distribution.
+Within each checkpoint, OOD queries are ranked by residual coverage and divided into quintiles,
+while their FM errors are independently converted to within-checkpoint percentile ranks. Fig. 5a
+aggregates the final rank-32 checkpoint from 42 trained policies—seven simulation settings, two
+observation spaces, and three seeds. For each coverage quintile, we report the median error rank
+across these 42 checkpoints.
+40

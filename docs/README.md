@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-06</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-07</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 20 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 11 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-06 23:34:45 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-07 23:36:08 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,10 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 20 篇推荐（精读 6 篇，速读 14 篇）</p>
-<p>精读：《Parasitic Co-Denoising: Unlocking 3D Human Motion Generation in a Frozen Video Diffusion Model》（9.0/10）, 《FlowHMR: Physically Plausible Motion Capture from Video》（9.0/10）</p>
-<p>速读：《MintFlow: Minimal Trajectory Intervention for Constrained Flow Matching》（7.0/10）, 《Learning Conditional Source Distribution via Flow Reversal for Temporal Flow Matching》（7.0/10）, 《Representation by Design in Generation: Cross-View Class-Token Alignment in Diffusion Transformers》（6.0/10）</p>
-<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
+<p>今日速读11篇、精读挂零，流量生成与模仿学习方向集中发力。最值得看的是三篇7分工作：几何感知时间重参数化、双线性流策略的分布外推，以及路径-流对齐的协同演化。普通读者可先挑双线性流策略入门，关注流匹配如何让机器人模仿更会“举一反三”。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Parasitic Co-Denoising: Unlocking 3D Human Motion Generation in a Frozen Video Diffusion Model">Parasitic Co-Denoising: Unlocking 3D Human Motion Generation in a Frozen Video Diffusion Model</span></li><li><span class="dpr-home-dashboard-paper-title" title="FlowHMR: Physically Plausible Motion Capture from Video">FlowHMR: Physically Plausible Motion Capture from Video</span></li><li><span class="dpr-home-dashboard-paper-title" title="Streaming Multi-Track Timeline Control for 3D Human Motion Generation">Streaming Multi-Track Timeline Control for 3D Human Motion Generation</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -94,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">14 篇</strong>
+    <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MintFlow: Minimal Trajectory Intervention for Constrained Flow Matching">MintFlow: Minimal Trajectory Intervention for Constrained Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Conditional Source Distribution via Flow Reversal for Temporal Flow Matching">Learning Conditional Source Distribution via Flow Reversal for Temporal Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Representation by Design in Generation: Cross-View Class-Token Alignment in Diffusion Transformers">Representation by Design in Generation: Cross-View Class-Token Alignment in Diffusion Transformers</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Geometry-Aware Time Reparameterization for Flow-Map Distillation">Geometry-Aware Time Reparameterization for Flow-Map Distillation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bilinear Flow Policy: Distributional Extrapolation for Goal-Conditioned Visuomotor Imitation">Bilinear Flow Policy: Distributional Extrapolation for Goal-Conditioned Visuomotor Imitation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Co-Evolving Paths and Flows via Path-Flow Alignment">Co-Evolving Paths and Flows via Path-Flow Alignment</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>14</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>11</strong></span></div>
 </section>
 </div>
 
