@@ -1,0 +1,980 @@
+Learning Task and Motion Plans from Real
+Demonstrations with Hybrid Flow Matching
+Zuleika Redondo Garcia∗,1, Andreu Matoses Gimenez∗,1, and Javier Alonso-Mora1
+Abstract—Long-horizon mobile manipulation requires a task
+plan and the motion that executes it. Generative planners trained
+on demonstration produce both in one pass, requiring neither a
+symbolic domain nor search. To date, however, they have relied
+on thousands of scripted demonstrations of fixed-base arms and
+executed open loop. This paper presents a hybrid flow matching
+planner: a single network generates the symbolic plan with
+masked discrete flow matching and the motion trajectory with
+continuous flow matching. Unlike prior generative planners, we
+aim to learn from a much smaller set of demonstrations and
+to execute the plan in closed loop. Two properties of the data
+compensate for the small dataset. A demonstration resumed from
+any of its intermediate actions is itself a demonstration, which
+multiplies the training samples and enables replanning after
+every action. Objects of the same kind are interchangeable, which
+turns demonstrations of one goal into demonstrations of every
+permuted goal. Our base implementation produces valid plans on
+68% of held-out scenes; a training and generation scheme for the
+discrete plan raises this to 76%, and replanning after every action
+raises the task completion rate from 40% to 53% in a kinematic
+simulation. The planner matches the task completion rate of
+motion-only flow matching policies while additionally providing
+the symbolic plan, and it outperforms previous hybrid diffusion
+formulations on both task completion and plan validity. We vali-
+date the planner on a real mobile manipulator. Videos and project
+page:  andreumatoses.github.io/research/hybrid-flow-planning
+Index Terms—Task and Motion Planning, Flow Matching,
+Discrete Flow Matching, Mobile Manipulation.
+I. INTRODUCTION
+Mobile manipulation tasks such as tidying a room or as-
+sembling a structure require a robot to decide what to do and
+how to move. To stack three cubes on a target table (Fig. 1),
+a robot has to choose which cube to pick first, from which
+side of which table, in which position to place it. It also has
+to produce the base and arm motion for each choice. The two
+levels depend on each other: a cube can only be reached from
+certain sides of a table, and a covered cube cannot be picked.
+Task and motion planning (TAMP) produces both the action
+sequence and the motion that realizes it while keeping them
+consistent [1].
+∗Equal contribution.
+This work is supported by the European Union through the ERC project
+INTERACT (Grant agreement No. 101041863). Views and opinions expressed
+are however those of the author(s) only and do not necessarily reflect those
+of the European Union or the European Research Council Executive Agency.
+Neither the European Union nor the granting authority can be held responsible
+for them.
+1The
+authors
+are
+with
+the
+Department
+of
+Cognitive
+Robotics,
+Delft
+University
+of
+Technology,
+2628
+CD
+Delft,
+The
+Netherlands.
+{A.MatosesGimenez, J.AlonsoMora}@tudelft.nl
+This work has been submitted to the IEEE for possible publication.
+Copyright may be transferred without notice, after which this version may
+no longer be accessible.
+t = 0s 
+t = 54s 
+t = 54s 
+t = 92s 
+Move
+Move
+Pick
+Place
+Move
+Move
+Pick
+Place
+Move
+Move
+Pick
+Place
+Move
+Move
+Pick
+Place
+Fig. 1. The planner on the real robot building the tower R on Y on G. Four
+frames of one run: the start and end of the first half of the task (top) and of
+the second half (bottom). Each frame shows the plan the planner generated
+from that scene, with the action in progress highlighted, and the generated
+waypoints of the base and end effector. The planner generates the waypoints
+of the whole task; for readability only those of the half shown are drawn.
+Classical TAMP methods search over symbolic action se-
+quences and call a motion planner to check each candidate [2]–
+[5]. They need a hand-written model of the task: predicates,
+action operators, and samplers for continuous parameters such
+as grasps and base placements. The search is also expensive,
+which limits replanning when the scene changes. Learning
+can guide the search [6], [7] or distill planner solutions into
+policies [8], but both still depend on the planner and its model.
+Generative models trained on demonstrations take a differ-
+ent route. The task knowledge enters through the demonstra-
+tions, so no planning domain is written by hand. A plan then
+costs one generation pass with a fixed number of network eval-
+uations instead of a search over candidate plans. Diffusion and
+flow matching policies capture the multimodal distribution of
+demonstrated motion and generate whole trajectories [9]–[12].
+On long tasks with several distinct decisions, however, the
+model blends different behaviors and the trajectory commits to
+none of them. Høeg et al. [13] address this with a discrete and
+a continuous diffusion process in one network that generate a
+symbolic plan together with the trajectory, and show that the
+joint generation outperforms trajectory-only generation.
+The space of task and motion plans is combinatorial, as each
+possible action sequence must be grounded in the geometry
+arXiv:2610.04771v1  [cs.RO]  3 Oct 2026
+
+
+of the scene. Prior joint symbolic and continuous generative
+planners have therefore relied on hundreds to thousands of
+demonstrations per task, often generated by scripted experts on
+fixed-base manipulators and executed open loop [13]. For real
+mobile manipulators, however, demonstrations are typically
+collected through teleoperation and cannot be generated at that
+scale. This limited coverage raises three challenges: general-
+ization to unseen scenes and plans, generation of variable-
+length symbolic plans, and error accumulation during open-
+loop execution.
+We address these challenges with a hybrid flow matching
+planner for mobile manipulation trained on about one hundred
+real demonstrations. Given an observation of the scene, a
+single network simultaneously generates a discrete symbolic
+plan and the continuous trajectories of both the mobile base
+and the end effector. To improve data efficiency, we augment
+each demonstration with its suffixes, the remaining plan and
+trajectory after each of its actions, which also enables the
+planner to replan after every action. We also exploit object
+interchangeability through object permutations, a consistent
+renaming of the objects in plan and observation, to obtain goal-
+conditioned demonstrations. We further constrain the gener-
+ated plans to well-formed action sequences, adapt training to
+variable-length plans, and automatically balance the discrete
+and continuous losses.
+We evaluate the method on a mobile manipulator building
+a three-cube tower from 109 teleoperated demonstrations.
+Generated plans are validated with a symbolic model, executed
+in kinematic simulation, and evaluated on the real robot. We
+compare against motion-only flow matching and the hybrid
+diffusion planner of Høeg et al. [13], and ablate the proposed
+components.
+The contributions of this paper are:
+• A hybrid flow matching planner that jointly generates the
+symbolic plan and the motion of a mobile manipulator,
+with a training and generation scheme that improves
+symbolic plan validity and task completion.
+• Two augmentations that exploit the structure of task
+and motion demonstrations, which allow replanning after
+every action and goal conditioning without new demon-
+strations (Section IV-D).
+• An evaluation on real demonstrations against motion-only
+flow matching and hybrid diffusion [13], with ablations
+and a deployment on the real robot (Section V).
+II. RELATED WORK
+Task and motion planning: Task and motion planning
+(TAMP) integrates symbolic task planning with geometric
+reasoning to ensure that high-level action sequences are phys-
+ically feasible [1]. Existing approaches couple these levels
+in different ways. Hierarchical methods progressively inter-
+leave task and motion planning [2], while planner-independent
+frameworks allow symbolic planners to invoke black-box ge-
+ometric samplers [3], [5], [14]. Logic-geometric programming
+instead optimizes the action sequence and its associated mo-
+tion jointly [4]. Learning has also been used to guide the plan-
+ning process, for example by ranking candidate refinements
+[6] or predicting promising action sequences before geometric
+verification [7]. Other work distills planner-generated solutions
+into visuomotor policies [8]. These approaches generally retain
+an explicit planning model, either during execution or when
+generating training data. In contrast, we consider learning
+symbolic plans and their associated motions directly from
+teleoperated demonstrations.
+Generative models for robot motion and planning: Dif-
+fusion models generate multimodal trajectories from demon-
+strations, for planning [9], [15] and for visuomotor control
+[10]. Flow matching trains the same class of models with
+a regression objective and supports sampling in only a few
+integration steps [11]; it has since been adopted for robot
+policies [12], [16]. For long-horizon tasks, however, task
+structure is often provided separately. Generative skill chaining
+composes diffusion models according to a given skill sequence
+[17], SkillDiffuser learns discrete skill abstractions from lan-
+guage instructions [18], and LTLDoG constrains sampling
+with temporal logic [19]. Inside classical TAMP, diffusion
+models have served as samplers for continuous parameters
+[20], [21], while language models can provide high-level plans
+that are subsequently grounded by a diffusion model [22].
+In these approaches, the symbolic task structure is provided,
+inferred, or planned separately from the continuous motion.
+Our planner instead generates both jointly.
+Joint discrete and continuous generation: Discrete dif-
+fusion and flow models generate token sequences by pro-
+gressively unmasking an initially masked sequence [23]–[26].
+Campbell et al. [27] combine such a masked discrete flow with
+a continuous flow to co-design protein sequences and struc-
+tures, while Diffusion Forcing assigns individual noise levels
+to tokens so that a single model can support both full-sequence
+and next-token generation [28]. Closest to our work, Høeg
+et al. [13] jointly generate a symbolic plan and continuous
+trajectory using discrete and continuous diffusion processes
+within a single transformer, with independent noise levels
+for the two modalities. On simulated and real tabletop tasks,
+the joint generation outperforms trajectory-only diffusion. Our
+work builds on this hybrid formulation, replacing diffusion
+with flow matching and studying the more data-limited setting
+of teleoperated mobile-manipulation demonstrations.
+Augmentation and replanning in imitation learning: Re-
+labeling and symmetry provide complementary ways to reuse
+demonstrations without collecting additional data. Hindsight
+experience replay relabels trajectories according to achieved
+goals [29], while equivariant policies incorporate scene sym-
+metries into the policy architecture [30]. Receding-horizon
+execution similarly improves robustness by repeatedly replan-
+ning over fixed-length action chunks [10], [31]. This strategy
+has also been applied to real mobile manipulation using rela-
+tively small per-task demonstration sets supplemented by co-
+training data [32]. Our work exploits object interchangeability
+for symbolic relabeling and performs replanning at symbolic
+action boundaries rather than at a fixed temporal horizon.
+
+
+Fig. 2. The running example. Three cubes R, Y, and G are placed on tables
+T1–T3, with approach regions RG1–RG10 located along the table sides. The
+observation o contains the poses of the mobile manipulator and the cubes. A
+plan consists of a sequence of symbolic actions, such as Pick G, while the
+goal g specifies the desired final configuration: R on Y on G on T1, illustrated
+by the ghost cubes.
+III. PROBLEM FORMULATION
+A task is given by the initial configuration, i.e., an observa-
+tion o of the scene, with the poses of the robot and of every
+movable object, and a symbolic goal g, i.e., a set of relations
+that must hold at the end. In the running example (Fig. 2),
+three cubes R, Y, and G can lie on three tables, and the goal
+is a tower in a given order on a given table.
+A solution has two aligned levels, a discrete plan of M
+actions and a continuous trajectory,
+σ = (a1, . . . , aM),
+xc = (xc,1, . . . , xc,M),
+(1)
+where xc,k is the segment of waypoints that realizes action
+ak, and ok denotes the observation at its start, with o1 =
+o. Each symbolic action consists of an action type and its
+arguments, drawn from a finite set of entities, such as the
+objects and locations of the scene. In the running example,
+Move_to takes an approach region, Pick a cube, and Place
+the currently held cube and a support, either a cube or the table
+on which to put it. A waypoint is the commanded robot state,
+including the base pose, the end-effector pose, and the gripper
+command.
+For training, each action is tokenized as its action type
+followed by one token per argument, and the tokens of all
+actions are concatenated and closed with an end-of-sequence
+token EOS, the end token. The plan then becomes a token
+sequence xd = (τ1, . . . , τL) over a vocabulary V of action
+types, entities, and EOS. A grammar G gives, for every prefix,
+the set AG(τ1:i−1) ⊆V of tokens allowed at position i: an
+action type or EOS if the preceding token completed an action,
+i.e. encoded its last argument, and otherwise an argument
+permitted for the action type currently being filled. A sequence
+is grammatical if
+τi ∈AG(τ1:i−1) ∀i,
+τL = EOS.
+(2)
+For evaluation, we use a symbolic model of the task to
+check whether a generated plan is valid. An abstraction ϕ
+maps an observation to a symbolic state; in the example that
+state contains the support of each cube, the cube held by the
+gripper, and the approach region of the robot. A transition f
+maps a symbolic state and an applicable action to the next
+state. A plan is valid for (o, g) if
+s1 = ϕ(o),
+sk+1 = f(sk, ak),
+sM+1 |= g,
+(3)
+two valid plans for the same task are equivalent, and a plan
+is successful if the execution of xc from o ends in a scene o′
+with ϕ(o′) |= g.
+Given teleoperated demonstrations D = {(o, g, σ, xc)},
+labeled with their actions and associated xc segments, we learn
+a generative model
+pθ(xd, xc | o, g)
+(4)
+whose samples for a new task are grammatical, valid, and
+successful, queried once per task or after every executed action
+(Section IV-D). We assume that the poses are observed, that V
+and G are given, and that objects are rigid and picked one at a
+time. The symbolic model (ϕ, f) is used only for evaluation.
+IV. HYBRID FLOW MATCHING
+Sampling a plan from (4) generates two data modalities, a
+discrete and a continuous one. The symbolic plan is generated
+with masked discrete flow matching, from a fully masked
+sequence. The trajectory is generated with continuous flow
+matching, from noise. Both flows run in parallel through the
+same network (Fig. 3), so each modality conditions the other
+while it is generated. Each flow has its own time, td and tc,
+from 0 (noise) to 1 (data).
+A. Symbolic plan with discrete flow matching
+The symbolic plan occupies the first L positions of a
+sequence of fixed length Lmax, with the remaining positions
+filled by a pad token. Following [26], [27], the noisy plan at
+time td keeps each token with probability td and replaces it
+by the mask token m otherwise,
+τ td
+i
+=
+(
+τi
+with probability td,
+m
+otherwise,
+i = 1, . . . , Lmax. (5)
+The network predicts a distribution pθ(τi | xtd
+d , xtc
+c , o, g) at
+every symbolic position, trained with the cross-entropy at the
+masked positions,
+Ld =
+P
+i wi ⊮[τ td
+i
+= m]
+ −log pθ(τi | xtd
+d , xtc
+c , o, g)
+
+P
+i wi ⊮[τ td
+i
+= m]
+,
+(6)
+where wi = 1 for plan tokens and wi = wpad for pad position.
+Padding tokens are masked and supervised together with the
+plan, as in fixed-length masked models [24], [25]. This is what
+allows plans of different lengths. Without padding supervision,
+the sampler would reveal arbitrary tokens after EOS, and the
+plan positions that remain masked would see a context never
+encountered during training.
+
+
+Fig. 3. The network. The symbolic plan tokens and the waypoints get a token embedding or a linear layer, a learned modality and positional embedding, and
+form one sequence for the transformer. Its cross-attention reads the memory: one token per flow time (Fourier features) and one per observation component
+(an MLP), each with a type embedding. The token head gives pθ at every symbolic position and the velocity head vθ at every waypoint.
+Sampling: Generation runs over K steps on a time grid
+0 = t0 < · · · < tK = 1 from a fully masked sequence. At
+each step, every masked position is revealed with probability
+∆t/(1 −t) [26] to its most likely token. We add three rules.
+Grammar-constrained reveal. When masks precede a po-
+sition, the tokens allowed there depend on how the masks
+are filled. We therefore compute the set AG(xt
+d, i) of tokens
+allowed at position i under every completion of its prefix, and
+the reveal is
+τi ←arg
+max
+τ∈AG(xt
+d,i) pθ(τ | xtd
+d , xtc
+c , o, g).
+(7)
+If a revealed token becomes invalid after its left context
+changes, it is re-masked and predicted again. Unlike au-
+toregressive grammar-constrained decoding [33], [34], this
+operates on a partially masked sequence.
+Freeze after the end token. Once an EOS is visible, no
+position after it is revealed. These positions stay masked, and
+become pads at the end.
+Remasking. At three predefined steps, a fixed fraction of
+the least-confident visible tokens is re-masked and predicted
+again. This acts as a correction step [24], [35], [36] and is
+used for all policies in our experiments.
+B. Motion with continuous flow matching
+The trajectory has a fixed length of Tmax waypoints, padded
+by repeating the last waypoint. With the linear path of flow
+matching [11],
+xtc
+c = (1 −tc) ϵ + tc xc,
+ϵ ∼N(0, I),
+(8)
+the target velocity is u = xc −ϵ. The network predicts
+vθ(xtc
+c , xtd
+d , tc, td, o, g), and is trained with mean squared error
+over the set T of unpadded waypoints of dimension n,
+Lc =
+1
+|T | n
+X
+t∈T
+vθ,t −ut
+2.
+(9)
+At inference, the trajectory is initialized from Gaussian noise
+and integrated with Euler steps xc ←xc + vθ ∆t, using the
+same sampling time grid as the symbolic plan.
+C. One network, one loss
+Architecture: We use a transformer [13], [37] with cross-
+attention (Fig. 3). Each waypoint of xtc
+c and every position of
+xtd
+d forms one input token, augmented with learned positional
+and modality embeddings. The two sequences are concate-
+nated, allowing self-attention to connect the modalities. Cross-
+attention conditions these tokens on a memory containing one
+token per component of the observation (the robot state, each
+object pose, and the goal) and one token per flow time.
+Flow times: During training, td, tc ∼U(0, 1) indepen-
+dently. With probability 1/4 both are instead sampled from
+U(0, 0.2) [13]. Independent times teach the model to predict
+either modality at different generation stages of the other [28],
+while the shared early range emphasizes the beginning of
+generation.
+Loss balance: Høeg et al. [13] combine (6) and (9) with
+a fixed weight. The two terms differ in scale and evolve
+differently: the velocity error keeps decreasing while the
+token cross-entropy flattens, so a fixed weight leaves the plan
+
+
+Fig. 4. Plan suffixes of one demonstration. Top: the end-effector path over
+the scene, colored per action (blue Move_to, yellow Pick Y and Place
+Y, red Pick R and Place R); the grey curves mark the boundary jitter
+around the action boundaries. Bottom: the plan σ and the suffixes that start
+at the observations o1, . . . , oM; each suffix is a training sample.
+under-weighted late in training. We learn their balance using
+uncertainty weighting [38],
+L = e−scLc + e−sdLd + 1
+2(sc + sd),
+(10)
+where sc and sd are learned log-variance parameters.
+Joint sampling: Each network evaluation produces both
+the symbolic token distributions and the continuous velocity.
+The symbolic plan takes its reveal step and the trajectory
+its Euler step from the same evaluation. During remasking,
+only td is shifted for that evaluation, consistent with the
+independently sampled flow times used during training.
+D. Data augmentation
+Task and motion plans grow combinatorially with the num-
+ber of objects, regions, and actions, while a demonstration
+covers one plan in one scene. We exploit two structures of the
+symbolic plan to generate additional training samples without
+collecting new demonstrations.
+Plan suffixes: The remainder of a demonstration after any
+action is itself a valid demonstration from the corresponding
+intermediate observation ok. We therefore train on every suffix
+of every demonstration (o, g, σ, xc) ∈D,
+D+ =
+
+(ok, g, ak:M, xc,k:M)
+	M
+k=1,
+(11)
+thus a demonstration of M actions yields M training samples
+(Fig. 4). These samples support closed-loop execution at
+the symbolic-action level: the robot generates a plan and
+trajectory, executes only the segment corresponding to the first
+action, observes the resulting scene, and replans from that
+state. Consequently, execution errors such as failed grasps or
+placements can be handled by subsequent replanning rather
+than propagated through the remainder of an open-loop tra-
+jectory.
+Constructing the suffixes requires the action boundaries of
+each demonstration, which are available from the recorded
+Fig. 5. Symbolic permutation of the same demonstration. Renaming the cubes
+(R to G, Y to R, G to Y) in the goal, the plan, and the observation gives a
+demonstration of another tower order with the same trajectory.
+labels. To reduce sensitivity to the exact boundary location,
+we can use boundary jitter, shifting the start of a suffix by a
+small number of waypoints while keeping the same symbolic
+plan. This exposes the model to slightly different observations
+around each action transition.
+Symbolic permutation: Entities of the same kind are
+interchangeable, such as the cubes of the running example.
+For a permutation π of interchangeable entities, consistently
+renaming their representation in the observation, goal, and
+symbolic plan yields
+(o, g, σ, xc) 7→(πo, πg, πσ, xc),
+(12)
+while the continuous trajectory remains unchanged because
+the renamed entities occupy the same physical poses. Training
+on these permutations exposes the planner to every goal
+assignment of the entities in each demonstration (Fig. 5);
+the object permutations of Section I are this augmentation
+applied to the cubes. This is related to goal relabeling [29]
+and provides a data-level analogue of equivariant modeling
+[30]. The augmentation requires an observation in which the
+permuted entities have separate representations. The goal is
+encoded per entity, together with its pose, so that each entity’s
+task role is associated with its spatial state.
+V. EXPERIMENTS
+The experiments answer three questions. Does the planner
+produce valid plans and successful executions on scenes it
+has not seen, and how does it compare with the two closest
+alternatives, motion-only flow matching [12], [16] and hybrid
+diffusion [13]? What does each part of the training and
+generation scheme contribute? Does the planner run on the
+real robot?
+A. Setup
+Task and robot: The robot is a holonomic mobile base
+(Clearpath Dingo-O) with a six-joint arm (Kinova Gen3 Lite);
+the cubes have a side of 6.5 cm and the tables differ in height
+and size (Fig. 2). The vocabulary has three action types, the
+three cubes, the three tables, ten approach regions, and the end
+token EOS. A waypoint is the robot’s base pose with respect
+
+
+1 Move_to RG8
+2 Pick G
+3 Move_to RG3
+4 Place G on T1
+5 Pick Y
+6 Place Y on G
+7 Pick R
+8 Place R on Y
+goal state
+camera
+base path
+end-effector path
+start pose
+cube at start
+T1
+T2
+T3
+4
+6
+8
+10
+12
+14
+16
+18
+plan length (actions)
+0
+20
+40
+Fig. 6.
+The 109 (+12 validation) demonstrations. Left: top view with the
+tables T1–T3 and the approach regions RG1–RG10: base paths (grey), end-
+effector paths (violet), start poses (arrows), and initial cube positions (dots).
+Right: one demonstration represented by observations o1, . . . , o8 at the action
+boundaries, together with the corresponding actions, wrist-camera views, and
+the distribution of plan lengths at the bottom right.
+Initial State
+Move to RG5
+Pick Cube Y 
+Move to RG1
+Place Y on G
+Move to RG6
+Pick Cube R
+Move to RG1
+Place R on Y
+Goal State
+Goal: Red on Yellow on Green on Table 1
+Fig. 7. A run on the real robot with the goal R on Y on G on table T1 (cubes
+R red, Y yellow, G green). After every action the policy observes the new
+scene and samples a new plan and trajectory. Here every action succeeds, so
+the plan stays the same from one planning step to the next and the run looks
+like an open-loop execution.
+to the floor plane, the end-effector pose in 3D, and the gripper
+state, 14 numbers.
+Demonstrations: 109 demonstrations were recorded us-
+ing teleoperation, with the cube and robot poses from a
+motion capture system, and 12 additional demonstrations were
+recorded and held out for validation. The cubes start on any
+table, alone or stacked, and the robot anywhere in the room;
+T1 starts empty, with G on it, or with a “wrong” cube on
+it (Fig. 6). Demonstrations contain 4–18 actions and 17–
+69 waypoints, sampled approximately every 0.8 s, with each
+action labeled by its starting waypoint.
+Training and inference: The transformer has four layers
+of width 256 with eight heads, 7.5 million parameters. It
+is trained for 20 000 steps with batches of 45 samples and
+wpad = 0.1, with the weights averaged over training, in
+about 20 minutes on one NVIDIA RTX 3090. Inference uses
+K = 100 steps. Every configuration is trained with three
+seeds; we report the mean and the standard deviation over
+them.
+Metrics: A sampled plan is valid under the symbolic
+model of Section III, evaluated from the scene at the start
+of the task. Execution is evaluated in a kinematic simulation
+of the scene: the sampled waypoints move the robot, a cube
+within 9 cm of the end effector attaches when the gripper
+TABLE I
+PERFORMANCE IN PERCENT ON THE 12 HELD-OUT DEMONSTRATIONS,
+AVERAGED OVER 3 TRAINING SEEDS AND 50 SAMPLES PER TASK.
+Symbolic plan valid† (%)
+Task completed‡ (%)
+Policy
+all d
+d ≥13
+open loop closed loop
+Motion-only FM
+–
+–
+39 ± 2
+52 ± 2
+Hybrid diffusion [13]:
+whole demonstrations
+8 ± 1
+1
+0
+0
+our suffix samples
+62 ± 1
+5
+6 ± 0
+9 ± 0
+Ours
+76 ± 1
+33
+40 ± 3
+53 ± 3
+Ours + permutations*
+76 ± 1
+53
+26 ± 3
+36 ± 3
+The scheme one step at a time, from Ours (base)
+Unconstrained generation
+55 ± 1
+5
+30 ± 2
+41 ± 4
++ grammar and freeze (base)
+68 ± 2
+10
+38 ± 3
+53 ± 5
++ pad supervision
+71 ± 4
+20
+38 ± 3
+53 ± 3
++ learned loss balance = Ours 76 ± 1
+33
+40 ± 3
+53 ± 3
+†The sampled plan is valid under the symbolic model, over all tasks, or over those with
+d ≥13 actions to the goal.
+‡The tower stands after execution in the kinematic simulation, of the whole sampled
+trajectory (open loop) or with replanning after every action (closed loop).
+*Goal-conditioned: trained on all tower order permutations (Fig. 5), scored on the
+recorded one.
+closes, and a released cube settles on the support beneath it.
+Tolerances are set to the 99th percentile of the demonstrations.
+The task completion rate is the fraction of samples after which
+the goal tower stands, whatever plan was executed. In the open
+loop, the whole sampled trajectory is executed; in closed loop,
+only the first action segment is executed before replanning,
+with a budget of three extra actions. Results are reported
+overall and by the number of actions remaining to the goal, d.
+Policies: Ours is the hybrid flow matching planner of
+Section IV, trained on the suffix samples with the full training
+and generation scheme. Ours (base) has a fixed loss weight and
+pad tokens without supervision; it uses grammar-constrained
+generation and the freeze after the end token, so that the
+comparison isolates the training changes. Ours + permutations
+is the goal-conditioned policy trained on the six permutations
+of the three cubes; it builds any tower order and is scored
+on the recorded one only. Motion-only FM (flow matching) is
+continuous flow matching on the waypoints alone [12], [16],
+the same network without the plan tokens, with a training
+sample starting at every waypoint of the demonstrations, not
+only at the action boundaries; without a plan, its execution
+follows its own gripper commands (closing picks the nearest
+cube, opening releases it). Hybrid diffusion is the formulation
+of Høeg et al. [13] on our network and data (diffusion on
+the waypoints, masked diffusion on the tokens, their loss
+weight, sampler, and optimizer), trained as published on whole
+demonstrations or on our suffix samples.
+B. Comparison
+Plans: Ours produces valid symbolic plans in about three
+quarters of the samples (Table I). Validity is near perfect with
+four or fewer actions remaining, but falls to about one third
+beyond 13 actions (Fig. 8, left). On training demonstrations of
+similar length, validity remains above 95% up to 17 actions,
+indicating that long-horizon failures arise mainly from gener-
+alization to unseen scenes rather than model capacity. Hybrid
+diffusion trained on our suffix samples plans, at the symbolic
+level, nearly as well as Ours (base), whereas training on whole
+
+
+13-18
+11-12
+9-10
+8
+7
+6
+5
+4
+3
+2
+1
+actions left to the goal d
+0
+20
+40
+60
+80
+100
+success rate (%)
+Symbolic plan valid
+13-18
+11-12
+9-10
+8
+7
+6
+5
+4
+3
+2
+1
+actions left to the goal d
+Task completed, open loop
+Ours
+Ours (base)
+Ours + permutations*
+Hybrid diffusion (our suffix samples)
+Hybrid diffusion (whole demonstrations)
+Motion-only FM
+13-18
+11-12
+9-10
+8
+7
+6
+5
+4
+3
+2
+1
+actions left to the goal d
+Task completed, closed loop
+Fig. 8. Success against the number of actions left to the goal, on the 12 held-out demonstrations (mean and standard deviation over three training seeds,
+50 samples per task). Values of d with few demonstrations are grouped: 13–18, 11–12, and 9–10 hold 850, 750, and 900 tasks, the other values 550 to 600
+each. Left: the sampled plan is valid. Middle: the tower stands after the whole sampled trajectory is executed. Right: the tower stands when the policy replans
+after every action. Hybrid diffusion is the formulation of Høeg et al. [13], trained on our suffix samples or on whole demonstrations. Motion-only FM is
+flow matching on the trajectory alone; it has no plan and no left panel. *The goal-conditioned policy builds any of the six tower orders and is scored on the
+recorded one.
+demonstrations performs poorly on tasks that start mid-way
+through a demonstration, since they are absent from its training
+distribution. Ours + permutations preserves symbolic plan
+validity and has the best long-horizon validity, while building
+any of the six tower orders.
+Execution: Ours and Ours (base) achieve similar task
+completion rates. Most execution failures result from grasp
+or placement errors of a few centimeters, which improved
+symbolic validity alone cannot correct. Motion-only flow
+matching performs similarly, showing that generating the plan
+jointly adds an explicit plan, action-level replanning, and goal
+conditioning rather than motion precision. Hybrid diffusion
+shows larger trajectory error, with a median end-effector error
+of 0.71 m compared with 0.25 m for ours.
+Closed loop: Replanning after every action raises the task
+completion rate by 13% overall and from 0 to 10–30% at long
+horizons (Fig. 8, right). The resulting rate matches the rate
+predicted from the per-action success rates on demonstrated
+scenes, so the states reached during replanning are as usable
+as the demonstrated ones. Moreover, 8–10% of rollouts recover
+after a failed action. The goal-conditioned policy shows a
+similar improvement.
+C. Ablations
+The lower part of Table I adds each component sequentially.
+Grammar-constrained generation and freezing after EOS raise
+plan validity from 55% to 68% and the closed-loop task
+completion rate from 41% to 53%, because a rollout that ends
+in an ungrammatical plan cannot continue. Pad supervision
+further improves validity by 3%, particularly at long horizons,
+while learned loss balancing raises overall validity to 76% and
+long-horizon validity to 33%. The open-loop task completion
+rate changes little, indicating that these components primarily
+improve symbolic planning rather than motion accuracy.
+The goal-conditioned policy keeps plan validity of Ours and
+achieves the best long-horizon validity of the study, but its task
+completion rate drops by 14%. This decrease is attributable to
+Initial State
+Move to RG6
+Pick Cube Y
+Move to RG1
+Place Y on G
+Pick Cube R
+Goal: Red on Yellow on Green on Table 1
+Move to RG5
+FAILED ACTION
+Move to RG5
+Place R on Y
+Pick Cube R
+Move to RG1
+Goal State
+Fig. 9.
+The same setup with a failure. The grasp of R misses; at the next
+planning step, the policy sees R still on the table, plans the pick again, and
+finishes the tower. Replanning after every action turns a missed grasp into a
+retry instead of a failed run.
+the object-wise observation encoding required for permutation
+augmentation: applying the same encoding to Ours produces
+a comparable loss in execution accuracy.
+D. Real robot
+The policy runs on the robot from the motion capture poses,
+with the end-effector waypoints converted to joint targets by
+inverse kinematics and the base waypoints sent to the base
+controller, and it replans after every action. Figure 7 shows a
+run in which every action succeeds, and Fig. 9 a run in which
+a missed grasp is retried. The robot was tested in 30 unseen
+cube placements: the tower was built in about 30% of the runs
+from short plans (d ≤6) and in 10% from long ones (d ≥8).
+The failures are the same as in the kinematic simulation, grasps
+missed by a few centimeters and placements off the support.
+
+
+Perception: The results above take the cube poses from
+motion capture. To check that the policy does not depend
+on them and works from image perception, we trained it on
+image features instead: the object pose tokens are replaced by
+one token per object from a DINOv2 keypoint estimator [39],
+trained on images from a fixed camera recorded alongside the
+demonstrations, with the same held-out split. The policy keeps
+its plan validity (78% against 76%) and loses 6% of open-loop
+task completion rate.
+VI. CONCLUSIONS
+We presented a hybrid flow matching planner, trained on
+109 teleoperated demonstrations of a mobile manipulator,
+that jointly generates symbolic plans and continuous trajec-
+tories. Plan-suffix and object-permutation augmentations im-
+prove data efficiency, enabling action-level replanning and goal
+conditioning. The proposed training and generation scheme
+increases the plan validity on held-out scenes to 76% while
+closed-loop replanning after every action raises the task com-
+pletion rate from 40% (open loop) to 53% in a kinematic
+simulation, and allows recovery from failed actions on the real
+robot. Compared with the two closest alternatives, the method
+matches the task completion rate of motion-only flow matching
+while providing an explicit plan, and improves trajectory
+accuracy over hybrid diffusion.
+REFERENCES
+[1] C. R. Garrett, R. Chitnis, R. Holladay, B. Kim, T. Silver, L. P. Kaelbling,
+and T. Lozano-P´erez, “Integrated task and motion planning,” Annu. Rev.
+Control Robot. Auton. Syst., vol. 4, no. 1, pp. 265–293, 2021.
+[2] L. P. Kaelbling and T. Lozano-P´erez, “Hierarchical task and motion
+planning in the now,” in Proc. IEEE Int. Conf. Robot. Autom. (ICRA),
+2011, pp. 1470–1477.
+[3] S. Srivastava, E. Fang, L. Riano, R. Chitnis, S. Russell, and P. Abbeel,
+“Combined task and motion planning through an extensible planner-
+independent interface layer,” in Proc. IEEE Int. Conf. Robot. Autom.
+(ICRA), 2014, pp. 639–646.
+[4] M. Toussaint, “Logic-geometric programming: An optimization-based
+approach to combined task and motion planning,” in Proc. Int. Joint
+Conf. Artif. Intell. (IJCAI), 2015.
+[5] C. R. Garrett, T. Lozano-P´erez, and L. P. Kaelbling, “PDDLStream:
+Integrating symbolic planners and blackbox samplers via optimistic
+adaptive planning,” in Proc. Int. Conf. Autom. Plan. Sched. (ICAPS),
+2020.
+[6] R. Chitnis, D. Hadfield-Menell, A. Gupta, S. Srivastava, E. Groshev,
+C. Lin, and P. Abbeel, “Guided search for task and motion plans using
+learned heuristics,” in Proc. IEEE Int. Conf. Robot. Autom. (ICRA), 2016,
+pp. 447–454.
+[7] D. Driess, J.-S. Ha, and M. Toussaint, “Deep visual reasoning: Learning
+to predict action sequences for task and motion planning from an initial
+scene image,” in Proc. Robot.: Sci. Syst. (RSS), 2020.
+[8] M. Dalal, A. Mandlekar, C. Garrett, A. Handa, R. Salakhutdinov,
+and D. Fox, “Imitating task and motion planning with visuomotor
+transformers,” in Proc. Conf. Robot Learn. (CoRL), 2023.
+[9] M. Janner, Y. Du, J. B. Tenenbaum, and S. Levine, “Planning with
+diffusion for flexible behavior synthesis,” in Proc. Int. Conf. Mach.
+Learn. (ICML), 2022, pp. 9902–9915.
+[10] C. Chi, Z. Xu, S. Feng, E. Cousineau, Y. Du, B. Burchfiel, R. Tedrake,
+and S. Song, “Diffusion policy: Visuomotor policy learning via action
+diffusion,” in Proc. Robot.: Sci. Syst. (RSS), 2023.
+[11] Y. Lipman, R. T. Q. Chen, H. Ben-Hamu, M. Nickel, and M. Le, “Flow
+matching for generative modeling,” in Proc. Int. Conf. Learn. Represent.
+(ICLR), 2023.
+[12] K. Black, N. Brown, D. Driess et al., “π0: A vision-language-action
+flow model for general robot control,” in Proc. Robot.: Sci. Syst. (RSS),
+2025.
+[13] S. H. Høeg, A. Vaaler, C. Liu, O. Egeland, and Y. Du, “Hybrid
+diffusion for simultaneous symbolic and continuous planning,” IEEE
+Robot. Autom. Lett., vol. 11, no. 4, pp. 4489–4496, 2026.
+[14] A. Matoses Gimenez, N. Wilde, C. Pek, and J. Alonso-Mora, “Cross-
+entropy optimization of physically grounded task and motion plans,”
+IEEE Robot. Autom. Lett., vol. 11, no. 6, pp. 7214–7221, 2026.
+[15] J. Carvalho, A. T. Le, M. Baierl, D. Koert, and J. Peters, “Motion plan-
+ning diffusion: Learning and planning of robot motions with diffusion
+models,” in Proc. IEEE/RSJ Int. Conf. Intell. Robots Syst. (IROS), 2023,
+pp. 1916–1923.
+[16] M. Braun, N. Jaquier, L. Rozo, and T. Asfour, “Riemannian flow
+matching policy for robot motion learning,” in Proc. IEEE/RSJ Int. Conf.
+Intell. Robots Syst. (IROS), 2024.
+[17] U. A. Mishra, S. Xue, Y. Chen, and D. Xu, “Generative skill chaining:
+Long-horizon skill planning with diffusion models,” in Proc. Conf. Robot
+Learn. (CoRL), 2023, pp. 2905–2925.
+[18] Z. Liang, Y. Mu, H. Ma, M. Tomizuka, M. Ding, and P. Luo,
+“SkillDiffuser: Interpretable hierarchical planning via skill abstractions
+in diffusion-based task execution,” in Proc. IEEE/CVF Conf. Comput.
+Vis. Pattern Recognit. (CVPR), 2024, pp. 16 467–16 476.
+[19] Z. Feng, H. Luan, P. Goyal, and H. Soh, “LTLDoG: Satisfying
+temporally-extended symbolic constraints for safe diffusion-based plan-
+ning,” IEEE Robot. Autom. Lett., vol. 9, no. 10, pp. 8571–8578, 2024.
+[20] Z. Yang, J. Mao, Y. Du, J. Wu, J. B. Tenenbaum, T. Lozano-P´erez, and
+L. P. Kaelbling, “Compositional diffusion-based continuous constraint
+solvers,” in Proc. Conf. Robot Learn. (CoRL), 2023.
+[21] X. Fang, C. R. Garrett, C. Eppner, T. Lozano-P´erez, L. P. Kaelbling, and
+D. Fox, “DiMSam: Diffusion models as samplers for task and motion
+planning under partial observability,” in Proc. IEEE/RSJ Int. Conf. Intell.
+Robots Syst. (IROS), 2024.
+[22] S. P. Sharan, R. Zhao, U. Topcu, Z. Wang, and S. P. Chinchali, “Plan
+diffuser: Grounding LLM planners with diffusion models for robotic
+manipulation,” in Bridging the Gap between Cognitive Science and
+Robot Learning in the Real World: Progresses and New Directions,
+2024.
+[23] J. Austin, D. D. Johnson, J. Ho, D. Tarlow, and R. van den Berg,
+“Structured denoising diffusion models in discrete state-spaces,” in Adv.
+Neural Inf. Process. Syst. (NeurIPS), vol. 34, 2021.
+[24] H. Chang, H. Zhang, L. Jiang, C. Liu, and W. T. Freeman, “MaskGIT:
+Masked generative image transformer,” in Proc. IEEE/CVF Conf. Com-
+put. Vis. Pattern Recognit. (CVPR), 2022, pp. 11 305–11 315.
+[25] S. S. Sahoo, M. Arriola, Y. Schiff, A. Gokaslan, E. Marroquin, J. T.
+Chiu, A. Rush, and V. Kuleshov, “Simple and effective masked diffusion
+language models,” in Adv. Neural Inf. Process. Syst. (NeurIPS), vol. 37,
+2024.
+[26] I. Gat, T. Remez, N. Shaul, F. Kreuk, R. T. Q. Chen, G. Synnaeve,
+Y. Adi, and Y. Lipman, “Discrete flow matching,” in Adv. Neural Inf.
+Process. Syst. (NeurIPS), vol. 37, 2024.
+[27] A. Campbell, J. Yim, R. Barzilay, T. Rainforth, and T. Jaakkola,
+“Generative flows on discrete state-spaces: Enabling multimodal flows
+with applications to protein co-design,” in Proc. Int. Conf. Mach. Learn.
+(ICML), 2024.
+[28] B. Chen, D. Mart´ı Mons´o, Y. Du, M. Simchowitz, R. Tedrake, and
+V. Sitzmann, “Diffusion forcing: Next-token prediction meets full-
+sequence diffusion,” in Adv. Neural Inf. Process. Syst. (NeurIPS), vol. 37,
+2024.
+[29] M. Andrychowicz, F. Wolski, A. Ray, J. Schneider, R. Fong, P. Welinder,
+B. McGrew, J. Tobin, P. Abbeel, and W. Zaremba, “Hindsight experience
+replay,” in Adv. Neural Inf. Process. Syst. (NeurIPS), vol. 30, 2017.
+[30] D. Wang, S. Hart, D. Surovik, T. Kelestemur, H. Huang, H. Zhao,
+M. Yeatman, J. Wang, R. Walters, and R. Platt, “Equivariant diffusion
+policy,” in Proc. Conf. Robot Learn. (CoRL), 2024.
+[31] T. Z. Zhao, V. Kumar, S. Levine, and C. Finn, “Learning fine-grained
+bimanual manipulation with low-cost hardware,” in Proc. Robot.: Sci.
+Syst. (RSS), 2023.
+[32] Z. Fu, T. Z. Zhao, and C. Finn, “Mobile ALOHA: Learning bimanual
+mobile manipulation using low-cost whole-body teleoperation,” in Proc.
+Conf. Robot Learn. (CoRL), 2024, pp. 4066–4083.
+[33] T. Scholak, N. Schucher, and D. Bahdanau, “PICARD: Parsing in-
+crementally for constrained auto-regressive decoding from language
+models,” in Proc. Conf. Empir. Methods Nat. Lang. Process. (EMNLP),
+2021.
+
+
+[34] S. Geng, M. Josifoski, M. Peyrard, and R. West, “Grammar-constrained
+decoding for structured NLP tasks without finetuning,” in Proc. Conf.
+Empir. Methods Nat. Lang. Process. (EMNLP), 2023.
+[35] A. Campbell, J. Benton, V. De Bortoli, T. Rainforth, G. Deligiannidis,
+and A. Doucet, “A continuous time framework for discrete denoising
+models,” in Adv. Neural Inf. Process. Syst. (NeurIPS), vol. 35, 2022.
+[36] G. Wang, Y. Schiff, S. S. Sahoo, and V. Kuleshov, “Remasking discrete
+diffusion models with inference-time scaling,” in Adv. Neural Inf.
+Process. Syst. (NeurIPS), 2025.
+[37] W. Peebles and S. Xie, “Scalable diffusion models with transformers,”
+in Proc. IEEE/CVF Int. Conf. Comput. Vis. (ICCV), 2023.
+[38] A. Kendall, Y. Gal, and R. Cipolla, “Multi-task learning using uncer-
+tainty to weigh losses for scene geometry and semantics,” in Proc.
+IEEE/CVF Conf. Comput. Vis. Pattern Recognit. (CVPR), 2018, pp.
+7482–7491.
+[39] M. Oquab, T. Darcet, T. Moutakanni et al., “DINOv2: Learning robust
+visual features without supervision,” Trans. Mach. Learn. Res., 2024.

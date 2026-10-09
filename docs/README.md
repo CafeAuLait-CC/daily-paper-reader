@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-07</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-09</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 11 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-07 23:36:08 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-09 00:25:39 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日速读11篇、精读挂零，流量生成与模仿学习方向集中发力。最值得看的是三篇7分工作：几何感知时间重参数化、双线性流策略的分布外推，以及路径-流对齐的协同演化。普通读者可先挑双线性流策略入门，关注流匹配如何让机器人模仿更会“举一反三”。</p>
+<p>2026-10-09 日报精选 9 篇，精读 1 篇、速读 8 篇。最值得看的是拿下 9.0 分的 DynaConTalk，用“小波约束扩散”做长时、可控的整体协同语音 3D 动作生成；速读里 UniDynamics 的事件-RGB 融合 4D 动态场景生成与扩散/流匹配后验采样的引导权重调优（均 7.0 分）也值得关注。普通读者可先从 DynaConTalk 入手，再按兴趣跟进 4D 场景生成或采样权重方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DynaConTalk: Wavelet-Constrained Diffusion for Long-Form and Controllable Holistic Co-Speech 3D Motion">DynaConTalk: Wavelet-Constrained Diffusion for Long-Form and Controllable Holistic Co-Speech 3D Motion</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">11 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Geometry-Aware Time Reparameterization for Flow-Map Distillation">Geometry-Aware Time Reparameterization for Flow-Map Distillation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bilinear Flow Policy: Distributional Extrapolation for Goal-Conditioned Visuomotor Imitation">Bilinear Flow Policy: Distributional Extrapolation for Goal-Conditioned Visuomotor Imitation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Co-Evolving Paths and Flows via Path-Flow Alignment">Co-Evolving Paths and Flows via Path-Flow Alignment</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="UniDynamics: Event-RGB Fusion for Unified Future 4D Dynamic Scene Generation">UniDynamics: Event-RGB Fusion for Unified Future 4D Dynamic Scene Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Getting Your Guidance Weights Right in diffusion and flow-matching posterior sampling">Getting Your Guidance Weights Right in diffusion and flow-matching posterior sampling</span></li><li><span class="dpr-home-dashboard-paper-title" title="Visualizing Distribution Coverage in Generative Diffusion Models">Visualizing Distribution Coverage in Generative Diffusion Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>11</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>8</strong></span></div>
 </section>
 </div>
 

@@ -1,0 +1,1835 @@
+DynaConTalk: Wavelet-Constrained Diffusion for Long-Form and
+Controllable Holistic Co-Speech 3D Motion
+YIFEI ZHU, Tohoku University, Japan
+YANGYANG CAI, Tohoku University, Japan
+MINGYI SHI, University of Hong Kong, Hong Kong
+MIAO CHENG, Tohoku University, Japan
+LIN GU, Tohoku University, Japan
+TAKU KOMURA∗, University of Hong Kong, Hong Kong
+YOSHIFUMI KITAMURA∗, Tohoku University, Japan
+Fig. 1. DynaConTalk maps multimodal speech cues to holistic 3D co-speech motion in an aligned wavelet space. The SWT bands separate coarse
+body evolution, gesture-scale dynamics, and fine expressive details while preserving temporal alignment.
+Holistic co-speech animation is prone to averaging in both motion rep-
+resentation and speech conditioning. In coordinate-space diffusion, slow
+body posture, mid-frequency gesture strokes, and fast hand or facial de-
+tails are entangled in one prediction target, often producing low-variance,
+over-smoothed motion. Meanwhile, dense rhythmic and acoustic cues can
+dominate sparse content-specific information under fixed multimodal fu-
+sion. We present DynaConTalk, a wavelet-constrained diffusion framework
+for long-form and controllable holistic co-speech motion generation. Dif-
+fusion operates in stationary wavelet transform (SWT) coefficient space,
+whose temporally aligned bands separate coarse posture evolution, gesture
+strokes, and fine expressive details. Our dynamic gating network preserves
+HuBERT and speaker identity as a base and selectively adds rhythm, mel,
+and transcript features through motion-state- and noise-aware residual
+gates. Attention pooling and learned depth routing deliver complementary
+conditions to each denoising stage, while a frame-resolution rhythm path
+preserves precise timing. A signed proposal–consensus update then rec-
+onciles these conditions with the evolving motion state. Matched-noise
+constraint injection uses the same sampling interface for history continua-
+tion and localized keypose repair, and extends to reference-guided control.
+Separate body-hand and facial denoisers, followed by inverse SWT and a
+∗Corresponding authors.
+Authors’ Contact Information: Yifei Zhu, Tohoku University, Sendai, Japan, zhuyifei.
+q4@dc.tohoku.ac.jp; Yangyang Cai, Tohoku University, Sendai, Japan; Mingyi Shi,
+University of Hong Kong, Hong Kong, Hong Kong; Miao Cheng, Tohoku University,
+Sendai, Japan; Lin Gu, Tohoku University, Sendai, Japan; Taku Komura, University of
+Hong Kong, Hong Kong, Hong Kong, taku@cs.hku.hk; Yoshifumi Kitamura, Tohoku
+University, Sendai, Japan, kitamura@riec.tohoku.ac.jp.
+pose-driven root regressor, produce holistic motion. Experiments evaluate
+generation quality, facial accuracy, temporal continuity, and controllable
+editing. Code, models, and the interactive editing interface are available at
+https://github.com/zhuyifeiabcd1/DynaConTalk.
+Additional Key Words and Phrases: co-speech motion generation, character
+animation, digital humans, diffusion models, wavelet representation, motion
+synthesis
+1
+Introduction
+Holistic co-speech generation is inherently prone to averaging,
+largely because the motion signal itself is layered rather than a
+single homogeneous pose sequence. While the torso evolves slowly
+to anchor the speaker, arms and hands produce mid-frequency ges-
+ture strokes, and fingers and facial expressions carry fast expressive
+details [Alexanderson et al. 2023; Ao et al. 2023; Chen et al. 2024b;
+Liu et al. 2024b; Pavlakos et al. 2019; Yang et al. 2023; Yi et al. 2023;
+Zhang et al. 2025]. This layered structure makes holistic co-speech
+generation especially vulnerable to averaging. When all body, hand,
+face, and trajectory variables are diffused as one coordinate vec-
+tor, slow posture, gesture strokes, and high-frequency details are
+optimized in the same space. The model can then reduce loss by
+producing safe and over-smoothed motion, where rare expressive
+gestures are absorbed into common beat-like movements.
+A second source of averaging is rooted in the way speech condi-
+tioning is structured. Speech provides multiple heterogeneous cues:
+1
+arXiv:2610.09846v1  [cs.GR]  7 Oct 2026
+
+
+2
+•
+Zhu et al.
+rhythm and acoustic energy are dense and frequent, while semantic
+and textual cues are sparse but crucial for content-specific gestures.
+Fixed concatenation or static fusion tends to let frequent rhythmic
+cues dominate the generated update, causing rare semantic gestures
+to be weakened or replaced by generic motion.
+To cope with these problems, we propose DynaConTalk, a wavelet-
+constrained diffusion framework for long-form and controllable
+holistic co-speech motion generation. Our approach tackles both
+sources of averaging by explicitly structuring the motion represen-
+tation and conditioning signals according to their temporal and
+semantic properties.
+First, to address motion-level averaging, we perform diffusion in
+the stationary wavelet transform (SWT) space, where aligned bands
+separate coarse posture, mid-frequency gestures, and fine expressive
+details. This decomposition enables scale-specific learning through
+dedicated prediction heads, preventing low-amplitude expressive
+dynamics from being overwhelmed by dominant coarse motion
+without resorting to a single entangled coordinate-space target.
+Second, we introduce state-aware dynamic gating and proposal–
+consensus conditioning. HuBERT features and speaker identity form
+a persistent base; independent residual gates select rhythm, mel,
+and transcript cues using both the current noisy motion and the
+diffusion timestep. Learned attention pooling and modality-to-depth
+routing adapt these signals to each denoising stage, while a separate
+frame-level rhythm path preserves timing within temporal patches.
+The consensus branch controls a signed motion update, allowing a
+proposed change to be accepted, attenuated, or reversed according
+to the current motion state.
+Third, we introduce matched-noise constraint injection for long-
+form continuation and flexible user control. A clean motion history
+or reference target is re-noised to the current diffusion timestep
+before being injected into the constrained region. This provides
+a shared sampling interface for window continuation, localized
+keypose repair, and reference-guided control. The released window
+sampler also uses a short velocity-based blend at joins, and the
+interactive editor repairs only clips surrounding the requested edits.
+Our contributions are summarized as follows:
+• SWT coefficient diffusion. We formulate motion genera-
+tion in temporally aligned wavelet space, decoupling coarse
+posture, gesture strokes, and fine hand and facial details
+through band-specific decoding.
+• Dynamic conditioning. We combine a persistent base,
+sparse residual gates, attention pooling, depth routing, and
+a frame-level rhythm path with signed proposal–consensus
+injection into the denoiser.
+• Matched-noise constraint injection. We turn window
+continuation, keypose editing, and reference control into
+a single in-distribution denoising process by injecting con-
+straints at the matched diffusion noise level.
+2
+Related Work
+2.1
+From Neural Regression to Holistic Diffusion
+Early speech-driven animation mapped linguistic and prosodic cues
+to authored gesture libraries [Cassell et al. 2001; Kipp 2005; Kopp
+et al. 2006; Prendinger et al. 2004]. Neural methods replaced these
+discrete pipelines with direct speech-to-motion regression using
+convolutional and recurrent models [Ferstl and McDonnell 2018;
+Ginosar et al. 2019; Hasegawa et al. 2018; Takeuchi et al. 2017; Yoon
+et al. 2019], but deterministic regression tends to average over the
+one-to-many mapping between speech and valid gestures [Cassell
+et al. 1999; Kucherenko et al. 2021; Loehr 2007].
+Generative models address this ambiguity through adversarial
+learning [Bhattacharya et al. 2021; Ferstl et al. 2020; Wu et al. 2021],
+variational models [Li et al. 2021; Pang et al. 2023; Petrovich et al.
+2021], and normalizing flows [Alexanderson et al. 2020; Henter
+et al. 2020; Ye et al. 2022]. Diffusion models [Ho et al. 2020; Song
+et al. 2021] further improved stochastic motion generation [Chen
+et al. 2023; Tevet et al. 2023] and speech-driven gesture synthe-
+sis [Alexanderson et al. 2023; Ao et al. 2023; Yang et al. 2023; Zhu
+et al. 2023]. Recent systems have expanded from upper-body ges-
+ture to coordinated body, hands, face, and trajectory [Chen et al.
+2024b; Liu et al. 2024b,a; Ng et al. 2021, 2024; Pang et al. 2023; Xu
+et al. 2024; Yi et al. 2023; Zhang et al. 2025]. Most generate motion
+in pose-coordinate or learned latent spaces; DynaConTalk instead
+uses an explicit temporally aligned multiscale representation as the
+diffusion target.
+2.2
+Content, Rhythm, and Dynamic Speech Conditioning
+Co-speech motion depends on complementary speech cues: prosody
+and acoustics capture rhythm and emphasis, self-supervised features
+such as wav2vec and HuBERT encode phonetic and contextual infor-
+mation [Baevski et al. 2020; Hsu et al. 2021], while text and speaker
+identity provide semantic and behavioral context. Multimodal meth-
+ods combine these signals or learn cross-modal associations [Liang
+et al. 2022; Liu et al. 2022b; Zhi et al. 2023], and DisCo separates con-
+tent and rhythm representations for diverse gesture generation [Liu
+et al. 2022a].
+Semantic conditioning has also been introduced through text
+features [Kucherenko et al. 2020], language-aligned diffusion la-
+tents [Ao et al. 2023], retrieved gesture concepts [Zhang et al. 2024],
+and holistic semantic-motion modeling [Zhang et al. 2025]. Dyna-
+ConTalk instead dynamically regulates multiple speech conditions
+according to the evolving motion state.
+2.3
+Frequency and Multiscale Motion Representation
+Frequency structure has been used to model periodic and long-
+range motion [Holden et al. 2017; Starke et al. 2022]. In gesture
+synthesis, DisCo uses motion analysis to disentangle content and
+rhythm without generating directly in the frequency domain [Liu
+et al. 2022a]. More recent work incorporates Fourier or wavelet
+structure into motion modeling [Fan et al. 2025; Feng et al. 2024],
+while wavelet-domain diffusion has also been explored for image
+synthesis and restoration [Huang et al. 2024; Phung et al. 2023].
+Co-speech motion additionally requires temporal alignment be-
+cause speech cues, gesture events, continuation boundaries, and
+user controls occur at specific times. Unlike global Fourier repre-
+sentations or decimated wavelets, the stationary wavelet transform
+(SWT) retains coefficients at every frame and scale. Following dif-
+fusion inpainting methods such as RePaint [Lugmayr et al. 2022],
+known content can be re-noised to the current diffusion level and
+
+
+DynaConTalk
+•
+3
+reintroduced during reverse sampling. DynaConTalk exploits this
+alignment for both speech-conditioned generation and localized
+control. This temporal alignment also provides a common interface
+for long-form synthesis and motion control: whereas prior work
+uses overlapping diffusion windows or inpainting/repainting for
+continuation and separate style, semantic, joint, or keyframe con-
+straints for control [Ahuja et al. 2020; Chen et al. 2024a,c; Jin et al.
+2023; Tevet et al. 2023; Zhang et al. 2024], DynaConTalk represents
+history, keyposes, and reference motion as partial observations in-
+jected at matched diffusion noise levels.
+3
+Method
+Co-speech animation must turn rapidly varying speech into physi-
+cally coherent body, hand, face, and root motion over long durations.
+DynaConTalk addresses this by performing conditional diffusion in
+a stationary wavelet motion space, where multi-scale motion coeffi-
+cients are generated by stream-specific denoisers and reconstructed
+into SMPL-X [Pavlakos et al. 2019] motion by inverse SWT. We first
+define the motion representation and wavelet diffusion (Secs. 3.1
+and 3.2), then describe the structure-aware denoisers (Sec. 3.3), state-
+aware dynamic gating and consensus injection (Sec. 3.4), matched-
+noise continuation and control (Sec. 3.5), and the training objectives
+(Sec. 3.6).
+3.1
+Problem Formulation
+Given an arbitrary-length speech signal, we generate holistic co-
+speech motion including body-hand pose, facial expression, and
+root trajectory. Training sequences are cut into 𝑁-frame clips. For
+each clip, the audio is encoded into a frame-aligned feature bank
+containing a three-channel rhythm descriptor (amplitude envelope,
+short-time energy, and onsets), a 128-band mel spectrogram, and
+1024-dimensional HuBERT-Large features. A 512-dimensional CLIP
+transcript embedding provides window-level text context. Speaker
+identity is represented by the speaker index, a learned speaker
+embedding, and the first ten SMPL-X shape coefficients. The local
+motion consists of body-hand 6D rotations 𝐵∈R𝑁×330 and facial
+expression coefficients 𝐹∈R𝑁×100.
+We model body-hand and face motion in SWT coefficient space.
+With a 3-level SWT, each channel is represented by four aligned
+bands (cA3, cD3, cD2, cD1), giving body-hand targets 𝑋𝐵
+0 ∈R𝑁×1320
+and face targets 𝑋𝐹
+0 ∈R𝑁×400. We find that diffusing the root tra-
+jectory jointly with the body motion is ineffective for two reasons.
+First, audio is largely uninformative for root trajectory prediction:
+the root trajectory is mainly correlated with lower-body motion.
+Joint training may produce plausible trajectories conditioned on the
+audio, but these trajectories are not necessarily consistent with the
+generated motion. Second, the root trajectory is only 3-dimensional,
+whereas the body representation is 330-dimensional, making its
+loss easily underweighted during training despite its strong visual
+impact. We therefore attach a separate pose-driven root-translation
+regressor. It uses pelvis-centered joint positions, their temporal
+derivatives, and root yaw rate extracted from the generated body
+pose. A convolutional patch encoder, bidirectional GRU, and tem-
+poral upsampling decoder predict translation relative to the first
+frame. Root translation is added after local pose generation; it is not
+part of the body denoiser’s 1320-dimensional target.
+3.2
+Wavelet-Domain Diffusion
+As shown in the left part of Fig. 2, DynaConTalk maps local motion
+into a stationary wavelet space before diffusion. For a stream target
+𝑀∈{𝐵, 𝐹}, we apply SWT along the temporal axis:
+𝑋0 = W(𝑀) = {cA3, cD3, cD2, cD1}.
+The coefficients are interleaved per channel and normalized by
+training-set mean and standard deviation. This representation ex-
+poses slow posture evolution and fast expressive details as tempo-
+rally aligned bands, allowing the denoiser to model coarse motion
+and fine details in a shared generation space.
+The forward diffusion process corrupts the normalized wavelet
+target 𝑥0 by
+𝑞(𝑥𝑡|𝑥0) = N
+
+𝑥𝑡; √¯𝛼𝑡𝑥0, (1 −¯𝛼𝑡)I
+
+.
+Given 𝑥𝑡, timestep 𝑡, and condition 𝑐, the denoiser predicts the clean
+wavelet sample:
+ˆ𝑥0 = 𝑓𝜃(𝑥𝑡,𝑡,𝑐).
+After sampling, the predicted coefficients are de-normalized and
+reconstructed by inverse SWT. This frequency-aware prediction
+makes isolated coordinate errors less likely to appear as abrupt
+frame-wise motion artifacts after reconstruction. We provide addi-
+tional diagnostic analysis of the SWT motion space in Fig. 8.
+3.3
+Structure-Aware Denoiser
+The body-hand stream and the face stream share the same diffu-
+sion formulation and conditioning interface, but use stream-specific
+backbones. The body-hand stream predicts high-dimensional SMPL-
+X joint rotations and uses structural motion tokens, while the face
+stream predicts compact expression coefficients and uses a lighter
+temporal Transformer without joint tokenization.
+Joint- and band-aware motion encoder. The body target is re-
+shaped to 𝑁× 55 × 4 × 6: each of the 55 SMPL-X joints has a
+six-dimensional rotation in each of four aligned SWT bands. A band-
+specific temporal convolution embeds each joint-band sequence.
+Learned joint and band embeddings identify the tokens. Within
+each frame, a spatial Transformer shared across bands models inter-
+joint coordination; a second Transformer mixes the four bands of
+each joint. Band fusion followed by joint fusion produces a frame-
+level feature. A linear projection of the input provides a parallel
+bypass:
+𝐻= Linear(𝑥𝑡) + 𝜌LN(TokenEncoder(𝑥𝑡)) ,
+where 𝜌is initialized to zero. This allows training to start with the
+linear representation and progressively incorporate the structured
+token branch. The face stream uses a direct linear projection instead
+of joint tokenization.
+Local and patch-level temporal processing. Each denoiser has four
+stages. A stage combines two local convolutional modules with
+a patch-level temporal mixer. Pointwise and depthwise temporal
+convolutions preserve local detail. The mixer downsamples motion
+features by 8×, applies stage-specific FiLM and proposal–consensus
+
+
+4
+•
+Zhu et al.
+Fig. 2. Overview of DynaConTalk. Speech conditions drive separate body-hand and face wavelet diffusion streams. The body stream uses structural motion
+tokens, the face stream predicts expression coefficients, and a pose-driven BiGRU supplies root translation after local motion generation. Matched-noise
+constraints support window continuation and keypose editing.
+conditioning, and processes the resulting patches with a temporal
+Transformer. A reversed copy of the patch sequence is prepended
+before attention, and the outputs for the original sequence are re-
+tained. Patch features are repeated back to frame resolution and
+fused with the frame-level branch. A diffusion-time token accom-
+panies the sequence; the identity projection is added to this token
+in both classifier-free guidance branches. Thus, local motion detail,
+longer-range temporal context, and speaker identity are available
+throughout the trunk.
+Four band-specific wavelet decoding heads. The SWT represen-
+tation also affects the output decoding design. Instead of using
+one shared decoder for all coefficients, DynaConTalk predicts each
+wavelet band with an independent head:
+ˆ𝑥𝑏
+0 = Head𝑏(ℎ),
+𝑏∈{cA3, cD3, cD2, cD1}.
+The low-frequency head cA3 models stable posture and broad body
+evolution, cD3 and cD2 capture gesture strokes and rhythmic mid-
+frequency motion, and cD1 preserves fast hand and facial details.
+This is a direct benefit of the wavelet motion space: different tem-
+poral scales no longer compete inside a single output decoder. The
+model can allocate decoder capacity according to frequency-specific
+motion statistics, which reduces over-smoothing of high-frequency
+details while keeping the inverse SWT reconstruction coherent.
+3.4
+State-Aware Dynamic Gating and Consensus
+Conditioning
+Dense acoustic cues and sparse content cues need not contribute
+equally to every frame or every denoising stage. Our Dynamic
+Gating Network (DGN) separates a persistent semantic–identity
+base from selectively activated residual streams. Its residual gates
+depend on speech, the encoded noisy motion, and the diffusion
+noise level. We use 𝑖for a motion frame, 𝑠for a diffusion timestep,
+and ℓfor a denoiser stage.
+Persistent base and residual modalities. Separate MLPs project
+rhythm, mel, HuBERT, and CLIP text features into a common em-
+bedding space. Let 𝑒hub
+𝑖
+, 𝑒rh
+𝑖, 𝑒mel
+𝑖
+, and 𝑒txt
+𝑖
+denote these embeddings.
+The window transcript embedding is broadcast across its frames;
+it is not a per-word label. An identity MLP embeds the normalized
+speaker index and shape coefficients, and a learned speaker lookup
+embedding is added to it to form 𝑒id. The base is
+𝑏𝑖= 𝑒hub
+𝑖
++ 𝑒id.
+HuBERT supplies frame-aligned speech context, while identity
+anchors speaker-specific behavior. The residual modality set is
+M = {rh, mel, txt}. These streams have independent sigmoid gates
+rather than competing through a modality softmax. Consequently,
+several cues can be active together, or all residual cues can be atten-
+uated while the base remains available.
+Motion-state- and noise-aware gates. Let 𝐻(𝑠)
+𝑖
+be the frame-level
+encoding of the noisy wavelet input before the denoiser trunk, and
+let 𝑣𝑠be the diffusion-time embedding. Their projected sum gives a
+gate context:
+𝑞𝑖,𝑠= LN
+
+𝑊ℎ𝐻(𝑠)
+𝑖
++𝑊𝑠𝑣𝑠
+
+.
+The gate MLP receives normalized residual embeddings and this
+context:
+𝑧𝑖,𝑠= 𝐺
+
+[LN(𝑒rh
+𝑖); LN(𝑒mel
+𝑖
+); LN(𝑒txt
+𝑖);𝑞𝑖,𝑠]
+
+.
+For residual modality 𝑚, the gate is
+𝛼𝑚
+𝑖,𝑠= sigmoid
+
+𝑧𝑚
+𝑖,𝑠+ 𝜂𝑚
+ 𝑠
+𝑆−1
+2
+
+,
+(1)
+
+
+DynaConTalk
+•
+5
+where 𝑆= 1000 is the training diffusion schedule length and 𝜂𝑚
+is a learned noise-level coefficient. The added linear term permits
+modality-specific changes in gate opening across the denoising
+schedule; the state-aware MLP can also adapt to the current sample.
+Normalization is used in the gate inputs, while the residual values
+retain their learned amplitudes. Define 𝑢0
+𝑖= 𝑏𝑖and 𝑢𝑚
+𝑖= 𝛼𝑚
+𝑖,𝑠𝑒𝑚
+𝑖for
+𝑚∈M. The semantic base and these three residual streams are
+retained separately for stage routing.
+The final gate layer has zero-initialized weights and bias −3, so the
+residual gates start at sigmoid(−3) ≃0.047. The noise coefficients
+𝜂𝑚start at zero. A small mean-gate penalty (Sec. 3.6) encourages
+selective residual use; it does not impose hard binary decisions.
+Attention pooling and modality-to-depth routing. To align con-
+ditions with the motion trunk’s eight-frame patches, each source
+stream is pooled independently with a shared learned score function
+𝑎. For source 𝑘and patch P𝑝,
+𝜔𝑘
+𝑖,𝑝=
+exp𝑎(𝑢𝑘
+𝑖)
+Í
+𝑗∈P𝑝exp𝑎(𝑢𝑘
+𝑗)
+,
+¯𝑢𝑘
+𝑝=
+∑︁
+𝑖∈P𝑝
+𝜔𝑘
+𝑖,𝑝𝑢𝑘
+𝑖.
+The score function’s last layer starts at zero, giving uniform averag-
+ing initially. Learning can then emphasize relevant frames within
+a patch. Each stage has its own learned routing logits 𝑟ℓ,𝑘over the
+four source streams:
+𝑤ℓ,𝑘= softmax𝑘(𝑟ℓ,𝑘),
+𝑐ℓ,𝑝= C
+ ∑︁
+𝑘
+𝑤ℓ,𝑘¯𝑢𝑘
+𝑝
+!
+.
+Here, C uses pointwise channel projections, layer normalization,
+and dropout. Routing weights are learned per stage and shared
+across samples; the residual gates and attention-pooling weights
+vary with the input. Zero-initialized routing logits initially allocate
+equal weights. Separate stage projections turn 𝑐ℓ,𝑝into a proposal
+feature 𝑓ℓ,𝑝and FiLM parameters (𝛾ℓ,𝑝, 𝛽ℓ,𝑝).
+Frame-resolution rhythm and identity paths. Patch pooling can
+dilute short rhythm events. We therefore also add
+𝑟frame
+𝑖,𝑠
+= 𝛼rh
+𝑖,𝑠𝑊𝑟𝑒rh
+𝑖
+to the encoded motion frames before the trunk, bypassing condition
+pooling. The projection𝑊𝑟starts at zero. A separate zero-initialized
+identity projection is added to the diffusion-time token. For classifier-
+free guidance, the unconditional branch replaces the base with a
+learned null embedding and closes all residual gates; the identity-
+token path is retained. Guidance therefore changes the speech-
+dependent update while keeping an explicit speaker anchor.
+Signed proposal–consensus injection. At each stage, letℎbe a patch-
+level motion feature and 𝑓its routed condition. FiLM first modulates
+the motion feature:
+˜ℎ= ℎ⊙(1 + tanh𝛾) + tanh 𝛽.
+A bounded proposal 𝑝is predicted from the modulated state and
+condition:
+𝑝= tanh
+
+𝑃([ ˜ℎ; 𝑓])
+
+.
+Fig. 3. Matched-noise window continuation. Instead of stitching indepen-
+dently generated windows, DynaConTalk re-noises the committed clean
+history to the current diffusion level and injects it into the overlap region at
+every reverse step.
+The consensus network observes both the proposal and the same
+motion state:
+𝑔= tanh
+
+𝐶([𝑝; ˜ℎ])
+
+,
+ℎ+ = ˜ℎ+ 𝜆ℓ(𝑔⊙𝑝).
+(2)
+The consensus gate is signed: each component can preserve, sup-
+press, or reverse a proposed update. Its final linear layer is initialized
+to zero, so proposal injection is initially inactive even though the
+learnable stage scale 𝜆ℓstarts at one. The updated patches are then
+processed by the temporal Transformer. This distinguishes modality
+selection, which determines what speech information is available,
+from consensus injection, which determines how that information
+changes the current motion.
+3.5
+Matched-Noise Constraint Injection
+We use a shared matched-noise constraint mechanism [Lugmayr
+et al. 2022] for long-form window continuation, sparse keypose
+editing, and reference-guided motion control. Constraints act di-
+rectly on the noisy wavelet sample, so the same denoiser and noise
+schedule can be used across these tasks.
+Let 𝑥𝑐
+0 be a clean constraint in wavelet space and 𝑚be a soft mask
+over time, body part, and wavelet band. Constraint coefficients
+use the same training-set normalization as the diffusion target. At
+reverse diffusion step 𝑡, we re-noise the constraint to the current
+diffusion level:
+𝑥𝑐
+𝑡= √¯𝛼𝑡𝑥𝑐
+0 + √1 −¯𝛼𝑡𝜖,
+(3)
+and inject it into the current sample:
+˜𝑥𝑡= (1 −𝑚) ⊙𝑥𝑡+ 𝑚⊙𝑥𝑐
+𝑡.
+(4)
+The denoiser then predicts ˆ𝑥0 from ˜𝑥𝑡, so constraints and generated
+content are observed at a consistent noise level.
+Seamless Window Transition. We now describe how we can apply
+this approach for seamlessly transitioning between motions syn-
+thesized per window. Fig. 3 top illustrates a standard windowed
+
+
+6
+•
+Zhu et al.
+outpainting scheme [Chen et al. 2024b], during the diffusion pro-
+cess, the beginning of each new window is replaced with the ending
+frames of the previous window as conditioning, thereby enabling
+the generation of arbitrarily long motion sequences.
+The middle row shows our approach. Instead of using the previous
+motion only as an overlap between windows, we repeatedly re-noise
+the committed clean history as the constraint during the diffusion
+process.
+The bottom row shows this operation in detail. At each reverse
+diffusion step, we take the same clean history, add noise to match
+the current diffusion level as in Eq. 3, and inject it into the overlap
+region as in Eq. 4 by masking for the overlapping region. At the next
+step, we again start from the original clean history, re-noise it to the
+new diffusion level, and repeat the process. After sampling, only the
+newly generated future frames are appended to the sequence. The
+released sampler uses 64-frame windows with an eight-frame his-
+tory and a 56-frame stride. It restores the overlap to the clean history
+at the end of sampling. A four-frame dead blend further smooths
+each join: the previous window’s final velocity extrapolates the
+committed motion, and a linear crossfade mixes that extrapolation
+with the new frames. The history for the next window is taken from
+this committed sequence.
+Keypose-guided editing. As shown in Fig. 4, for sparse pose editing,
+the user specifies K = {(𝜏𝑖, 𝐽𝑖,𝑦𝑖,𝑤𝑖)}, where 𝜏𝑖is the edited frame,
+𝐽𝑖is the controlled body part, 𝑦𝑖is the target pose, and 𝑤𝑖∈[0, 1] is
+the strength of the edit. Given the base generated motion 𝑀base, we
+construct a smooth keypose target 𝑀key around the edited frame.
+Let 𝑅base
+𝑗,𝑡
+∈SO(3) denote the rotation matrix of joint 𝑗at frame 𝑡
+in 𝑀base, 𝑅tar
+𝑗
+∈SO(3) the target rotation extracted from the user-
+specified pose 𝑦𝑖, and 𝑅key
+𝑗,𝑡the resulting smooth target rotation. For
+rotational keyposes, the target is formed by interpolation in SO(3):
+𝑅key
+𝑗,𝑡= 𝑅base
+𝑗,𝑡
+exp
+
+𝑔𝑖(𝑡) log
+
+(𝑅base
+𝑗,𝑡)⊤𝑅tar
+𝑗
+
+,
+𝑗∈𝐽𝑖,
+where the temporal edit mask is defined as
+𝑔𝑖(𝑡) = 𝑤𝑖exp
+
+−(𝑡−𝜏𝑖)2
+2𝜎2
+𝑖
+
+,
+where 𝜎𝑖controls the temporal width of the edit. Rotations outside
+the controlled joint set 𝐽𝑖remain unchanged. The complete sequence
+assembled from these target rotations and represented in 6D rotation
+space is denoted by 𝑀key. Let W denote the channel-wise temporal
+SWT defined in Sec. 3.2. We transform 𝑀key into SWT space and
+construct a separable constraint mask 𝑚key over time, body parts,
+and wavelet bands:
+𝑥key
+0
+= W(𝑀key),
+𝑚key = 𝑚time ⊗𝑚part ⊗𝑚band.
+In the SWT domain, the keypose constraint is no longer a frame-wise
+coordinate replacement; instead, it is distributed over temporally
+aligned frequency bands, anchoring low-frequency pose changes
+while allowing high-frequency gesture details to be repaired by the
+denoising prior. Editing is then performed by a second diffusion
+repair pass initialized from the initial wavelet prediction. The user
+can control the edit strength, affected body parts, and constrained
+wavelet bands. Since this uses the same matched-noise injection as
+Fig. 4. Keypose-guided wavelet repainting. A sparse user keypose is con-
+verted into a smooth SWT-domain target and injected through a time-part-
+band mask using the same matched-noise mechanism as history continua-
+tion.
+seamless window transition, the denoiser completes the surround-
+ing motion while following the sparse keypose constraint. In the
+released editor, quaternion SLERP implements the rotation inter-
+polation above. Repainting starts halfway through the sampling
+schedule from a noised copy of the base prediction. A fixed target-
+noise realization is reused across the repaint steps, while history
+noise is resampled at each step. In overlap frames, history takes
+priority over the edit mask. Windows with an empty edit mask
+retain the base prediction. Edits are grouped into local clips, and the
+repaired clips are crossfaded into the surrounding motion at their
+borders.
+Reference-guided control. Through the wavelet representation, the
+same mechanism can be extended from sparse keyposes to broader
+reference controls, including style control, hold-pose guidance, and
+follow-action guidance.
+For style control, let 𝑅denote a reference motion, and let 𝑝and
+𝑏index a body part and a wavelet band, respectively. We denote
+by ˆ𝑥𝑝,𝑏
+0
+and 𝑥𝑝,𝑏
+𝑅
+the corresponding part-band coefficients of the
+current clean prediction and the reference motion, 𝜇𝑝,𝑏
+𝑅
+and 𝜎𝑝,𝑏
+𝑅
+the
+temporal mean and standard deviation of 𝑥𝑝,𝑏
+𝑅, and 𝜇𝑝,𝑏
+ˆ𝑥
+and 𝜎𝑝,𝑏
+ˆ𝑥
+
+
+DynaConTalk
+•
+7
+those of ˆ𝑥𝑝,𝑏
+0 . We project the current prediction toward the reference
+statistics by
+Π𝑅( ˆ𝑥0)𝑝,𝑏= 𝜇𝑝,𝑏
+𝑅
++ 𝜎𝑝,𝑏
+𝑅
+ˆ𝑥𝑝,𝑏
+0
+−𝜇𝑝,𝑏
+ˆ𝑥
+𝜎𝑝,𝑏
+ˆ𝑥
++ 𝜖
+,
+ˆ𝑥′
+0 = ˆ𝑥0 + 𝜆𝑚𝑅⊙(Π𝑅( ˆ𝑥0) −ˆ𝑥0) .
+where Π𝑅denotes the reference-statistics projection, 𝜆controls its
+strength, and 𝑚𝑅selects the affected time range, body parts, and
+wavelet bands. For hold-pose and follow-action control, the selected
+pose is repeated or the reference action is looped/stretched into a
+clean target sequence 𝑀𝑅= T (𝑅), transformed into SWT space,
+and injected as a time-part-band constraint:
+𝑥𝑅
+0 = W(𝑀𝑅),
+˜𝑥𝑡= (1−𝑚𝑅) ⊙𝑥𝑡+𝑚𝑅⊙
+√¯𝛼𝑡𝑥𝑅
+0 + √1 −¯𝛼𝑡𝜖
+
+.
+Thus, style modifies part-band statistics, hold-pose anchors a long-
+range postural target, and follow-action guides the motion along a
+reference action, while the denoiser preserves speech compatibility
+and repairs unconstrained details.
+3.6
+Training Objective
+Both streams predict clean samples in normalized SWT coefficient
+space. Using ⟨·⟩for an average over the indicated tensor entries, the
+diffusion objective is
+Lwav = E𝑥0,𝑠,𝜖
+
+( ˆ𝑥0 −𝑥0)2
+.
+For the body stream, we de-normalize the coefficients, apply inverse
+SWT, and compute SMPL-X joint positions. Position and velocity
+supervision are
+Lgeo =
+
+(FK( ˆ𝐵) −FK(𝐵))2
+,
+Lvel =
+
+(ΔFK( ˆ𝐵) −ΔFK(𝐵))2
+.
+Boundary supervision compares the first predicted future pose with
+the final ground-truth history pose:
+Lsmo =
+
+( ˆ𝐵fut
+1 −𝐵hist
+𝐾)2
+.
+The editable body recipe also applies a foot-contact loss. Predicted
+and ground-truth local joints are placed in world coordinates under
+the root trajectory used for training. Ground-truth foot displacement
+and height identify the contact set C, and the loss penalizes mean
+horizontal foot displacement on those frames:
+Lfoot = 1
+|C|
+∑︁
+(𝑖,𝑗)∈C
+∥( ˆ𝑝𝑖,𝑗−ˆ𝑝𝑖−1,𝑗)𝑥𝑧∥2.
+The contact thresholds are 0.01 for per-frame horizontal displace-
+ment and 0.05 m for height above the sequence’s ground estimate;
+an empty contact set contributes zero.
+Sparse keypose supervision. For the editable body recipe, training
+clips have no keypose, one keypose, or two to three keyposes with
+probabilities 0.5, 0.25, and 0.25. Keyposes select ground-truth motion
+at random future frames and body parts, with Gaussian temporal
+masks of width 𝜎= 6 frames. The masked ground-truth coefficients
+supply the training hint. The additional supervision uses the soft
+mask as a weight:
+Lkp =
+Í
+𝑖,𝑑𝑚𝑖,𝑑( ˆ𝑥0,𝑖,𝑑−𝑥0,𝑖,𝑑)2
+Í
+𝑖,𝑑𝑚𝑖,𝑑+ 𝜖
+.
+The speech-only body and face recipes have no keypose supervision.
+At inference, user keyposes replace these synthetic targets in the
+repainting mechanism.
+Residual-gate regularization. The DGN residual gates are encour-
+aged to open selectively through
+Lgate = E
+"
+1
+𝑁|M|
+𝑁
+∑︁
+𝑖=1
+∑︁
+𝑚∈M
+𝛼𝑚
+𝑖,𝑠
+#
+,
+𝜆gate = 10−3.
+Because the gates are nonnegative, this is a mean 𝐿1 penalty. The
+full body objective is
+L𝐵= Lwav + 0.2Lgeo + 0.5Lvel + Lsmo
++ 𝜆footLfoot + 𝜆kpLkp + 10−3Lgate.
+The editable recipe uses 𝜆foot = 8 and 𝜆kp = 1; both are zero for the
+speech-only recipe. The face objective is L𝐹= Lwav + 10−3Lgate.
+4
+Experiments
+We first evaluate the complete DynaConTalk system, then ana-
+lyze the evidence for each of its three core components: SWT mo-
+tion representation, dynamic proposal–consensus conditioning, and
+matched-noise constraint injection.
+4.1
+Experimental Setup
+Datasets. We evaluate on two public holistic co-speech bench-
+marks, BEAT2 [Liu et al. 2024b] and SHOW [Yi et al. 2023]. BEAT2
+provides motion-captured holistic body, hand, and facial motion,
+whereas SHOW contains SMPL-X motion reconstructed from in-
+the-wild talking videos with synchronized speech. We represent all
+motion at 30 fps.
+Evaluation metrics. For all main comparisons, we use the official
+training, validation, and test splits. For body motion, Fréchet Ges-
+ture Distance (FGD) [Yoon et al. 2020] measures the distribution of
+learned gesture features, beat consistency (BC) measures speech–
+motion rhythm alignment, and L1 diversity measures motion vari-
+ation. Facial output is evaluated with vertex MSE and face-vertex
+velocity distance (LVD), using the released EMAGE evaluation tools.
+In Table 1, the test-set ground truth (GT) provides reference values
+for BC and diversity; generated values closer to these references are
+preferred.
+The speech-only body evaluation generates complete test se-
+quences without ground-truth motion history, keypose targets, or
+root-trajectory inputs. FGD uses 6D joint rotations; BC and diversity
+use SMPL-X joint positions with neutral body shape. BC excludes
+the first and last two seconds of each sequence. For face evaluation,
+the first eight expression frames initialize the history. SMPL-X ver-
+tices use the predicted expressions with the ground-truth jaw pose
+and body shape. Thus, facial metrics assess expression generation
+under this stated initialization and geometry protocol.
+Implementation details. The body denoisers have four stages with
+1024 channels and use 256-dimensional joint-band tokens, four spa-
+tial Transformer layers, two cross-band layers, and temporal at-
+tention with 16 heads. The face denoiser has four stages with 512
+channels, uses temporal attention with eight heads, and omits joint
+tokens. The condition embedding width is 256 for body and 128 for
+
+
+8
+•
+Zhu et al.
+face. All recipes use three-level db6 SWT, a linear diffusion schedule
+with 1000 training steps, 64-frame windows, and temporal patches
+of eight frames.
+We optimize with AdamW, learning rate 2 × 10−4, zero weight
+decay, effective batch size 192, gradient clipping at 0.5, and mixed
+bfloat16 precision. An exponential moving average with decay 0.995
+starts at optimizer step 1000. The per-epoch cosine learning rate has
+minimum 5 × 10−6 and an initial period of 600 epochs. The period
+changes to 160 at epoch 104 for the speech-only body recipe, 200 at
+epoch 136 for the editable body recipe, and 158 at epoch 33 for the
+face recipe; it is evaluated using the absolute epoch. Training ends
+at epochs 157, 176, and 157, respectively (zero-based numbering).
+The reported speech-only body checkpoint is epoch 157; the face
+checkpoint is epoch 150, selected by validation expression MSE.
+Classifier-free condition dropout has probability 0.2, and partial
+speech-modality dropout has probability 0.4. Inference uses EMA
+weights, 10 second-order UniPC denoising steps, guidance scale 4.0,
+a 56-frame window stride, and a four-frame dead blend. HuBERT
+features are extracted in full precision and resampled from 50 to
+30 fps; cached speech features are stored in float16. The transcript
+is encoded with CLIP ViT-B/32. Speaker identity and shape are
+supplied to both streams.
+4.2
+Overall Holistic Generation Quality
+Quantitative and Qualitative Analysis. As shown in Tables 1 and 2,
+DynaConTalk achieves the best FGD and facial reconstruction met-
+rics among the compared methods on both BEAT2 and SHOW. On
+BEAT2, the final DynaConTalk row in Table 1 reports the speech-
+only body checkpoint at epoch 157 and the face checkpoint at epoch
+150. Its raw metrics are FGD 0.175, BC 0.536, diversity 7.85, facial
+MSE 3.55 × 10−8, and LVD 1.32 × 10−5. The speech-only row has
+lower FGD and LVD and is closer to the test-set GT in both BC and
+diversity than the editable row, while the editable row has lower
+facial MSE. These rows describe different generation configurations.
+Figure 5 compares matched-speech body, hand, and facial outputs
+with the strongest holistic baselines.
+Reference-keypose editing. As shown in Fig. 6, by directly learn-
+ing the compatibility between motion and different conditioning
+cues, DGN can dynamically adjust gestures at appropriate moments.
+Figure 7 further demonstrates the controllability of DynaConTalk
+through reference-keypose editing. Given a target pose and a spec-
+ified edit time, the model adjusts the local motion to follow the
+reference while preserving the surrounding motion context. The
+examples show that the edited gesture is introduced locally and
+transitions smoothly to the original motion before and after the
+edited interval.
+User study. Thirty participants rated 15 matched speech cases
+with anonymized outputs from EMAGE, SemTalk, and DynaCon-
+Talk. Table 3 reports that DynaConTalk receives the highest mean
+score in realism, semantic congruence, synchrony, and diversity.
+This study evaluates the complete systems—representation, condi-
+tioning, and holistic output together.
+Foot–ground stability. Under the CAMDM protocol [Chen et al.
+2024c], DynaConTalk reduces normalized foot sliding to less than
+Table 1. Quantitative comparison on BEAT2 All-Speakers Setting. We follow
+the evaluation protocol of RAG-GESTURE [Mughal et al. 2025]. We report
+FGD×10−1, BC×10−1, MSE×10−8, and LVD×10−5. MSE and LVD evaluate
+facial motion. For BC and Div., closer to the test-set GT is better; lower is
+better for FGD, MSE, and LVD. The (edit) row uses the editable configuration;
+the final row reports the speech-only body model and the face model without
+keypose or trajectory controls. Best generated results are in bold.
+Method
+FGD↓
+BC
+Div.
+MSE↓
+LVD↓
+GT (test set)
+–
+4.77
+7.29
+–
+–
+CaMN [Liu et al. 2022c]
+5.12
+2.00
+5.58
+–
+–
+Audio2Photoreal [Ng et al. 2024]
+8.49
+3.26
+6.24
+–
+–
+ReMoDiffuse [Zhang et al. 2023]
+11.20
+2.18
+5.06
+–
+–
+DSG [Yang et al. 2023]
+11.74
+7.34
+11.12
+–
+–
+HoloGest [Cheng and Huang 2025]
+6.46
+8.03
+13.53
+–
+–
+EMAGE [Liu et al. 2024b]
+6.92
+2.84
+6.06
+6.908
+1.453
+RAG-GESTURE [Mughal et al. 2025]
+4.87
+5.14
+9.94
+–
+–
+SemTalk [Zhang et al. 2025]
+3.56
+5.10
+8.409
+4.439
+1.435
+DiffSHEG [Chen et al. 2024b]
+9.43
+2.25
+7.23
+7.665
+8.673
+DynaConTalk (edit)
+2.97
+6.83
+8.09
+3.413
+1.422
+DynaConTalk
+1.75
+5.36
+7.85
+3.55
+1.32
+Table 2. Quantitative SHOW comparison. We report FGD×10−1, BC×10−1,
+MSE×10−8, and LVD×10−5. MSE and LVD evaluate facial motion. Best
+results are in bold.
+Method
+FGD↓
+BC↑
+Div.↑
+MSE↓
+LVD↓
+FaceFormer [Fan et al. 2022]
+–
+–
+–
+138.1
+43.69
+CodeTalker [Xing et al. 2023]
+–
+–
+–
+140.7
+45.84
+CaMN [Liu et al. 2022c]
+22.12
+7.712
+10.37
+–
+–
+DSG [Yang et al. 2023]
+24.84
+8.027
+10.23
+–
+–
+LivelySpeaker [Zhi et al. 2023]
+32.17
+7.844
+10.14
+–
+–
+Habibie et al. [Habibie et al. 2021]
+27.22
+8.209
+8.541
+145.6
+47.35
+TalkSHOW [Yi et al. 2023]
+24.43
+8.249
+10.98
+139.6
+45.17
+EMAGE [Liu et al. 2024b]
+22.12
+8.280
+12.46
+136.1
+42.44
+SemTalk [Zhang et al. 2025]
+20.18
+8.304
+11.36
+134.1
+39.15
+DiffSHEG [Chen et al. 2024b]
+24.87
+8.061
+10.79
+139.0
+45.77
+DynaConTalk
+14.25
+8.313
+11.45
+105.41
+28.59
+Table 3. User study on BEAT2. Mean ratings; higher is better.
+Method
+Realism
+Semantic
+Synchrony
+Diversity
+EMAGE
+1.67
+1.89
+1.76
+1.83
+SemTalk
+2.05
+1.95
+2.05
+2.05
+DynaConTalk
+2.30
+2.15
+2.21
+2.15
+half that of the best baseline and also reaches the lowest absolute
+and 95th-percentile sliding (Table 4).
+4.3
+Full-System Ablation Analysis
+We conducted ablation experiments on the single-person (speaker2)
+subset of the BEAT2 dataset, splitting the data into training, valida-
+tion, and test sets at a ratio of 8:1:1.
+Main component attribution. Table 5 reports the core-component
+ablations under the same full-system metrics.
+
+
+DynaConTalk
+•
+9
+(a) Body and gesture motion
+(b) Facial expression
+Fig. 5. Qualitative comparison on matched speech. The examples show an outward denial for “not considering,” raised hands for “really tempered,” and a
+directional gesture for “drive like this,” together with coordinated body–hand motion and expressive facial detail.
+Fig. 6. Qualitative study on DGN. It can be observed that DGN increases
+the weight assigned to lexical information when semantically salient words
+occur.
+Table 4. Foot stability on the BEAT2 test set under the CAMDM protocol.
+Method
+Sliding↓
+Abs.↓
+P95↓
+Contact
+EMAGE
+2.2040
+.01328
+.01908
+.0008
+SemTalk
+1.6942
+.00555
+.01507
+.0109
+DynaConTalk
+.7751
+.00233
+.00613
+.0933
+Removing DGN causes the largest FGD degradation, followed
+by removing the consensus operation, while replacing DGN with
+Table 5. Core-component attribution on BEAT2 speaker 2. ΔFGD is relative
+to the full model.
+Variant
+FGD↓
+ΔFGD
+BC↑
+L1-div.↑
+Full model
+3.107
+–
+7.853
+11.0900
+w/o DGN
+4.465
++1.358
+7.783
+11.7689
+w/o consensus
+3.951
++.844
+7.911
+11.6772
+DGN →cross-attn.
+3.747
++.640
+7.352
+10.8291
+w/o SWT
+3.482
++.375
+7.717
+12.1563
+Table 6. Backbone and sampling ablations on BEAT2 speaker 2. ΔFGD is
+relative to the full model.
+Variant
+FGD↓
+ΔFGD
+BC↑
+L1-div.↑
+w/o downsampling
+3.643
++.536
+7.572
+11.6865
+w/o spatial Transformer
+3.445
++.338
+7.581
+11.6986
+w/o band-specific heads
+3.411
++.304
+7.620
+11.5354
+Smooth window sampling
+3.377
++.270
+7.573
+11.9420
+Full model
+3.107
+–
+7.853
+11.0900
+cross-attention also performs worse than the full model (Table 5).
+Removing SWT has a smaller effect on FGD; its contribution to
+fine-scale dynamics is examined directly in Sec. 4.4.2.
+Backbone and sampling choices. Temporal downsampling has the
+largest effect among the tested backbone components, while the
+spatial Transformer, band-specific heads, and proposed window
+sampling also improve generation quality (Table 6).
+Condition set. Table 7 evaluates the contribution of individual
+conditioning inputs starting from the complete annotation set. Re-
+moving CLIP emotion or word-index cues improves FGD by 0.108
+and 0.085, respectively, showing that including every available an-
+notation is not necessarily beneficial.
+Rhythm and content-related cues affect different aspects of gen-
+eration. Removing rhythm causes the largest drop in BC while
+leaving FGD nearly unchanged, indicating that it primarily sup-
+ports speech–motion synchronization. In contrast, removing mel or
+HuBERT increases FGD by 0.047 and 0.088, respectively, whereas
+removing CLIP text has only a marginal effect on FGD. These results
+motivate selecting the conditioning set according to its measured
+contribution rather than using all available inputs.
+Wavelet family and level. Table 8 separates filter choice from
+decomposition depth. Three-level db6 gives the strongest complete
+result, but several other three-level families remain competitive.
+The standard metrics select db6 L3 for the complete model. The
+targeted multi-family study below then asks a different question:
+whether the dynamic representation effect persists across filters
+even when their aggregate FGD values are similar.
+
+
+10
+•
+Zhu et al.
+Fig. 7. Reference-keypose motion editing. Given a target keypose and a specified edit time, DynaConTalk modifies the local motion to follow the reference
+while preserving the surrounding motion context. Red boxes highlight the regions most affected by the edit.
+Table 7. Condition-input ablations on BEAT2 speaker 2. ΔFGD is relative to
+All conditions; negative values indicate improvement.
+Variant
+FGD↓
+ΔFGD
+BC↑
+L1-div.↑
+All conditions
+3.325
+–
+7.681
+11.8578
+w/o CLIP emotion
+3.217
+−.108
+7.721
+11.3341
+w/o word index
+3.240
+−.085
+7.729
+11.3781
+w/o rhythm
+3.304
+−.021
+7.428
+11.3719
+w/o mel
+3.372
++.047
+7.766
+10.7499
+w/o HuBERT semantics
+3.413
++.088
+7.724
+11.5954
+w/o CLIP text
+3.305
+−.020
+7.720
+11.5920
+Full selected set
+3.107
+−.218
+7.853
+11.0900
+4.4
+Analysis of the SWT Motion Representation
+4.4.1
+Multiscale Structure of Natural Co-Speech Motion. We first
+examine the multiscale structure of ground-truth co-speech motion
+on the BEAT2 training set. As shown in Fig. 8, the four SWT bands
+capture progressively faster temporal dynamics, ranging from slow
+postural variation in cA3 to rapid local motion in cD1.
+More importantly, finer-scale motion differs substantially from
+coarse motion in both amplitude and temporal distribution. Across
+Table 8. Wavelet-family and decomposition-level ablations on BEAT2
+speaker 2. ΔFGD is relative to the full model.
+Variant
+FGD↓
+ΔFGD
+BC↑
+L1-div.↑
+sym4 L3
+3.162
++.055
+7.672
+11.8648
+bior2.8 L3
+3.145
++.038
+7.581
+11.6986
+coif5 L3
+3.348
++.241
+7.658
+11.7614
+bior4.4 L3
+3.199
++.092
+7.676
+11.8984
+db6 L1
+3.341
++.234
+7.698
+11.9722
+db6 L2
+3.178
++.071
+7.621
+11.9938
+db6 L4
+3.527
++.420
+7.262
+11.4232
+w/o wavelet
+3.482
++.375
+7.717
+12.1563
+Full: db6 L3
+3.107
+–
+7.853
+11.0900
+the torso, arms, and hands, the standard deviation of cD1 is 65–101×
+smaller than that of cA3. At the same time, 69–81% of its energy is
+concentrated in the highest-energy 10% of frames. Thus, fine-scale
+motion is not only low in amplitude, but also highly localized in time.
+These brief motion events can therefore contribute little to an aggre-
+gate raw-coordinate loss despite being important to natural motion
+dynamics. This motivates the use of SWT to explicitly separate and
+
+
+DynaConTalk
+•
+11
+Table 9. Full-test upper-body joint-acceleration distribution.
+Method
+Median
+𝑊1 to GT ↓
+KS to GT ↓
+GT
+2.7386
+0
+0
+DynaConTalk
+2.7901
+0.0887
+0.0679
+Raw6D
+3.8911
+1.1217
+0.7849
+EMAGE
+2.2619
+0.5540
+0.5472
+SemTalk
+2.1035
+0.8015
+0.6906
+model fine-scale motion that would otherwise be underweighted in
+raw-coordinate learning.
+4.4.2
+Representation-Space Error Analysis. The previous subsection
+established that SWT separates motion into distinct temporal scales.
+A natural question then arises: does this structured representation
+also make the generation process more robust to prediction errors?
+To answer this, we conduct a controlled perturbation experiment
+that isolates the effect of the representation space itself, independent
+of the denoiser or conditioning.
+We take ground-truth motion sequences from the BEAT2 test set
+and add a small amount of Gaussian noise to either: the Raw6D
+coordinate space (direct perturbation of 6D rotations), or the SWT
+coefficient space (perturbation applied to each wavelet band, fol-
+lowed by inverse SWT to reconstruct the motion). The noise mag-
+nitude is calibrated so that the resulting motion exhibits a similar
+overall root-mean-square error (RMSE) in pose space across both
+conditions. This ensures a fair comparison: we are not asking which
+representation preserves the pose better, but which representation
+produces more natural motion dynamics from the same level of pose
+error.
+Let 𝐸= e
+𝑀−𝑀denote the difference between the perturbed and
+original motion. Since Raw6D and SWT are matched to have the
+same pose RMSE, we focus on how this error changes over time.
+We measure temporal distortion using the second-order temporal
+difference of 𝐸, where a larger value indicates stronger frame-to-
+frame jitter.
+Under this matched-error setting, Raw6D yields a temporal resid-
+ual of 44.10, while SWT yields only 4.67, corresponding to an 89.4%
+reduction. This shows that, even with the same overall pose er-
+ror, perturbations in SWT space lead to much smoother and less
+disruptive motion dynamics than perturbations in Raw6D space.
+Dynamic-distribution validation. To evaluate whether SWT bet-
+ter preserves the brief, high-acceleration events characteristic of
+natural motion, we compare the distribution of upper-body joint-
+acceleration kurtosis, denoted by 𝜅acc. We report its log-transformed
+value log(1 + 𝜅acc) and compare generated and GT distributions
+using the 1-Wasserstein distance (𝑊1) and Kolmogorov–Smirnov
+(KS) statistics. Under the same DGN conditioning, DynaConTalk
+closely matches the GT distribution, with 𝑊1 = 0.0887, compared
+with 1.1217 for Raw6D—a 92.1% reduction (Table 9, Fig. 9). A two-
+sample KS test also does not reject distributional agreement with
+GT (𝑝= 0.57). Because this evaluation uses joint positions after
+kinematic conversion, the representation advantage also carries
+over to physical motion.
+Table 10. Long-form and control evaluation. The comparison column is over-
+lap replacement for continuation, Raw6D repaint / DiffSHEG for keypose
+repair (in that order), and the uncontrolled output for reference control.
+Raw6D repaint uses our matched-noise protocol without SWT. Lower is
+better.
+Setting
+Metric
+Comparator(s)
+Ours / ctrl.
+Window
+Position
+.0240
+.0158
+Velocity
+.0069
+.0029
+Acceleration
+.0034
+.0017
+Keypose
+Edge acceleration
+6.35 / 6.46
+5.89
+Edge velocity
+1.84 / 1.84
+1.72
+Spill
+2.131 / 1.249
+1.242
+Reference
+Style distance
+.822
+.537
+Hold RMS
+.298
+.148
+Follow error
+.656
+.360
+Why FGD Underrepresents Fine-Scale Improvements. SWT substan-
+tially improves fine-scale dynamics, yet its removal changes FGD
+only modestly. We therefore examine whether FGD is less sensitive
+to high-frequency motion. First, we apply perturbations of the same
+magnitude at different temporal frequencies and find that FGD re-
+sponds about 20× less to 4–12 Hz perturbations than to 0.25–2 Hz
+perturbations. Second, in a band-replacement test, replacing the
+predicted 3–15 Hz bands with GT leaves 99.51% of FGD unchanged,
+whereas replacing only the 0–1 Hz band reduces the remaining FGD
+to 9.14%. These results show that FGD is mainly determined by
+coarse, low-frequency motion and is relatively insensitive to the
+fine-scale dynamics improved by SWT.
+4.5
+Evaluation of Long-Form and Controllable Generation
+Table 10 evaluates matched-noise constraint injection for long-
+form continuation, keypose editing, and reference-guided control.
+For window continuation, matched-noise history injection reduces
+boundary position error by about one third and roughly halves
+velocity and acceleration jumps relative to overlap replacement, im-
+proving continuity across generation windows without a separate
+transition network. For keypose editing, SWT repaint uses the same
+editing protocol as Raw6D repaint but reduces edit spill by 42%
+while improving boundary continuity, indicating better localization
+of the edited motion as shown in Fig. 10. The same constraint mech-
+anism supports reference-guided style, pose-hold, and follow-action
+control without retraining, reducing style distance by about one
+third and nearly halving both pose-hold and motion-envelope errors
+relative to uncontrolled generation.
+Additional style and follow-action results are shown in Fig. 11
+and the supplementary video.
+5
+Limitations
+Most holistic co-speech datasets provide limited global locomotion,
+making root-trajectory generation weakly constrained by speech
+alone. Future work will investigate larger-scale training and stronger
+trajectory priors for more expressive whole-body motion. General-
+ization to more diverse speakers and locomotion-heavy sequences
+also remains to be evaluated.
+
+
+12
+•
+Zhu et al.
+cA3
+0–1 Hz
+cD3
+1–3 Hz
+cD2
+3–8 Hz
+cD1
+8–15 Hz
+0.01×
+0.03×
+0.1×
+0.3×
+1×
+65–101×
+smaller
+Training-set standard deviation relative to cA3
+(a) Fine bands occupy a much smaller physical scale
+cA3
+0–1 Hz
+cD3
+1–3 Hz
+cD2
+3–8 Hz
+cD1
+8–15 Hz
+10%
+30%
+50%
+70%
+80%
+uniform-in-time reference
+69–81%
+Energy in highest-energy 10% of frames
+(b) Fine-band energy concentrates into brief events
+Torso
+Arms
+Hands
+Fig. 8. Multiscale structure of ground-truth co-speech motion on the BEAT2 training set. (a) Standard deviation of each SWT band relative to cA3. (b) Fraction
+of band energy contained in the highest-energy 10% of frames. Across torso, arms, and hands, finer bands have progressively smaller physical amplitudes
+while becoming more temporally concentrated: cD1 is 65–101× smaller in standard deviation than cA3, yet 69–81% of its energy is concentrated in only 10% of
+frames.
+2
+3
+4
+5
+6
+7
+log(1 + κacc)
+0.0
+0.5
+1.0
+ECDF
+GT
+DynaConTalk
+w/o SWT
+Fig. 9. Full-test distributions of log(1 + 𝜅acc). DynaConTalk closely follows
+the GT ECDF, whereas Raw6D is strongly shifted toward higher acceleration
+kurtosis, indicating more impulsive and heavy-tailed dynamics.
+20
+0
+20
+frames around edit
+10
+3
+10
+2
+10
+1
+acc. RMS
+Local acceleration
+Base
+6D repaint
+SWT repaint
+Base
+6D
+SWT
+0.0
+0.5
+1.0
+HF power fraction
+0.20
+0.97
+0.13
+acc. RMS: 1.0x / 25.8x / 1.3x
+>6Hz acceleration
+Fig. 10. Local smoothness around keypose editing.
+6
+Conclusion
+DynaConTalk addresses the loss of multiscale motion detail, static
+fusion of heterogeneous speech cues, and discontinuities introduced
+by windowed generation. It combines aligned SWT-domain diffu-
+sion, dynamic state-aware residual gating with attention pooling
+and depth routing, signed proposal–consensus conditioning, and
+matched-noise constraint injection for holistic speech-driven mo-
+tion. Experiments support improved generation quality, while the
+Fig. 11. Qualitative examples of reference-guided control.
+controlled analyses associate dynamic shape with the SWT repre-
+sentation, activity calibration with DGN, and smoother window
+transitions and localized control with matched-noise constraints.
+Acknowledgments
+The authors thank all participants in the user study for their time
+and valuable feedback. The authors also acknowledge the Interactive
+Content Design Lab, Research Institute of Electrical Communica-
+tion, Tohoku University, for providing the facilities and computa-
+tional resources that supported this work. This work was partially
+funded by the Research Grants Council of Hong Kong (Ref: 17216826)
+and by the Innovation and Technology Commission of the HK-
+SAR Government under the ITSP-Platform grant (Ref: ITS/335/23FP,
+ITS/469/24FP).
+References
+Chaitanya Ahuja, Dong Won Lee, Yukiko I Nakano, and Louis-Philippe Morency. 2020.
+Style transfer for co-speech gesture animation: A multi-speaker conditional-mixture
+approach. In Computer Vision–ECCV 2020: 16th European Conference, Glasgow, UK,
+August 23–28, 2020, Proceedings, Part XVIII 16. Springer, Cham, Switzerland, 248–265.
+Simon Alexanderson, Gustav Eje Henter, Taras Kucherenko, and Jonas Beskow. 2020.
+Style-Controllable Speech-Driven Gesture Synthesis Using Normalising Flows. Com-
+puter Graphics Forum 39, 2 (2020), 487–496.
+
+
+DynaConTalk
+•
+13
+Simon Alexanderson, Rajmund Nagy, Jonas Beskow, and Gustav Eje Henter. 2023.
+Listen, denoise, action! audio-driven motion synthesis with diffusion models. ACM
+Transactions on Graphics (TOG) 42, 4 (2023), 1–20.
+Tenglong Ao, Zeyi Zhang, and Libin Liu. 2023. Gesturediffuclip: Gesture diffusion
+model with clip latents. ACM Transactions on Graphics (TOG) 42, 4 (2023), 1–18.
+Alexei Baevski, Yuhao Zhou, Abdelrahman Mohamed, and Michael Auli. 2020. wav2vec
+2.0: A framework for self-supervised learning of speech representations. Advances
+in neural information processing systems 33 (2020), 12449–12460.
+Uttaran Bhattacharya, Elizabeth Childs, Nicholas Rewkowski, and Dinesh Manocha.
+2021. Speech2affectivegestures: Synthesizing co-speech gestures with generative
+adversarial affective expression learning. In Proceedings of the 29th ACM International
+Conference on Multimedia. Association for Computing Machinery, New York, NY,
+USA, 2027–2036.
+Justine Cassell, David McNeill, and Karl-Erik McCullough. 1999. Speech-gesture mis-
+matches: Evidence for one underlying representation of linguistic and nonlinguistic
+information. Pragmatics & cognition 7, 1 (1999), 1–34.
+Justine Cassell, Hannes Högni Vilhjálmsson, and Timothy W. Bickmore. 2001. Beat: the
+behavior expression animation toolkit. In Proceedings of the 28th annual conference on
+Computer graphics and interactive techniques. Association for Computing Machinery,
+New York, NY, USA, 477–486.
+Bohong Chen, Yumeng Li, Yao-Xiang Ding, Tianjia Shao, and Kun Zhou. 2024a. Enabling
+synergistic full-body control in prompt-based co-speech motion generation. In
+Proceedings of the 32nd ACM International Conference on Multimedia. Association
+for Computing Machinery, New York, NY, USA, 6774–6783.
+Junming Chen, Yunfei Liu, Jianan Wang, Ailing Zeng, Yu Li, and Qifeng Chen. 2024b.
+Diffsheg: A diffusion-based approach for real-time speech-driven holistic 3d expres-
+sion and gesture generation. In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition. IEEE Computer Society, Los Alamitos, CA, USA,
+7352–7361.
+Rui Chen, Mingyi Shi, Shaoli Huang, Ping Tan, Taku Komura, and Xuelin Chen. 2024c.
+Taming Diffusion Probabilistic Models for Character Control. In ACM SIGGRAPH
+2024 Conference Papers. Association for Computing Machinery, New York, NY, USA,
+1–10. doi:10.1145/3641519.3657440
+Xin Chen, Biao Jiang, Wen Liu, Zilong Huang, Bin Fu, Tao Chen, and Gang Yu. 2023.
+Executing your commands via motion diffusion in latent space. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition. IEEE Computer
+Society, Los Alamitos, CA, USA, 18000–18010.
+Yongkang Cheng and Shaoli Huang. 2025. HoloGest: Decoupled Diffusion and Motion
+Priors for Generating Holisticly Expressive Co-Speech Gestures. In 2025 International
+Conference on 3D Vision. IEEE, Piscataway, NJ, USA, 748–757.
+Ke Fan, Shunlin Lu, Minyue Dai, Runyi Yu, Lixing Xiao, Zhiyang Dou, Junting Dong,
+Lizhuang Ma, and Jingbo Wang. 2025. Go to Zero: Towards Zero-shot Motion
+Generation with Million-scale Data. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision. IEEE Computer Society, Los Alamitos, CA, USA,
+13336–13348.
+Yingruo Fan, Zhaojiang Lin, Jun Saito, Wenping Wang, and Taku Komura. 2022. Face-
+former: Speech-driven 3d facial animation with transformers. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition. IEEE Computer
+Society, Los Alamitos, CA, USA, 18770–18780.
+Yuming Feng, Zhiyang Dou, Ling-Hao Chen, Yuan Liu, Tianyu Li, Jingbo Wang, Zeyu
+Cao, Wenping Wang, Taku Komura, and Lingjie Liu. 2024. MotionWavelet: Human
+Motion Prediction via Wavelet Manifold Learning. arXiv:2411.16964 [cs.CV] https:
+//arxiv.org/abs/2411.16964
+Ylva Ferstl and Rachel McDonnell. 2018. Investigating the use of recurrent motion
+modelling for speech gesture generation. In Proceedings of the 18th International
+Conference on Intelligent Virtual Agents. Association for Computing Machinery, New
+York, NY, USA, 93–98.
+Ylva Ferstl, Michael Neff, and Rachel McDonnell. 2020. Adversarial gesture generation
+with realistic gesture phasing. Computers & Graphics 89 (2020), 117–130.
+Shiry Ginosar, Amir Bar, Gefen Kohavi, Caroline Chan, Andrew Owens, and Jitendra
+Malik. 2019. Learning individual styles of conversational gesture. In Proceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern Recognition. IEEE Computer
+Society, Los Alamitos, CA, USA, 3497–3506.
+Ikhsanul Habibie, Weipeng Xu, Dushyant Mehta, Lingjie Liu, Hans-Peter Seidel, Gerard
+Pons-Moll, Mohamed Elgharib, and Christian Theobalt. 2021. Learning speech-
+driven 3d conversational gestures from video. In Proceedings of the 21st ACM In-
+ternational Conference on Intelligent Virtual Agents. Association for Computing
+Machinery, New York, NY, USA, 101–108.
+Dai Hasegawa, Naoshi Kaneko, Shinichi Shirakawa, Hiroshi Sakuta, and Kazuhiko
+Sumi. 2018. Evaluation of speech-to-gesture generation using bi-directional LSTM
+network. In Proceedings of the 18th International Conference on Intelligent Virtual
+Agents. Association for Computing Machinery, New York, NY, USA, 79–86.
+Gustav Eje Henter, Simon Alexanderson, and Jonas Beskow. 2020. Moglow: Probabilistic
+and controllable motion synthesis using normalising flows. ACM Transactions on
+Graphics (TOG) 39, 6 (2020), 1–14.
+Jonathan Ho, Ajay Jain, and Pieter Abbeel. 2020. Denoising Diffusion Probabilistic
+Models. In Advances in Neural Information Processing Systems, H. Larochelle, M. Ran-
+zato, R. Hadsell, M.F. Balcan, and H. Lin (Eds.), Vol. 33. Curran Associates, Inc.,
+Red Hook, NY, USA, 6840–6851. https://proceedings.neurips.cc/paper/2020/file/
+4c5bcfec8584af0d967f1ab10179ca4b-Paper.pdf
+Daniel Holden, Taku Komura, and Jun Saito. 2017. Phase-functioned neural networks
+for character control. ACM Transactions on Graphics (TOG) 36, 4 (2017), 1–13.
+Wei-Ning Hsu, Benjamin Bolte, Yao-Hung Hubert Tsai, Kushal Lakhotia, Ruslan
+Salakhutdinov, and Abdelrahman Mohamed. 2021. Hubert: Self-supervised speech
+representation learning by masked prediction of hidden units. IEEE/ACM transac-
+tions on audio, speech, and language processing 29 (2021), 3451–3460.
+Yi Huang, Jiancheng Huang, Jianzhuang Liu, Mingfu Yan, Yu Dong, Jiaxi Lv, Chaoqi
+Chen, and Shifeng Chen. 2024. WaveDM: Wavelet-Based Diffusion Models for Image
+Restoration. IEEE Transactions on Multimedia 26 (2024), 7058–7073. doi:10.1109/
+TMM.2024.3359769
+Peng Jin, Yang Wu, Yanbo Fan, Zhongqian Sun, Wei Yang, and Li Yuan. 2023. Act
+As You Wish: Fine-Grained Control of Motion Diffusion Model with Hierarchical
+Semantic Graphs. In Advances in Neural Information Processing Systems, Vol. 36.
+Curran Associates, Inc., Red Hook, NY, USA, 15497–15518.
+Michael Kipp. 2005. Gesture Generation by Imitation: From Human Behavior to Computer
+Character Animation. Dissertation.com / Universal Publishers, Boca Raton, FL, USA.
+Stefan Kopp, Brigitte Krenn, Stacy Marsella, Andrew N Marshall, Catherine Pelachaud,
+Hannes Pirker, Kristinn R Thórisson, and Hannes Vilhjálmsson. 2006. Towards a
+common framework for multimodal generation: The behavior markup language.
+In Intelligent Virtual Agents: 6th International Conference, IVA 2006, Marina Del Rey,
+CA, USA, August 21-23, 2006. Proceedings 6. Springer, Berlin, Heidelberg, 205–217.
+Taras Kucherenko, Dai Hasegawa, Naoshi Kaneko, Gustav Eje Henter, and Hedvig
+Kjellström. 2021. Moving fast and slow: Analysis of representations and post-
+processing in speech-driven automatic gesture generation. International Journal of
+Human–Computer Interaction 37, 14 (2021), 1300–1316. doi:10.1080/10447318.2021.
+1883883
+Taras Kucherenko, Patrik Jonell, Sanne Van Waveren, Gustav Eje Henter, Simon Alexan-
+derson, Iolanda Leite, and Hedvig Kjellström. 2020. Gesticulator: A framework for
+semantically-aware speech-driven gesture generation. In Proceedings of the 2020
+international conference on multimodal interaction. Association for Computing Ma-
+chinery, New York, NY, USA, 242–250.
+Jing Li, Di Kang, Wenjie Pei, Xuefei Zhe, Ying Zhang, Zhenyu He, and Linchao Bao. 2021.
+Audio2gestures: Generating diverse gestures from speech audio with conditional
+variational autoencoders. In Proceedings of the IEEE/CVF International Conference on
+Computer Vision. IEEE Computer Society, Los Alamitos, CA, USA, 11293–11302.
+Yuanzhi Liang, Qianyu Feng, Linchao Zhu, Li Hu, Pan Pan, and Yi Yang. 2022. Seeg:
+Semantic energized co-speech gesture generation. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition. IEEE Computer Society, Los
+Alamitos, CA, USA, 10473–10482.
+Haiyang Liu, Naoya Iwamoto, Zihao Zhu, Zhengqing Li, You Zhou, Elif Bozkurt, and
+Bo Zheng. 2022a. DisCo: Disentangled Implicit Content and Rhythm Learning for
+Diverse Co-Speech Gestures Synthesis. In Proceedings of the 30th ACM International
+Conference on Multimedia. Association for Computing Machinery, New York, NY,
+USA, 3764–3773.
+Haiyang Liu, Zihao Zhu, Giorgio Becherini, Yichen Peng, Mingyang Su, You Zhou,
+Xuefei Zhe, Naoya Iwamoto, Bo Zheng, and Michael J Black. 2024b. EMAGE:
+Towards Unified Holistic Co-Speech Gesture Generation via Expressive Masked
+Audio Gesture Modeling. In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition. IEEE Computer Society, Los Alamitos, CA, USA,
+1144–1154.
+Haiyang Liu, Zihao Zhu, Naoya Iwamoto, Yichen Peng, Zhengqing Li, You Zhou, Elif
+Bozkurt, and Bo Zheng. 2022c. Beat: A large-scale semantic and emotional multi-
+modal dataset for conversational gestures synthesis. In European conference on
+computer vision. Springer, Cham, Switzerland, 612–630.
+Xian Liu, Qianyi Wu, Hang Zhou, Yinghao Xu, Rui Qian, Xinyi Lin, Xiaowei Zhou,
+Wayne Wu, Bo Dai, and Bolei Zhou. 2022b. Learning hierarchical cross-modal asso-
+ciation for co-speech gesture generation. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition. IEEE Computer Society, Los Alamitos,
+CA, USA, 10462–10472.
+Yifei Liu, Qiong Cao, Yandong Wen, Huaiguang Jiang, and Changxing Ding. 2024a.
+Towards Variable and Coordinated Holistic Co-Speech Motion Generation. In Pro-
+ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition.
+IEEE Computer Society, Los Alamitos, CA, USA, 1566–1576.
+Daniel Loehr. 2007. Aspects of rhythm in gesture and speech. Gesture 7, 2 (2007),
+179–214.
+Andreas Lugmayr, Martin Danelljan, Andres Romero, Fisher Yu, Radu Timofte, and
+Luc Van Gool. 2022. RePaint: Inpainting Using Denoising Diffusion Probabilistic
+Models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR). IEEE Computer Society, Los Alamitos, CA, USA, 11461–11471.
+M. Hamza Mughal, Rishabh Dabral, Merel C. J. Scholman, Vera Demberg, and Christian
+Theobalt. 2025. Retrieving Semantics from the Deep: An RAG Solution for Gesture
+
+
+14
+•
+Zhu et al.
+Synthesis. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition. IEEE Computer Society, Los Alamitos, CA, USA, 16578–16588.
+Evonne Ng, Shiry Ginosar, Trevor Darrell, and Hanbyul Joo. 2021. Body2Hands: Learn-
+ing to Infer 3D Hands from Conversational Gesture Body Dynamics. In Proceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern Recognition. IEEE Computer
+Society, Los Alamitos, CA, USA, 11865–11874.
+Evonne Ng, Javier Romero, Timur Bagautdinov, Shaojie Bai, Trevor Darrell, Angjoo
+Kanazawa, and Alexander Richard. 2024. From audio to photoreal embodiment:
+Synthesizing humans in conversations. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition. IEEE Computer Society, Los Alamitos,
+CA, USA, 1001–1010.
+Kunkun Pang, Dafei Qin, Yingruo Fan, Julian Habekost, Takaaki Shiratori, Junichi
+Yamagishi, and Taku Komura. 2023. Bodyformer: Semantics-guided 3D Body Gesture
+Synthesis with Transformer. ACM Transactions on Graphics 42, 4 (July 2023), 1–12.
+doi:10.1145/3592456
+Georgios Pavlakos, Vasileios Choutas, Nima Ghorbani, Timo Bolkart, Ahmed AA
+Osman, Dimitrios Tzionas, and Michael J Black. 2019. Expressive body capture: 3d
+hands, face, and body from a single image. In Proceedings of the IEEE/CVF conference
+on computer vision and pattern recognition. IEEE Computer Society, Los Alamitos,
+CA, USA, 10975–10985.
+Mathis Petrovich, Michael J Black, and Gül Varol. 2021. Action-conditioned 3D human
+motion synthesis with transformer VAE. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision. IEEE Computer Society, Los Alamitos, CA, USA,
+10985–10995.
+Hao Phung, Quan Dao, and Anh Tran. 2023. Wavelet Diffusion Models Are Fast and
+Scalable Image Generators. In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition. IEEE Computer Society, Los Alamitos, CA, USA,
+10199–10208.
+Helmut Prendinger, Sylvain Descamps, and Mitsuru Ishizuka. 2004. MPML: A markup
+language for controlling the behavior of life-like characters. Journal of Visual
+Languages & Computing 15, 2 (2004), 183–203.
+Jiaming Song, Chenlin Meng, and Stefano Ermon. 2021. Denoising Diffusion Implicit
+Models. In 9th International Conference on Learning Representations, ICLR 2021, Vir-
+tual Event, Austria, May 3-7, 2021. OpenReview.net, Virtual Event, Austria, 22 pages.
+https://openreview.net/forum?id=St1giarCHLP
+Sebastian Starke, Ian Mason, and Taku Komura. 2022. Deepphase: Periodic autoencoders
+for learning motion phase manifolds. ACM Transactions on Graphics (TOG) 41, 4
+(2022), 1–13.
+Kenta Takeuchi, Dai Hasegawa, Shinichi Shirakawa, Naoshi Kaneko, Hiroshi Sakuta,
+and Kazuhiko Sumi. 2017. Speech-to-gesture generation: A challenge in deep
+learning approach with bi-directional LSTM. In Proceedings of the 5th International
+Conference on Human Agent Interaction. Association for Computing Machinery, New
+York, NY, USA, 365–369.
+Guy Tevet, Sigal Raab, Brian Gordon, Yoni Shafir, Daniel Cohen-Or, and Amit Haim
+Bermano. 2023. Human Motion Diffusion Model. In The Eleventh International
+Conference on Learning Representations. OpenReview.net, Kigali, Rwanda, 12 pages.
+https://openreview.net/forum?id=SJ1kSyO2jwu
+Bowen Wu, Chaoran Liu, Carlos Toshinori Ishi, and Hiroshi Ishiguro. 2021. Modeling the
+conditional distribution of co-speech upper body gesture jointly using conditional-
+GAN and unrolled-GAN. Electronics 10, 3 (2021), 228.
+Jinbo Xing, Menghan Xia, Yuechen Zhang, Xiaodong Cun, Jue Wang, and Tien-Tsin
+Wong. 2023. Codetalker: Speech-driven 3d facial animation with discrete motion
+prior. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition. IEEE Computer Society, Los Alamitos, CA, USA, 12780–12790.
+Zunnan Xu, Yachao Zhang, Sicheng Yang, Ronghui Li, and Xiu Li. 2024. Chain of gener-
+ation: Multi-modal gesture synthesis via cascaded conditional control. Proceedings
+of the AAAI Conference on Artificial Intelligence 38, 6 (2024), 6387–6395.
+Sicheng Yang, Zhiyong Wu, Minglei Li, Zhensong Zhang, Lei Hao, Weihong Bao, Ming
+Cheng, and Long Xiao. 2023. DiffuseStyleGesture: Stylized Audio-Driven Co-Speech
+Gesture Generation with Diffusion Models. In Proceedings of the Thirty-Second
+International Joint Conference on Artificial Intelligence, IJCAI-23. International Joint
+Conferences on Artificial Intelligence Organization, California, USA, 5860–5868.
+doi:10.24963/ijcai.2023/650
+Sheng Ye, Yu-Hui Wen, Yanan Sun, Ying He, Ziyang Zhang, Yaoyuan Wang, Weihua He,
+and Yong-Jin Liu. 2022. Audio-driven stylized gesture generation with flow-based
+model. In European Conference on Computer Vision. Springer, Cham, Switzerland,
+712–728.
+Hongwei Yi, Hualin Liang, Yifei Liu, Qiong Cao, Yandong Wen, Timo Bolkart, Dacheng
+Tao, and Michael J Black. 2023. Generating holistic 3d human motion from speech. In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition.
+IEEE Computer Society, Los Alamitos, CA, USA, 469–480.
+Youngwoo Yoon, Bok Cha, Joo-Haeng Lee, Minsu Jang, Jaeyeon Lee, Jaehong Kim,
+and Geehyuk Lee. 2020. Speech gesture generation from the trimodal context of
+text, audio, and speaker identity. ACM Trans. Graph. 39, 6, Article 222 (Nov. 2020),
+16 pages. doi:10.1145/3414685.3417838
+Youngwoo Yoon, Woo-Ri Ko, Minsu Jang, Jaeyeon Lee, Jaehong Kim, and Geehyuk Lee.
+2019. Robots learn social skills: End-to-end learning of co-speech gesture generation
+for humanoid robots. In 2019 International Conference on Robotics and Automation
+(ICRA). IEEE, Piscataway, NJ, USA, 4303–4309.
+Mingyuan Zhang, Xinying Guo, Liang Pan, Zhongang Cai, Fangzhou Hong, Huirong Li,
+Lei Yang, and Ziwei Liu. 2023. ReMoDiffuse: Retrieval-Augmented Motion Diffusion
+Model. In Proceedings of the IEEE/CVF International Conference on Computer Vision.
+IEEE Computer Society, Los Alamitos, CA, USA, 364–373.
+Xiangyue Zhang, Jianfang Li, Jiaxu Zhang, Ziqiang Dang, Jianqiang Ren, Liefeng Bo,
+and Zhigang Tu. 2025. Semtalk: Holistic co-speech motion generation with frame-
+level semantic emphasis. In Proceedings of the IEEE/CVF International Conference on
+Computer Vision. IEEE Computer Society, Los Alamitos, CA, USA, 13761–13771.
+Zeyi Zhang, Tenglong Ao, Yuyao Zhang, Qingzhe Gao, Chuan Lin, Baoquan Chen,
+and Libin Liu. 2024. Semantic Gesticulator: Semantics-Aware Co-Speech Gesture
+Synthesis. ACM Transactions on Graphics 43, 4 (July 2024), 1–17. doi:10.1145/3658134
+Yihao Zhi, Xiaodong Cun, Xuelin Chen, Xi Shen, Wen Guo, Shaoli Huang, and Shenghua
+Gao. 2023. Livelyspeaker: Towards semantic-aware co-speech gesture generation.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision. IEEE
+Computer Society, Los Alamitos, CA, USA, 20807–20817.
+Lingting Zhu, Xian Liu, Xuanyu Liu, Rui Qian, Ziwei Liu, and Lequan Yu. 2023. Taming
+diffusion models for audio-driven co-speech gesture generation. In Proceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern Recognition. IEEE Computer
+Society, Los Alamitos, CA, USA, 10544–10553.
