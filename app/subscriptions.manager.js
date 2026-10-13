@@ -17,6 +17,8 @@ window.SubscriptionsManager = (function () {
   let quickRun30dStandardBtn = null;
   let quickRunOpenWorkflowPanelBtn = null;
   let quickRunConferenceBtn = null;
+  let starterPackBtn = null;
+  let starterPackAsOf = new Date().toISOString().slice(0, 10);
   let quickRunMsgEl = null;
   let quickRunSelectionCountEl = null;
   let conferenceSelectionCountEl = null;
@@ -38,6 +40,11 @@ window.SubscriptionsManager = (function () {
   let adminConferenceTabBtn = null;
   let adminDailyPanel = null;
   let adminConferencePanel = null;
+  let adminTopicTabBtn = null;
+  let adminTopicPanel = null;
+  let topicProfilePickerEl = null;
+  let topicSelectedTag = '';
+  let topicSelectionInitialized = false;
   let activeAdminPanelTab = 'daily';
 
   let draftConfig = null;
@@ -112,8 +119,9 @@ window.SubscriptionsManager = (function () {
     'NDSS',
   ];
   const CONFERENCE_STATS_SNAPSHOT_URL = 'app/conference-stats.json';
-  // 2026 年已入库并验证检索的会议（截至 2026-09，含 CVPR、ECCV）。
-  const CONFERENCE_2026_AVAILABLE = new Set(['ICLR', 'ICML', 'AAAI', 'ACL', 'CVPR', 'ECCV', 'OSDI', 'IEEE S&P', 'NDSS']);
+  // 2026 年已入库并验证检索的会议；正式论文集已开放的 IJCAI 同样可选。
+  const CONFERENCE_2026_AVAILABLE = new Set(['ICLR', 'ICML', 'AAAI', 'ACL', 'CVPR', 'ECCV', 'IJCAI', 'OSDI', 'SOSP', 'IEEE S&P', 'NDSS']);
+  const CONFERENCE_DATA_NOTICES = {};
   const FEATURED_CONFERENCE_YEAR_PAIRS = new Set(['acl:2026', 'icml:2026']);
   // ECCV 是双年会议（偶数年）
   const BIENNIAL_EVEN_CONFERENCES = new Set(['ECCV']);
@@ -262,6 +270,7 @@ window.SubscriptionsManager = (function () {
         .map((year) => {
           const active = selectedConferenceYearPairs.has(`${name}:${year}`);
           const reason = getConferenceYearDisabledReason(name, year);
+          const dataNotice = CONFERENCE_DATA_NOTICES[`${name}:${year}`] || '';
           const disabled = !!reason;
           const stats = getConferenceYearStats(name, year);
           const classes = [
@@ -285,8 +294,9 @@ window.SubscriptionsManager = (function () {
             data-conference="${escapeHtml(name)}"
             data-conference-year="${escapeHtml(year)}"
             aria-pressed="${active ? 'true' : 'false'}"
-            aria-label="${escapeHtml(`${name} ${visibleLabel}`)}"
-            ${disabled ? `disabled title="${escapeHtml(reason)}"` : ''}
+            aria-label="${escapeHtml(`${name} ${visibleLabel}${dataNotice ? `；${dataNotice}` : ''}`)}"
+            ${disabled ? 'disabled' : ''}
+            ${reason || dataNotice ? `title="${escapeHtml(reason || dataNotice)}"` : ''}
           ><span class="dpr-choice-pill-main">${labelHtml}</span>${featureStar}</button>`;
         })
         .join('');
@@ -692,13 +702,11 @@ window.SubscriptionsManager = (function () {
     if (yearNum >= currentYear && !CONFERENCE_2026_AVAILABLE.has(conf)) {
       const ESTIMATED_DATES = {
         ICML:    '2026 年 7 月会后',
-        IJCAI:   '2026 年 8 月会后',
         ACL:     '2026 年 7 月会后',
         EMNLP:   '2026 年 10 月中下旬（以官方论文集开放时间为准）',
         NEURIPS: '2026 年 12 月会后',
         NIPS:    '2026 年 12 月会后',
         OSDI:    '2026 年会后论文 PDF 公开后',
-        SOSP:    '2026 年会后论文 PDF 公开后',
         'IEEE S&P': '2026 年 CSDL 论文 PDF 公开后',
       };
       const est = ESTIMATED_DATES[conf];
@@ -767,7 +775,7 @@ window.SubscriptionsManager = (function () {
       return;
     }
     targetEl.innerHTML = filtered.map((profile) => {
-      const selected = !!profile.selected;
+      const selected = mode === 'topic' ? normalizeText(profile.tag) === topicSelectedTag : !!profile.selected;
       const tag = normalizeText(profile.tag);
       const desc = normalizeText(profile.description);
       const shortDesc = truncateDisplayText(desc, 10);
@@ -788,6 +796,28 @@ window.SubscriptionsManager = (function () {
   const renderProfilePickers = () => {
     renderProfilePicker(dailyProfilePickerEl, 'daily');
     renderProfilePicker(conferenceProfilePickerEl, 'conference');
+    renderProfilePicker(topicProfilePickerEl, 'topic');
+  };
+  const initializeTopicSelection = () => {
+    if (topicSelectionInitialized) return;
+    const selected = getSelectedProfilesForRun();
+    topicSelectedTag = selected.length === 1 ? normalizeText(selected[0].tag) : '';
+    topicSelectionInitialized = true;
+    renderProfilePicker(topicProfilePickerEl, 'topic');
+  };
+  const setTopicProfileSelection = profileId => {
+    const profile = getProfilesForRun().find(item => String(item.id) === String(profileId));
+    if (!profile) return;
+    topicSelectedTag = normalizeText(profile.tag);
+    topicSelectionInitialized = true;
+    renderProfilePicker(topicProfilePickerEl, 'topic');
+  };
+  const getTopicResearchProfiles = () => {
+    const bridge = window.SubscriptionsSmartQuery;
+    const profiles = bridge && typeof bridge.getResearchProfiles === 'function'
+      ? bridge.getResearchProfiles()
+      : ((draftConfig && draftConfig.subscriptions && draftConfig.subscriptions.intent_profiles) || []);
+    return profiles.filter(profile => topicSelectedTag && normalizeText(profile.tag) === topicSelectedTag).map(cloneDeep);
   };
   const setProfileSelection = (profileId, selected) => {
     if (!window.SubscriptionsSmartQuery || typeof window.SubscriptionsSmartQuery.setProfileSelection !== 'function') {
@@ -835,7 +865,7 @@ window.SubscriptionsManager = (function () {
     if (!window.SubscriptionsSmartQuery || typeof window.SubscriptionsSmartQuery.setRunSelectionMode !== 'function') {
       return;
     }
-    window.SubscriptionsSmartQuery.setRunSelectionMode(activeAdminPanelTab, () => {
+    window.SubscriptionsSmartQuery.setRunSelectionMode(activeAdminPanelTab === 'topic' ? 'daily' : activeAdminPanelTab, () => {
       refreshQuickRunButtons();
     });
   };
@@ -843,6 +873,13 @@ window.SubscriptionsManager = (function () {
   const refreshQuickRunButtons = () => {
     const selectedProfiles = getSelectedProfilesForRun();
     const selectedProfileCount = selectedProfiles.length;
+    if (starterPackBtn) {
+      const runner = window.DPRWorkflowRunner;
+      const supported = runner && typeof runner.isStarterPackSupported === 'function' && runner.isStarterPackSupported();
+      starterPackBtn.disabled = hasUnsavedChanges || selectedProfileCount !== 1 || !supported;
+      starterPackBtn.title = !supported ? '请在 GitHub Pages 站点使用此功能；入门包仅由 GitHub Actions 执行。'
+        : hasUnsavedChanges ? '请先保存修改。' : selectedProfileCount !== 1 ? '请恰好勾选一个词条。' : '生成或按相同截止日期续跑入门包。';
+    }
     const dailySelectedProfileCount = selectedProfileCount;
     const MAX_CONFERENCE_PROFILES = 2;
     const profileOverLimit = selectedProfileCount > MAX_CONFERENCE_PROFILES;
@@ -910,6 +947,10 @@ window.SubscriptionsManager = (function () {
         conferenceHintEl.textContent = `先勾选词条（最多 2 个），再勾选会议年份（库内总数 < ${formatCount(MAX_CONFERENCE_STORED_TOTAL)} 篇）。每组约 5 分钟 / ¥0.2`;
         conferenceHintEl.style.color = '';
       }
+      // 元数据可检索不代表全文可读；复用现有说明区，移动端选择后也能看到。
+      const dataNotices = Array.from(selectedConferenceYearPairs)
+        .map((pair) => CONFERENCE_DATA_NOTICES[pair]).filter(Boolean);
+      if (dataNotices.length) conferenceHintEl.textContent += ` ${dataNotices.join(' ')}`;
     }
     if (hasUnsavedChanges && quickRunMsgEl) {
       quickRunMsgEl.textContent = '有未保存修改，请先保存。';
@@ -951,10 +992,11 @@ window.SubscriptionsManager = (function () {
   };
 
   const syncAdminPanelTabs = () => {
-    const active = activeAdminPanelTab === 'conference' ? 'conference' : 'daily';
+    const active = ['conference', 'topic'].includes(activeAdminPanelTab) ? activeAdminPanelTab : 'daily';
     [
       [adminDailyTabBtn, active === 'daily'],
       [adminConferenceTabBtn, active === 'conference'],
+      [adminTopicTabBtn, active === 'topic'],
     ].forEach(([btn, isActive]) => {
       if (!btn) return;
       btn.classList.toggle('is-active', !!isActive);
@@ -967,13 +1009,16 @@ window.SubscriptionsManager = (function () {
     if (adminConferencePanel) {
       adminConferencePanel.hidden = active !== 'conference';
     }
+    if (adminTopicPanel) adminTopicPanel.hidden = active !== 'topic';
     if (panel) {
       panel.classList.toggle('is-conference-tab', active === 'conference');
+      panel.classList.toggle('is-topic-tab', active === 'topic');
     }
   };
 
   const switchAdminPanelTab = (tab) => {
-    const nextTab = tab === 'conference' ? 'conference' : 'daily';
+    const nextTab = ['conference', 'topic'].includes(tab) ? tab : 'daily';
+    if (nextTab === 'topic') initializeTopicSelection();
     if (activeAdminPanelTab === nextTab) {
       syncAdminPanelTabs();
       return;
@@ -1143,6 +1188,38 @@ window.SubscriptionsManager = (function () {
     }
     showWorkflowSuccessEffects();
     return true;
+  };
+
+  const runStarterPack = async () => {
+    const output = document.getElementById('arxiv-admin-starter-pack-msg');
+    const show = (text, color = '#c00') => { if (output) { output.textContent = text; output.style.color = color; } };
+    try {
+      if (hasUnsavedChanges) throw new Error('请先保存修改，再生成入门包。');
+      const profiles = getSelectedProfilesForRun();
+      if (profiles.length !== 1) throw new Error('入门包需要恰好勾选一个词条。');
+      const runner = window.DPRWorkflowRunner;
+      if (!runner || typeof runner.buildStarterPackRequest !== 'function') throw new Error('工作流触发器未加载，请刷新后重试。');
+      if (!runner.isStarterPackSupported()) throw new Error('请在 GitHub Pages 站点操作；入门包仅通过 GitHub Actions 执行，不在本地运行。');
+      const value = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+      const selected = getSelectedConferencePairSpecs();
+      const request = runner.buildStarterPackRequest({
+        profile_tag: profiles[0].tag,
+        as_of: value('arxiv-admin-starter-pack-as-of'),
+        conferences: selected.map(pair => pair.split(':')[0]),
+        max_new_reviews: value('arxiv-admin-starter-pack-budget'),
+        content_limit: value('arxiv-admin-starter-pack-content-limit'),
+      });
+      starterPackAsOf = request.inputs.as_of;
+      const scope = selected.length ? request.inputs.conferences : '全库支持会议';
+      if (!window.confirm(`生成/续跑词条「${request.inputs.profile_tag}」的入门包：\nUTC 截止日期 ${request.inputs.as_of}（不含当天）\n近365天 arXiv + 近24个月会议；范围：${scope}\n会议年份勾选不限制滚动24个月窗口。\n新增评审上限 ${request.inputs.max_new_reviews} 篇；内容生成上限 ${request.inputs.content_limit} 篇。\n模型调用按实际用量计费，新增评审为0仅复用已有评审，内容生成仍可能调用模型。\n进度未完成时，请保持相同截止日期、词条和会议范围续跑。确认开始？`)) return false;
+      const success = await runner.runWorkflowByKey(request.key, request.inputs);
+      if (success === false) throw new Error('入门包工作流未成功触发，请检查权限或工作流配置。');
+      show(`已发起入门包任务；若仅生成进度提示，请保持 ${starterPackAsOf} 和相同词条、会议范围续跑。`, '#080');
+      return true;
+    } catch (error) {
+      show(error.message || String(error));
+      return false;
+    }
   };
 
   const runResetContent = async (msgEl) => {
@@ -1415,6 +1492,7 @@ window.SubscriptionsManager = (function () {
               >
                 会议论文
               </button>
+              <button id="dpr-admin-tab-topic" class="dpr-admin-tab" type="button" role="tab" aria-selected="false" aria-controls="arxiv-topic-control-side">专题研究</button>
             </div>
           </div>
           <div style="display:flex; gap:8px; align-items:center;">
@@ -1429,11 +1507,9 @@ window.SubscriptionsManager = (function () {
             <div id="dpr-smart-query-section" class="arxiv-pane dpr-smart-pane">
               <div class="dpr-display-card">
                 <div id="dpr-sq-display" class="dpr-sq-display"></div>
-                <div class="dpr-input-card">
-                  <div class="dpr-inline-row">
-                    <button id="dpr-sq-open-chat-btn" class="arxiv-tool-btn" style="background:#2e7d32; color:#fff;">新增</button>
-                  </div>
-                </div>
+              </div>
+              <div class="dpr-admin-add-row">
+                <button id="dpr-sq-open-chat-btn" class="arxiv-tool-btn" type="button">新增研究方向</button>
               </div>
             </div>
 
@@ -1478,18 +1554,7 @@ window.SubscriptionsManager = (function () {
                     <span class="dpr-task-action-title">立即抓取三十天精读</span>
                     <span class="dpr-task-action-cost">约 ¥0.50</span>
                   </label>
-                  <label class="chat-quick-run-item dpr-task-radio-card">
-                    <input type="radio" name="dpr-quick-run-mode" value="90">
-                    <span class="dpr-task-action-title">回溯九十天 arXiv</span>
-                    <span class="dpr-task-action-cost">专题评审 · 按实际用量计费</span>
-                  </label>
-                  <label class="chat-quick-run-item dpr-task-radio-card">
-                    <input type="radio" name="dpr-quick-run-mode" value="365">
-                    <span class="dpr-task-action-title">回溯一年 arXiv</span>
-                    <span class="dpr-task-action-cost">365 天 · 可复用评审进度</span>
-                  </label>
                 </div>
-                <p class="dpr-task-hint">90天/365天为 arXiv 专题回溯：关键词候选与语义补漏，不保证找全；核心≥8分，补充6–7分。完成后在 Sidebar「日报」选择区间结束日期与专题标签阅读，或下载工作流结果附件。</p>
                 <button id="arxiv-admin-quick-run-start-btn" class="chat-quick-run-run-btn dpr-task-start-btn" type="button">开始检索</button>
                 <div id="arxiv-admin-quick-run-msg" class="chat-quick-run-msg"></div>
               </div>
@@ -1507,6 +1572,7 @@ window.SubscriptionsManager = (function () {
                 <div id="arxiv-admin-reset-content-msg" class="chat-quick-run-msg"></div>
               </div>
             </div>
+            <div class="dpr-topic-invitation"><span>想更深入了解一个研究方向？</span><button id="dpr-admin-go-topic" class="arxiv-tool-btn" type="button">前往专题研究</button></div>
           </div>
 
           <div
@@ -1548,6 +1614,9 @@ window.SubscriptionsManager = (function () {
               </div>
             </div>
           </div>
+          <div id="arxiv-topic-control-side" class="dpr-admin-task-panel" role="tabpanel" aria-labelledby="dpr-admin-tab-topic" hidden>
+            ${window.DPRTopicResearch ? window.DPRTopicResearch.render() : '<p class="dpr-task-hint">专题模块尚未加载，请刷新重试。</p>'}
+          </div>
         </div>
       </div>
     `;
@@ -1562,6 +1631,18 @@ window.SubscriptionsManager = (function () {
     adminConferenceTabBtn = document.getElementById('dpr-admin-tab-conference');
     adminDailyPanel = document.getElementById('arxiv-search-quick-run-side');
     adminConferencePanel = document.getElementById('arxiv-conference-control-side');
+    adminTopicTabBtn = document.getElementById('dpr-admin-tab-topic');
+    adminTopicPanel = document.getElementById('arxiv-topic-control-side');
+    topicProfilePickerEl = document.getElementById('arxiv-admin-topic-profile-picker');
+    if (adminTopicTabBtn) adminTopicTabBtn.addEventListener('click', () => switchAdminPanelTab('topic'));
+    const topicInvitation = document.getElementById('dpr-admin-go-topic');
+    if (topicInvitation) topicInvitation.addEventListener('click', () => switchAdminPanelTab('topic'));
+    if (window.DPRTopicResearch) window.DPRTopicResearch.mount(adminTopicPanel, {
+      getProfiles: getTopicResearchProfiles,
+      getConfig: () => cloneDeep(draftConfig || {}),
+      hasUnsaved: () => hasUnsavedChanges,
+      getConferences: () => getSelectedConferencePairSpecs().map(pair => pair.split(':')[0]),
+    });
 
     const reloadAll = () => {
       renderFromDraft();
@@ -1758,6 +1839,16 @@ window.SubscriptionsManager = (function () {
     quickRunConferenceBtn = document.getElementById(
       'arxiv-admin-quick-run-conference-run-btn',
     );
+    starterPackBtn = document.getElementById('arxiv-admin-starter-pack-btn');
+    if (starterPackBtn && !starterPackBtn._bound) {
+      starterPackBtn._bound = true;
+      starterPackBtn.addEventListener('click', runStarterPack);
+    }
+    const starterDateInput = document.getElementById('arxiv-admin-starter-pack-as-of');
+    if (starterDateInput && !starterDateInput._bound) {
+      starterDateInput._bound = true;
+      starterDateInput.addEventListener('change', () => { starterPackAsOf = starterDateInput.value; });
+    }
     quickRunMsgEl = document.getElementById('arxiv-admin-quick-run-msg');
     quickRunSelectionCountEl = null;
     conferenceSelectionCountEl = null;
@@ -1805,7 +1896,8 @@ window.SubscriptionsManager = (function () {
     [
       [dailyProfilePickerEl, 'daily'],
       [conferenceProfilePickerEl, 'conference'],
-    ].forEach(([picker]) => {
+      [topicProfilePickerEl, 'topic'],
+    ].forEach(([picker, mode]) => {
       if (!picker || picker._bound) return;
       picker._bound = true;
       picker.addEventListener('click', (event) => {
@@ -1814,6 +1906,7 @@ window.SubscriptionsManager = (function () {
           : null;
         if (!chip) return;
         const profileId = chip.getAttribute('data-profile-id') || '';
+        if (mode === 'topic') { setTopicProfileSelection(profileId); return; }
         const selected = chip.getAttribute('aria-pressed') !== 'true';
         setProfileSelection(profileId, selected);
       });
@@ -1939,6 +2032,12 @@ window.SubscriptionsManager = (function () {
     validateDraftConfig: () => validateIntentProfiles(draftConfig || {}),
     runProfileQuickFetch: (profileTag, days, runOptions) => runProfileQuickFetch(profileTag, days, runOptions),
     __test: {
+      initializeTopicSelection,
+      setTopicProfileSelection,
+      getTopicResearchProfiles,
+      __resetTopicSelection: () => { topicSelectedTag = ''; topicSelectionInitialized = false; },
+      __setTopicProfilePickerEl: el => { topicProfilePickerEl = el; },
+      runStarterPack,
       __setQuickRunMode: (value) => { quickRunMode = value; },
       runSelectedQuickFetchByMode,
       normalizeSubscriptions: (config) => normalizeSubscriptions(config),
