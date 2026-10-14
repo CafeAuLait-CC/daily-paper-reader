@@ -1,0 +1,1739 @@
+SONIC-AMG: STREAMING HUMAN MOTION
+GENERATION FROM SPATIAL AUDIO
+Jingcheng Ni1
+Zekun Li1
+Zhiyang Dou2
+Xiaoyan Cong1
+Ziyao Zeng3
+Hongyang Du1
+Randall Balestriero1
+Taku Komura4
+Srinath Sridhar1∗
+1 Brown University
+2 MIT
+3 Yale University
+4 The University of Hong Kong
+Music
+Explosion
+Birdsong
+L
+R
+now
+Figure 1: Streaming motion generation from spatial audio. Sonic-AMG generates continuous re-
+actions to successive sounds, updating each source’s position relative to the generated body. Colors
+link sound sources and audio segments to the corresponding motions. The unified scene shows suc-
+cessive motion snapshots from purple to blue to yellow. Translucent bands connect audio segments
+to their motion responses, while faded poses highlight motion transitions between audio segments.
+ABSTRACT
+Modeling human reactions to spatial audio requires understanding both what is
+heard and where it comes from. Prior work generates motion offline from com-
+plete acoustic and spatial input sequences. Humans, however, react to sounds
+without knowing what they will hear next.
+We present Sonic-AMG, to our
+knowledge the first framework for streaming human motion generation from spa-
+tial audio.
+The model encodes acoustic content and body-relative source ge-
+ometry as separate tokens. Conditioned on these tokens, a causal transformer
+with a flow head generates continuous motion latents, from which a causal de-
+coder reconstructs motion segments.
+Standard teacher-forced training derives
+motion histories and body-relative source locations from ground-truth motion,
+whereas streaming inference relies on generated motion for both, resulting in
+a training–inference mismatch.
+To reduce this history discrepancy, we intro-
+duce rehearsal training, which combines full-sequence teacher-forced supervision
+with supervised prediction along short autoregressive self-rollouts. To keep spa-
+tial conditioning consistent with generated motion, we propose spatial feedback,
+which recomputes body-relative source locations from generated root poses dur-
+ing both rehearsal training and inference. On SAM, Sonic-AMG achieves state-
+of-the-art FID and R-precision. It further supports real-time online generation
+of coherent reactions across sound events and source locations. Project page:
+https://jingchengni.com/sonic-amg/.
+∗Corresponding author.
+1
+arXiv:2610.13300v1  [cs.CV]  9 Oct 2026
+
+
+1
+INTRODUCTION
+Sound provides information about events beyond the visual field, making it an important cue for
+embodied interaction (Chen et al., 2020; 2021). Human reactions to sound depend on both its
+content and the source’s location relative to the body. For example, hearing a voice from behind
+may prompt a listener to turn toward the speaker before the utterance ends and adjust the movement
+as new acoustic information arrives. As the listener turns, the source’s direction relative to the body
+changes. Generating such reactions therefore requires responding as audio arrives and updating
+spatial conditions as the body moves.
+Recent work (Xu et al., 2025) synthesizes complete motion sequences within predefined temporal
+windows, conditioned on fully observed acoustic and spatial inputs. Requiring the full input window
+prevents it from responding causally to an incoming audio stream. Autoregressive motion models
+provide a basis for streaming generation by predicting successive motion segments from preceding
+movements (Shi et al., 2024; Xiao et al., 2025). Extending autoregressive learning to spatial audio
+requires representations that capture both acoustic content and spatial cues. Furthermore, stream-
+ing generation requires each motion prediction to incorporate the acoustic and spatial information
+currently available as the input evolves.
+Table 1: Method comparison. Online SSL denotes spa-
+tial conditioning updated from generated motion.
+Method
+Spatial Audio Causal Online SSL
+EDGE (Tseng et al., 2023)
+×
+×
+—
+POPDG (Luo et al., 2024)
+×
+×
+—
+LODGE (Li et al., 2024a)
+×
+×
+—
+MOSPA (Xu et al., 2025)
+✓
+×
+×
+Ours
+✓
+✓
+✓
+We present Sonic-AMG, to our knowl-
+edge the first framework for streaming
+human motion generation from continu-
+ous spatial audio (Table 1). Motion is rep-
+resented in the continuous latent space of
+a pretrained causal temporal VAE (Xiao
+et al., 2025).
+Given a binaural audio
+stream and the world-space sound source
+location (SSL), the model encodes acous-
+tic content and body-relative source ge-
+ometry as separate tokens. At each step,
+a causal transformer processes the incom-
+ing acoustic and spatial conditions together with preceding motion latents. Its output conditions a
+flow-matching head that samples the next motion latent, and a causal decoder reconstructs the cor-
+responding motion segment. Repeating this process extends the motion as audio arrives, without
+requiring the full audio in advance or revising previously generated frames.
+We treat acoustic content and spatial cues as distinct modalities of spatial-audio conditioning. We
+hypothesize that early fusion introduces interference between them. Sonic-AMG therefore encodes
+them as dedicated what and where tokens, respectively, and learns their interactions within the
+causal transformer. With sound source geometry supplied separately, the acoustic branch can fo-
+cus on sound content rather than a comprehensive description of the binaural signal. For instance,
+simple log-mel features in our model yield better results than MOSPA’s 2,272-dimensional audio
+features (Xu et al., 2025). To design the where token, we examine perceptual research to understand
+how body-relative SSL influences human reactions. We develop an 11-dimensional spatial event
+representation inspired by studies of nearby auditory space (Graziano et al., 1999), sound-source
+motion (Warren et al., 2002), and looming (Neuhoff, 1998).
+With acoustic and spatial representations in place, learning the causal generator further requires
+addressing two sources of training–inference mismatch. The first concerns motion history: teacher-
+forced training uses ground-truth histories, whereas autoregressive inference relies on the model’s
+own predictions. To reduce this mismatch, two-forward training replaces selected ground-truth in-
+puts with predictions from a preliminary teacher-forced pass (Mihaylova & Martins, 2019; Xiao
+et al., 2025). However, these replacements are still predicted under ground-truth histories, where
+later replacements do not depend on earlier sampled outputs. We introduce rehearsal training, which
+combines teacher-forced supervision with supervised prediction on short histories generated autore-
+gressively by the model. Training on self-rollouts improves robustness to accumulated prediction
+errors, while teacher-forced supervision provides a stable learning signal across the full sequence.
+The second mismatch arises in spatial conditioning. While acoustic content is directly supplied by
+the incoming audio stream, body-relative SSL depends on the root position and orientation. MO-
+SPA uses complete SSL sequences precomputed from recorded motion, which encode information
+2
+
+
+about future ground-truth root motion. Such conditioning is incompatible with causal streaming
+generation, which requires SSL to be updated from the generated root. Training with SSL derived
+from ground-truth motion therefore creates a mismatch with the spatial conditions encountered at
+inference. Our experiments show that this mismatch substantially degrades generation quality. We
+therefore introduce spatial feedback, which recomputes body-relative source coordinates after each
+generated segment during both rehearsal training and inference. The updated coordinates condition
+the next prediction, keeping spatial conditions consistent with the generated motion history.
+On SAM (Xu et al., 2025), Sonic-AMG achieves state-of-the-art FID and R-precision. It further
+supports causal and online motion generation from streaming spatial audio in real time. Although
+trained on individual audio–motion clips, Sonic-AMG can generate coherent motion across succes-
+sive sound events with varying content and source locations (Fig. 1), demonstrating robust streaming
+generation. Our contributions are:
+• We present Sonic-AMG, to our knowledge the first framework for causal human motion genera-
+tion from streaming spatial audio, with dedicated what and where tokens for acoustic content and
+spatial cues.
+• We introduce rehearsal training to address the history mismatch between training and inference,
+combining teacher-forced supervision with supervised prediction from histories constructed through
+short autoregressive self-rollouts.
+• We propose spatial feedback to address the mismatch in spatial conditioning, updating body-
+relative source coordinates from generated motion during both rehearsal training and inference.
+2
+RELATED WORK
+Audio-conditioned motion generation. Music-driven dance methods use autoregressive models to
+align motion with musical structure, either in pose space or through learned choreographic codes (Li
+et al., 2021; Siyao et al., 2022). Diffusion-based approaches support diverse choreography, motion
+editing, and hierarchical synthesis of long dance sequences (Alexanderson et al., 2023; Tseng et al.,
+2023; Luo et al., 2024; Li et al., 2024a). Diffusion-based visual generation and prediction benefit
+from complementary conditioning modalities (Zhang et al., 2023b; Mou et al., 2024; Zeng et al.,
+2026). Co-speech gesture models combine acoustic, textual, and speaker or style information to
+generate gestures that match speech content and rhythm (Yoon et al., 2020; Ao et al., 2023). Dif-
+fusion models and learned motion priors capture gesture diversity while coordinating body-part
+movements (Zhu et al., 2023; Ao et al., 2023; Liu et al., 2024; Chen et al., 2024b). Streaming sys-
+tems extend these tasks to incoming music and speech (Saleem et al., 2026; Chen et al., 2026; Vu
+et al., 2026; Ji et al., 2026; Liu et al., 2026). MOSPA (Xu et al., 2025) introduces the SAM dataset
+of human reactions to spatial audio and a diffusion model conditioned on binaural audio, source
+coordinates, and reaction style. Its full-sequence conditioning requires future observations, preclud-
+ing causal reactions to an incoming audio stream. MoSAT (Xu et al., 2026) conditions a latent
+flow-matching model on text, acoustic features, and an initial body-relative sound-source direction.
+Streaming generation remains future work. Sonic-AMG enables real-time causal motion generation
+from incoming spatial audio, with spatial feedback updating body-relative source geometry.
+Causal motion generation. Autoregressive (AR) models use next-token prediction for language
+modeling (Brown et al., 2020) and image synthesis with discrete visual tokens (Esser et al., 2021).
+Continuous latent representations support diffusion-based and flow-based generation (Li et al.,
+2024b; Ren et al., 2025; Zheng et al., 2026; Du et al., 2026). Autoregressive approaches pair a trans-
+former with a conditional diffusion or flow head, including in multimodal language models (Sun
+et al., 2026). In motion synthesis, discrete-token models predict quantized motion codes (Zhang
+et al., 2023a; Jiang et al., 2023), whereas AR diffusion models sample successive frames or motion
+primitives (Shi et al., 2024; Zhao et al., 2025; Tevet et al., 2025; Zhang et al., 2025; Zhao et al.,
+2026). Streaming generation in latent space requires decoding segments without future latents. Sys-
+tems combining causal decoding with transformer-conditioned generative heads support online text
+control, two-character interaction, and co-speech gestures (Xiao et al., 2025; Cen et al., 2025; Li
+et al., 2026; Liu et al., 2026). Causal decoding alone does not resolve exposure bias: teacher forcing
+uses recorded histories, whereas inference relies on model predictions. Diffusion forcing exposes
+models to contexts at varying noise levels (Chen et al., 2024a; Cai et al., 2026; Ji et al., 2026), while
+3
+
+
+Feature extraction
+Log-mel L/R
+80 bins per ear
+Stereo audio
+Semantic branch (what)
+Input: log-mel L/R
+Shared causal
+CNN
+Average
+L/R
+LayerNorm
++ Linear
+Mean
+Pool ×4
+Linear
+what token
+Spatial branch (where)
+11-D features
+direction
+direction increment
+inverse distance
+direction change magnitude
+3D
+3D
+1D
+Linear
+SiLU
+Linear
+where token
+(2) Binaural Causal Encoder
+(3) AR Model with Flow Head
+Body-relative
+Left
+Right
+Generated motion sequence
+(1) Overview
+Binaural Causal
+Encoder
+Autoregressive
+Model
+what
+where
+Causal
+Decoder
+Latent
+sequence
+Linear
+…
+…
+Causal Transformer
+Rectified Flow
+Head
+Motion latent
+Motion
+Causal
+Encoder
+16-D latent
+Linear
+motion
+···
+(4) Spatial Feedback
+History
+Prediction
+Update body-relative SSL
+Spatial feature
+extraction
+11-D
+Gaussian noise
+Frozen weights
+Sound source
+Detail expansion
+Causal
+CNN
+Root pose
+distance
+distance increment
+looming
+1D
+1D
+1D
+1D
+SSL
+𝑎𝑘
+𝑠𝑘
+𝑚𝑘
+ℎ𝑘= concat(out(𝑎𝑘), out(𝑠𝑘), out(𝑚𝑘))̂
+𝑧𝑘+1 ∈ℝ16
+𝑋𝑘̂
+𝑋𝑘+1
+𝑎0
+𝑠0
+𝑚0
+𝑎𝑘
+𝑠𝑘
+𝑚𝑘
+𝑎𝑘+1
+𝑠𝑘+1̂
+𝑚𝑘+1
+𝜖∼𝒩(0, 𝐼)
+𝑎𝑘∈ℝ768
+𝑠𝑘∈ℝ768
+(̂𝑝,̂ 𝑅)
+Figure 2: Sonic-AMG architecture. A causal transformer and flow head generate motion latents
+from interleaved acoustic (what), spatial (where), and motion tokens. Spatial feedback updates
+body-relative SSL from decoded root poses. Xk, zk, and mk denote a four-frame motion block, its
+latent, and its projected token, respectively.
+other strategies introduce model-generated histories (Bengio et al., 2015; Zhao et al., 2025; Huang
+et al., 2025). Two-forward training preserves parallel computation using replacement inputs from a
+preliminary teacher-forced pass (Mihaylova & Martins, 2019; Xiao et al., 2025). These replacements
+do not recursively depend on earlier sampled outputs. Our rehearsal training retains teacher forcing
+alongside short autoregressive self-rollouts. The combined objective accounts for error propagation
+across generated segments while retaining sequence-wide supervision.
+3
+METHOD
+Given an incoming binaural audio stream A and a known world-space sound-source position, Sonic-
+AMG generates motion autoregressively from an initial motion segment, without access to future
+audio or motion (Fig. 2). We represent motion with continuous latents and encode acoustic con-
+tent and body-relative source geometry as separate conditioning tokens (Sec. 3.1). A causal trans-
+former conditions a flow head to generate the next motion latent from these tokens and the motion
+history (Sec. 3.2). We train the generator using rehearsal training, which combines full-sequence
+teacher-forced supervision with supervised prediction under histories constructed through short au-
+toregressive self-rollouts (Sec. 3.3). We further apply spatial feedback to update body-relative SSL
+from the generated root pose during both rehearsal training and inference, keeping spatial conditions
+consistent with the generated motion history (Sec. 3.4).
+3.1
+MOTION AND CONDITIONING REPRESENTATIONS
+Motion representation.
+We represent motion at 30 Hz. Each frame xt ∈R300 comprises the
+global 3D positions, local rotations in a 6D representation, and 3D velocities of 25 joints (Xu et al.,
+2025). We adopt MotionStreamer’s causal temporal VAE (Xiao et al., 2025) and pretrain it on
+SAM (Xu et al., 2025). The VAE encodes motion into a sequence of K latents zk ∈Rdz with
+dz = 16 at a temporal stride of r = 4. Each latent zk corresponds to a four-frame motion block
+Ik = {rk, . . . , rk + r −1}. The encoder and decoder remain frozen during generator training.
+For spatial audio, we regard acoustic content and source geometry as two distinct conditioning
+modalities. We hypothesize that the two modalities can act as noise for one another when fused into
+a single conditioning representation. We therefore encode them as separate tokens.
+4
+
+
+Semantic branch: what.
+The semantic branch in Figure 2(2) learns acoustic features for mo-
+tion prediction from the incoming binaural stream. We represent each ear’s spectral content with
+80-dimensional log-mel features and process them with a shared causal temporal CNN. The shared
+encoder maps both ears into a common feature space, where we average the two streams to em-
+phasize sound content shared across ears. A two-layer causal temporal CNN then aggregates recent
+acoustic context, followed by layer normalization and a linear projection. Mean pooling over each
+four-frame block produces fk at the motion latent rate, so that each acoustic token aligns with a mo-
+tion block. We obtain the acoustic token as ak = Wafk +ec, where Wa is a learned linear projection
+and ec is a learned embedding indexed by SAM’s annotated reaction-style label c.
+Spatial branch: where.
+The spatial branch in Figure 2(2) encodes source location and relative
+motion. Our descriptor reflects perceptually relevant aspects of spatial sound: proximity (Graziano
+et al., 1999), relative motion (Warren et al., 2002), and approach (Neuhoff, 1998). We assume a
+sound source at known world-space position g. For root position pt and orientation Rt ∈SO(3),
+the egocentric source location is ℓt = R⊤
+t (g −pt). We average source locations within each block,
+ℓk = r−1 P
+t∈Ik ℓt, and define distance ρk = ∥ℓk∥2 and direction dk = ℓk/ρk. The resulting
+11-dimensional descriptor contains direction, distance, their increments, and three derived features:
+ϕk =
+
+dk, ρk, ∆dk, ∆ρk, ρ−1
+k , ∥∆dk∥2, max(−∆ρk, 0)
+ρk
+
+.
+(1)
+For k > 0, the direction increment ∆dk = dk −dk−1 and distance increment ∆ρk = ρk −ρk−1
+measure changes between consecutive motion blocks. The final three features are inverse distance,
+direction change magnitude, and looming, respectively. Inverse distance emphasizes proximity,
+while direction change magnitude summarizes changes in source bearing. We represent looming
+by the decrease in distance per block normalized by the current distance, with zero assigned when
+the distance does not decrease. The spatial token is sk = Es((ϕk −µϕ)/σϕ) + ec, where Es is a
+two-layer MLP and µϕ, σϕ are the training-set mean and standard deviation. At inference, acoustic
+tokens are computed from the incoming audio, while spatial feedback updates spatial tokens from
+the generated body state (Section 3.4).
+3.2
+CAUSAL MOTION GENERATION
+Given an initial motion latent z0, we predict each subsequent latent zk+1 from the motion history
+z0:k, conditioned on acoustic and spatial tokens up to block k:
+pθ(z1:K−1 | A, g, c, z0) =
+K−2
+Y
+k=0
+pθ(zk+1 | z0:k, a0:k, s0:k, c),
+(2)
+where θ denotes the generator parameters.
+We use a learned linear projection Wm to obtain motion tokens mk = Wmzk and feed the inter-
+leaved sequence to a causal transformer (Figure 2(3)). We concatenate the transformer outputs at
+the three token positions of block k to form the conditioning vector hk for the flow head:
+U0:k = [a0, s0, m0, . . . , ak, sk, mk],
+hk = [oa
+k; os
+k; om
+k ],
+(3)
+where oa
+k, os
+k, om
+k denote the corresponding transformer outputs. At inference, we reuse cached keys
+and values for the history and process only the new token triplet at each step.
+Conditioned on hk, a rectified flow head samples the next motion latent from Gaussian noise. The
+head predicts a velocity field vθ, which we train with conditional flow matching (Liu et al., 2023;
+Lipman et al., 2023). For a next-latent target z and conditioning vector h, the interpolation at flow
+time τ ∈[0, 1] is uτ = (1 −τ)ϵ + τz, where ϵ ∼N(0, I). We sample τ from a logit-normal
+distribution and minimize
+ℓFM(z, h) = Eϵ,τ
+ 1
+dz
+∥vθ(uτ, τ; h) −(z −ϵ)∥2
+2
+
+.
+(4)
+Sampling integrates the learned velocity field from τ = 0 to 1 with ten Euler steps. We write the
+sampled latent as bzk+1 = Gθ(ϵ; hk), where Gθ denotes the flow sampler. At inference, classifier-
+free guidance (Ho & Salimans, 2022) combines velocity predictions with and without the current
+acoustic and spatial conditions.
+5
+
+
+We project the sampled latent bzk+1 to a motion token and append it to the motion history. The causal
+decoder reconstructs the new motion segment from the extended latent sequence without revising
+earlier frames. Spatial feedback then recomputes body-relative source geometry from the decoded
+root pose for the next prediction (Section 3.4).
+3.3
+REHEARSAL TRAINING
+In two-forward training (Mihaylova & Martins, 2019; Xiao et al., 2025), an initial teacher-forced
+pass estimates motion latents from GT histories. Selected estimates then replace GT motion inputs
+for a second supervised pass. Although this exposes the model to predicted inputs, those inputs are
+not generated recursively from earlier predictions, as they would be during autoregressive inference.
+Rehearsal training instead constructs motion histories through short autoregressive self-rollouts.
+Each sampled latent extends the history used for the next prediction. We combine next-latent su-
+pervision under these recursively generated histories with full-sequence teacher-forced supervision.
+Both objectives use the corresponding GT next latent as the prediction target.
+Teacher-forced prediction and initialization.
+A teacher-forced pass over the full sequence yields
+the loss
+LTF =
+1
+K −1
+K−2
+X
+k=0
+ℓFM(zGT
+k+1, hGT
+k
+).
+(5)
+Here, hGT
+k
+is computed from the GT motion history zGT
+0:k and the corresponding acoustic and spatial
+tokens. We sample a start s for an H-transition rollout independently for each sequence. A detached
+denoising estimate from the same teacher-forced pass initializes zs. The transformer cache and
+acoustic context are reset at s.
+Recursive context construction.
+At step k, the rollout history zs:k and the corresponding acoustic
+and spatial token sequences determine hk. We compute the flow-matching loss against zGT
+k+1 under
+this context. We then independently sample a latent under the same context and append it to the
+rollout history:
+zk+1 = sg
+
+Gθ(ϵk; hk)
+
+,
+zs:k+1 = [zs:k, zk+1],
+(6)
+where sg stops gradients and ϵk is fresh Gaussian noise. We average the flow-matching losses over
+the H transitions and combine the two objectives with equal weight:
+Lreh = 1
+H
+s+H−1
+X
+k=s
+ℓFM(zGT
+k+1, hk),
+L = 1
+2(LTF + Lreh).
+(7)
+The teacher-forced term supervises the full recorded sequence, while the rollout term supervises con-
+tinuations of increasingly long sampled histories. We use H = 16 by default and unguided sampling
+during rehearsal. Gradients from both objectives update the conditioning encoders, transformer, and
+flow head. Gradients propagate through cached transformer states but not through sampled latents
+or the sampling procedure.
+3.4
+SPATIAL FEEDBACK
+Spatial feedback recomputes the source’s body-relative coordinates from generated motion during
+both training rollouts and inference (Figure 2(4)). Given the decoder input prefix z0:k, the causal
+decoder Dψ with frozen parameters ψ reconstructs block k, whose root positions bpt and orientations
+bRt determine the updated source coordinates:
+bxIk = Dψ(z0:k)|Ik ,
+bℓt = bR⊤
+t (g −bpt),
+t ∈Ik.
+(8)
+We average bℓt within block k and recompute the descriptor in Eq. (1) from the current and preced-
+ing pooled locations. During training rollouts, the recomputed geometry is detached before spatial
+encoding. The spatial encoder in Section 3.1 maps this descriptor to sk, which conditions the pre-
+diction of block k + 1.
+6
+
+
+Table 2: Quantitative comparison on SAM. Causal denotes support for causal generation. † de-
+notes results from Xu et al. (2025).
+Method
+Causal
+Eval. SSL
+FID↓
+R@1↑
+R@2↑
+R@3↑
+Diversity→
+GT motion†
+—
+—
+0.001
+1.000±0.000
+1.000±0.000
+1.000±0.000
+23.616±0.188
+EDGE†
+×
+GT
+13.993
+0.886±0.005
+0.960±0.003
+0.977±0.002
+23.099±0.196
+POPDG†
+×
+GT
+20.967
+0.762±0.006
+0.886±0.005
+0.934±0.003
+22.536±0.170
+LODGE†
+×
+GT
+102.289
+0.444±0.006
+0.594±0.005
+0.679±0.004
+21.101±0.141
+Bailando†
+×
+GT
+168.396
+0.077±0.003
+0.134±0.003
+0.182±0.004
+17.347±0.247
+MOSPA
+×
+GT
+8.242
+0.942±0.004
+0.984±0.002
+0.994±0.001
+23.412±0.169
+Sonic-AMG (Ours)
+✓
+GT
+6.505
+0.957±0.004
+0.991±0.002
+0.998±0.001
+23.241±0.158
+Sonic-AMG (Ours)
+✓
+Online
+8.066
+0.943±0.004
+0.984±0.002
+0.994±0.001
+23.194±0.149
+4
+EXPERIMENTS
+Dataset. We evaluate on SAM (Xu et al., 2025), which pairs spatial audio with human reactions.
+Autoregressive models receive four initial ground-truth motion frames and the reaction style.
+Spatial conditioning inputs.
+We consider two spatial-conditioning protocols: GT uses body-
+relative SSL precomputed from recorded motion, whereas Online recomputes SSL from generated
+root poses during inference. GT SSL relies on ground-truth root information that is unavailable
+during causal streaming generation. We include a GT SSL variant to enable fair comparison with
+MOSPA and other baselines under their established evaluation protocol. Online evaluation is more
+challenging, as inaccuracies in generated root poses perturb the SSL used to condition subsequent
+predictions, introducing an additional pathway for error propagation. All qualitative results of Sonic-
+AMG shown in the experiments are generated under the Online protocol.
+Following the established SAM evaluation protocol, SSL inputs are available to all methods in our
+main comparisons. Such inputs can be supplied by dataset annotations, an upstream localization
+module (Krause et al., 2024a;b), or virtual-scene metadata. Our modular conditioning design also
+supports a No-SSL variant that derives spatial tokens directly from binaural audio, without requiring
+SSL inputs at inference, detailed in Appendix D.
+Evaluation metrics. Following MOSPA (Xu et al., 2025), we report Fr´echet Inception Distance
+(FID), R-precision (R@1–3), and feature-space diversity. Lower FID indicates better distributional
+fidelity, while higher R-precision indicates better conditioning alignment. Diversity closer to real
+motion is preferred. We report 95% confidence intervals. Bold and underlined values mark the best
+and second-best results within each comparison.
+4.1
+COMPARISON WITH EXISTING METHODS
+Quantitative comparison. Sonic-AMG supports real-time streaming generation (Section 4.2) while
+achieving the best distributional fidelity and conditioning alignment among the compared methods
+under the GT SSL protocol (Table 2). Under the Online protocol, Sonic-AMG maintains strong
+distributional fidelity and conditioning alignment while updating spatial conditions from its own
+generated motion. We attribute these results to the complementary roles of our separate condi-
+tioning representations and rehearsal training. Dedicated conditioning tokens allow each motion
+prediction to distinguish acoustic content from body-relative source geometry, supporting reactions
+that account for both cues. Rehearsal training combines sequence-wide supervision with local au-
+toregressive consistency. Teacher forcing provides supervision across complete motion sequences,
+supporting motion fidelity and long-range temporal structure, while short self-rollouts expose the
+model to the temporal consequences of its own predictions. The joint objective directly targets
+the recursive prediction process required for streaming generation, which is absent from MOSPA’s
+full-sequence training. The ablations in Sections 4.3 and 4.5 support the contributions of the repre-
+sentation and training.
+Qualitative comparison. Sonic-AMG produces recognizable and spatially appropriate reactions
+under the Online protocol (Fig. 3). It covers the ears in response to crowd noise and combines
+movement away from the source with a lowered posture for an explosion, whereas several baselines
+7
+
+
+Sound
+EDGE
+POPDG
+LODGE
+MOSPA
+Sonic-AMG
+Bicycle ring
+Step aside
+Crowd yell
+Cover ears and
+step back
+Explosion
+Run away and
+squat down
+Music
+Start dancing
+Figure 3: Qualitative comparison on SAM. EDGE, POPDG, and LODGE panels are reproduced
+from Xu et al. (2025); purple markers indicate sound sources.
+Method
+(a)
+(b)
+(c)
+(d)
+MOSPA
+Sonic-AMG
+Figure 4: Reactions over the full audio duration. MOSPA (top) generates 8 s of motion; Sonic-
+AMG (bottom) covers the full 10–12 s audio clips. Six poses are sampled uniformly over each
+sequence’s own duration. Purple markers denote sound sources; red dots trace root trajectories.
+exhibit limited postural change or displacement in these examples. These comparisons illustrate
+the model’s ability to coordinate the type of reaction with movement relative to the sound source.
+Additional visual results are provided in Appendix B, with videos available in the supplementary
+material.
+Generation over complete audio clips. Sonic-AMG generates complete reactions to audio clips of
+different durations using a single trained model (Fig. 4). While MOSPA is restricted to a fixed output
+window, Sonic-AMG extends motion as audio arrives. Postural changes and body displacement can
+therefore unfold throughout the audio, yielding coherent and complete reaction sequences.
+Physical simulation. We retarget reactions to Unitree G1 with GMR (Ara´ujo et al., 2026) and track
+them with pretrained GEAR-SONIC (Luo et al., 2026) in MuJoCo (Todorov et al., 2012) (Fig. 5).
+4.2
+STREAMING EFFICIENCY AND LATENCY
+Real-time computation. Sonic-AMG sustains real-time Online generation on both RTX A6000
+and TITAN RTX GPUs (Table 3). Each autoregressive step produces four motion frames at 30 Hz,
+allowing 133.3 ms of computation per block. The 95th-percentile step time remains below this
+budget on both GPUs, including motion decoding and spatial feedback. MOSPA achieves an RTF
+below one on RTX A6000, but requires the complete audio window before generation and therefore
+does not support causal streaming. On TITAN RTX, its RTF exceeds one, while Sonic-AMG retains
+real-time throughput.
+8
+
+
+(a) Birdsong: approaching the sound source.
+(b) Singing: performing arm and leg gestures.
+Figure 5: Physical simulation of generated reactions. See Appendix B.3 for details.
+Table 3: Streaming computation. All measurements use batch size one. For Sonic-AMG, step
+times (ms) are measured from precomputed acoustic tokens. Online includes motion decoding and
+spatial feedback; GT measures latent generation with precomputed SSL. RTF is computation time
+divided by generated motion duration. Real-time denotes causal streaming with RTF < 1. MOSPA
+has no four-frame step time.
+GPU
+Method
+Eval. SSL
+Mean↓
+Median↓
+P95↓
+RTF↓
+Real-time
+RTX A6000
+MOSPA
+GT
+—
+—
+—
+0.357
+×
+Ours
+GT
+41.2
+41.1
+42.5
+0.309
+✓
+Ours
+Online
+50.2
+50.9
+53.2
+0.376
+✓
+TITAN RTX
+MOSPA
+GT
+—
+—
+—
+1.427
+×
+Ours
+GT
+102.5
+105.8
+108.1
+0.769
+✓
+Ours
+Online
+118.0
+117.9
+125.6
+0.885
+✓
+Table 4: Training strategies. Each group uses the same SSL protocol for predicted training histories
+and evaluation. Two-forward schedules increase (0→1), decrease (1→0), or fix (p = 1) the fraction
+of replaced motion inputs.
+Training strategy
+Eval. SSL
+FID↓
+R@1↑
+R@2↑
+R@3↑
+Diversity→
+GT motion†
+0.001
+1.000±0.000
+1.000±0.000
+1.000±0.000
+23.616±0.188
+Two-forward (0→1)
+GT
+10.797
+0.839±0.006
+0.924±0.004
+0.956±0.003
+22.856±0.160
+Two-forward (1→0)
+GT
+8.001
+0.926±0.004
+0.972±0.002
+0.983±0.001
+23.106±0.136
+Two-forward (p = 1)
+GT
+8.033
+0.934±0.004
+0.981±0.002
+0.992±0.001
+23.223±0.172
+Rollout Only
+GT
+14.854
+0.860±0.005
+0.937±0.004
+0.966±0.003
+22.550±0.161
+Rollout Only with History
+GT
+8.585
+0.915±0.004
+0.968±0.003
+0.984±0.003
+22.883±0.142
+Rehearsal (Ours)
+GT
+6.505
+0.957±0.004
+0.991±0.002
+0.998±0.001
+23.241±0.158
+Two-forward (0→1)
+Online
+15.367
+0.796±0.005
+0.887±0.004
+0.923±0.003
+22.974±0.147
+Two-forward (1→0)
+Online
+12.695
+0.846±0.005
+0.933±0.003
+0.963±0.002
+23.239±0.151
+Two-forward (p = 1)
+Online
+11.766
+0.887±0.004
+0.958±0.003
+0.981±0.002
+23.195±0.166
+Rollout Only
+Online
+17.036
+0.792±0.006
+0.903±0.005
+0.945±0.003
+22.660±0.151
+Rollout Only with History
+Online
+12.320
+0.891±0.005
+0.961±0.002
+0.980±0.002
+22.684±0.110
+Rehearsal (Ours)
+Online
+8.714
+0.909±0.005
+0.966±0.002
+0.981±0.001
+23.353±0.189
+Initial response latency. On RTX A6000, Sonic-AMG reduces estimated initial response latency
+from MOSPA’s 10,857 ms to approximately 193 ms, a reduction by a factor of about 56. Causal
+blockwise generation allows reactions to begin as audio arrives, whereas MOSPA must first collect
+its complete 8 s input window. These estimates combine input waiting with mean steady-state gener-
+ation time. Appendix C provides the timing protocols, excluded operations, and latency breakdown.
+4.3
+REHEARSAL TRAINING
+Comparison with two-forward training. Rehearsal training improves motion fidelity and condi-
+tioning alignment over all two-forward schedules under both SSL protocols (Table 4). All variants
+share the generator architecture, and Online two-forward baselines also update spatial conditions.
+The gains support recursive history construction, which exposes the model to error propagation
+across generated segments that teacher-forced replacements do not capture.
+9
+
+
+Table 5: Cross-condition evaluation.
+Table 6: Conditioning representations.
+Train
+SSL
+Eval.
+SSL
+FID↓R@1↑R@2↑R@3↑Div.→
+GT motion†
+0.001 1.000 1.000 1.000 23.616
+GT
+GT
+6.505 0.957 0.991 0.998 23.241
+GT
+Online 25.872 0.714 0.827 0.868 22.067
+Online Online 8.714 0.909 0.966 0.981 23.353
+Configuration
+FID↓R@1↑R@2↑R@3↑Div.→
+GT motion†
+0.001 1.000 1.000 1.000 23.616
+Spatial
+Fused
+11.445 0.881 0.951 0.972 23.083
+Separate
+8.714 0.909 0.966 0.981 23.353
+Acoustic MOSPA 12.759 0.818 0.907 0.940 22.694
+Ours
+8.714 0.909 0.966 0.981 23.353
+Role of teacher-forced supervision. Self-rollouts are most effective when combined with full-
+sequence teacher-forced supervision. Removing this supervision degrades fidelity and alignment.
+Restoring the motion and conditioning prefix in Rollout Only with History (Appendix F) improves
+performance but does not recover rehearsal’s fidelity or top-rank retrieval under either protocol.
+Additional context therefore cannot fully replace supervision over complete sequences.
+4.4
+EFFECT OF SPATIAL FEEDBACK
+Adapting to generated motion histories alone is insufficient for Online generation. Table 5 com-
+pares two rehearsal-trained models. For the GT-trained model, switching evaluation from GT to
+Online SSL with fixed generation settings substantially degrades motion fidelity and conditioning
+alignment. During training, it encounters prediction errors in its motion history but not the result-
+ing changes in spatial conditions. Training with spatial feedback substantially improves fidelity and
+alignment under the same Online protocol. The comparison supports updating body-relative SSL
+during rehearsal, so that motion histories and spatial conditions reflect the same generated trajectory.
+4.5
+ACOUSTIC AND SPATIAL REPRESENTATION
+Separate spatial tokens. All representation ablations use Online SSL. Fused linearly projects con-
+catenated acoustic and spatial embeddings into a single conditioning token. Separate tokens improve
+fidelity and alignment (Table 6). Preserving distinct inputs allows the transformer to attend to acous-
+tic and spatial cues separately.
+Learning reaction-relevant acoustic features. MOSPA aggregates diverse audio descriptors into
+a 2,272-dimensional feature vector. Our learned log-mel features achieve better fidelity and con-
+ditioning alignment (Table 6). This improvement is consistent with our hypothesis that redundant
+or task-irrelevant acoustic variation can interfere with condition modeling. Separating what from
+where helps the model associate acoustic events with spatially appropriate responses.
+5
+CONCLUSION
+We presented Sonic-AMG for real-time autoregressive motion generation from streaming spatial
+audio, with separate acoustic and spatial representations. Rehearsal training combines full-sequence
+teacher-forced supervision with short autoregressive self-rollouts, while spatial feedback keeps
+source coordinates consistent with generated motion. Sonic-AMG achieves state-of-the-art FID and
+R-precision on SAM and generates coherent reactions across sound events and source locations.
+10
+
+
+AI USE STATEMENT
+Generative AI tools were used to polish the manuscript and assist with code development. The
+authors take full responsibility for the final manuscript and code.
+REPRODUCIBILITY STATEMENT
+Section 3 describes the model and training objectives, while Section 4 specifies the evaluation pro-
+tocols and metrics. Appendices E and F provide implementation and training details. Runtime
+measurement procedures are described in Appendix C. Our code and model will be released upon
+acceptance.
+REFERENCES
+Simon Alexanderson, Rajmund Nagy, Jonas Beskow, and Gustav Eje Henter. Listen, denoise, action!
+audio-driven motion synthesis with diffusion models. ACM Transactions on Graphics, 42(4):
+44:1–44:20, 2023. doi: 10.1145/3592458. URL https://doi.org/10.1145/3592458.
+Tenglong Ao, Zeyi Zhang, and Libin Liu. GestureDiffuCLIP: Gesture diffusion model with CLIP
+latents. ACM Transactions on Graphics, 42(4):42:1–42:18, 2023. doi: 10.1145/3592097. URL
+https://arxiv.org/abs/2303.14613.
+Jo˜ao Pedro Ara´ujo, Yanjie Ze, Pei Xu, Jiajun Wu, and C. Karen Liu. Retargeting matters: General
+motion retargeting for humanoid motion tracking. In 2026 IEEE International Conference on
+Robotics and Automation (ICRA), 2026. URL https://pei-xu.github.io/GMR.
+Samy Bengio, Oriol Vinyals, Navdeep Jaitly, and Noam Shazeer.
+Scheduled sampling for se-
+quence prediction with recurrent neural networks. In Advances in Neural Information Processing
+Systems, volume 28, 2015. URL https://proceedings.neurips.cc/paper/2015/
+hash/e995f98d56967d946471af29d7bf99f1-Abstract.html.
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal,
+Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel
+Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel Ziegler,
+Jeffrey Wu, Clemens Winter, Chris Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray,
+Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever,
+and Dario Amodei. Language models are few-shot learners. In Advances in Neural Informa-
+tion Processing Systems, volume 33, 2020. URL https://proceedings.neurips.cc/
+paper/2020/hash/1457c0d6bfcb4967418bfb8ac142f64a-Abstract.html.
+Yiyi Cai, Yuhan Wu, Kunhang Li, You Zhou, Bo Zheng, and Haiyang Liu.
+FloodDiffusion:
+Tailored diffusion forcing for streaming motion generation. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition (CVPR), pp. 2295–2304, June 2026.
+URL
+https://openaccess.thecvf.com/content/CVPR2026/papers/Cai_
+FloodDiffusion_Tailored_Diffusion_Forcing_for_Streaming_Motion_
+Generation_CVPR_2026_paper.pdf.
+Zhi Cen, Huaijin Pi, Sida Peng, Qing Shuai, Yujun Shen, Hujun Bao, Xiaowei Zhou, and
+Ruizhen Hu.
+Ready-to-React: Online reaction policy for two-character interaction genera-
+tion.
+In The Thirteenth International Conference on Learning Representations, 2025.
+URL
+https://openreview.net/forum?id=mm0cqJ2O3f.
+Bohong Chen, Yumeng Li, Yinglin Xu, Youyi Zheng, Yanlin Weng, and Kun Zhou.
+EchoA-
+vatar: Real-time generative avatar animation from audio streams. In Proceedings of the Spe-
+cial Interest Group on Computer Graphics and Interactive Techniques Conference Conference
+Papers, SIGGRAPH Conference Papers ’26. Association for Computing Machinery, 2026. doi:
+10.1145/3799902.3811066. URL https://doi.org/10.1145/3799902.3811066.
+Boyuan Chen, Diego Mart´ı Mons´o, Yilun Du, Max Simchowitz, Russ Tedrake, and Vincent Sitz-
+mann. Diffusion forcing: Next-token prediction meets full-sequence diffusion. In Advances in
+Neural Information Processing Systems, volume 37, 2024a. doi: 10.52202/079017-0759. URL
+https://arxiv.org/abs/2407.01392.
+11
+
+
+Changan Chen, Unnat Jain, Carl Schissler, Sebastia Vicenc Amengual Gari, Ziad Al-Halah,
+Vamsi Krishna Ithapu, Philip Robinson, and Kristen Grauman. SoundSpaces: Audio-visual nav-
+igation in 3D environments. In Proceedings of the European Conference on Computer Vision,
+2020. URL https://arxiv.org/abs/1912.11474.
+Changan Chen, Ziad Al-Halah, and Kristen Grauman. Semantic audio-visual navigation. In Pro-
+ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp. 15516–
+15525, 2021. URL https://arxiv.org/abs/2012.11583.
+Junming Chen, Yunfei Liu, Jianan Wang, Ailing Zeng, Yu Li, and Qifeng Chen.
+Diff-
+SHEG:
+A
+diffusion-based
+approach
+for
+real-time
+speech-driven
+holistic
+3D
+expres-
+sion and gesture generation.
+In Proceedings of the IEEE/CVF Conference on Com-
+puter Vision and Pattern Recognition (CVPR), pp. 7352–7361,
+June 2024b.
+URL
+https://openaccess.thecvf.com/content/CVPR2024/papers/Chen_
+DiffSHEG_A_Diffusion-Based_Approach_for_Real-Time_Speech-driven_
+Holistic_3D_Expression_CVPR_2024_paper.pdf.
+Hongyang Du, Yunfei Xie, Junjie Ye, Jiawei Yang, Xiaoyan Cong, Haodong Zhang, Yongchao
+Huang, Haiyu Wu, Zongxia Li, Shihang Gui, Dawei Liu, Runhao Li, Jingcheng Ni, Chen
+Wei, Randall Balestriero, and Yue Wang.
+FuseReg: Regularizing layer fusion mitigates the
+reconstruction-generation gap in representation autoencoders. arXiv preprint arXiv:2609.31620,
+2026. URL https://arxiv.org/abs/2609.31620.
+Patrick Esser, Robin Rombach, and Bj¨orn Ommer. Taming transformers for high-resolution image
+synthesis. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recog-
+nition, pp. 12873–12883, 2021. URL https://openaccess.thecvf.com/content/
+CVPR2021/html/Esser_Taming_Transformers_for_High-Resolution_
+Image_Synthesis_CVPR_2021_paper.html.
+Michael S. A. Graziano, Lina A. J. Reiss, and Charles G. Gross. A neuronal representation of
+the location of nearby sounds. Nature, 397(6718):428–430, 1999. doi: 10.1038/17115. URL
+https://doi.org/10.1038/17115.
+Jonathan Ho and Tim Salimans. Classifier-free diffusion guidance, 2022. URL https://arxiv.
+org/abs/2207.12598.
+Xun Huang, Zhengqi Li, Guande He, Mingyuan Zhou, and Eli Shechtman. Self Forcing: Bridging
+the train-test gap in autoregressive video diffusion. In Advances in Neural Information Processing
+Systems, volume 38, 2025. URL https://arxiv.org/abs/2506.08009.
+Kaiyang Ji, Bingsheng Qian, Binghuan Wu, Kangyi Chen, Ye Shi, and Jingya Wang. DiscoForc-
+ing: A unified framework for real-time audio-driven character control with diffusion forcing.
+In Proceedings of the Forty-third International Conference on Machine Learning, 2026. URL
+https://arxiv.org/abs/2605.28491.
+Biao Jiang, Xin Chen, Wen Liu, Jingyi Yu, Gang Yu, and Tao Chen. MotionGPT: Human motion
+as a foreign language. In Advances in Neural Information Processing Systems, volume 36, 2023.
+URL https://arxiv.org/abs/2306.14795.
+Daniel Aleksander Krause, Guillermo Garc´ıa-Barrios, Archontis Politis, and Annamaria Mesaros.
+Binaural sound source distance estimation and localization for a moving listener. IEEE/ACM
+Transactions on Audio, Speech, and Language Processing, 32:996–1011, 2024a. doi: 10.1109/
+TASLP.2023.3346297. URL https://doi.org/10.1109/TASLP.2023.3346297.
+Daniel Aleksander Krause, Archontis Politis, and Annamaria Mesaros. Sound event detection and
+localization with distance estimation.
+In 32nd European Signal Processing Conference (EU-
+SIPCO), pp. 286–290, 2024b. doi: 10.23919/EUSIPCO63174.2024.10715220. URL https:
+//doi.org/10.23919/EUSIPCO63174.2024.10715220.
+Ronghui Li, YuXiang Zhang, Yachao Zhang, Hongwen Zhang, Jie Guo, Yan Zhang, Yebin Liu,
+and Xiu Li. Lodge: A coarse to fine diffusion network for long dance generation guided by the
+characteristic dance primitives. In 2024 IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), pp. 1524–1534. IEEE, 2024a.
+12
+
+
+Ruilong Li, Shan Yang, David A. Ross, and Angjoo Kanazawa. AI choreographer: Music condi-
+tioned 3D dance generation with AIST++. In Proceedings of the IEEE/CVF International Con-
+ference on Computer Vision, pp. 13401–13412, 2021.
+Tianhong Li, Yonglong Tian, He Li, Mingyang Deng, and Kaiming He.
+Autoregressive image
+generation without vector quantization. In Advances in Neural Information Processing Systems,
+volume 37, 2024b. URL https://arxiv.org/abs/2406.11838.
+Zekun Li, Sizhe An, Chengcheng Tang, Chuan Guo, Ivan Shugurov, Linguang Zhang, Amy Zhao,
+Srinath Sridhar, Lingling Tao, and Abhay Mittal. LLaMo: Scaling pretrained language models
+for unified motion understanding and generation with continuous autoregressive tokens.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 2209–2220, June 2026.
+URL https://openaccess.thecvf.com/content/
+CVPR2026/papers/Li_LLaMo_Scaling_Pretrained_Language_Models_for_
+Unified_Motion_Understanding_and_CVPR_2026_paper.pdf.
+Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow matching
+for generative modeling. In The Eleventh International Conference on Learning Representations,
+2023. URL https://arxiv.org/abs/2210.02747.
+Haiyang Liu, Zihao Zhu, Giorgio Becherini, Yichen Peng, Mingyang Su, You Zhou, Xuefei
+Zhe, Naoya Iwamoto, Bo Zheng, and Michael J. Black.
+EMAGE: Towards unified holistic
+co-speech gesture generation via expressive masked audio gesture modeling. In Proceedings
+of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp. 1144–1154,
+2024. URL https://openaccess.thecvf.com/content/CVPR2024/html/Liu_
+EMAGE_Towards_Unified_Holistic_Co-Speech_Gesture_Generation_via_
+Expressive_Masked_CVPR_2024_paper.html.
+Pinxin Liu, Haiyang Liu, Jiahao Luo, Junhua Huang, Chunhao Zou, and Luchuan Song. Gesture-
+FAR: Streaming co-speech gesture generation with flow autoregression, 2026. URL https:
+//arxiv.org/abs/2609.21576.
+Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow straight and fast: Learning to generate and
+transfer data with rectified flow. In The Eleventh International Conference on Learning Repre-
+sentations, 2023. URL https://arxiv.org/abs/2209.03003.
+Zhengyi Luo, Ye Yuan, Tingwu Wang, Chenran Li, Fernando Casta˜neda, Sirui Chen, Zi-Ang Cao,
+Jiefeng Li, David Minor, Qingwei Ben, Jinhyung Park, David Sami, Zi Wang, Xingye Da, Runyu
+Ding, Cyrus Hogg, Lina Song, Edy Lim, Eugene Jeong, Tairan He, Haoru Xue, Wenli Xiao,
+Simon Yuen, Jan Kautz, Yan Chang, Umar Iqbal, Linxi Fan, and Yuke Zhu. SONIC: Supersizing
+motion tracking for natural humanoid whole-body control. Science Robotics, 11(117):eaed4592,
+2026. doi: 10.1126/scirobotics.aed4592. URL https://arxiv.org/abs/2511.07820.
+Zhenye Luo, Min Ren, Xuecai Hu, Yongzhen Huang, and Li Yao.
+POPDG: Popular 3D
+dance generation with PopDanceSet.
+In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition, pp. 26984–26993, 2024.
+URL https:
+//openaccess.thecvf.com/content/CVPR2024/html/Luo_POPDG_Popular_
+3D_Dance_Generation_with_PopDanceSet_CVPR_2024_paper.html.
+Tsvetomila Mihaylova and Andr´e F. T. Martins. Scheduled sampling for transformers. In Pro-
+ceedings of the 57th Annual Meeting of the Association for Computational Linguistics: Stu-
+dent Research Workshop, pp. 351–356, 2019.
+doi: 10.18653/v1/P19-2049.
+URL https:
+//aclanthology.org/P19-2049/.
+Chong Mou, Xintao Wang, Liangbin Xie, Yanze Wu, Jian Zhang, Zhongang Qi, and Ying Shan.
+T2I-Adapter: Learning adapters to dig out more controllable ability for text-to-image diffusion
+models. In Proceedings of the AAAI Conference on Artificial Intelligence, volume 38, pp. 4296–
+4304, 2024. doi: 10.1609/aaai.v38i5.28226. URL https://ojs.aaai.org/index.php/
+AAAI/article/view/28226.
+John G. Neuhoff. Perceptual bias for rising tones. Nature, 395(6698):123–124, 1998. doi: 10.1038/
+25862. URL https://doi.org/10.1038/25862.
+13
+
+
+Sucheng Ren, Qihang Yu, Ju He, Xiaohui Shen, Alan Yuille, and Liang-Chieh Chen. FlowAR:
+Scale-wise autoregressive image generation meets flow matching. In Proceedings of the 42nd
+International Conference on Machine Learning, volume 267, pp. 51489–51502, 2025.
+URL
+https://proceedings.mlr.press/v267/ren25e.html.
+Muhammad Usama Saleem, Mayur Jagdishbhai Patel, Ekkasit Pinyoanuntapong, Zhongxing
+Qin, Li Yang, Hongfei Xue, Ahmed Helmy, Chen Chen, and Pu Wang. LiveGesture: Stream-
+able co-speech gesture generation model.
+In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR), pp. 2264–2273, June 2026.
+URL
+https://openaccess.thecvf.com/content/CVPR2026/papers/Saleem_
+LiveGesture_Streamable_Co-Speech_Gesture_Generation_Model_CVPR_
+2026_paper.pdf.
+Yi Shi, Jingbo Wang, Xuekun Jiang, Bingkun Lin, Bo Dai, and Xue Bin Peng. Interactive char-
+acter control with auto-regressive motion diffusion models.
+ACM Transactions on Graphics,
+43(4):143:1–143:14, 2024. doi: 10.1145/3658140. URL https://xbpeng.github.io/
+projects/AMDM/AMDM_2024.pdf.
+Li Siyao, Weijiang Yu, Tianpei Gu, Chunze Lin, Quan Wang, Chen Qian, Chen Change Loy,
+and Ziwei Liu.
+Bailando:
+3D dance generation by actor-critic GPT with choreographic
+memory.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, pp. 11050–11059, 2022.
+URL https://openaccess.thecvf.com/
+content/CVPR2022/html/Siyao_Bailando_3D_Dance_Generation_by_
+Actor-Critic_GPT_With_Choreographic_Memory_CVPR_2022_paper.html.
+Yutao Sun, Hangbo Bao, Wenhui Wang, Zhiliang Peng, Li Dong, Shaohan Huang, Yaoyao Chang,
+Jianyong Wang, and Furu Wei. Multimodal latent language modeling with next-token diffusion.
+In Proceedings of the Forty-third International Conference on Machine Learning, 2026. URL
+https://openreview.net/forum?id=PnTXyTR2VG.
+Guy Tevet, Sigal Raab, Setareh Cohan, Daniele Reda, Zhengyi Luo, Xue Bin Peng, Amit H.
+Bermano, and Michiel van de Panne. CLoSD: Closing the loop between simulation and diffusion
+for multi-task character control. In The Thirteenth International Conference on Learning Rep-
+resentations, 2025.
+URL https://proceedings.iclr.cc/paper_files/paper/
+2025/hash/7319b7561ffe5e2f6419acd4a2f52d6b-Abstract-Conference.
+html.
+Emanuel Todorov, Tom Erez, and Yuval Tassa. MuJoCo: A physics engine for model-based control.
+In 2012 IEEE/RSJ International Conference on Intelligent Robots and Systems, pp. 5026–5033,
+2012. doi: 10.1109/IROS.2012.6386109.
+Jonathan Tseng, Rodrigo Castellon, and C. Karen Liu. EDGE: Editable dance generation from
+music. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 448–458, 2023. URL https://arxiv.org/abs/2211.10658.
+Evgeniia Vu, Andrei Boiarov, and Dmitry Vetrov. Streaming generation of co-speech gestures via
+accelerated rolling diffusion. In Proceedings of the AAAI Conference on Artificial Intelligence,
+volume 40, pp. 26054–26061, 2026. doi: 10.1609/aaai.v40i31.39807. URL https://ojs.
+aaai.org/index.php/AAAI/article/view/39807.
+Jason D. Warren, Brandon A. Zielinski, Gary G. R. Green, Josef P. Rauschecker, and Timo-
+thy D. Griffiths. Perception of sound-source motion by the human brain. Neuron, 34(1):139–
+148, 2002.
+doi: 10.1016/S0896-6273(02)00637-2.
+URL https://doi.org/10.1016/
+S0896-6273(02)00637-2.
+Lixing Xiao, Shunlin Lu, Huaijin Pi, Ke Fan, Liang Pan, Yueer Zhou, Ziyong Feng, Xiaowei Zhou,
+Sida Peng, and Jingbo Wang. MotionStreamer: Streaming motion generation via diffusion-based
+autoregressive model in causal latent space. In Proceedings of the IEEE/CVF International Con-
+ference on Computer Vision, pp. 10086–10096, 2025.
+URL https://arxiv.org/abs/
+2503.15451.
+14
+
+
+Shuyang Xu, Zhiyang Dou, Mingyi Shi, Liang Pan, Leo Ho, Jingbo Wang, Yuan Liu, Cheng Lin,
+Yuexin Ma, Wenping Wang, and Taku Komura. MOSPA: Human motion generation driven by
+spatial audio. In Advances in Neural Information Processing Systems, 2025. URL https:
+//arxiv.org/abs/2507.11949.
+Shuyang Xu, Zhiyang Dou, Yiduo Hao, Zekun Li, Liang Pan, Jingbo Wang, Cheng Lin, Yuan Liu,
+Wenping Wang, Mingmin Zhao, and Taku Komura. MoSAT: Human motion generation from
+spatial audio and textual description. arXiv preprint arXiv:2609.23797, 2026. URL https:
+//arxiv.org/abs/2609.23797.
+Youngwoo Yoon, Bok Cha, Joo-Haeng Lee, Minsu Jang, Jaeyeon Lee, Jaehong Kim, and Geehyuk
+Lee. Speech gesture generation from the trimodal context of text, audio, and speaker identity.
+ACM Transactions on Graphics, 39(6):222:1–222:16, 2020.
+doi: 10.1145/3414685.3417838.
+URL https://arxiv.org/abs/2009.02119.
+Ziyao Zeng, Jingcheng Ni, Daniel Wang, Patrick Rim, Younjoon Chung, Fengyu Yang, Byung-
+Woo Hong, and Alex Wong. Iris: Integrating language into diffusion-based monocular depth
+estimation.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), pp. 34193–34205, 2026.
+URL https://openaccess.thecvf.
+com/content/CVPR2026/html/Zeng_Iris_Integrating_Language_into_
+Diffusion-based_Monocular_Depth_Estimation_CVPR_2026_paper.html.
+Jianrong Zhang, Yangsong Zhang, Xiaodong Cun, Yong Zhang, Hongwei Zhao, Hongtao Lu,
+Xi Shen, and Ying Shan. Generating human motion from textual descriptions with discrete repre-
+sentations. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recog-
+nition, pp. 14730–14740, 2023a. URL https://openaccess.thecvf.com/content/
+CVPR2023/html/Zhang_Generating_Human_Motion_From_Textual_
+Descriptions_With_Discrete_Representations_CVPR_2023_paper.html.
+Lvmin Zhang, Anyi Rao, and Maneesh Agrawala.
+Adding conditional control to text-to-image
+diffusion models. In Proceedings of the IEEE/CVF International Conference on Computer Vision
+(ICCV), pp. 3836–3847, 2023b. URL https://openaccess.thecvf.com/content/
+ICCV2023/html/Zhang_Adding_Conditional_Control_to_Text-to-Image_
+Diffusion_Models_ICCV_2023_paper.html.
+Yan Zhang, Yao Feng, Alp´ar Cseke, Nitin Saini, Nathan Bajandas, Nicolas Heron, and Michael J.
+Black. PRIMAL: Physically reactive and interactive motor model for avatar learning. In Proceed-
+ings of the IEEE/CVF International Conference on Computer Vision (ICCV), pp. 12725–12736,
+October 2025.
+URL https://openaccess.thecvf.com/content/ICCV2025/
+papers/Zhang_PRIMAL_Physically_Reactive_and_Interactive_Motor_
+Model_for_Avatar_Learning_ICCV_2025_paper.pdf.
+Kaifeng Zhao, Gen Li, and Siyu Tang. DartControl: A diffusion-based autoregressive motion model
+for real-time text-driven motion control. In The Thirteenth International Conference on Learning
+Representations, 2025. URL https://arxiv.org/abs/2410.05260.
+Kaifeng Zhao, Mathis Petrovich, Haotian Zhang, Tingwu Wang, Siyu Tang, and Davis Rempe.
+ARDY: Autoregressive diffusion with hybrid representation for interactive human motion gener-
+ation. ACM Transactions on Graphics, 45(4):86:1–86:14, 2026. doi: 10.1145/3811284. URL
+https://doi.org/10.1145/3811284.
+Boyang Zheng, Nanye Ma, Shengbang Tong, and Saining Xie. Diffusion transformers with represen-
+tation autoencoders. In The Fourteenth International Conference on Learning Representations,
+2026. URL https://openreview.net/forum?id=0u1LigJaab.
+Lingting Zhu, Xian Liu, Xuanyu Liu, Rui Qian, Ziwei Liu, and Lequan Yu. Taming diffusion models
+for audio-driven co-speech gesture generation. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition, pp. 10544–10553, 2023. URL https://arxiv.
+org/abs/2303.09119.
+15
+
+
+A
+LIMITATIONS AND FUTURE WORK
+Our main experiments assume known world-space source positions during inference. Our No-SSL
+variant (Appendix D) provides an initial demonstration that spatial conditioning can be derived
+from binaural audio. A systematic evaluation of alternative spatial inference methods and their
+effects on motion generation remains future work. Our evaluation is limited to SAM, so general-
+ization to broader acoustic environments and human reactions remains to be assessed. Evidence for
+long-horizon coherence and event transitions is primarily qualitative. Future work should establish
+quantitative benchmarks for evaluating motion quality over longer audio streams with more diverse
+event transitions.
+B
+ADDITIONAL VISUAL RESULTS AND PHYSICS-BASED SIMULATION
+The supplementary material includes HTML and videos of four comparisons with MOSPA, ten
+single-sound examples, and a continuous sequence spanning three sound events. To view the videos
+in the accompanying HTML page, open index.html after extracting the supplementary package.
+The single-sound and continuous examples pair human motion visualizations with humanoid physics
+simulations, synchronized with stereo audio.
+Music
+Explosion
+Birdsong
+3 s
+7 s
+12 s
+17 s
+23 s
+28 s
+Motion video
+Physics simulation
+Figure 6: Human reactions and humanoid tracking in physics simulation. Aligned snapshots
+of the continuous Music →Explosion →Birdsong sequence show human motion (top) and G1
+simulation (bottom). Robot tracking is described in Appendix B.3.
+B.1
+REACTIONS TO DIFFERENT SOUNDS
+Across diverse sounds, Sonic-AMG combines recognizable gestures with changes in body orienta-
+tion and position. Figures 7 and 8 show all ten single-sound examples from Part 3 of the supplemen-
+tary HTML, including hands raised toward the ears, an arm raised in response to a call, and a hand
+brought toward the mouth. The full videos show how these gestures develop alongside stepping and
+body turns. All examples use the feedback-trained model with online spatial updates.
+16
+
+
+(a) Aircraft: cover ears (0012002)
+(b) Insect: swatting gestures (0473312)
+(c) Call: raise an arm (0133102)
+(d) Cough: hand toward mouth (0213301)
+(e) Singing: lift a knee (0632311)
+(f) Siren: step and turn (0681200)
+Figure 7: Additional reactions under online spatial feedback. Original generated motions for six
+sounds, with poses ordered chronologically. Purple markers denote sound sources; clip identifiers
+match the supplementary videos.
+17
+
+
+(a) Phone ringing: bend forward (0582000)
+(b) Fire alarm: turn and return (0370110)
+(c) Wind and rain: draw arms inward (0780302)
+(d) Speech: gesture with both hands (0710002)
+Figure 8: Additional reactions under online spatial feedback (continued).
+B.2
+CONTINUOUS REACTIONS ACROSS SOUND EVENTS
+Sonic-AMG sustains coherent reactions as sound content and source location change, without a new
+ground-truth motion initialization at event transitions. The continuous example spans 30.13 s and
+combines three SAM audio events—Music →Explosion →Birdsong—at different source locations
+(Table 7). Generation begins with four GT motion frames; later events continue from the generated
+body state.
+Table 7: Continuous demonstration setup. Source locations change at event boundaries. Intervals
+refer to the generated 30 Hz sequence; style identifiers follow SAM.
+Sound
+SAM clip
+Style
+Interval (s)
+Music
+0541212
+2
+[0, 10.00)
+Explosion
+0330202
+2
+[10.00, 20.27)
+Birdsong
+0113311
+1
+[20.27, 30.13)
+At each transition, generation resumes from the generated motion history in a root-aligned frame.
+Spatial feedback updates the active source’s body-relative coordinates, while previously emitted
+frames remain fixed.
+B.3
+EXECUTION IN A HUMANOID PHYSICS SIMULATION
+Generated reactions can be tracked by a pretrained humanoid controller without additional policy
+training. We retarget the human motions to a Unitree G1 humanoid using General Motion Retar-
+18
+
+
+geting (GMR) (Ara´ujo et al., 2026) and track the references offline with the released pretrained
+GEAR-SONIC controller (Luo et al., 2026) in MuJoCo (Todorov et al., 2012). References are inter-
+polated from 30 to 50 Hz, with physics integrated at 1,000 Hz. The simulation uses gravity, ground
+contact, and PD torques clipped to actuator limits. After initialization, the free root evolves through
+physics integration.
+Figure 6 pairs human reactions with their simulated humanoid execution. The robot tracks the
+references through all three sound events in a single uninterrupted simulation.
+C
+STREAMING TIMING PROTOCOLS
+This appendix details the computation measurements and initial response estimates reported in Sec-
+tion 4.2 and Table 3.
+Timing protocol.
+We measure one 700-step run per GPU and spatial protocol, discarding the first
+20 steps as warm-up. Generation starts from a zero motion latent. The run measures computation
+over 93.3 s of additional motion. The KV cache retains the full history within a configured context of
+4,096 token positions. We use FP32 tensors with TF32 enabled where supported and synchronize the
+GPU around each wall-clock measurement. The GT and Online runs use the GT-SSL and feedback-
+trained rehearsal models, respectively.
+Measured operations.
+At batch size one, each step includes both guidance branches, ten Euler
+sampling steps, and the persistent KV-cache update. GT spatial tokens are precomputed. Online
+timing additionally includes decoding the generated latent prefix and computing spatial tokens from
+its last two poses; quality evaluation uses four-frame pooled coordinates (Section 3.4). We time the
+motion-generation stage from precomputed acoustic tokens, excluding audio preprocessing and en-
+coding, initialization, rendering, and output delivery. The acoustic frontend and feature-availability
+delay are specified in Appendix E.
+Per-step computation.
+Online feedback increases mean step time from 41.2 to 50.2 ms on RTX
+A6000 and from 102.5 to 118.0 ms on TITAN RTX. The corresponding online real-time factors are
+0.376 and 0.885, with RTF = tstep/(4/30 s), where tstep denotes mean per-step computation time.
+MOSPA timing protocol.
+MOSPA jointly denoises a complete 240-frame sequence using the
+full audio window (Xu et al., 2025), so its generation protocol does not support causal blockwise
+streaming. We time its released sampler on the same two GPUs: batch size one, the published 1,000-
+step denoising schedule, and five timed blocks after one warm-up block, with the GPU synchronized
+around each measurement. Because a block is emitted in a single call, MOSPA has no per-step time
+to report, and the per-step columns of Table 3 are left blank. The real-time factor is defined for both
+methods as computation time divided by the duration of motion produced, so that column is directly
+comparable.
+Throughput calculation.
+One 240-frame block spans 8.0 s of motion and takes 2,857 ms on the
+RTX A6000 and 11,415 ms on the TITAN RTX, giving real-time factors of 0.357 and 1.427. Our
+online configuration reaches 0.376 and 0.885 on the same hardware. RTF measures computational
+throughput, independently of the input waiting time required before generation.
+The gap widens with weaker hardware. Moving from the RTX A6000 to the TITAN RTX multiplies
+MOSPA’s block time by 3.99 and our online step time by 2.35. Per second of generated motion,
+MOSPA evaluates its network 125 times over the full 240-token sequence, whereas our model takes
+7.5 autoregressive steps, each extending the KV cache by three tokens and invoking the rectified-
+flow head for ten Euler steps.
+Initial response latency calculation.
+With the initial motion segment supplied, the acoustic token
+for the first new block becomes available 142.7 ms after audio onset (Appendix E). Adding the
+measured mean online generation time of 50.2 ms gives an estimated response latency of 192.9 ms
+on the RTX A6000. For MOSPA’s 8.0 s input window, the corresponding estimate is 10,857 ms,
+including 2,857 ms of generation. Both estimates combine input waiting with mean generation time,
+19
+
+
+using steady-state computation measurements. Acoustic preprocessing and encoding, initialization,
+rendering, and output delivery are excluded.
+D
+GENERATION WITHOUT SSL INPUTS
+Motivation and setting.
+Sonic-AMG separates the source of spatial conditions from the autore-
+gressive motion generator. In our SAM setting, source-location annotations are available alongside
+binaural audio (Xu et al., 2025) and provide the geometry used by the main model. At deployment,
+the source position can instead be supplied by an upstream sound source localization module, after
+transformation into the required coordinate frame, or by scene metadata in a virtual environment. To
+examine an alternative realization of this interface, we instantiate a variant that derives spatial tokens
+directly from binaural audio. We refer to this variant as No-SSL, denoting the absence of source-
+location inputs at inference. It retains the initial four-frame motion segment and the reaction-style
+label used by the main model.
+Feature extraction
+Log-mel L/R
+80 bins per ear
+Stereo audio
+Semantic branch (what)
+Input: log-mel L/R
+Shared causal
+CNN
+Average
+L/R
+LayerNorm
++ Linear
+Mean
+Pool ×4
+Linear
+what token
+Spatial branch (where)
+Input: ILD / IPD (192-D)
+Linear
++ GELU
+Linear
+where token
+(2) Binaural Causal Encoder
+(3) AR Model with Flow Head
+Left
+Right
+Generated motion sequence
+(1) Overview
+Binaural Causal
+Encoder
+Autoregressive
+Model
+what
+where
+Causal
+Decoder
+Latent
+sequence
+Linear
+…
+…
+Causal Transformer
+Rectified Flow
+Head
+Motion latent
+Motion
+Causal
+Encoder
+16-D latent
+Linear
+motion
+···
+History
+Prediction
+Binaural cues
+ILD / IPD
+192-D
+Gaussian noise
+Frozen weights
+Sound source
+Detail expansion
+Causal
+CNN
+LayerNorm
++ Linear
+Mean
+Pool ×4
+SSL supervision (training only)
+GT SSL
+geometry (11-D)
+SSL loss
+(MSE)
+SSL Head
+𝑎𝑘
+𝑠𝑘
+𝑚𝑘
+ℎ𝑘= concat(out(𝑎𝑘), out(𝑠𝑘), out(𝑚𝑘))̂
+𝑧𝑘+1 ∈ℝ16
+𝑋𝑘̂
+𝑋𝑘+1
+𝑎0
+𝑠0
+𝑚0
+𝑎𝑘
+𝑠𝑘
+𝑚𝑘
+𝑎𝑘+1
+𝑠𝑘+1̂
+𝑚𝑘+1
+𝜖∼𝒩(0, 𝐼)
+𝑎𝑘∈ℝ768
+𝑠𝑘∈ℝ768
+Figure 9: Sonic-AMG with audio-derived spatial conditioning. The semantic and spatial branches
+derive what and where tokens from log-mel and ILD/IPD features, respectively. These tokens use
+the same interface to the autoregressive motion generator. The training-only SSL head predicts
+the normalized 11-dimensional geometric descriptor from pooled spatial features, supervised by
+ground-truth geometry through an MSE loss. Inference uses the learned spatial features directly,
+without the SSL head or spatial feedback. Motion poses are schematic.
+Audio-derived spatial tokens.
+Figure 9 shows the variant’s architecture. For each audio frame, we
+concatenate interaural level differences (ILD) and the sine and cosine of interaural phase differences
+(IPD) over 64 frequency bands, giving a 192-dimensional input. A linear projection with GELU, a
+two-layer causal CNN, and a layer-normalized linear projection encode these cues. Mean pooling
+over four frames produces a spatial feature f s
+k ∈R128 at the motion-latent rate. The spatial token
+is sk = Wsf s
+k + ec, where Ws projects to the transformer width of 768 and ec is the reaction-
+style embedding. The semantic branch encodes log-mel features with a shared per-ear causal CNN,
+averages the left and right streams, and applies projection and pooling to obtain the acoustic token.
+Unlike the main encoder, this variant omits the additional causal CNN after left/right averaging in
+the semantic branch.
+Motion generation.
+The variant preserves the interleaved sequence [ak, sk, mk], the causal trans-
+former, the rectified-flow head, and the frozen causal motion autoencoder. We train the generator
+jointly with the audio encoders using the teacher-forced and 16-step rehearsal objectives described in
+20
+
+
+Section 3.3. Both conditioning streams are computed from the audio, while sampled motion latents
+extend the autoregressive history. This variant therefore does not decode root poses to recompute
+spatial conditions during rehearsal or inference. Its spatial conditions follow the recorded binaural
+stream rather than an explicit source position updated relative to the generated body.
+Geometric supervision during training.
+No-SSL retains source-location annotations as training
+targets. An auxiliary head HSSL predicts the normalized 11-dimensional descriptor of Eq. (1) from
+f s
+k, before its projection to a spatial token. For valid training positions V, the SSL objective is
+LSSL =
+1
+11|V|
+X
+k∈V
+HSSL(f s
+k) −ϕGT
+k
+−µϕ
+σϕ
+
+2
+2
+,
+(9)
+where normalization statistics are computed from the training set. The semantic features also support
+audio energy, onset, and activity regression with loss Levent, alongside audio-class classification
+with loss Lclass. The complete training objective is
+LNo-SSL = 1
+2(LTF + Lreh) + 0.10LSSL + 0.05Levent + 0.05Lclass.
+(10)
+The auxiliary heads are used only for training. The predicted geometric descriptor is not passed to
+the motion generator: at inference, the learned spatial feature directly supplies the where token.
+Scope of the experiment.
+This configuration instantiates the same motion-generation interface
+with an audio-derived provider of spatial conditions. It removes the need for source-position inputs
+at inference while retaining geometric supervision during training.
+Quantitative comparison.
+No-SSL must infer spatial cues from incoming binaural audio while
+generating motion causally, without source-location inputs or access to future audio. Despite these
+demands, it surpasses EDGE in motion fidelity and achieves conditioning alignment and diversity
+comparable to MOSPA (Table 8). These results show that audio-derived spatial tokens provide
+effective conditioning for autoregressive reactions. Sonic-AMG can therefore support streaming
+motion generation in scenarios where explicit source geometry is unavailable.
+Table 8: No-SSL comparison on SAM. Baselines are reused from Table 2. † denotes results from
+Xu et al. (2025).
+Method
+FID↓
+R@1↑
+R@2↑
+R@3↑
+Diversity→
+GT motion†
+0.001
+1.000
+1.000
+1.000
+23.616
+EDGE†
+13.993
+0.886
+0.960
+0.977
+23.099
+POPDG†
+20.967
+0.762
+0.886
+0.934
+22.536
+LODGE†
+102.289
+0.444
+0.594
+0.679
+21.101
+Bailando†
+168.396
+0.077
+0.134
+0.182
+17.347
+MOSPA
+8.242
+0.942
+0.984
+0.994
+23.412
+Sonic-AMG (No-SSL)
+11.917
+0.915
+0.973
+0.987
+23.371
+21
+
+
+E
+IMPLEMENTATION DETAILS
+Dataset.
+SAM (Xu et al., 2025) contains binaural recordings paired with human reactions across
+27 sound scenarios and three reaction styles.
+Architecture and optimization.
+The generator uses a 12-layer, 12-head transformer of width
+d = 768, with rotary positional embeddings and query–key normalization. Motion latents have di-
+mension dz = 16. The conditional flow head contains nine residual MLP blocks of width 1792 with
+adaptive layer normalization. We optimize the generator and conditioning modules with AdamW,
+using batch size 64, learning rate 10−5, weight decay 10−6, and momentum coefficients (0.9, 0.95).
+Each supervised transition uses four independently sampled noise–time pairs. Padded prediction
+positions are excluded from all losses.
+Training hardware and time.
+For the H = 16 configuration, we train the online rehearsal model
+from scratch for 150,000 updates on a single NVIDIA L40S GPU, taking approximately 63 hours.
+The 130,000-update checkpoint is reached after approximately 54 hours. These wall-clock times
+include periodic validation and checkpointing, but exclude motion-autoencoder pretraining.
+Causal motion autoencoder.
+The temporal autoencoder is pretrained using a Gaussian recon-
+struction objective, KL regularization, and an additional root-position reconstruction term. The en-
+coder and decoder are then fixed during generator training. Motion channels are standardized using
+training-set statistics; decoded channels are converted back to physical coordinates before source
+geometry is computed. The initial GT latent encodes four motion frames.
+Acoustic encoding and feature availability.
+Audio is sampled at 48 kHz. Each channel is con-
+verted to 80-dimensional log-mel features using a 2048-sample Hann window, hop 1600, and non-
+centered windows. The shared per-ear causal convolutional stack has 64 channels and dilation rates
+(1, 2, 4); the subsequent two-layer causal CNN has 128 channels and dilations (1, 2). Both use ker-
+nel size three and left padding. A layer-normalized projection, four-frame mean pooling, and a final
+linear projection produce acoustic tokens of width 768.
+The final analysis window contributing to block k ends at sample (4k + 3)1600 + 2048. Thus its
+audio token becomes available at
+bk = (4k + 3)1600 + 2048
+48000
+,
+(11)
+which is 9.33 ms beyond the nominal four-frame boundary 4(k + 1)/30. This specifies the feature
+delay required by the factorization in Eq. (2). Section 4.2 reports the subsequent motion-generation
+computation, starting from precomputed acoustic tokens. Measurement details are provided in Ap-
+pendix C.
+Spatial encoding.
+Spatial descriptors are normalized channel-wise using training-set statistics.
+The spatial MLP has widths 11 →768 →768 with SiLU activation. Direction and distance incre-
+ments are measured per latent step, rather than divided by elapsed time. Both increments are zero
+for the first block. Distance denominators are clamped from below at 10−8 for direction normal-
+ization and 10−6 for inverse distance and normalized approach. For SAM, we recover world-space
+source coordinates as the coordinatewise temporal median of RGT
+t
+ℓGT
+t
++ pGT
+t
+. At evaluation, the
+corresponding egocentric coordinates are updated from the generated root.
+Guidance and sampling.
+For flow matching, we sample τ = sigmoid(ξ) with ξ ∼N(0, 1).
+During training, the current acoustic and spatial conditions are jointly dropped with probability 0.1
+by supplying zero-normalized inputs; the reaction-style embedding is retained. At inference, the
+conditional and null branches share the motion history and cached prefix, but differ in the current
+acoustic and spatial tokens. The guided velocity is
+vω = vnull + ω(vcond −vnull),
+(12)
+where ω is the guidance scale; vcond and vnull denote the respective branch predictions. Only the
+conditional branch updates the persistent key–value cache. This guidance rule preserves past condi-
+tional states in both branches. Evaluation uses ten uniform Euler steps per generated latent. Training
+rollouts also use ten steps and unguided sampling.
+22
+
+
+F
+TRAINING SEQUENCE CONSTRUCTION
+Two-forward training.
+Let bzi denote a detached first-pass denoising estimate. For full replace-
+ment, the two sequence passes are
+[zGT
+0
+, zGT
+1
+, zGT
+2
+, . . .]
+first pass
+−−−−→[bz1,bz2,bz3, . . .],
+[zGT
+0
+,bz1,bz2, . . .]
+second pass
+−−−−−−→next-latent losses against GT.
+Audio and spatial tokens are omitted for clarity. The first motion latent is retained, while first-pass
+predictions replace later inputs at corresponding positions. With updated SSL, the replaced sequence
+is decoded before the second pass to construct its spatial conditions. The second pass is causally
+masked, but its outputs do not become later inputs within that pass.
+For normalized training progress u ∈[0, 1], replacement schedules are
+p0→1(u) = 1
+2(1 −cos πu),
+p1→0(u) = 1
+2(1 + cos πu),
+pconstant(u) = 1.
+(13)
+A subset of input positions is randomly selected according to the replacement fraction. These sched-
+ules alter motion-input replacement rather than switching between spatial-conditioning protocols.
+Rehearsal initialization and recursion.
+For each sequence with K valid latents, the start s is
+sampled uniformly from {1, . . . , K −H −1}, with H = 16 by default. The Online result in Table 2
+uses H = 32. The rollout seed is
+zs = sg
+h
+u(s)
+τ
++ (1 −τ)vθ(u(s)
+τ , τ; hGT
+s−1)
+i
+,
+(14)
+where u(s)
+τ
+is an interpolation between noise and the GT target zGT
+s
+, and sg denotes stop-gradient.
+Subsequent latents are sampled from fresh Gaussian noise and appended recursively, as in Eq. (6).
+The decoder receives the pre-window GT prefix followed by these generated latents. With online
+spatial updates, the decoded root determines the next spatial descriptor after each append; the GT-
+SSL variant retains recorded conditions. Each transition is supervised with the next GT latent,
+independently of the sampled latent used to extend the history.
+The acoustic features are cropped at frame rs and re-encoded. Acoustic convolutional context and
+the transformer’s key–value cache are reset at this boundary, while the decoder retains its GT pre-
+fix. Each rollout contains H transitions, producing 4H frames. Gradients are stopped through the
+sampled latents and decoded geometry, but retained through transformer states and conditioning
+encoders in the supervised objective.
+Rollout-only ablations.
+Both variants optimize only the rollout loss and retain the stop-gradient
+initialization in Eq. (14); the teacher-forced prediction pass supplies the seed but contributes no
+training loss. Rollout Only uses the same independently sampled starts and reset acoustic and trans-
+former contexts as rehearsal. Rollout Only with History instead builds a transformer cache from
+the GT motion and conditioning prefix before s, and takes acoustic conditions from the full causal
+encoding. Gradients from the rollout loss propagate through this prefix cache. Both variants use
+H = 16 and ten sampling steps per latent.
+23

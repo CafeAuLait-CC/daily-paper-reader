@@ -4,24 +4,24 @@
     <a class="dpr-home-notice-tutorial" href="#/tutorial/README">使用教程 <span aria-hidden="true">›</span></a>
   </div>
   <div class="dpr-home-notice-entry">
+    <time class="dpr-home-notice-date" datetime="2026-10-05">10.05</time>
+    <div>
+      <strong class="dpr-home-notice-entry-title">medRxiv 自动更新已恢复</strong>
+      <span class="dpr-home-notice-entry-summary">修复超长摘要导致的向量生成失败，维护任务现会限制单条 embedding 文本长度并分片写入。受影响范围已重新同步，公开读取、关键词检索与语义检索均已验证。</span>
+    </div>
+  </div>
+  <div class="dpr-home-notice-entry">
+    <time class="dpr-home-notice-date" datetime="2026-09-16">09.16</time>
+    <div>
+      <strong class="dpr-home-notice-entry-title">日报跨日重复推荐已修复</strong>
+      <span class="dpr-home-notice-entry-summary">历史推荐现按原始召回标签与 arXiv 论文标识去重，暂停词条不再参与评分；同一专题次日不会重复推荐相同论文。已有历史页面保留，不自动删除。</span>
+    </div>
+  </div>
+  <div class="dpr-home-notice-entry">
     <time class="dpr-home-notice-date" datetime="2026-09-09">09.09</time>
     <div>
       <strong class="dpr-home-notice-entry-title">90天/365天 arXiv 专题回溯</strong>
       <span class="dpr-home-notice-entry-summary">支持分片召回、断点评审与分页查看，核心论文与待复核结果分开展示。DeepSeek 费用按实际用量计算，不下载全量 PDF。</span>
-    </div>
-  </div>
-  <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-09-09">09.09</time>
-    <div>
-      <strong class="dpr-home-notice-entry-title">ECCV 2026 已更新</strong>
-      <span class="dpr-home-notice-entry-summary">已收录 2,834 篇论文，摘要与 PDF 链接齐全，可按会议年份检索。EMNLP 2026 暂待可信官方数据开放。</span>
-    </div>
-  </div>
-  <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-09-05">09.05</time>
-    <div>
-      <strong class="dpr-home-notice-entry-title">CVPR 2026 已更新</strong>
-      <span class="dpr-home-notice-entry-summary">已收录 CVPR 2026 官方 Open Access 论文 4,042 篇，可在会议检索中查看。EMNLP 2026 预计于 10 月中下旬更新，具体以官方论文集开放时间为准。</span>
     </div>
   </div>
   <div class="dpr-home-site-stats" data-dpr-site-stats hidden aria-live="polite">
@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-09</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-05 ~ 2026-10-14</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 15 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-09 00:25:39 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-14 05:19:12 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,10 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-09 日报精选 9 篇，精读 1 篇、速读 8 篇。最值得看的是拿下 9.0 分的 DynaConTalk，用“小波约束扩散”做长时、可控的整体协同语音 3D 动作生成；速读里 UniDynamics 的事件-RGB 融合 4D 动态场景生成与扩散/流匹配后验采样的引导权重调优（均 7.0 分）也值得关注。普通读者可先从 DynaConTalk 入手，再按兴趣跟进 4D 场景生成或采样权重方向。</p>
+<p>今日共生成 15 篇推荐（精读 4 篇，速读 11 篇）</p>
+<p>精读：《PartiGen: Part-Aware Representations for Language-Conditioned Humanoid Motion Generation》（9.0/10）, 《Controllable Exaggeration for Generative Motion Models via Training-Time Adaptation and Inference-Time Guidance》（8.0/10）</p>
+<p>速读：《Barron Optimal Transport I: Generative Modeling》（7.0/10）, 《ReSFlow: Rectifying Categorical Flows on Statistical Manifolds for One-Step Generation》（7.0/10）, 《Benchmarking Generative Trajectory Models for Active-Inference Control》（6.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +81,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DynaConTalk: Wavelet-Constrained Diffusion for Long-Form and Controllable Holistic Co-Speech 3D Motion">DynaConTalk: Wavelet-Constrained Diffusion for Long-Form and Controllable Holistic Co-Speech 3D Motion</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PartiGen: Part-Aware Representations for Language-Conditioned Humanoid Motion Generation">PartiGen: Part-Aware Representations for Language-Conditioned Humanoid Motion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Controllable Exaggeration for Generative Motion Models via Training-Time Adaptation and Inference-Time Guidance">Controllable Exaggeration for Generative Motion Models via Training-Time Adaptation and Inference-Time Guidance</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sonic-AMG: Streaming Human Motion Generation from Spatial Audio">Sonic-AMG: Streaming Human Motion Generation from Spatial Audio</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>4</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +94,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="UniDynamics: Event-RGB Fusion for Unified Future 4D Dynamic Scene Generation">UniDynamics: Event-RGB Fusion for Unified Future 4D Dynamic Scene Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Getting Your Guidance Weights Right in diffusion and flow-matching posterior sampling">Getting Your Guidance Weights Right in diffusion and flow-matching posterior sampling</span></li><li><span class="dpr-home-dashboard-paper-title" title="Visualizing Distribution Coverage in Generative Diffusion Models">Visualizing Distribution Coverage in Generative Diffusion Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Barron Optimal Transport I: Generative Modeling">Barron Optimal Transport I: Generative Modeling</span></li><li><span class="dpr-home-dashboard-paper-title" title="ReSFlow: Rectifying Categorical Flows on Statistical Manifolds for One-Step Generation">ReSFlow: Rectifying Categorical Flows on Statistical Manifolds for One-Step Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Benchmarking Generative Trajectory Models for Active-Inference Control">Benchmarking Generative Trajectory Models for Active-Inference Control</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>8</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>11</strong></span></div>
 </section>
 </div>
 
