@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-05 ~ 2026-10-14</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-15</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 15 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-14 05:19:12 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-15 22:40:45 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,10 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 15 篇推荐（精读 4 篇，速读 11 篇）</p>
-<p>精读：《PartiGen: Part-Aware Representations for Language-Conditioned Humanoid Motion Generation》（9.0/10）, 《Controllable Exaggeration for Generative Motion Models via Training-Time Adaptation and Inference-Time Guidance》（8.0/10）</p>
-<p>速读：《Barron Optimal Transport I: Generative Modeling》（7.0/10）, 《ReSFlow: Rectifying Categorical Flows on Statistical Manifolds for One-Step Generation》（7.0/10）, 《Benchmarking Generative Trajectory Models for Active-Inference Control》（6.0/10）</p>
-<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
+<p>今日扫过17篇新作（精读6、速读11），主线仍是扩散模型与流匹配在生成任务上的扩张。</p>
+<p>最值得看的是两篇9.0：一篇证明图像扩散模型能当好3D人体动作生成器，另一篇MFlowHOI用部件感知MeanFlow实现全身人-物交互生成。</p>
+<p>普通读者可先看这两篇的生成效果与结论，再借速读中的无数据扩散蒸馏、流匹配条件分布等了解&quot;更快更省&quot;的配套进展。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PartiGen: Part-Aware Representations for Language-Conditioned Humanoid Motion Generation">PartiGen: Part-Aware Representations for Language-Conditioned Humanoid Motion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Controllable Exaggeration for Generative Motion Models via Training-Time Adaptation and Inference-Time Guidance">Controllable Exaggeration for Generative Motion Models via Training-Time Adaptation and Inference-Time Guidance</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sonic-AMG: Streaming Human Motion Generation from Spatial Audio">Sonic-AMG: Streaming Human Motion Generation from Spatial Audio</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Image Diffusion Models Are Good 3D Human Motion Generators">Image Diffusion Models Are Good 3D Human Motion Generators</span></li><li><span class="dpr-home-dashboard-paper-title" title="MFlowHOI: Whole-Body Human-Object Interaction Generation via Part-Aware MeanFlow">MFlowHOI: Whole-Body Human-Object Interaction Generation via Part-Aware MeanFlow</span></li><li><span class="dpr-home-dashboard-paper-title" title="OmniPoser: Flexible Human Motion Recovery in the Wild with Masked Flow Matching">OmniPoser: Flexible Human Motion Recovery in the Wild with Masked Flow Matching</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -97,7 +96,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Barron Optimal Transport I: Generative Modeling">Barron Optimal Transport I: Generative Modeling</span></li><li><span class="dpr-home-dashboard-paper-title" title="ReSFlow: Rectifying Categorical Flows on Statistical Manifolds for One-Step Generation">ReSFlow: Rectifying Categorical Flows on Statistical Manifolds for One-Step Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Benchmarking Generative Trajectory Models for Active-Inference Control">Benchmarking Generative Trajectory Models for Active-Inference Control</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Consistent Distribution Matching for Data-Free Diffusion Distillation">Consistent Distribution Matching for Data-Free Diffusion Distillation</span></li><li><span class="dpr-home-dashboard-paper-title" title="StimFlow: Synthesizing Brain Activity from Images via Stimulus-conditioned Flow Matching">StimFlow: Synthesizing Brain Activity from Images via Stimulus-conditioned Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning $ω$-Powered Conditional Distributions with Importance-Weighted Flow Matching">Learning $ω$-Powered Conditional Distributions with Importance-Weighted Flow Matching</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>11</strong></span></div>
 </section>
