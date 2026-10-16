@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-15</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-16</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 12 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-15 22:40:45 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-16 22:12:34 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日扫过17篇新作（精读6、速读11），主线仍是扩散模型与流匹配在生成任务上的扩张。</p>
-<p>最值得看的是两篇9.0：一篇证明图像扩散模型能当好3D人体动作生成器，另一篇MFlowHOI用部件感知MeanFlow实现全身人-物交互生成。</p>
-<p>普通读者可先看这两篇的生成效果与结论，再借速读中的无数据扩散蒸馏、流匹配条件分布等了解&quot;更快更省&quot;的配套进展。</p>
+<p>今日精选12篇论文，精读1篇、速读11篇，重点聚焦人形动作生成与流匹配。最值得看的是精读8.0分的TRACE，用类型化引用感知的对话式编辑改进人形动作扩散模型；流匹配方向也有三篇7.0分工作，涉及强化学习、微调与语义对齐。普通读者可先读TRACE了解对话式动作编辑，再按兴趣跟进流匹配的效率与可控性改进。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Image Diffusion Models Are Good 3D Human Motion Generators">Image Diffusion Models Are Good 3D Human Motion Generators</span></li><li><span class="dpr-home-dashboard-paper-title" title="MFlowHOI: Whole-Body Human-Object Interaction Generation via Part-Aware MeanFlow">MFlowHOI: Whole-Body Human-Object Interaction Generation via Part-Aware MeanFlow</span></li><li><span class="dpr-home-dashboard-paper-title" title="OmniPoser: Flexible Human Motion Recovery in the Wild with Masked Flow Matching">OmniPoser: Flexible Human Motion Recovery in the Wild with Masked Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TRACE: Typed Reference-Aware Conversational Editing for Humanoid Motion Diffusion">TRACE: Typed Reference-Aware Conversational Editing for Humanoid Motion Diffusion</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -96,7 +94,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Consistent Distribution Matching for Data-Free Diffusion Distillation">Consistent Distribution Matching for Data-Free Diffusion Distillation</span></li><li><span class="dpr-home-dashboard-paper-title" title="StimFlow: Synthesizing Brain Activity from Images via Stimulus-conditioned Flow Matching">StimFlow: Synthesizing Brain Activity from Images via Stimulus-conditioned Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning $ω$-Powered Conditional Distributions with Importance-Weighted Flow Matching">Learning $ω$-Powered Conditional Distributions with Importance-Weighted Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PrT-Flow: Probability-Tractable Flow Matching for Reinforcement Learning">PrT-Flow: Probability-Tractable Flow Matching for Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Weighted Adjoint Matching: Finetuning Flow Matching Models with Time-Dependent Control Cost">Weighted Adjoint Matching: Finetuning Flow Matching Models with Time-Dependent Control Cost</span></li><li><span class="dpr-home-dashboard-paper-title" title="Semantic Latent Alignment for Flow Matching with Invertible Bi-Lipschitz Adapters">Semantic Latent Alignment for Flow Matching with Invertible Bi-Lipschitz Adapters</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>11</strong></span></div>
 </section>
