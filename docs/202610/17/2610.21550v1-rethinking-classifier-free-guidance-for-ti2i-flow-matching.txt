@@ -1,0 +1,947 @@
+Rethinking Classifier-Free Guidance for TI2I Flow Matching
+Andreas Floros⋆, ‡
+Elena Koritska‡
+Teofilo de Campos‡
+Christoph Vogel‡
+Chu-Tak Li‡
+Anuj Sharma‡
+Alexandros Neophytou‡
+⋆Imperial College London
+‡Microsoft
+andreas.floros18@imperial.ac.uk
+Abstract
+We study Text-and-Image-to-Image (TI2I) flow matching methods for controllable image
+editing. In a broader generative modeling context, Classifier-Free Guidance (CFG) is estab-
+lished as a key component responsible for high quality outputs. However, we argue that its
+role in TI2I modeling is poorly understood. Specifically, we make the surprising observation
+that the CFG mechanism is implicitly harmful for editing in the noisy phase of flow model-
+ing, hindering instruction following and controllability. We propose a simple correction in
+the early flow steps, enabling a richer alignment-preservation tradeoff at no extra cost. The
+effectiveness of our approach is demonstrated on both pixel-space and latent TI2I flows.
+turn the misty bog into cracked desert ground
+age the woman while keeping her smile and surroundings
+turn the haunted manor into a gingerbread house
+make the bike pastel pink
+make the piano ivory
+make the sunflower petals red
+cover the donut in rainbow sprinkles
+light the scene by candlelight
+turn the scene into paper origami
+make the scene a bioluminescent night
+turn the muddy jungle into a glass forest
+Figure 1: We propose a simple modification in TI2I flows that substantially improves source preservation
+while maintaining text alignment. In the examples above, source images are on the left, baseline edits in the
+middle (we evaluate Qwen, FLUX.2 and PixelGen models) and editing with our correction on the right.
+1
+Introduction
+Text-and-Image-to-Image (TI2I) editing is the task of modifying a source image according to a text prompt
+while retaining the source wherever no change is intended. The source image provides the concrete visual
+instance, including scene, object identity, composition, appearance and incidental details.
+The prompt
+instead serves as an instruction specifying how that instance should change. Crucially, a successful edit must
+apply the requested changes without reopening the rest of the image for synthesis.
+1
+arXiv:2610.21550v1  [cs.CV]  15 Oct 2026
+
+
+TI2I editing methods studied in the literature typically adapt pretrained Text-to-Image (T2I) models. These
+methods are often training-free, so their design space concentrates on inference-time mechanisms (Kulikov
+et al., 2025; Yang & Ye, 2026). This adaptation paradigm has produced a broad and useful set of techniques
+but it also inherits limitations from models trained primarily for T2I generation. In parallel, a newer line
+of systems trains text-and-image-conditioned flows directly for editing (Wu et al., 2025; Black Forest Labs,
+2025a). These models are increasingly important yet their properties remain comparatively underexplored.
+In this paper, we study this setting of bespoke TI2I flow matching, rather than editing through adaptation
+of a T2I generator.
+Specifically, we focus on the nuance of Classifier-Free Guidance (CFG), which is a
+central mechanism of modern generative flows (Ho & Salimans, 2021). In T2I generation, increasing the
+CFG weight, ω, is commonly understood as improving text alignment at the cost of sample diversity and, at
+large values, visual naturalness (Zheng & Lan, 2024; Karras et al., 2024). In editing, however, the relevant
+tradeoff is alignment versus preservation with respect to the source. In that case, we find that CFG produces
+a poorly shaped guidance tradeoff. That is, small ω weakens instruction following but may not reliably reduce
+distortion, while large ω is often essential for alignment but tends to amplify unnecessary changes.
+We identify the source of this inefficiency and attribute it to the well-established and widely adopted recipe
+of Ho & Salimans (2021).
+As demonstrated in Figure 1, we propose a simple inference-time correction
+that largely mitigates the issue.
+Our intervention requires no additional evaluations, leaves the trained
+model unchanged and recovers a richer set of operating points as ω varies. We show this in two settings.
+For a controlled analysis, we use a PixelGen (Ma et al., 2026b) finetune for pixel-space editing. We then
+demonstrate our approach in more general editing, benchmarking via Qwen-Image-Edit (Wu et al., 2025)
+and FLUX.2 (Black Forest Labs, 2025a), representative off-the-shelf latent flows tailored for the task.
+2
+Background
+We give a brief overview of literature on modern generative flows, techniques for TI2I modeling and CFG.
+2.1
+Flow Matching
+Flows perform generative modeling through Ordinary Differential Equations (ODEs) (Chen et al., 2018).
+Letting p represent the target distribution on RD, they correspond to the following transport dynamics:
+dxt = vθ(xt, t)dt,
+t ∈[0, 1],
+x1 ∼p,
+(1)
+where vθ : RD×R →RD denotes a velocity field parameterized by θ. In principle, there are several transport
+paths that satisfy Equation 1. In practice, Lipman et al. (2023) propose to model a linear interpolation
+between a tractable standard Gaussian distribution and the desired p. The ODE then defines marginal
+distributions, qt, subject to the constraints. The corresponding flow matching objective is as follows:
+min
+θ Et,x1∼p,x0∼N(0,I)
+(vθ [ψt(x0; x1), t] −d
+dtψt(x0; x1)
+
+2
+2
+)
+,
+ψt(x0; x1) := (1 −t)x0 + tx1,
+(2)
+where ψt denotes the conditional flow and its time derivative yields the associated conditional velocity. Note
+that this formulation is closely related to score-based generative models (Song et al., 2021). That is, letting
+Id denote the identity map, scores are expressed in terms of velocity as ∇x log qt = (1 −t)−1[tvθ(·, t) −Id].
+2.2
+Text-and-Image-to-Image Modeling
+TI2I models generate edit candidates conditioned jointly on a source image, cimg, and a text prompt or
+instruction ctxt. That is, the target distribution here is of the form p(· | cimg, ctxt). Unlike T2I generation,
+which has weaker conditioning, sampling from p(· | ctxt), TI2I editing requires balancing two competing
+guiding signals and goals. Namely, adherence to the requested edit and preservation of source content.
+Most editing methods in the literature do not train TI2I editing models directly.
+Instead, they adapt
+pretrained T2I models at inference time, effectively exploiting their strong generative priors while avoiding
+additional optimization costs (Meng et al., 2022; Rout et al., 2025; Kulikov et al., 2025; Yang & Ye, 2026).
+2
+
+
+Alternatively, it is also possible to train a generator directly for image editing. Early diffusion-based examples
+include Brooks et al. (2023), which learns to follow natural-language editing instructions from paired editing
+data. More recently, large-scale multimodal flow models have been trained natively with both image and text
+conditioning, enabling direct modeling of the TI2I distribution (Wu et al., 2025; Black Forest Labs, 2025a).
+Notably, in these systems, the source image enters the model as a first-class conditioning signal. In particular,
+for flow matching models, conditioning is typically incorporated into the velocity field, vθ(xt, t, cimg, ctxt), so
+that the sampling trajectory is jointly determined by the current state, source image and textual instruction.
+2.3
+Classifier-Free Guidance
+Ho & Salimans (2021) introduced CFG as a principled way to trade mode coverage for alignment in condi-
+tional models. Intuitively, CFG aims to sample from tilted distributions, qt,ω(· | c) ∝q1−ω
+t
+(· | ∅)qω
+t (· | c),
+where the guidance weight, ω, controls the tradeoff and ∅denotes an empty condition. Note, this corresponds
+to a linear interpolation of score functions. That is, taking logarithms and differentiating, we write:
+∇x log qt,ω(· | c) = (1 −ω)∇x log qt(· | ∅) + ω∇x log qt(· | c).
+(3)
+Therefore, given the equivalence of scores with velocities, the implementation requires training both an
+unconditional and a conditional model. In practice, this is done by dropping conditioning information during
+training for a fraction of the iterations, effectively unifying the two flows under a single parameterization.
+Despite the theoretical elegance of CFG, subtle technical details make it a non-trivial mechanism, with more
+nuanced dynamics and interpretation than the original motivation suggests (Zheng & Lan, 2024; Karras
+et al., 2024). Moreover, its design in the presence of multimodal conditioning remains relatively unexplored.
+3
+Methodology
+Before proceeding with analysis, we summarize our experimental setup. For completeness, we consider both
+pixel-space and latent-space TI2I models. In particular, pixel-space modeling enables a controlled and more
+interpretable setup. To this end, we produce a TI2I finetune of PixelGen (Ma et al., 2026b) at 512 × 512
+resolution.
+For latent-space modeling, we experiment with Qwen-Image-Edit (Wu et al., 2025) and the
+FLUX.2 family (Black Forest Labs, 2025a) at 256 × 256, 512 × 512 and 1024 × 1024 image resolutions.
+Throughout the paper, we use synthetic datasets, created by existing foundation models.
+After quality
+control, each contains approximately 200 entries. Specifically, we first generate text triplets of source image
+descriptions, edit instructions and post-edit descriptions via Claude Opus 4.7. Source descriptions are then
+used to generate source images via FLUX.2. Additionally, for local editing with PixelGen, we constrain the
+text triplets to describe scenarios where changes are expected to be strictly confined within specific regions in
+the images. In that case, we use the Segment Anything Model (SAM) of Carion et al. (2026) to automatically
+obtain corresponding segmentation masks. For latent-space editing with Qwen and FLUX.2, which we found
+to be significantly more capable, we allow general and challenging triplets to effectively test limitations.
+Further details on infrastructure, data, model configurations and hyperparameters are given in Appendix A.
+3.1
+Understanding Guidance & Its Design Space in TI2I Flows
+Our goal is understanding when editing failures emerge and how to interpret them, with the expectation
+that this will lead to actionable insights. Concretely, here we investigate TI2I flow modeling under CFG.
+Following the equivalence with score matching, this corresponds to the following ODE dynamics:
+dxt = vθ,ω(xt, t, c)dt,
+vθ,ω(·, t, c) := vθ(·, t, ∅) + ω∆vθ(·, t, c),
+x0 ∼N(0, I),
+(4)
+where we abbreviate joint conditioning as c = cimg, ctxt and ∆vθ(·, t, c) := vθ(·, t, ctxt) −vθ(·, t, ∅) is the
+differential velocity. Importantly, following the documentation of modern TI2I models (Wu et al., 2025; Black
+Forest Labs, 2025a), CFG is only applied with respect to text conditioning. That is, all terms appearing in
+vθ,ω(·, t, c) and ∆vθ(·, t, c), where we have slightly abused notation for compactness, should be understood as
+being implicitly conditioned on cimg. In that case, ∅represents an empty text prompt and text-unconditional
+modeling, that remains conditioned on cimg. We adopt these conventions for the remainder of the paper.
+3
+
+
+xt
+x∅
+1 j t
+xc
+1 j t
+/ ‖vc
+t −v∅
+t ‖2
+source
+edit
+t = 0.00
+t = 0.14
+t = 0.37
+t = 0.89
+source
+edit
+t = 0.00
+t = 0.14
+t = 0.37
+t = 0.89
+max
+min
+“repaint the hand-painted ceramic garden gnome in solid silver”
+“repaint the black helicopter in bright rescue orange”
+Figure 2: Visualization of two representative TI2I modeling scenarios with our PixelGen finetune. The first
+rows show the iterates xt. The second and third rows show the unconditional and conditional predictions of
+the network for the output edit image given xt, which can be derived given knowledge of the corresponding
+velocities. The last rows show the evolution of the differential velocity, equivalent to the difference of the
+second and third rows. Specifically, we visualize its magnitude as a heatmap that is normalized for each t.
+In both cases, the results of the last row concentrate on the edit regions near t = 0 and become less localized
+and noisy as t →1. Moreover, the failure in the right example is evident immediately at t = 0 and we can
+intuitively attribute it to the unconditional prediction of the second row, where the field has been repainted.
+0.1
+0.3
+0.5
+0.7
+0.9
+t
+1
+2
+3
+4
+5
+localization gain
+0.0
+0.1
+! = 1.0
+! = 4.0
+! = 1.5
+! = 5.5
+! = 2.0
+! = 7.0
+! = 2.5
+Ãt(¢; ¢ )
+Figure 3: Average localization gain (± the
+standard error) for our PixelGen finetune.
+We use SAM 3 (Carion et al., 2026) for the
+oracle masks. Results labeled as ψt(·; ·) cor-
+respond to using the analytical flow model,
+previously discussed in Section 2.1.
+Specifically for this section, we focus on pixel-space and strictly
+local editing with PixelGen. Our motivation for this is two-fold.
+First, since transport dynamics unfold in data space here, we
+are able to gain visual intuition for how flow modeling works
+by directly inspecting intermediate results. Equipped with this
+knowledge, we may then test our findings in more general en-
+vironments, not amenable to the same analysis. In fact, this
+enables our controlled local editing analysis. Importantly, our
+second argument for studying pixel-space models is that we
+avoid confounders that emerge from autoencoding and latent-
+space design, ensuring that our analysis is grounded in dynam-
+ics arising solely due to flow modeling.
+Having motivated our setting, we set out to study the funda-
+mental quantity of CFG in Equation 4, namely, the differential
+velocity ∆vθ(·, t, c). As a first step, we visualize its evolution
+along with intermediate results over flow modeling in Figure
+2. The examples we have selected here are representative of a
+general trend. That is, we observe that the differential velocity
+is localized in the early steps of flow modeling, becoming less
+local and noisy as t →1. In particular, we are able to quantify
+this phenomenon via the localization gain, defined as follows:
+LG(·, t, c) := Eu∼U(ΩM)
+[∆vθ(·, t, c)]u
+
+2
+.
+Eu∼U(Ω)
+[∆vθ(·, t, c)]u
+
+2,
+(5)
+where Ωrepresents the image (pixel) domain, the set ΩM ⊆Ωis determined via an oracle binary mask, M,
+with no support outside the intended edit region and [ · ]u is evaluation at pixel u. In words, LG compares
+the mean per-pixel magnitude of ∆vθ(·, t, c) inside the edit region against its mean over the complete image.
+4
+
+
+M
+cimg
+Ectxt x1
+ cimg 
+Figure 4: Consider a data manifold, M ⊆RD, and
+an arbitrary point in ambient space. The theoretical
+text-unconditional velocity, in blue, pushes points on
+M, toward source cimg. The CFG-trained velocity, in
+red, steers toward the mean edit, which need not ∈M.
+source
+edit
+Figure 5: Results with our TI2I PixelGen fine-
+tune for text-unconditional editing, equivalent to
+setting the CFG weight ω = 0.
+The top row
+shows source, input images. The outputs, shown
+on the bottom row, are distorted and we do not
+have faithful reconstruction of the inputs.
+If LG ≈1 then the differential velocity is spatially uniform whereas LG ≷1 implies it concentrates inside or
+outside of ΩM respectively. To investigate, in Figure 3 we report this quantity averaged across our dataset as
+a function of t. The curves confirm quantitatively what Figure 2 suggests. Namely, LG generally decreases
+as t →1, with ∆vθ(·, t, c) becoming increasingly uniform.
+Curiously, however, we see that localization
+consistently rises from t = 0 before peaking early. To probe whether this profile reflects the trained model
+or is prescribed by our particular sampling and discretization procedure, we additionally evaluate LG along
+the analytical flow, ψt(·; ·), from Section 2.1, where xt is drawn directly from the linear interpolant rather
+than rolled out by the reverse ODE. In that case, we observe a similar trend, i.e., the temporal profile of LG
+is inherent to the model, not an artifact of a particular trajectory taken by sampling.
+We conclude this section by emphasizing the key findings of the above experiments.
+First, our locality
+analysis suggests that edit-relevant signal is concentrated in the noisy phase. That is, the spatial structure
+of ∆vθ(·, t, c) effectively encodes where the edit will land before any detail has been resolved in xt. Second,
+as Figure 2 illustrates anecdotally, intermediate predictions in this same phase are already predictive of the
+final outcome, i.e., we expect a successful edit and an over-aggressive one to diverge early. Taken together,
+this identifies the noisy phase as the regime in which TI2I editing is effectively decided, and in which any
+corrective intervention is likely to be both necessary and sufficient. We turn to such an intervention next.
+3.2
+The Unconditional Branch Pathology and a Simple Remedy
+One interpretation of non-monotonic localization profiles observed in Figure 3 is that they reflect a modeling
+defect. Specifically, edit failures, as shown on the right in Figure 2, may substantially degrade the average
+LG in early stages of flow modeling by placing support outside of ΩM. Then, as t increases, reparation of
+the profiles intuitively requires dispersing this excess mass, causing LG to initially increase before collapsing.
+Given this reasoning and the analysis of Section 3.1, suggesting that the observed trend is independent from
+sampling dynamics, we are therefore motivated to investigate model-intrinsic failure cases near t = 0.
+Our insight is that, while TI2I models are trained for editing, they are only implicitly taught to preserve the
+source’s structure. In particular, we can formalize this phenomenon by examining the text-unconditional
+velocity, vθ(·, t, ∅), which, given no text instruction, we intuitively interpret as a no-edit flow toward the
+source.
+Concretely, for t ≈0, say t < τ for some τ > 0, we expect this to be well-approximated by
+(cimg −Id)/(1 −t), since noisy inputs in this regime carry little information. However, as illustrated in
+Figure 4, this no-edit constraint is not necessarily captured during training. Instead, CFG trains the text-
+unconditional branch to approximate the same target as the conditional branch, effectively forcing an edit
+even in the absence of a text instruction. In that case, it follows that the unconditional branch steers data
+toward the mean edit Ectxt[x1 | cimg], which need not reside on the data manifold. As demonstrated in Figure
+5, where we perform TI2I modeling with an empty text prompt, the results are therefore not guaranteed to
+be close to the source. That is, our analysis suggests that CFG implicitly hurts source preservation.
+5
+
+
+To overcome this issue, we introduce a simple intervention, which we refer to as early correction in the
+remainder of the paper. Specifically, since we have an analytical approximation of the desired unconditional
+velocity for t ≈0 and given the findings of Section 3.1, where we empirically find that coarse structure is
+determined early in the flow modeling process, we propose to augment the dynamics of Equation 4 as follows:
+dxt = vθ,ω,τ(xt, t, c)dt,
+vθ,ω,τ(·, t, c) := vθ,τ(·, t, ∅) + ω∆vθ(·, t, c),
+x0 ∼N(0, I).
+(6)
+Here, vθ,τ(·, t, ∅) is the early-corrected unconditional branch that we define piecewise as:
+vθ,τ(·, t, ∅) :=
+
+
+
+
+
+cimg −Id
+1 −t
+if t < τ
+vθ(·, t, ∅)
+otherwise.
+(7)
+In practice, τ may be rounded to the nearest sampling step to satisfy a smoothness requirement (Kynkään-
+niemi et al., 2024). Note that our proposed correction is valid for the isolated unconditional branch but
+not for the differential velocity ∆vθ(·, t, c). We empirically verify this in Figure 6, where the correction is
+successful only for our proposed configuration and otherwise results in severe distortion of the source image.
+“Change the ﬂower pot to glazed cobalt blue ceramic with white ﬂoral patterns”
+“Change the briefcase to black with chrome latches and corner protectors”
+source
+baseline
+correct v∅
+t
+correct ∆vc
+t
+correct both
+Figure 6: We ablate the proposed correction on
+our PixelGen finetune with simple edit tasks, set-
+ting τ = 0.05. Of tested configurations, only the
+one corresponding to Equation 6 is successful.
+A practical explanation of this connects with Karras et al.
+(2024), who find benefits of CFG can be interpreted as er-
+ror cancellation. In that case, the unconditional branch,
+vθ(·, t, ∅), serves as a weak predictor of conditional ve-
+locity whereas the conditional branch, vθ(·, t, ctxt), is a
+stronger predictor, having smaller but directionally con-
+sistent errors with vθ(·, t, ∅), i.e., ∆vθ(·, t, c) captures
+model-specific and meaningful errors that should be direc-
+tionally preserved. In particular, full correction amounts
+to an implicit shift in the training distribution of the
+model, corresponding to a symmetrization of edit tasks
+such that Ectxt[x1 | cimg] = cimg, but this may not be
+well-approximated. Instead, our correction corresponds
+to a still valid tradeoff in terms of the symmetrized uncon-
+ditional density and the preserved implicit CFG-induced
+classifier.
+That is, invoking the equivalence with score
+matching, roughly, we interpret this as sampling from a
+tilted distribution qt,ω,τ(· | c) ∝qt,τ(· | ∅)
+h
+qt(·|c)
+qt(·|∅)
+iω
+.
+3.3
+Early Correction Unlocks a Richer Alignment-Preservation Tradeoff
+Having introduced early correction, we now turn to evaluation. As discussed in Section 1, we are interested in
+quantifying the alignment-preservation tradeoff. We consider various proxies for each axis that are commonly
+adopted in the literature. Alignment is quantified by comparing the post-edit images with target post-edit
+descriptions via CLIP similarity (Radford et al., 2021), PickScore (Kirstain et al., 2023) and HPSv3 (Ma
+et al., 2025). Separately, we use the Aesthetics predictor (Schuhmann, 2022), a no-reference, unconditional
+human preference proxy operating only on images. For preservation, we compare post-edit images with
+corresponding source images via PSNR, LPIPS (Zhang et al., 2018) and DINOv2 (Oquab et al., 2024).
+In Table 1 and Figure 7 we report results with the above protocol. It is evident that early correction tends
+to improve performance across all models, with FLUX.2 especially benefiting at resolutions 256 × 256 and
+512 × 512. Specifically for PixelGen and local editing, following the findings of Section 3.1, we consider an
+additional baseline, augmenting ∆vθ(·, t, c) in Equation 6 via a masking oracle for better localization as:
+[∆vθ,M,τ(·, t, c)]u :=
+
+
+
+[∆vθ(·, t, c)]u
+if t ≥τ or u ∈ΩM and t < τ
+0
+otherwise.
+(8)
+6
+
+
+Table 1: Editing with Qwen, FLUX.2 and PixelGen. Without CFG we tend to observe strong preservation
+but insufficient alignment. That is, CFG is often essential for image editing. However, recommended weights,
+ω, tend to improve alignment while harming preservation. Early correction mitigates this tradeoff by largely
+improving preservation while maintaining strong alignment for Qwen-Image-Edit and PixelGen. For FLUX.2,
+found relatively conservative at 1024 × 1024 resolution, it recovers part of the distortion introduced by CFG
+while retaining its alignment gains.
+Moreover, our intervention is a key ingredient for unlocking robust
+masked guidance, i.e., removing it in the last row of the PixelGen experiments introduces severe distortion.
+Preservation
+Alignment
+Method
+PSNR ↑LPIPS ↓DINOv2 ↑CLIP ↑PickScore ↑HPSv3 ↑
+1024×1024
+Qwen-Image-Edit
+13.06
+0.4948
+0.7082
+0.2853
+22.15
+7.65
++ Classifier-free guidance (ω = 4.00)
+11.25
+0.5616
+0.5750
+0.2905
+22.03
+6.88
++ Early correction
+(τ = 0.10)
+14.05
+0.4159
+0.6606
+0.2946
+22.28
+7.97
+FLUX.2 [klein] 4B Base
+27.65
+0.0516
+0.9926
+0.2389
+21.63
+7.92
++ Classifier-free guidance (ω = 4.00)
+20.22
+0.1973
+0.9163
+0.2605
+21.88
+7.91
++ Early correction
+(τ = 0.01)
+20.33
+0.1948
+0.9171
+0.2603
+21.88
+7.92
+512×512
+FLUX.2 [klein] 4B Base
+14.07
+0.4456
+0.6496
+0.2791
+21.88
+8.03
++ Classifier-free guidance (ω = 4.00)
+12.05
+0.4576
+0.5973
+0.2891
+22.08
+8.34
++ Early correction
+(τ = 0.10)
+13.81
+0.3523
+0.6828
+0.2917
+22.19
+8.69
+PixelGen-XXL
+19.60
+0.1625
+0.8647
+0.2798
+22.62
+7.15
++ Classifier-free guidance (ω = 4.00)
+16.19
+0.1818
+0.8699
+0.2970
+22.88
+8.10
++ Early correction
+(τ = 0.05)
+20.62
+0.1118
+0.9159
+0.2907
+22.94
+8.64
++ Masked guidance
+21.54
+0.0960
+0.9186
+0.2888
+22.98
+8.73
+−Early correction
+13.93
+0.3179
+0.8430
+0.2927
+22.60
+7.24
+256×256
+FLUX.2 [klein] 4B Base
+14.62
+0.3668
+0.6573
+0.2638
+21.42
+5.18
++ Classifier-free guidance (ω = 4.00)
+12.04
+0.4461
+0.5605
+0.2858
+21.91
+7.30
++ Early correction
+(τ = 0.10)
+13.09
+0.3850
+0.6298
+0.2884
+22.04
+7.84
+0.280
+0.285
+0.290
+CLIP →
+13
+18
+24
+29
+PSNR →
+ 
+PixelGen-XXL (512 × 512, ¿ = 0.05)
+0.260
+0.270
+0.280
+CLIP →
+11
+15
+19
+23
+ 
+FLUX.2 [klein] 4B Base (512 × 512, ¿ = 0.10)
+0.280
+0.285
+0.290
+CLIP →
+10
+13
+15
+18
+ 
+Qwen-Image-Edit (1024 × 1024, ¿ = 0.10)
+baseline, ¿ = 0
+ours, ¿ > 0
+mask
+ours w mask
+!: 1.0 → 7.0
+Figure 7: Alignment-preservation tradeoffs via PSNR and CLIP.
+We evaluate our PixelGen finetune, FLUX.2 and Qwen models.
+Curves form by varying ω, with faint colors given to small values.
+Our method redefines the Pareto front, enabling robust editing.
+The masking strategy, however, is not
+sufficient. In fact, its benefits are only re-
+alized once our correction is applied and,
+counterintuitively, it otherwise leads to
+severe distortion in the outputs.
+This
+serves as evidence that early correction
+is a key ingredient in disentangling CFG
+dynamics. In particular, with reference
+to the left in Figure 7, SAM 3 masks
+appear to offer minor gains beyond our
+proposed correction and tend to merely
+shift operating points without changing
+the underlying Pareto front.
+We inter-
+pret this to mean that our correction
+alone leads to better localization, effec-
+tively approximating the masked oracle.
+To show our approach is operationally distinct from CFG, we also explored the choice of early correction time
+τ. Figure 8 gives a qualitative summary of our findings, where small τ yield strong alignment but tend to
+also give somewhat generic results at large CFG weight ω. Instead, large τ tend to maintain alignment while
+grounding edits to the source more strongly. Crucially, this does not necessarily compromise their integrity.
+Indeed, Figure 9 shows our correction may simultaneously improve DINOv2, HPSv3 and Aesthetics scores.
+7
+
+
+source
+source
+“re-render as a photorealistic image”
+“modernize the interior into a tech startup office”
+Increasing CFG weight !
+! = 1
+! = 4
+Increasing early correction time ¿
+¿ = 0.000
+¿ = 0.125
+Increasing early correction time ¿
+¿ = 0.000
+¿ = 0.125
+Figure 8: Qualitative analysis showing the effect of ω and τ at 1024 × 1024 resolution. On the left we show
+edits with Qwen-Image-Edit and on the right with FLUX.2 [klein] 4B Base. The first columns use τ = 0,
+i.e., no early correction. In both cases, τ = 0 tends to give generic results at large ω that may disregard the
+source. That is, on the left the raccoon is changed to a cat and on the right, eventually, no elements from the
+source survive. The proposed correction, activated when τ > 0, produces edits that are more faithful to the
+source without compromising instruction-following ability. See Figure 11 in Appendix B for more examples.
+4
+Discussion
+7.04
+7.87
+8.69
+9.52
+HPSv3 →
+ 
+PixelGen-XXL (512 × 512)
+5.02
+6.16
+7.29
+8.43
+ 
+FLUX.2 [klein] 4B Base (256 × 256)
+5.15
+6.17
+7.18
+8.20
+ 
+Qwen-Image-Edit (1024 × 1024)
+0.88
+0.92
+0.96
+DINOv2 →
+5.34
+5.37
+5.40
+5.43
+Aesthetics →
+0.60
+0.75
+0.90
+DINOv2 →
+5.66
+5.73
+5.81
+5.88
+0.60
+0.70
+0.80
+DINOv2 →
+5.76
+5.86
+5.96
+6.06
+! = 1.0
+! = 1.5
+! = 2.0
+! = 2.5
+! = 4.0
+! = 5.5
+! = 7.0
+¿ : 0.0 →0.1
+Figure 9: We show DINOv2-HPSv3, Aesthetics tradeoffs for the
+PixelGen, FLUX.2 and Qwen models with different ω and τ.
+Curves represent fixed ω and form by varying τ, with faint colors
+given to small values. A positive τ often improves all metrics.
+We studied CFG in TI2I flows and ar-
+gued the recipe of Ho & Salimans (2021)
+is poorly integrated. Our observation is
+that CFG trains the text-unconditional
+branch to approximate the mean edit
+rather than a no-edit flow, so the mecha-
+nism responsible for alignment implicitly
+erodes preservation. We localized this ef-
+fect to the noisy phase of modeling and
+proposed an intervention that substitutes
+a no-edit velocity into the unconditional
+branch for t < τ.
+It requires no addi-
+tional evaluations and recovers markedly
+richer alignment-preservation tradeoffs.
+We do not present a rule for τ. In prac-
+tice, however, a uniform choice delivers
+consistent improvements. Moreover, we
+note that open TI2I models often do not
+provide complete information about their
+development, which may involve post-
+training we cannot account for. In these
+cases, we cannot cleanly attribute the
+success or relative ineffectiveness of our
+intervention to flow modeling alone.
+Our findings caution against blind transfer of techniques across tasks. Despite its ubiquity, CFG is not a
+silver bullet and its naive application is harmful for source preservation in editing. We therefore view our
+work as an invitation to rethink such recipes. Instead of treating editing as T2I generation with an additional
+conditioning signal, we argue that TI2I modeling benefits from task-specific context, here a no-edit prior
+grounding generation to the source, and hope this perspective informs the design of future systems.
+8
+
+
+References
+Black Forest Labs. FLUX.2: Frontier Visual Intelligence. https://bfl.ai/blog/flux-2, 2025a.
+Black Forest Labs. Flux.1 kontext: Flow matching for in-context image generation and editing in latent
+space, 2025b.
+Tim Brooks, Aleksander Holynski, and Alexei A. Efros. Instructpix2pix: Learning to follow image editing
+instructions. In 2023 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pp.
+18392–18402, 2023. doi: 10.1109/CVPR52729.2023.01764.
+Nicolas Carion, Laura Gustafson, Yuan-Ting Hu, Shoubhik Debnath, Ronghang Hu, Didac Suris Coll-Vinent,
+Chaitanya Ryali, Kalyan Vasudev Alwala, Haitham Khedr, Andrew Huang, Jie Lei, Tengyu Ma, Baishan
+Guo, Arpit Kalla, Markus Marks, Joseph Greer, Meng Wang, Peize Sun, Roman Rädle, Triantafyllos
+Afouras, Effrosyni Mavroudi, Katherine Xu, Tsung-Han Wu, Yu Zhou, Liliane Momeni, RISHI HAZRA,
+Shuangrui Ding, Sagar Vaze, Francois Porcher, Feng Li, Siyuan Li, Aishwarya Kamath, Ho Kei Cheng,
+Piotr Dollar, Nikhila Ravi, Kate Saenko, Pengchuan Zhang, and Christoph Feichtenhofer. SAM 3: Segment
+anything with concepts. In The Fourteenth International Conference on Learning Representations, 2026.
+Ricky T. Q. Chen, Yulia Rubanova, Jesse Bettencourt, and David K Duvenaud. Neural ordinary differential
+equations. In S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and R. Garnett (eds.),
+Advances in Neural Information Processing Systems, volume 31. Curran Associates, Inc., 2018.
+Jonathan Ho and Tim Salimans. Classifier-free diffusion guidance. In NeurIPS 2021 Workshop on Deep
+Generative Models and Downstream Applications, 2021.
+Tero Karras, Miika Aittala, Tuomas Kynkäänniemi, Jaakko Lehtinen, Timo Aila, and Samuli Laine. Guid-
+ing a diffusion model with a bad version of itself. In The Thirty-eighth Annual Conference on Neural
+Information Processing Systems, 2024.
+Yuval Kirstain, Adam Polyak, Uriel Singer, Shahbuland Matiana, Joe Penna, and Omer Levy. Pick-a-pic:
+An open dataset of user preferences for text-to-image generation. In Thirty-seventh Conference on Neural
+Information Processing Systems, 2023.
+Vladimir Kulikov, Matan Kleiner, Inbar Huberman-Spiegelglas, and Tomer Michaeli. Flowedit: Inversion-
+free text-based editing using pre-trained flow models.
+In Proceedings of the IEEE/CVF International
+Conference on Computer Vision (ICCV), pp. 19721–19730, October 2025.
+Maksim Kuprashevich, Grigorii Alekseenko, Irina Tolstykh, Georgii Fedorov, Bulat Suleimanov, Vladimir
+Dokholyan, and Aleksandr Gordeev. Nohumansrequired: Autonomous high-quality image editing triplet
+mining.
+In Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision
+(WACV), pp. 6059–6068, March 2026.
+Tuomas Kynkäänniemi, Miika Aittala, Tero Karras, Samuli Laine, Timo Aila, and Jaakko Lehtinen. Applying
+guidance in a limited interval improves sample and distribution quality in diffusion models. In The Thirty-
+eighth Annual Conference on Neural Information Processing Systems, 2024.
+Tianhong Li and Kaiming He. Back to basics: Let denoising generative models denoise. In Proceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pp. 36115–36125, June
+2026.
+Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow matching for
+generative modeling. In The Eleventh International Conference on Learning Representations, 2023.
+Xu Ma, Yitian Zhang, Qihua Dong, and Yun Fu. Fine-t2i: An open, large-scale, and diverse dataset for
+high-quality t2i fine-tuning, 2026a.
+Yuhang Ma, Xiaoshi Wu, Keqiang Sun, and Hongsheng Li. Hpsv3: Towards wide-spectrum human preference
+score. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV), pp. 15086–
+15095, October 2025.
+9
+
+
+Zehong Ma, Ruihan Xu, and Shiliang Zhang. Pixelgen: Improving pixel diffusion with perceptual supervision,
+2026b.
+Chenlin Meng, Yutong He, Yang Song, Jiaming Song, Jiajun Wu, Jun-Yan Zhu, and Stefano Ermon. SDEdit:
+Guided image synthesis and editing with stochastic differential equations. In International Conference on
+Learning Representations, 2022.
+Maxime Oquab, Timothée Darcet, Théo Moutakanni, Huy V. Vo, Marc Szafraniec, Vasil Khalidov, Pierre
+Fernandez, Daniel HAZIZA, Francisco Massa, Alaaeldin El-Nouby, Mido Assran, Nicolas Ballas, Woj-
+ciech Galuba, Russell Howes, Po-Yao Huang, Shang-Wen Li, Ishan Misra, Michael Rabbat, Vasu Sharma,
+Gabriel Synnaeve, Hu Xu, Herve Jegou, Julien Mairal, Patrick Labatut, Armand Joulin, and Piotr Bo-
+janowski. DINOv2: Learning robust visual features without supervision. Transactions on Machine Learn-
+ing Research, 2024. ISSN 2835-8856.
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish
+Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. Learning
+transferable visual models from natural language supervision. In Marina Meila and Tong Zhang (eds.),
+Proceedings of the 38th International Conference on Machine Learning, volume 139 of Proceedings of
+Machine Learning Research, pp. 8748–8763. PMLR, 18–24 Jul 2021.
+Litu Rout, Yujia Chen, Nataniel Ruiz, Constantine Caramanis, Sanjay Shakkottai, and Wen-Sheng Chu.
+Semantic image inversion and editing using rectified stochastic differential equations. In The Thirteenth
+International Conference on Learning Representations, 2025.
+Christoph Schuhmann. Laion-aesthetics. https://laion.ai/blog/laion-aesthetics, 2022.
+Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+Score-based generative modeling through stochastic differential equations. In International Conference on
+Learning Representations, 2021.
+Cong Wei, Zheyang Xiong, Weiming Ren, Xeron Du, Ge Zhang, and Wenhu Chen. Omniedit: Building image
+editing generalist models through specialist supervision. In The Thirteenth International Conference on
+Learning Representations, 2025.
+Chenfei Wu, Jiahao Li, Jingren Zhou, Junyang Lin, Kaiyuan Gao, Kun Yan, Sheng ming Yin, Shuai Bai,
+Xiao Xu, Yilei Chen, Yuxiang Chen, Zecheng Tang, Zekai Zhang, Zhengyi Wang, An Yang, Bowen Yu,
+Chen Cheng, Dayiheng Liu, Deqing Li, Hang Zhang, Hao Meng, Hu Wei, Jingyuan Ni, Kai Chen, Kuan
+Cao, Liang Peng, Lin Qu, Minggang Wu, Peng Wang, Shuting Yu, Tingkun Wen, Wensen Feng, Xiaoxiao
+Xu, Yi Wang, Yichang Zhang, Yongqiang Zhu, Yujia Wu, Yuxuan Cai, and Zenan Liu.
+Qwen-image
+technical report, 2025.
+Shitao Xiao, Yueze Wang, Junjie Zhou, Huaying Yuan, Xingrun Xing, Ruiran Yan, Chaofan Li, Shuting
+Wang, Tiejun Huang, and Zheng Liu. Omnigen: Unified image generation. In 2025 IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR), pp. 13294–13304, 2025. doi: 10.1109/CVPR52734.
+2025.01241.
+Desong Yang and Mang Ye.
+Directedit: Step-level accurate inversion for flow-based image editing.
+In
+Forty-third International Conference on Machine Learning, 2026.
+Sihyun Yu, Sangkyung Kwak, Huiwon Jang, Jongheon Jeong, Jonathan Huang, Jinwoo Shin, and Saining
+Xie. Representation alignment for generation: Training diffusion transformers is easier than you think. In
+The Thirteenth International Conference on Learning Representations, 2025.
+Richard Zhang, Phillip Isola, Alexei A. Efros, Eli Shechtman, and Oliver Wang. The unreasonable effective-
+ness of deep features as a perceptual metric. In 2018 IEEE/CVF Conference on Computer Vision and
+Pattern Recognition, pp. 586–595, 2018. doi: 10.1109/CVPR.2018.00068.
+Candi Zheng and Yuan Lan. Characteristic guidance: Non-linear correction for diffusion model at large
+guidance scale. In Forty-first International Conference on Machine Learning, 2024.
+10
+
+
+20%
+13%
+13%
+12.5%
+12%
+7.5%
+7.5%
+7.5%
+7%
+source images
+Food
+Recreation
+Tools
+Wardrobe
+Nature
+Vehicles
+Furniture
+Kitchenware
+Homeware
+19%
+19%
+18.5%
+17.5%
+16.5%
+9.5%
+edit prompts
+Lighten
+Darken
+Material
+Cooler
+Warmer
+Metalize
+(a) Local editing with PixelGen
+19.5%
+16%
+11.5%
+10%
+10.5%
+9%
+8.5%
+7.5%
+7.5%
+source images
+Interiors
+Venues
+Landscapes
+Animals
+People
+Fantastical
+Streets
+Vehicles
+Food
+29%
+19.5%
+18%
+17%
+10.5%
+6%
+edit prompts
+Multiswap
+Swap
+Atmosphere
+Setting
+Restyle
+Transform
+(b) General editing with Qwen and FLUX.2
+Figure 10: Compositions of our two editing benchmarks, with approximately 200 entries each. The panels
+pair two donuts, showing the distribution of source images on the left and of edit prompts on the right. The
+benchmark on the left panel targets single objects on plain backdrops with localized recolor and material
+edits, i.e., confined within a specific region of the image. The benchmark on the right targets complex,
+typically crowded scenes and was specifically designed as a stress-test of TI2I capabilities. Together, they
+cover the spectrum from precise local edits to scene-wide changes that must still preserve surrounding context.
+A
+Experimental Setup
+We ran inference on Linux machines using RTX Quadro 6000, RTX A5000, H100 GPUs and CUDA 13.0.
+Benchmarks were generated via Claude Opus 4.7, FLUX.2 [klein] 4B Base (Black Forest Labs, 2025a)
+(1024 × 1024, 50 steps, ω = 4, Euler) and SAM 3 (Carion et al., 2026), with compositions in Figure 10.
+For TI2I editing, which consumed most of our compute budget, we used the Euler solver with 25 steps.
+Preliminary runs with the recommended 50 steps showed little difference and did not justify the extra cost.
+Regarding our pixel-space experiments, we finetuned PixelGen-XXL (Ma et al., 2026b) (512 × 512, bf16) on
+NHR-Edit (Kuprashevich et al., 2026), OmniEdit (Wei et al., 2025), X2I (Xiao et al., 2025) datasets for TI2I
+modeling and on Fine-T2I (Ma et al., 2026a) for T2I preservation. We used the JiT flow-matching velocity
+loss from Li & He (2026) and LPIPS, DINOv2, REPA (Yu et al., 2025) regularizers applied similarly to the
+original PixelGen recipe, gated at t = 0.5. We additionally applied unconditional T2I regularization and a
+KL penalty (β =1e-3) against a frozen reference to preserve base generative quality. The model was trained
+with the AdamW optimizer, a learning rate of 1e-4 and a batch size of 128 for 20k iterations.
+We note that our adaptation of PixelGen reuses the T2I backbone without introducing any new parameters.
+In particular, source conditioning is realized through token concatenation, following the Kontext paradigm
+(Black Forest Labs, 2025b). That is, source images are embedded like the noisy inputs and their tokens are
+appended to the noisy token sequence inside the transformer. To distinguish them, noisy tokens carry the
+denoising timestep whereas source tokens are marked as noise-free, i.e., t = 1. With this setup, information
+therefore propagates through the model’s existing joint attention, requiring no adapters or auxiliary encoders.
+B
+Additional Results
+source
+source
+source
+“turn the lemon into glowing citrine crystal”
+“overgrow the watch in moss and wildflowers”
+“turn it into an aquarium of tropical fish”
+! = 1.0
+! = 2.5
+! = 3.5
+¿ = 0.00
+¿ = 0.03
+¿ = 0.10
+¿ = 0.00
+¿ = 0.03
+¿ = 0.10
+¿ = 0.00
+¿ = 0.03
+¿ = 0.10
+Figure 11: Editing with FLUX.2, showing the effect of ω and τ at 512 × 512 resolution. Ours, with τ > 0,
+maintains the lemon shape (left), perspective (middle) and booth shape (right) while adhering to the text.
+11

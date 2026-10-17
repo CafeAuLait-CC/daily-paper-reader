@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-16</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-17</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 12 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 11 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-16 22:12:34 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-17 21:05:47 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精选12篇论文，精读1篇、速读11篇，重点聚焦人形动作生成与流匹配。最值得看的是精读8.0分的TRACE，用类型化引用感知的对话式编辑改进人形动作扩散模型；流匹配方向也有三篇7.0分工作，涉及强化学习、微调与语义对齐。普通读者可先读TRACE了解对话式动作编辑，再按兴趣跟进流匹配的效率与可控性改进。</p>
+<p>今天完成 11 篇论文的筛选与速读（0 篇精读），重点集中在流匹配与高效生成方向。最值得看的是两篇反思性工作：《When do explicit penalties improve flow matching?》讨论显式惩罚在什么条件下才真正改善流匹配，《Are We Overthinking One-Step Generation?》质疑一步生成是否被过度设计；应用侧可关注 ControlFlow3D，它把多视图知识蒸馏进潜空间流匹配来做点云上采样。建议普通读者先读这两篇反思型短文，核对自己的生成流程是否被复杂化，再按需深入点云上采样这类落地任务。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TRACE: Typed Reference-Aware Conversational Editing for Humanoid Motion Diffusion">TRACE: Typed Reference-Aware Conversational Editing for Humanoid Motion Diffusion</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -94,7 +94,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PrT-Flow: Probability-Tractable Flow Matching for Reinforcement Learning">PrT-Flow: Probability-Tractable Flow Matching for Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Weighted Adjoint Matching: Finetuning Flow Matching Models with Time-Dependent Control Cost">Weighted Adjoint Matching: Finetuning Flow Matching Models with Time-Dependent Control Cost</span></li><li><span class="dpr-home-dashboard-paper-title" title="Semantic Latent Alignment for Flow Matching with Invertible Bi-Lipschitz Adapters">Semantic Latent Alignment for Flow Matching with Invertible Bi-Lipschitz Adapters</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="When do explicit penalties improve flow matching?">When do explicit penalties improve flow matching?</span></li><li><span class="dpr-home-dashboard-paper-title" title="Are We Overthinking One-Step Generation?">Are We Overthinking One-Step Generation?</span></li><li><span class="dpr-home-dashboard-paper-title" title="ControlFlow3D: Distilling Multi-View Knowledge into Latent Flow Matching for Point Cloud Upsampling">ControlFlow3D: Distilling Multi-View Knowledge into Latent Flow Matching for Point Cloud Upsampling</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>11</strong></span></div>
 </section>
