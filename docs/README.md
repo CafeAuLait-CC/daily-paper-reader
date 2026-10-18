@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-17</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-18</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 11 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-17 21:05:47 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-18 22:01:44 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天完成 11 篇论文的筛选与速读（0 篇精读），重点集中在流匹配与高效生成方向。最值得看的是两篇反思性工作：《When do explicit penalties improve flow matching?》讨论显式惩罚在什么条件下才真正改善流匹配，《Are We Overthinking One-Step Generation?》质疑一步生成是否被过度设计；应用侧可关注 ControlFlow3D，它把多视图知识蒸馏进潜空间流匹配来做点云上采样。建议普通读者先读这两篇反思型短文，核对自己的生成流程是否被复杂化，再按需深入点云上采样这类落地任务。</p>
+<p>今日速读8篇论文，聚焦视觉-语言-动作通用策略与扩散模型在机器人控制、离线强化学习中的高效建模。值得关注PRISM的精准强制通用VLA策略，以及MOSAIC对机器人扩散模型的模式与支持感知推理控制。普通读者可先看PRISM概览，再按兴趣跟进扩散策略优化方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">11 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="When do explicit penalties improve flow matching?">When do explicit penalties improve flow matching?</span></li><li><span class="dpr-home-dashboard-paper-title" title="Are We Overthinking One-Step Generation?">Are We Overthinking One-Step Generation?</span></li><li><span class="dpr-home-dashboard-paper-title" title="ControlFlow3D: Distilling Multi-View Knowledge into Latent Flow Matching for Point Cloud Upsampling">ControlFlow3D: Distilling Multi-View Knowledge into Latent Flow Matching for Point Cloud Upsampling</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PRISM: Precision Forcing for Generalist Vision-Language-Action Policies">PRISM: Precision Forcing for Generalist Vision-Language-Action Policies</span></li><li><span class="dpr-home-dashboard-paper-title" title="Compositional Average Velocity Modeling for Efficient Diffusion Offline Reinforcement Learning">Compositional Average Velocity Modeling for Efficient Diffusion Offline Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MOSAIC: Mode- and Support-Aware Inference-Time Control of Robot Diffusion Models">MOSAIC: Mode- and Support-Aware Inference-Time Control of Robot Diffusion Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>11</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>8</strong></span></div>
 </section>
 </div>
 

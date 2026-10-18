@@ -1,0 +1,2021 @@
+ReAl: Refine neural operators via aligning dynam-
+ical flow
+Jing Xu1,†
+Zenglin Xu1,2
+Li Yi1
+Ruoxi Jiang1,2,†,∗
+Yuan Qi1,2,∗
+1 Shanghai Academy of AI for Science ,
+2 Fudan University
+† Project leader , * Corresponding author
+{roxie jiang, qiyuan}@fudan.edu.cn
+Abstract
+Neural partial differential equation (PDE) surrogates trained with mean squared
+error (MSE) can capture dominant dynamics but often lose high-frequency in-
+formation and fine-scale structures.
+Generative models (e.g., Flow Matching)
+can capture the distribution of fine-scale details, yet stochastic errors may accu-
+mulate during autoregressive rollouts and compromise long-term stability.
+To
+address these limitations, we introduce Refine and Align (ReAl), a model-agnostic
+plug-in that augments pretrained PDE surrogates to improve the reconstruction of
+high-frequency structures associated with complex physical phenomena. In the re-
+finement stage, a conditional flow-matching model learns the residual distribution
+around the deterministic base prediction, recovering missing fine-scale structures
+while retaining the dominant dynamics. In the alignment stage, to mitigate the gen-
+erative discrepancies amplified in the autoregressive rollout, particularly in chaotic
+systems, we generate multiple trajectories from the same input and reinforce the
+refiner with trajectory-level rewards, thereby achieving long-horizon dynamical
+alignment.
+Experiments across diverse surrogate architectures and PDE tasks
+demonstrate that ReAl consistently improves high-frequency fidelity, forecasting
+accuracy, and long-horizon stability.
+1
+Introduction
+Partial differential equations (PDEs) are fundamental to modeling physical systems across fluid
+mechanics (Davidson, 2004), heat and mass transfer (Bergman, 2011), electromagnetics (Schwinger
+et al., 1998), and chemical diffusion (Crank, 1979). Classical finite-difference (Morton & Mayers,
+1994) and finite-element methods (Hughes, 2003) provide reliable solutions, but their computational
+costs grow rapidly with spatial resolution, dimensionality, and parameter-space size. This limitation
+has driven the development of deep-learning-based PDE surrogates and neural operators, including
+DeepONet (Lu et al., 2021), the Fourier Neural Operator (Li et al., 2020), and the Physics-Informed
+Neural Operator (Goswami et al., 2023). By approximating PDE solution operators, these methods
+enable substantially faster inference for large-scale simulation and real-time scientific prediction.
+Most deep-learning-based PDE surrogates are trained with mean squared error (MSE) objective,
+which provides stable optimization and effectively captures large-scale, low-frequency dynamics.
+However, as a mean-regression objective, MSE tends to suppress high-frequency information, local
+vortices, and sharp interfaces
+(Lippe et al., 2023; Fotiadis et al., 2025), particularly on real-
+world datasets such as RealPDEBench (Hu et al., 2026), where measurement noise and unresolved
+physical processes further complicate the underlying dynamics. Generative models (Ho et al., 2020;
+Rombach et al., 2022; Lipman et al., 2023) can alleviate this limitation by modeling the conditional
+distribution of PDE solutions instead of producing only one deterministic prediction, enabling richer
+high-frequency details (Yao et al., 2026; Utkarsh et al., 2026; Hu et al., 2025). However, stochastic
+sampling may introduce predictive variance and compromise the dynamical consistency and long-
+term stability required by deterministic PDE systems.
+Motivated by these observations, we adopt a complementary modeling strategy: retain the MSE-
+trained surrogate as a stable predictor of dominant dynamics and apply a conditional flow-based
+refiner to its output. Rather than regenerating the entire PDE state, the refiner is conditioned on
+1
+arXiv:2610.20369v1  [cs.LG]  14 Oct 2026
+
+
+MSE-trained Surrogate
+Ground Truth
+w/ Refiner (our 1st phase)
+(a) Necessity of refinement
+reject
+Stochastic Regressive rollout
+chosen
+t = 1
+t = T
+Trajectory 1
+Trajectory 2
+Trajectory 3
+Trajectory 4
+t = 0
+(b) Necessity of alignment
+Figure 1: (a) MSE training leads to high-frequency information loss, while stochastic refiner recovers
+the structures. (b) Sampling variability accumulates during stochastic autoregressive rollout, espe-
+cially in the high-frequency regime. Our ReAl mitigates this accumulation of sampling variability.
+the base prediction and learns to generate its fine-scale residual correction (Fotiadis et al., 2025).
+As shown in Fig.1 (a), this strategy recovers high-frequency information lost by MSE training
+while preserving low-frequency dynamics consistent in PDE predictions. Despite these benefits,
+a generative refiner can only partially mitigate the rollout shift rather than completely eliminate
+it. Stochastic perturbations can accumulate during autoregressive rollout, creating a gap between
+recovering fine-scale structures at individual steps and maintaining forecasting accuracy over the
+resulting trajectory (Luo, 2025; Yoo et al., 2026). As shown in Fig.1 (b), the base model preserves
+low-frequency dynamics over longer horizons, while high-frequency errors progressively accumulate
+and amplify, degrading long-term stability and physical consistency.
+These observations motivate optimizing the refiner beyond individual prediction quality by ac-
+counting for its cumulative effect on the entire autoregressive trajectory. To this end, inspired by
+reinforcement learning for diffusion models (Liu et al., 2025; Zheng et al., 2026), we introduce
+trajectory-alignment post-training for the flow-based refiner. Starting from the same input state, we
+sample multiple autoregressive trajectories using independent random seeds and evaluate their long-
+term quality with trajectory-level rewards. These rewards guide flow-matching updates to the same
+refiner, favoring refinements that yield accurate long-horizon forecasts. This extends the optimization
+target from one-step accuracy to long-term trajectory quality without sacrificing the refiner’s ability
+to recover fine-scale structures. Our main contributions are summarized as follows:
+• We propose Refine and Align (ReAl), a lightweight, model-agnostic PDE forecasting plug-
+in based on Flow Matching. ReAl addresses the loss of high-frequency information and
+fine-scale structures commonly observed in MSE-pretrained surrogates on real-world data,
+refining their predictions without modifying the underlying architectures.
+• To the best of our knowledge, we are the first to post-train long-term autoregressive PDE
+trajectories from a reinforcement learning perspective. ReAl samples multiple stochastic
+rollouts from the same initial state and optimizes the Flow refiner with trajectory-level
+rewards, aligning local residual corrections with long-term dynamical evolution.
+• Extensive experiments demonstrate that ReAl improves both prediction accuracy and long-
+term stability. Compared with the base models, it reduces the average RMSE by 34.3% at
+the 1-st rollout step and by 45.4% at the 20-th step, with larger gains over longer horizons
+on RealPDEBench.
+ReAl also recovers high-frequency physical structures, suppresses
+long-term error accumulation, and mitigates numerical dissipation.
+2
+Related Works
+Neural PDE Surrogates.
+Neural PDE surrogates approximate expensive numerical solvers by
+learning mappings between physical fields. Representative approaches include DeepONet (Lu et al.,
+2021), the Fourier Neural Operator (FNO) (Li et al., 2021), and physics-informed neural opera-
+tors (Goswami et al., 2023). Subsequent architectures have explored latent spectral representations,
+geometry-aware attention, hierarchical modeling, and large-scale pretraining, including LSM (Wu
+2
+
+
+et al., 2023), DPOT (Hao et al., 2024), Transolver (Wu et al., 2024), Poseidon (Herde et al., 2024),
+and HINE (Jiang et al., 2026). Although these models are effective for autoregressive forecasting,
+prediction errors and insufficiently modeled frequency components can accumulate over long roll-
+outs (Lippe et al., 2023; Yoo et al., 2026). We retain such models as deterministic backbones and
+improve their predictions through a model-agnostic refinement plug-in.
+Generative Models and Refinements for PDEs. Diffusion and Flow Matching models (Ho et al.,
+2020; Rombach et al., 2022; Lipman et al., 2023) have been widely applied to PDE simulation, data
+assimilation, and physics-constrained generation (Shysheya et al., 2024; Yao et al., 2026; Utkarsh
+et al., 2026). DiffusionPDE addresses PDE solving under partial observations (Huang et al., 2024),
+DYffusion targets probabilistic multi-step forecasting (R¨uhling Cachay et al., 2023), and autoregres-
+sive conditional diffusion models have been studied for turbulent-flow prediction (Kohl et al., 2026).
+Other methods improve multiscale reconstruction through wavelet or latent representations (Hu
+et al., 2025; Li et al., 2026). PDE-Refiner (Lippe et al., 2023), Adaptive Flow Matching (Fotiadis
+et al., 2025), PDE-SpectralRefiner (Luo, 2025), and FlowRefiner (Dai et al., 2026) further recover
+non-dominant frequency components through generative refinement. Unlike those methods based
+primarily on short-horizon objectives, ReAl directly optimizes long-term autoregressive rollouts.
+Post-Training of Diffusion Models. Reward-based post-training aligns diffusion and Flow Matching
+models with task-specific objectives. DDPO (Black et al., 2024) and DPOK (Fan et al., 2023) optimize
+diffusion sampling through reinforcement learning, Flow-GRPO (Liu et al., 2025) compares groups
+of samples, and DiffusionNFT (Zheng et al., 2026) employs negative-aware online reinforcement
+learning. We extend these ideas to PDE forecasting by post-training the refiner with trajectory-level
+rewards for long-term accuracy, stability, and physical consistency.
+3
+Method
+In this section, we introduce Refine and Align (ReAl), a model-agnostic plug-in for stable and accurate
+long-term partial differential equation forecasting, as illustrated in Fig. 2. During refinement, we
+pretrain a flow matching refiner to correct the residual distribution of the base predictions. During
+alignment, we employ trajectory-level post-training to improve long-term forecasting stability.
+3.1
+Preliminaries
+PDE surrogates for forecasting. Consider a nonlinear dynamical system governed by a partial
+differential equation (PDE):
+𝜕u
+𝜕𝑡= G(u; 𝜙),
+(1)
+where u(x, 𝑡) denotes a continuous physical field depending on spatial coordinate x and time 𝑡, 𝜙
+represents the physical parameters governing the dynamics of the system, and G : U × Φ →U is
+a differential operator. By applying numerical discretization techniques, such as finite-difference or
+spectral methods, we obtain a discrete trajectory of consecutive observed states:{u0, u1, . . . , u𝑁}.
+Our goal is to learn a neural surrogate model 𝑓𝜃, parameterized by 𝜃, that approximates the discrete
+evolution operator and predicts the next state u𝑛+1 from the current state u𝑛1, ˆu𝑛+1 = 𝑓𝜃(u𝑛). For
+multi-step forecasting, the surrogate model is applied recursively in an autoregressive manner. The
+prediction at the 𝑘-th future step is given by ˆu𝑛+𝑘= 𝑓◦𝑘
+𝜃(u𝑛), where 𝑓◦𝑘
+𝜃(·) denotes the 𝑘-fold
+composition of 𝑓𝜃(·).
+Conditional Flow Matching. Conditional flow matching (CFM) (Lipman et al., 2023) learns a
+conditional vector field that transports samples from a Gaussian noise distribution to the target data
+distribution conditioned on c.
+During training, an intermediate state is sampled along a linear
+interpolation between a noise sample and a target sample, and the vector field v𝜓is optimized to
+predict the corresponding transport velocity. At inference, the learned vector field is integrated
+from noise to data to generate a sample under the given condition. Here, the flow time 𝜏∈[0, 1]
+parameterizes the generative transport process and is distinct from the physical time of PDE evolution.
+1To simplify the notation, we consider one-step forecasting as a representative setting.
+Our method is
+agnostic to the temporal input–output configuration and can be applied to surrogates that use multiple historical
+states or predict multiple future states.
+3
+
+
+𝑢!
+Deterministic 
+model
+Frozen
+❄
+Generative 
+refiner
+Trainable
+🔥
+𝑢""
+𝑢#"
+Coarse
+Refined
+Old policy
+❄
+❄
+𝒅𝜽
+𝒈𝜽
+𝒅𝜽
+…
+𝑢""
+𝑢"$
+Reward
+Reject
+Reject
+ (a) Re：Distribution Refinement 
+ (b) Al：Trajectory Alignment
+Trainable
+β
++
+−
++
+🔥
+❄
+𝒈𝜽
+𝑢!
+loss
+𝒈𝜽
+𝒐𝒍𝒅
+𝒈𝜽
+𝒐𝒍𝒅
+Ref Policy
+Chosen
++Noise
+Trajectory 1
+Residual
+⊕
+.
+Negative
+Positive
+…
+…
+Trajectory 2
+Trajectory K
+1-β
+β
+1+β
+Figure 2: Overview of Refine and Align (ReAl), a model-agnostic plug-in for pretrained PDE
+surrogates. (a) Refine: a conditional flow matching refiner generates fine-scale residuals for the
+frozen deterministic prediction. (b) Align: trajectory rewards from multiple stochastic rollouts post-
+train the refiner for stable long-term PDE forecasting. Both stages optimize the same conditional
+velocity field, with trajectory rewards weighting its flow-matching objectives during alignment.
+3.2
+Distribution Refinement with Conditional Flow Matching
+We first introduce the distribution refinement phase of ReAl, as shown in Fig. 2(a). Most existing
+PDE surrogates are trained with MSE, enabling the deterministic predictor d𝜃to stably capture
+dominant dynamics but often suppressing high-frequency structures through mean regression. To
+address this limitation, we introduce a conditional flow matching refiner g𝜓that learns the residual
+distribution between the base prediction and ground truth, recovering fine-scale structures.
+Deterministic Base Prediction. Given the current PDE state u𝑛, the MSE-based deterministic
+predictor produces the next-state estimate, ¯u𝑛, and is pretrained by minimizing its discrepancy from
+the ground truth, u𝑛+1:
+¯u𝑛+1 = d𝜃(u𝑛),
+LMSE(𝜃) = E
+
+∥¯u𝑛+1 −u𝑛+1∥2
+.
+(2)
+The optimal MSE predictor approaches the conditional mean, E [u𝑛+1 | u𝑛] . Although this reliably
+captures the dominant dynamics, conditional averaging tends to suppress non-dominant fine-scale
+structures, resulting in overly smooth predictions.
+Conditional Flow Refinement. To recover non-dominant structures suppressed by MSE training,
+we introduce a conditional flow matching refiner g𝜓that models the conditional distribution of
+fine-scale residuals. Specifically, we define the target residual, r𝑛+1, and the condition, c𝑛, as:
+r𝑛+1 = u𝑛+1 −¯u𝑛+1,
+c𝑛= Concat [u𝑛, ¯u𝑛+1] .
+(3)
+The refiner learns to generate r𝑛+1 conditioned on the current state, u𝑛, and deterministic base
+prediction, ¯u𝑛+1. Given a Gaussian sample z0 ∼N (0, I), we construct a linear flow path toward
+the target residual:
+z𝜏= (1 −𝜏)z0 + 𝜏r𝑛+1,
+𝜏∼U(0, 1).
+(4)
+The conditional velocity field v𝜓is trained to match the corresponding transport velocity:
+Lrefine(𝜓) = E
+hv𝜓(z𝜏, 𝜏| c𝑛) −(r𝑛+1 −z0)
+2i
+.
+(5)
+At inference, the generative mapping g𝜓is obtained by integrating v𝜓from 𝜏= 0 to 𝜏= 1, starting
+from ϵ ∼N (0, I). The generated residual and refined prediction are:
+ˆr𝑛+1 = g𝜓(ϵ | c𝑛) ,
+ˆu𝑛+1 = ¯u𝑛+1 + ˆr𝑛+1.
+(6)
+4
+
+
+Residual
+Mean
+Residual
+Variance
+Mean
+Residual
+Variance
+Base
+Base + Re (ours 1st phase)
+Base + ReAl (ours)
+Ground Truth
+u
+v
+Figure 3: Qualitative results on Controlled Cylinder Real2Real for velocity components 𝑢and 𝑣.
+Residuals are computed against the ground truth, while variance is measured across random seeds.
+Base+ReAl produces more accurate and consistent predictions.
+The deterministic predictor and stochastic refiner are complementary: the former captures stable
+dominant dynamics, while the latter restores residual fine-scale structures without imposing a strict
+low- and high-frequency decomposition, as illustrated in Fig. 2(a).
+3.3
+Trajectory Alignment for PDE Forecasting
+Although combining the deterministic predictor d𝜃with a conditional flow matching refiner g𝜓
+recovers non-dominant fine-scale information missing from the base prediction, perturbations in-
+troduced by stochastic flow sampling may accumulate during autoregressive rollouts and degrade
+long-term stability. To address this issue, we introduce the trajectory-alignment post-training phase
+of ReAl, as shown in Fig. 2(b). Specifically, we keep d𝜃frozen and post-train the refiner g𝜓using
+trajectory-level rewards from multiple stochastic rollouts, thereby improving the quality of long-term
+PDE trajectories.
+Trajectory rollout. Given an initial state u𝑛, we generate 𝐾candidate trajectories using the frozen
+deterministic predictor d𝜃and a snapshot of the refiner gold
+𝜓. All candidates start from the same state
+but use independent noise sequences. For the 𝑖-th candidate, we initialize ˆu(𝑖)
+𝑛
+= u𝑛and recursively
+apply the refined transition:
+¯u(𝑖)
+𝑛+𝑘= d𝜃
+
+ˆu(𝑖)
+𝑛+𝑘−1
+
+, c(𝑖)
+𝑛+𝑘−1 = Concat
+h
+ˆu(𝑖)
+𝑛+𝑘−1, ¯u(𝑖)
+𝑛+𝑘
+i
+,
+ˆr(𝑖)
+𝑛+𝑘= g𝜓old
+
+ϵ(𝑖)
+𝑘
+| c(𝑖)
+𝑛+𝑘−1
+
+,
+ϵ(𝑖)
+𝑘
+∼N (0, I),
+ˆu(𝑖)
+𝑛+𝑘= ¯u(𝑖)
+𝑛+𝑘+ ˆr(𝑖)
+𝑛+𝑘,
+𝑘= 1, . . . , ℎ.
+(7)
+After ℎautoregressive steps, the resulting trajectory is:
+bT (𝑖)
+𝑛
+=
+h
+ˆu(𝑖)
+𝑛+1, ˆu(𝑖)
+𝑛+2, . . . , ˆu(𝑖)
+𝑛+ℎ
+i
+,
+𝑖= 1, . . . , 𝐾.
+(8)
+Despite sharing the same initial state and deterministic predictor, independent residual samples
+produce different long-term trajectories. As shown in Fig. 3, stochastic refinement (Base + Re)
+introduces high-frequency variance that can accumulate during autoregressive rollouts.
+Trajectory-level reward. Each candidate trajectory bT (𝑖)
+𝑛
+is evaluated against the corresponding
+ground-truth trajectory T𝑛to obtain its trajectory-level reward:
+𝑅(𝑖) = R
+
+bT (𝑖)
+𝑛
+, T𝑛
+
+,
+𝑅(𝑖)
+MSE = −
+ ˆu(𝑖)
+𝑛+ℎ−u𝑛+ℎ
+
+2
+,
+(9)
+where 𝑅(𝑖)
+MSE denotes the negative mean squared error at the terminal state, such that a larger reward
+indicates a more accurate terminal prediction. Although the reward is evaluated only at the endpoint,
+the terminal state reflects the accumulated effects of stochastic residual corrections propagated
+throughout the multi-step autoregressive rollout.
+It therefore serves as a measure of long-term
+trajectory quality. More generally, R may be defined using discrepancies in physically relevant
+quantities, such as vorticity, divergence, and kinetic energy, or by combining multiple criteria to
+evaluate complementary properties of the predicted dynamics.
+5
+
+
+Since reward magnitudes can vary across initial conditions, we standardize the rewards within each
+group of 𝐾trajectories. Let 𝜇𝑅and 𝜎𝑅denote the group mean and standard deviation, respectively.
+We then clip the standardized reward and linearly rescale it to [0, 1]:
+𝑤(𝑖) = 1
+2
+
+1 +
+1
+𝑎max
+clip
+ 𝑅(𝑖) −𝜇𝑅
+𝜎𝑅+ 𝜖num
+, −𝑎max, 𝑎max
+
+.
+(10)
+Here, 𝜖num is a small constant that ensures numerical stability and 𝑎max > 0 controls the clipping
+range. Consequently, higher-quality trajectories receive weights closer to 1, whereas lower-quality
+receive weights closer to 0.
+Trajectory reward-Guided Flow Alignment.
+Trajectory alignment post-trains the conditional
+velocity field learned during refinement (Sec. 3.2). We incorporate feedback from autoregressive
+rollouts through positive and negative flow-matching terms constructed from the current and old
+velocity fields, weighted by trajectory rewards.
+For the 𝑘-th autoregressive transition of the 𝑖-
+th candidate trajectory, z(𝑖,𝑘)
+𝜏
+denotes the intermediate residual state at flow time 𝜏, following
+Eq. equation 4. The velocity fields predicted by the current policy, old policy, and reference model
+are uniformly written as:
+v𝑠,(𝑖,𝑘) = v𝜓𝑠
+
+z(𝑖,𝑘)
+𝜏
+, 𝜏| c(𝑖)
+𝑛+𝑘−1
+
+,
+𝑠∈{cur, old, ref} .
+(11)
+Here, 𝜓cur ≡𝜓denotes the parameters of the refiner being updated, 𝜓old denotes the old-policy
+parameters used to generate the candidate trajectories, and 𝜓ref denotes the parameters of the pre-
+trained reference model, which remain frozen throughout post-training. Following the negative-aware
+forward-process formulation of DiffusionNFT (Zheng et al., 2026), we construct positive and negative
+velocity fields from the current- and old-policy predictions:
+v+,(𝑖,𝑘) = 𝛽vcur,(𝑖,𝑘) + (1 −𝛽)vold,(𝑖,𝑘),
+v−,(𝑖,𝑘) = (1 + 𝛽)vold,(𝑖,𝑘) −𝛽vcur,(𝑖,𝑘),
+(12)
+where 𝛽> 0 controls the deviation of the positive and negative velocity fields from the old policy.
+The corresponding positive and negative flow matching losses are:
+ℓ(𝑖,𝑘)
+±
+=
+v±,(𝑖,𝑘) −
+
+r(𝑖)
+𝑛+𝑘−z(𝑖,𝑘)
+0
+
+2
+.
+(13)
+The final alignment objective averages over both candidate trajectories 𝑖and autoregressive steps 𝑘:
+Lalign = 1
+𝛽E𝑖,𝑘
+h
+𝑤(𝑖)ℓ(𝑖,𝑘)
++
++
+
+1 −𝑤(𝑖)
+ℓ(𝑖,𝑘)
+−
+i
+.
+(14)
+Same trajectory-level reward 𝑤(𝑖) is applied to every autoregressive step of the 𝑖-th candidate. A high
+trajectory reward produces a weight close to 1, emphasizing the positive objective and encouraging
+the associated residual corrections. A low reward produces a weight closer to 0, emphasizing the
+negative objective. Because the same trajectory-level weight is shared at every rollout step, the
+terminal feedback supervises residual generation along the entire trajectory.
+To stabilize post-training, we further regularize the refiner toward the frozen pretrained reference
+model while retaining the supervised residual-learning objective. The training objective is:
+L = Lalign + 𝜆refE𝑖,𝑘
+vcur,(𝑖,𝑘) −vref,(𝑖,𝑘)
+2
++ 𝜆supE𝑖,𝑘
+ ˆr(𝑖)
+𝑛+𝑘−r(𝑖)
+𝑛+𝑘
+
+2
+.
+(15)
+The reference-model regularization prevents excessive deviation from the pretrained flow dynamics,
+while the supervised term preserves the refiner’s residual-modeling capability. Throughout post-
+training, only the current refiner parameters 𝜓are updated; the deterministic predictor d𝜃, old-policy
+parameters gold
+𝜓, and reference-model parameters gref
+𝜓remain frozen.
+Overall, ReAl produces more accurate long-term predictions with lower across-seed variance. By
+favoring residual corrections that remain reliable over long horizons, it produces more accurate
+predictions with lower across-seed variance, as shown in Fig. 3 (Base+ReAl).
+6
+
+
+Table 1: Main experimental results on RealPDEBench (Hu et al., 2026). We report RMSE over the
+10 predicted future frames on test set. lower is better. The small percentage in the bottom-right
+corner indicates the relative RMSE reduction over the corresponding baseline.
+UNet
+FNO
+DPOT
+Transolver
+Benchmark
+Setting
+Task
+Baseline
++ Ours
+Baseline
++ Ours
+Baseline
++ Ours
+Baseline
++ Ours
+RealPDEBench
+Sim2Real
+Cylinder
+0.0256
+0.0216
++16%
+0.0425
+0.0261
++39%
+0.0235
+0.0236
++1%
+0.0315
+0.0244
++23%
+Controlled Cylinder
+0.0219
+0.0155
++29%
+0.0309
+0.0168
++46%
+0.0183
+0.0144
++21%
+0.0277
+0.0147
++47%
+Foil
+0.0167
+0.0136
++19%
+0.0197
+0.0122
++38%
+0.0290
+0.0169
++42%
+0.0345
+0.0276
++20%
+FSI
+0.0247
+0.0161
++35%
+0.0452
+0.0132
++71%
+0.0201
+0.0116
++42%
+0.0273
+0.0128
++53%
+Real2Real
+Cylinder
+0.0082
+0.0073
++11%
+0.0135
+0.0089
++34%
+0.0115
+0.0092
++20%
+0.0154
+0.0092
++41%
+Controlled Cylinder
+0.0089
+0.0073
++19%
+0.0102
+0.0086
++18%
+0.0114
+0.0081
++30%
+0.0137
+0.0083
++39%
+Foil
+0.0082
+0.0069
++14%
+0.0134
+0.0070
++48%
+0.0144
+0.0074
++49%
+0.0241
+0.0101
++58%
+FSI
+0.0058
+0.0053
++8%
+0.0089
+0.0056
++37%
+0.0106
+0.0056
++47%
+0.0119
+0.0056
++53%
+4
+Experiment
+Benchmarks. We evaluate on RealPDEBench (Hu et al., 2026), comprising four physical sub-
+datasets: Cylinder, Controlled Cylinder, Foil, and FSI, which provides paired numerical simulations
+and real-world measurements. Real observations contain noise, unresolved effects, and finer-scale
+dynamics absent from simulations. We consider two settings: Sim2Real, training on simulations and
+testing on real data; and Real2Real, training and testing on real data2.
+Evaluation metircs. To evaluate quality of prediction , we report the root mean squared error
+(RMSE) and relative (Rel. 𝐿2) error. To further assess physical fidelity, we use the Fourier-space
+RMSE (fRMSE), frequency error (FE), and kinetic energy error (KE). Detailed definitions of these
+metrics are provided in the Appendix A.
+Experiment setup. In our experiments, following the task setting of RealPDEBench, we use 10
+consecutive input frames to directly predict the subsequent 10 frames. We adopt U-Net (Ronneberger
+et al., 2015), FNO (Li et al., 2021), DPOT-S (Hao et al., 2024), and Transolver (Wu et al., 2024)
+as the base architectures. We then freeze the base model and train a lightweight time-conditioned
+U-Net flow matching Refiner (approximately 5.04M parameters, typically under one-tenth of the
+base model size) for 50,000 steps with a batch size of 16 and a learning rate of 1 × 10−4. Details are
+provided in Appendix B. Subsequently, we initialize ReAl from the best Refiner checkpoint while
+keeping the base model frozen, and optimize ReAl for 10,000 steps using the trajectory-alignment
+objective. We use AdamW with a batch size of 4 and a learning rate of 2 × 10−5. For each condition,
+we sample 𝐾= 4 complete trajectories. Each trajectory consists of five autoregressive rollout blocks,
+with each block generated by integrating the flow velocity field using four Euler flow steps. We use
+the negative MSE of the final, fifth prediction block as the trajectory reward. We set 𝛽= 0.1 in
+Eq. 14, and set 𝜆ref = 0.01 and 𝜆sup = 0.1 in Eq. 15.
+4.1
+Main Results
+Prediction Accuracy. We first evaluate ReAl after a single rollout, i.e., direct prediction of one
+10-frame future block, under the Sim2Real and Real2Real settings of RealPDEBench. As shown in
+Table 1, Base+ReAl consistently improves diverse base architectures across physical tasks. Averaged
+over all models, tasks, and settings, Base+ReAl reduces RMSE by 33.9%, including reductions of
+33.7% on Sim2Real and 34.1% on Real2Real. Notably, ReAl achieves a 71% relative improvement
+for FNO on the Sim2Real FSI task. These results demonstrate that Base+ReAl provides effective
+post-training refinement even after a single rollout.
+Long-Term Stability. To further evaluate long-term stability, we extend the autoregressive prediction
+horizon to 200 frames and compare the base models, Base+Re with only the flow refiner, and
+Base+ReAl with additional trajectory-alignment post-training in Fig. 4.
+As the rollout horizon
+increases, prediction errors of the base models accumulate continuously, with some models exhibiting
+severe error blow-up, such as FNO on FSI and DPOT on Foil. For DPOT on Foil, Base+ReAl limits
+2For Cylinder, we exclude trajectory 3656.h5 due to a reproducible spatiotemporal misalignment in our
+processing pipeline.
+7
+
+
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	
+
+
+	
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Figure 4: RMSE over long autoregressive rollout frames under the RealPDEBench Real2Real setting.
+Long-horizon error accumulation causes severe degradation for several base models, most notably
+DPOT on Foil and FNO on FSI. By contrast, Base+ReAl consistently limits error growth and
+preserves stable predictions over long rollout horizons.
+frame 1
+frame 10
+frame 20
+frame 40
+frame 60
+frame 1
+frame 10
+frame 20
+frame 40
+frame 60
+GT
+Base
++ReAl
+GT
+Base
++ReAl
+(a) DPOT / Cylinder
+(b) Transolver / Cylinder
+(c) FNO / Foil
+(d) DPOT / Foil
+Figure 5: Visualization of long-horizon Real2Real rollouts (v channel): Base+ReAl (a) restores
+fine-scale details, (b) suppresses error accumulation, and (c, d) mitigates numerical dissipation to
+preserve flow energy and wake structures.
+200-frame error growth to 10.9×, compared with 44.5× for Base+Re and 1,360× for the base model.
+Although Base+Re reduces the overall error through fine-scale residual correction, perturbations
+introduced by stochastic sampling may still be progressively amplified during long-term forecasting.
+In contrast, Base+ReAl exhibits substantially slower error growth across most models and tasks and
+effectively suppresses these instabilities. Fig. 5 compares long-horizon predictions. While base
+predictions become oversmoothed and lose fine-scale vortices, Base+ReAl better preserves these
+structures throughout the rollout. Additional results are provided in Appendix C.
+Frequency Information Recovery. To examine how each module corrects autoregressive trajec-
+tories, we decompose the prediction error in the radial frequency domain and evaluate the lowest
+20% ( 𝑓< 20) and highest 20% ( 𝑓≥80) frequency regions. Here, R1, R5, and R10 denote the
+first, fifth, and tenth autoregressive rollout blocks, corresponding to rollout horizons of 10, 50, and
+100 future frames, respectively. For frequency region 𝑏, we use the ground-truth-normalized error
+energy 𝐸err,𝑏
+𝐸GT,𝑏× 100%, where lower values indicate better frequency information recovery. As shown
+in Fig. 6 and Table 2, the Base+Re correction range expands with the rollout. At R1, it reduces high-
+and low-frequency errors by 15.76% and 1.63%, respectively. At R10, these improvements reach
+28.22% and 32.72%, indicating that Base+Re gradually extends from fine-scale to multiscale tra-
+jectory correction. In contrast, Base+ReAl consistently targets high-frequency errors: its additional
+8
+
+
+Figure 6: Comparison of frequency-normalized error energy
+across rollout horizons. Lower is better.
+Table 2:
+Numerical frequency-
+normalized error energy.
+Lower
+is better.
+Frequency
+Method
+R1
+R5
+R10
+Low
+Base
+2.83
+33.72
+63.17
+Base + Re
+1.20
+14.37
+30.45
+Base + ReAl
+0.97
+12.73
+28.76
+High
+Base
+121.42
+136.39
+149.57
+Base + Re
+105.66
+120.06
+121.36
+Base + ReAl
+88.35
+104.50
+107.63
+Table 3: Reward ablation results on Controlled Cylinder.
+ℎ𝑟denotes the rollout block used to
+compute the training reward. The best results are shown in bold, and the second-best results are
+underlined.
+Method Reward hr
+Evaluation R1
+Evaluation R5
+Evaluation R10
+RMSE ↓Rel. 𝐿2 ↓fRMSE ↓
+FE ↓
+KE ↓
+RMSE ↓Rel. 𝐿2 ↓fRMSE ↓
+FE ↓
+KE ↓
+RMSE ↓Rel. 𝐿2 ↓fRMSE ↓
+FE ↓
+KE ↓
+Base
+–
+–
+0.0100
+0.0750
+0.0012
+21.5557 3.77e-5
+0.0227
+0.1771
+0.0040
+46.0869 5.57e-5
+0.0320
+0.2603
+0.0065
+64.3384 6.28e-5
++ Re
+–
+–
+0.0093
+0.0673
+0.0011
+26.3517 3.39e-5
+0.0243
+0.1830
+0.0043
+49.6342 5.63e-5
+0.0331
+0.2492
+0.0067
+65.5248 6.33e-5
++ ReAl
+RMSE
+1
+0.0082
+0.0602
+0.0010
+20.0997 3.12e-5
+0.0223
+0.1694
+0.0039
+35.1164 5.49e-5
+0.0314
+0.2358
+0.0063
+59.6282 6.20e-5
++ ReAl
+RMSE
+5
+0.0084
+0.0619
+0.0010
+20.5995 3.22e-5
+0.0200
+0.1560
+0.0032
+35.4562 5.38e-5
+0.0273
+0.2070
+0.0054
+55.0176 5.91e-5
++ ReAl
+RMSE
+10
+0.0087
+0.0637
+0.0011
+20.1948 3.31e-5
+0.0210
+0.1605
+0.0037
+35.7731 5.45e-5
+0.0269
+0.2052
+0.0053
+55.2919 5.91e-5
++ ReAl
+KE
+5
+0.0084
+0.0618
+0.0010
+20.7217 3.21e-5
+0.0208
+0.1585
+0.0036
+35.4098 5.37e-5
+0.0273
+0.2072
+0.0054
+55.3497 5.90e-5
++ ReAl
+FE
+5
+0.0085
+0.0624
+0.0010
+20.3108 3.24e-5
+0.0210
+0.1602
+0.0037
+35.2623 5.39e-5
+0.0275
+0.2095
+0.0054
+56.0622 5.92e-5
+improvements at R1, R5, and R10 are 17.32%, 15.56%, and 13.72%, while the low-frequency gains
+remain only 0.24%, 1.64%, and 1.69%. Thus, ReAl continuously restores fine-scale information lost
+during autoregressive prediction.
+4.2
+Ablation Study
+Ablation of Reward Horizon and Metric. We investigate how the rollout block used to compute the
+training reward, ℎ𝑟∈{1, 5, 10}, and the choice of reward metric affect rollout performance. A clear
+horizon-matching effect emerges: ℎ𝑟= 1, 5, and 10 achieve the best RMSE at R1, R5, and R10,
+respectively, while remaining competitive elsewhere. Longer reward horizons improve recursive
+stability. RMSE provides the most consistent gains in RMSE, Rel. 𝐿2, and fRMSE, while KE yields
+the lowest kinetic-energy error. FE optimization does not consistently minimize FE, indicating that
+physics-specific rewards need not improve their corresponding metrics. We therefore use RMSE
+with ℎ𝑟= 5 by default, which best balances short- and long-horizon performance.
+5
+Conclusion
+In this paper, we propose Refine and Align (ReAl), a model-agnostic post-training framework
+for long-horizon PDE forecasting.
+ReAl retains an MSE-trained base model to capture stable
+dominant dynamics and uses a lightweight conditional Flow Refiner to generatively correct prediction
+residuals, recovering fine-scale high-frequency structures that are often lost under MSE training. We
+further introduce trajectory-alignment post-training, which optimizes the Refiner using trajectory-
+level rewards from multiple stochastic autoregressive rollouts to align local corrections with long-
+term dynamics and suppress accumulated sampling perturbations. We systematically evaluate ReAl
+on RealPDEBench using UNet, FNO, DPOT-S, and Transolver. ReAl reduces RMSE by 33.9%
+on average for 1-st step predictions and 45.4% by 20-th step, which effectively mitigates error
+accumulation, trajectory divergence, and numerical dissipation over long autoregressive rollouts.
+Frequency analysis shows that the Refiner gradually extends to multiscale correction, while ReAl
+mainly provides additional improvements in high-frequency errors. These results demonstrate that
+ReAl serves as a general, lightweight, and plug-and-play post-training module that improves fine-
+scale detail recovery and long-horizon prediction stability for diverse PDE surrogates under real-world
+data distributions and simulation-to-reality shifts.
+9
+
+
+AI usage statement
+In this work, we used generative AI tools to assist with language polishing, translation, dataset
+cleaning and reformatting, qualitative and thematic data analysis, and the interpretation of exper-
+imental results. We did not use generative AI to generate synthetic datasets, develop theoretical
+models or conceptual frameworks, formulate mathematical claims, provide key elements of or write
+mathematical proofs, propose or refine hypotheses, design or provide feedback on research method-
+ologies or experiments, or implement the proposed methods. We additionally used generative AI for
+brainstorming, information retrieval, improving the readability of the manuscript, and identifying
+potentially relevant literature. All AI-assisted text and translations were reviewed by the authors,
+references were verified against their original sources, and data processing, analyses, and interpreta-
+tions were independently checked against the source data, implementation, and experimental results.
+We take full responsibility for the final content of this work, including all text, claims, and artifacts
+produced with the assistance of generative AI.
+10
+
+
+References
+Theodore L Bergman. Fundamentals of heat and mass transfer. John Wiley & Sons, 2011.
+Kevin Black, Michael Janner, Yilun Du, Ilya Kostrikov, and Sergey Levine. Training diffusion models
+with reinforcement learning. In International Conference on Learning Representations, volume
+2024, pp. 4965–4987, 2024.
+John Crank. The mathematics of diffusion. Oxford university press, 1979.
+Yilong Dai, Yiming Sun, Yiheng Chen, Shengyu Chen, Xiaowei Jia, and Runlong Yu. Flowre-
+finer: Flow matching-based iterative refinement for 3d turbulent flow simulation. arXiv preprint
+arXiv:2604.17149, 2026.
+Peter Alan Davidson. Turbulence: an introduction for scientists and engineers. Oxford university
+press, 2004.
+Ying Fan, Olivia Watkins, Yuqing Du, Hao Liu, Moonkyung Ryu, Craig Boutilier, Pieter Abbeel,
+Mohammad Ghavamzadeh, Kangwook Lee, and Kimin Lee. Dpok: Reinforcement learning for
+fine-tuning text-to-image diffusion models. Advances in neural information processing systems,
+36:79858–79885, 2023.
+Stathi Fotiadis, Noah D Brenowitz, Tomas Geffner, Yair Cohen, Michael Pritchard, Arash Vahdat,
+and Morteza Mardani. Adaptive flow matching for resolving small-scale physics. In Forty-second
+International Conference on Machine Learning, 2025.
+Somdatta Goswami, Aniruddha Bora, Yue Yu, and George Em Karniadakis. Physics-informed
+deep neural operator networks. In Machine learning in modeling and simulation: methods and
+applications, pp. 219–254. Springer, 2023.
+Zhongkai Hao, Chang Su, Songming Liu, Julius Berner, Chengyang Ying, Hang Su, Anima Anand-
+kumar, Jian Song, and Jun Zhu.
+DPOT: Auto-regressive denoising operator transformer for
+large-scale PDE pre-training. In Ruslan Salakhutdinov, Zico Kolter, Katherine Heller, Adrian
+Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp (eds.), Proceedings of the 41st
+International Conference on Machine Learning, volume 235 of Proceedings of Machine Learning
+Research, pp. 17616–17635, 2024.
+Maximilian Herde, Bogdan Raoni´c, Tobias Rohner, Roger K¨appeli, Roberto Molinaro, Emmanuel
+De Bezenac, and Siddhartha Mishra. Poseidon: Efficient foundation models for pdes. Advances
+in Neural Information Processing Systems, 37:72525–72624, 2024.
+Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Advances in
+neural information processing systems, 33:6840–6851, 2020.
+Peiyan Hu, Rui Wang, Xiang Zheng, Tao Zhang, Haodong Feng, Ruiqi Feng, Long Wei, Yue Wang,
+Zhi-Ming Ma, and Tailin Wu. Wavelet diffusion neural operator. In International Conference on
+Learning Representations, volume 2025, pp. 12291–12333, 2025.
+Peiyan Hu, Haodong Feng, Hongyuan Liu, Tongtong Yan, Wenhao Deng, Tianrun Gao, Rong Zheng,
+Haoren Zheng, Chenglei Yu, Chuanrui Wang, et al. Realpdebench: A benchmark for complex
+physical systems with real-world data. International Conference on Learning Representations,
+2026.
+Jiahe Huang, Guandao Yang, Zichen Wang, and Jeong Joon Park. Diffusionpde: Generative pde-
+solving under partial observation.
+Advances in Neural Information Processing Systems, 37:
+130291–130323, 2024.
+Thomas JR Hughes. The finite element method: linear static and dynamic finite element analysis.
+Courier Corporation, 2003.
+Ruoxi Jiang, Xiao Zhang, Karan Jakhar, Peter Y Lu, Pedram Hassanzadeh, Michael Maire, and Re-
+becca Willett. Hierarchical implicit neural emulators. Advances in Neural Information Processing
+Systems, 38:73718–73751, 2026.
+11
+
+
+Georg Kohl, Li-Wei Chen, and Nils Thuerey. Benchmarking autoregressive conditional diffusion
+models for turbulent flow simulation. Neural Networks, pp. 108641, 2026.
+Zhong-Hao Li, Chao-Yu Liu, and Qian Zhang. Di-bilps: Denoising induced bidirectional latent-
+pde-solver under sparse observations. ArXiv, abs/2605.13790, 2026. URL https://api.
+semanticscholar.org/CorpusID:288254894.
+Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya, An-
+drew Stuart, and Anima Anandkumar. Fourier neural operator for parametric partial differential
+equations. International Conference on Learning Representations (ICLR), 2020.
+Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya, An-
+drew Stuart, and Anima Anandkumar. Fourier neural operator for parametric partial differential
+equations. International Conference on Learning Representations, 2021.
+Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow matching
+for generative modeling. International Conference on Learning Representations, 2023.
+Phillip Lippe, Bas Veeling, Paris Perdikaris, Richard Turner, and Johannes Brandstetter.
+Pde-
+refiner: Achieving accurate long rollouts with neural pde solvers. Advances in Neural Information
+Processing Systems, 36:67398–67433, 2023.
+Jie Liu, Gongye Liu, Jiajun Liang, Yangguang Li, Jiaheng Liu, Xintao Wang, Pengfei Wan, Di Zhang,
+and Wanli Ouyang. Flow-grpo: Training flow matching models via online rl. ArXiv, Advances
+in Neural Information Processing Systems, 2025. URL https://api.semanticscholar.
+org/CorpusID:278394068.
+Lu Lu, Pengzhan Jin, Guofei Pang, Zhongqiang Zhang, and George Em Karniadakis. Learning
+nonlinear operators via deeponet based on the universal approximation theorem of operators.
+Nature machine intelligence, 3(3):218–229, 2021.
+Li Luo. Pdespectralrefiner: Achieving more accurate long rollouts with spectral adjustment. In 2025
+4th International Symposium on Computer Applications and Information Technology (ISCAIT),
+pp. 2097–2100. IEEE, 2025.
+KW Morton and DF Mayers.
+Numerical solution of partial differential equations.
+Cambridge
+University, 512, 1994.
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Bj¨orn Ommer. High-
+resolution image synthesis with latent diffusion models. In 2022 IEEE/CVF conference on com-
+puter vision and pattern recognition (CVPR), pp. 10674–10685. ieee, 2022.
+Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical
+image segmentation. In International Conference on Medical image computing and computer-
+assisted intervention, pp. 234–241. Springer, 2015.
+Salva R¨uhling Cachay, Bo Zhao, Hailey Joren, and Rose Yu. Dyffusion: A dynamics-informed
+diffusion model forspatiotemporal forecasting. Advancesin neural information processing systems,
+36:45259–45287, 2023.
+Julian Schwinger, Lester L Deraad, Kimball Milton, Wu-yang Tsai, and Joyce Norton. Classical
+electrodynamics. Hachette UK, 1998.
+Aliaksandra Shysheya, Cristiana Diaconu, Federico Bergamin, Paris Perdikaris, Jos´e Miguel
+Hern´andez-Lobato, Richard E. Turner, and Emile Mathieu. On conditional diffusion models
+for pde simulations. In Advances in Neural Information Processing Systems, 2024.
+Utkarsh Utkarsh, Pengfei Cai, Alan Edelman, Rafael Gomez-Bombarelli, and Christopher Rack-
+auckas. Physics-constrained flow matching: Sampling generative models with hard constraints.
+Advances in Neural Information Processing Systems, 38:160217–160252, 2026.
+Haixu Wu, Tengge Hu, Huakun Luo, Jianmin Wang, and Mingsheng Long. Solving high-dimensional
+pdes with latent spectral models. International Conference on Machine Learning, 2023.
+12
+
+
+Haixu Wu, Huakun Luo, Haowen Wang, Jianmin Wang, and Mingsheng Long. Transolver: A
+fast transformer solver for pdes on general geometries. Proceedings of the 41st International
+Conference on Machine Learning, 2024.
+Jiachen Yao, Abbas Mammadov, Julius Berner, Gavin Kerrigan, Jong Chul Ye, Kamyar Aziz-
+zadenesheli, and Animashree Anandkumar. Guided diffusion sampling on function spaces with
+applications to pdes. Advances in Neural Information Processing Systems, 38:127057–127094,
+2026.
+Seungwoo Yoo, Juil Koo, Daehyeon Choi, and Minhyuk Sung. Diffusionrollout: Uncertainty-aware
+rollout planning in long-horizon pde solving. Transactions on Machine Learning Research, 2026.
+Kaiwen Zheng, Huayu Chen, Haotian Ye, Haoxiang Wang, Qinsheng Zhang, Kai Jiang, Hang Su,
+Stefano Ermon, Jun Zhu, and Ming-Yu Liu. Diffusionnft: Online diffusion reinforcement with
+forward process. In International Conference on Learning Representations, volume 2026, pp.
+134129–134150, 2026.
+13
+
+
+A
+Evaluation Metrics
+Let bY𝑛, Y𝑛∈R𝐶×𝐻×𝑊denote the predicted and ground-truth physical fields at the 𝑛-th autoregressive
+rollout step, respectively, where 𝐶is the number of physical variables, and 𝐻and 𝑊denote the spatial
+height and width. All evaluation metrics are computed in the original physical space. Specifically,
+we invert the channel-wise Gaussian normalization as:
+b𝑌𝑛,𝑐,ℎ,𝑤= b𝑌norm
+𝑛,𝑐,ℎ,𝑤𝜎𝑐+ 𝜇𝑐,
+𝑌𝑛,𝑐,ℎ,𝑤= 𝑌norm
+𝑛,𝑐,ℎ,𝑤𝜎𝑐+ 𝜇𝑐,
+(16)
+where 𝑐∈{1, . . . , 𝐶} indexes the physical variable, while ℎand 𝑤index the spatial coordinates.
+Here, b𝑌norm
+𝑛,𝑐,ℎ,𝑤and 𝑌norm
+𝑛,𝑐,ℎ,𝑤are the normalized prediction and target, respectively, and 𝜇𝑐and 𝜎𝑐are
+the training-set mean and standard deviation of the 𝑐-th physical variable.
+Prediction Accuracy Metrics. We use the Root Mean Squared Error (RMSE) and Relative 𝐿2 Error
+(Rel. 𝐿2) to evaluate the pointwise accuracy of the predicted physical fields. At the 𝑛-th rollout step,
+RMSE is defined as:
+RMSE𝑛=
+v
+u
+t
+1
+𝐶𝐻𝑊
+𝐶
+∑︁
+𝑐=1
+𝐻
+∑︁
+ℎ=1
+𝑊
+∑︁
+𝑤=1
+
+b𝑌𝑛,𝑐,ℎ,𝑤−𝑌𝑛,𝑐,ℎ,𝑤
+2
+.
+(17)
+This metric measures the absolute pointwise discrepancy between the prediction and ground truth
+over all physical variables and spatial locations. To account for differences in magnitude across
+physical variables, we further report the channel-averaged Rel. 𝐿2 Error:
+Rel. 𝐿2,𝑛= 1
+𝐶
+𝐶
+∑︁
+𝑐=1
+bY𝑛,𝑐−Y𝑛,𝑐
+
+2
+Y𝑛,𝑐
+
+2
+= 1
+𝐶
+𝐶
+∑︁
+𝑐=1
+v
+u
+u
+u
+tÍ𝐻
+ℎ=1
+Í𝑊
+𝑤=1
+
+b𝑌𝑛,𝑐,ℎ,𝑤−𝑌𝑛,𝑐,ℎ,𝑤
+2
+Í𝐻
+ℎ=1
+Í𝑊
+𝑤=1 𝑌2
+𝑛,𝑐,ℎ,𝑤
+.
+(18)
+Here, bY𝑛,𝑐and Y𝑛,𝑐∈R𝐻×𝑊denote the predicted and ground-truth spatial fields of the 𝑐-th physical
+variable. Rel. 𝐿2 Error is dimensionless and is computed independently for each physical variable
+before being averaged across all 𝐶variables.
+Physics-Oriented Metrics. Beyond pointwise prediction errors, we employ Fourier-space RMSE
+(fRMSE), Frequency Error (FE), and Kinetic Energy Error (KE) to evaluate the spectral and dynam-
+ical consistency of the predictions. Lower values indicate better performance for all three metrics.
+Fourier-Space RMSE (fRMSE).
+fRMSE evaluates prediction accuracy in the spatial-frequency
+domain. At the 𝑛-th rollout step, a two-dimensional Fourier transform is applied independently
+to each physical variable, and the resulting coefficient errors are grouped according to their radial
+frequency magnitudes:
+fRMSE𝑛=
+1
+𝐶𝐾
+𝐶
+∑︁
+𝑐=1
+𝐾−1
+∑︁
+𝑞=0
+1
+𝐻𝑊
+©­
+«
+∑︁
+(𝑖, 𝑗)∈S𝑞
+Fℎ,𝑤
+
+bY𝑛,𝑐
+
+𝑖, 𝑗−Fℎ,𝑤
+ Y𝑛,𝑐
+
+𝑖, 𝑗
+
+2ª®
+¬
+1
+2
+.
+(19)
+Here, Fℎ,𝑤denotes the two-dimensional spatial Fourier transform, (𝑖, 𝑗) indexes the spatial-frequency
+coefficients, S𝑞denotes the 𝑞-th radial frequency shell, and 𝐾is the total number of valid shells.
+For a more fine-grained spectral analysis, we further partition the radial spectrum into low-, middle-,
+and high-frequency bands.
+Frequency Error (FE).
+FE measures whether the predicted trajectory preserves the temporal
+frequency characteristics of the underlying dynamics. Let bY , Y ∈R𝑇×𝐶×𝐻×𝑊denote the predicted
+and ground-truth trajectories over 𝑇consecutive physical time steps. We first aggregate each state
+over all physical variables and spatial locations:
+b𝑠𝑡=
+𝐶
+∑︁
+𝑐=1
+𝐻
+∑︁
+ℎ=1
+𝑊
+∑︁
+𝑤=1
+b𝑌𝑡,𝑐,ℎ,𝑤,
+𝑠𝑡=
+𝐶
+∑︁
+𝑐=1
+𝐻
+∑︁
+ℎ=1
+𝑊
+∑︁
+𝑤=1
+𝑌𝑡,𝑐,ℎ,𝑤.
+(20)
+14
+
+
+A one-dimensional Fourier transform is then applied along the physical time dimension, and FE is
+defined as the mean absolute difference between the predicted and ground-truth temporal spectra:
+FE = 1
+𝑇
+𝑇−1
+∑︁
+𝜔=0
+|F𝑡(bs)𝜔−F𝑡(s)𝜔| .
+(21)
+Here, bs = (b𝑠1, . . . ,b𝑠𝑇) and s = (𝑠1, . . . , 𝑠𝑇) are the aggregated temporal signals, F𝑡denotes the one-
+dimensional Fourier transform along physical time, and 𝜔is the corresponding temporal-frequency
+index.
+Kinetic Energy Error (KE).
+KE evaluates whether the predicted velocity field preserves the
+time-averaged fluctuating kinetic-energy distribution. Let 𝑢𝑡,ℎ,𝑤and 𝑣𝑡,ℎ,𝑤denote the two velocity
+components at physical time 𝑡. Their temporal means and the resulting fluctuating kinetic-energy
+field are defined as:
+𝑢ℎ,𝑤= 1
+𝑇
+𝑇
+∑︁
+𝑡=1
+𝑢𝑡,ℎ,𝑤,
+𝑣ℎ,𝑤= 1
+𝑇
+𝑇
+∑︁
+𝑡=1
+𝑣𝑡,ℎ,𝑤,
+Kℎ,𝑤(Y ) = 1
+2𝑇
+𝑇
+∑︁
+𝑡=1
+h 𝑢𝑡,ℎ,𝑤−𝑢ℎ,𝑤
+2 +  𝑣𝑡,ℎ,𝑤−𝑣ℎ,𝑤
+2i
+.
+(22)
+The kinetic energy error is the spatial mean absolute difference between the predicted and ground-
+truth energy fields:
+KE =
+1
+𝐻𝑊
+𝐻
+∑︁
+ℎ=1
+𝑊
+∑︁
+𝑤=1
+Kℎ,𝑤( bY ) −Kℎ,𝑤(Y )
+ .
+(23)
+Thus, KE measures the error in the time-averaged fluctuating kinetic-energy field rather than the
+instantaneous total kinetic energy. A lower KE indicates better preservation of temporal velocity
+fluctuations and their spatial energy distribution.
+B
+Details of architecture
+We evaluate four representative neural operators under a unified direct multi-step forecasting protocol.
+U-Net (Ronneberger et al., 2015). We use a spatiotemporal U-Net with an encoder–decoder archi-
+tecture and skip connections. The network contains four resolution scales with channel multipliers
+[1, 2, 4, 8], corresponding to feature widths 64, 128, 256, and 512 for the 64 × 64 fields used in our
+experiments. Downsampling captures large-scale flow structures, while skip connections preserve
+local details and sharp spatial variations during decoding. The 10-frame input and 10-frame output
+are processed jointly, enabling the model to learn temporal correlations within a prediction block.
+The model contains 85.98M parameters for three-field datasets; for Controlled Cylinder, where two
+additional control variables are included in the input, the model has 86.02M parameters.
+FNO (Li et al., 2021). We employ a 3D Fourier Neural Operator that alternates spectral convolution
+layers with pointwise channel mixing. Spectral convolutions operate jointly over the two spatial
+dimensions and time, allowing the model to capture long-range interactions efficiently in Fourier
+space. All FNO models use four Fourier layers. For Controlled Cylinder and Foil, we use width 64
+and retained Fourier modes (4, 12, 16), resulting in 50.36M parameters. For Combustion, we retain
+(4, 16, 16) modes with width 64, resulting in 67.14M parameters. For FSI, we use width 128 and
+(4, 16, 16) modes, resulting in 268.52M parameters.
+DPOT-S (Hao et al., 2024). DPOT-S is a discriminative pretrained operator transformer. It tokenizes
+spatiotemporal fields into 8×8 patches, maps them into a 1024-dimensional latent space, and applies
+six operator-Transformer layers with eight internal mixing blocks. Global token interactions and
+spectral/operator mixing enable the model to capture non-local physical dependencies. DPOT-S
+contains 30.80M parameters.
+Transolver (Wu et al., 2024). We use Transolver as a coordinate-aware Transformer baseline. The
+model represents each point in the spatiotemporal mesh using its (𝑥, 𝑦, 𝑡) coordinate and associated
+15
+
+
+physical variables, and models their interactions through slice-based physics attention. Our config-
+uration contains six Transformer layers, hidden dimension 256, eight attention heads, 32 slices, and
+reference resolution parameter 4. The model directly maps the complete 10-frame input block to the
+complete 10-frame output block. It contains approximately 42.59M parameters.
+Refiner architecture. The refiner adopts a time-conditioned 2D U-Net that jointly predicts residuals
+for all ten future frames. For datasets with three physical variables, the residual trajectory is repre-
+sented by 30 channels, corresponding to ten frames and three variables. The refiner is conditioned
+on the concatenation of the deterministic prediction of the ten-frames and the observation history of
+the ten-frames, resulting in 60 conditioning channels. The U-Net has a base width of 64 and consists
+of a 256-dimensional sinusoidal time embedding, two downsampling stages, two bottleneck residual
+blocks, two upsampling stages, and encoder–decoder skip connections. Its six time-conditioned
+residual blocks each employ Group Normalization, SiLU activations, two 3 × 3 convolutions, and
+a time-dependent affine projection. The resulting refiner contains 5,03M trainable parameters on
+standard three-variable datasets and 5,05M parameters on Controlled Cylinder, whose observation
+history includes two additional control channels.
+C
+Results on RealPDEBench
+Consistent with the quantitative improvements reported in Table 1, Table 4 further compares RMSE
+at different autoregressive rollout horizons. The advantage of ReAl generally becomes more pro-
+nounced as the rollout progresses, indicating reduced long-term error accumulation. Table 5 further
+shows that these improvements extend beyond pointwise prediction accuracy to Rel. 𝐿2 error, spectral
+fidelity, temporal-frequency consistency, and kinetic-energy preservation. Qualitative comparisons
+in Fig. 7 and Fig. 8 show that ReAl effectively corrects accumulated rollout errors.
+Under the
+Real2Real setting, ReAl preserves coherent physical structures over longer horizons. The Sim2Real
+setting introduces a substantially larger distribution shift, causing base-model errors to accumulate
+more rapidly and increasing the risk of trajectory divergence. We therefore visualize Frames 1, 5, 10,
+15, and 20, covering the informative rollout period before catastrophic failure. Across both settings,
+ReAl consistently reduces rollout drift and produces trajectories that remain closer to the ground
+truth.
+16
+
+
+Table 4: RMSE of autoregressive rollout frames. Lower is better; the lowest displayed value within
+each model–dataset group is shown in bold blue.
+Dataset
+Method
+R1
+R2
+R5
+R10
+R20
+FNO
+Cylinder
+Base
+0.0138
+0.0192
+0.0286
+0.0389
+0.0572
++ Re
+0.0104
+0.0174
+0.0252
+0.0336
+0.0492
++ ReAl
+0.0092
+0.0153
+0.0233
+0.0340
+0.0406
+Controlled cylinder
+Base
+0.0142
+0.0181
+0.0229
+0.0421
+0.0584
++ Re
+0.0120
+0.0162
+0.0331
+0.0407
+0.0590
++ ReAl
+0.0088
+0.0143
+0.0246
+0.0366
+0.0444
+FSI
+Base
+0.0091
+0.0148
+0.0271
+0.0687
+0.9538
++ Re
+0.0062
+0.0132
+0.0266
+0.0384
+0.1232
++ ReAl
+0.0058
+0.0124
+0.0254
+0.0370
+0.0510
+Foil
+Base
+0.0136
+0.0216
+0.0407
+0.0590
+0.0798
++ Re
+0.0081
+0.0131
+0.0205
+0.0301
+0.0455
++ ReAl
+0.0073
+0.0120
+0.0190
+0.0237
+0.0285
+U-Net
+Cylinder
+Base
+0.0099
+0.0164
+0.0285
+0.0439
+0.0691
++ Re
+0.0089
+0.0147
+0.0224
+0.0310
+0.0413
++ ReAl
+0.0090
+0.0127
+0.0184
+0.0210
+0.0383
+Controlled cylinder
+Base
+0.0083
+0.0135
+0.0220
+0.0323
+0.0463
++ Re
+0.0077
+0.0133
+0.0214
+0.0307
+0.0440
++ ReAl
+0.0067
+0.0103
+0.0154
+0.0257
+0.0400
+FSI
+Base
+0.0059
+0.0117
+0.0252
+0.0424
+0.0703
++ Re
+0.0054
+0.0115
+0.0248
+0.0405
+0.0643
++ ReAl
+0.0052
+0.0085
+0.0208
+0.0325
+0.0603
+Foil
+Base
+0.0083
+0.0121
+0.0225
+0.0279
+0.0278
++ Re
+0.0071
+0.0115
+0.0221
+0.0281
+0.0303
++ ReAl
+0.0067
+0.0105
+0.0191
+0.0241
+0.0253
+DPOT
+Cylinder
+Base
+0.0115
+0.0181
+0.0302
+0.0428
+0.0679
++ Re
+0.0105
+0.0175
+0.0251
+0.0331
+0.0574
++ ReAl
+0.0092
+0.0154
+0.0229
+0.0327
+0.0400
+Controlled cylinder
+Base
+0.0115
+0.0191
+0.0365
+0.0531
+0.0643
++ Re
+0.0091
+0.0155
+0.0239
+0.0351
+0.0510
++ ReAl
+0.0081
+0.0137
+0.0218
+0.0299
+0.0404
+FSI
+Base
+0.0106
+0.0167
+0.0351
+0.0544
+0.0738
++ Re
+0.0060
+0.0126
+0.0254
+0.0364
+0.0494
++ ReAl
+0.0056
+0.0118
+0.0237
+0.0344
+0.0399
+Foil
+Base
+0.0144
+0.0174
+0.0284
+0.1003
+19.5792
++ Re
+0.0081
+0.0130
+0.0239
+0.0695
+0.3616
++ ReAl
+0.0074
+0.0119
+0.0220
+0.0640
+0.0803
+Transolver
+Cylinder
+Base
+0.0154
+0.0248
+0.0535
+0.0869
+0.1101
++ Re
+0.0104
+0.0173
+0.0252
+0.0441
+0.0693
++ ReAl
+0.0092
+0.0153
+0.0231
+0.0328
+0.0404
+Controlled cylinder
+Base
+0.0137
+0.0232
+0.0483
+0.0711
+0.0921
++ Re
+0.0094
+0.0165
+0.0268
+0.0518
+0.0751
++ ReAl
+0.0083
+0.0146
+0.0249
+0.0400
+0.0638
+FSI
+Base
+0.0119
+0.0200
+0.0360
+0.0570
+0.1284
++ Re
+0.0060
+0.0127
+0.0260
+0.0430
+0.0586
++ ReAl
+0.0056
+0.0118
+0.0243
+0.0368
+0.0554
+Foil
+Base
+0.0239
+0.0400
+0.0849
+0.0950
+0.0969
++ Re
+0.0109
+0.0226
+0.0323
+0.0391
+0.0455
++ ReAl
+0.0100
+0.0240
+0.0316
+0.0369
+0.0407
+17
+
+
+Table 5: Additional quantitative results across autoregressive rollout steps in the Real2Real setting.
+Each rollout step aggregates 10 frames. Lower is better; entries highlighted in the supplied table are
+shown in bold blue.
+Dataset
+Method
+R1
+R5
+R10
+Rel 𝐿2 fRMSE
+FE
+KE
+Rel 𝐿2 fRMSE
+FE
+KE
+Rel 𝐿2 fRMSE
+FE
+KE
+FNO
+Cylinder
+Base
+0.074 2.02e-3 52.61 6.65e-5 0.161 5.77e-3 154.37 1.13e-4 0.220 8.45e-3 219.35 1.55e-4
++ Re
+0.053 1.88e-3 42.55 6.00e-5 0.143 4.10e-3 100.95 9.37e-5 0.197 7.05e-3 87.12 1.30e-4
++ ReAl
+0.047 1.11e-3 28.92 4.90e-5 0.123 3.96e-3 55.08 8.84e-5 0.175 6.46e-3 64.18 1.07e-4
+Controlled cylinder Base
+0.073 1.17e-3 21.63 3.69e-5 0.173 3.96e-3 45.72 5.43e-5 0.251 6.42e-3 146.69 6.14e-5
++ Re
+0.066 1.06e-3 22.84 3.31e-5 0.178 4.21e-3 46.84 5.49e-5 0.242 6.55e-3 65.37 6.21e-5
++ ReAl
+0.058 9.32e-4 20.90 3.02e-5 0.165 3.84e-3 44.41 5.33e-5 0.229 6.14e-3 55.47 6.01e-5
+FSI
+Base
+0.066 7.50e-4 7.12 1.85e-5 0.185 3.64e-3 36.53 3.32e-5 0.379 1.22e-2 299.36 2.27e-3
++ Re
+0.054 4.25e-4 10.58 1.50e-5 0.181 3.28e-3 21.49 2.31e-5 0.303 6.09e-3 56.44 2.51e-5
++ ReAl
+0.041 4.11e-4 10.67 1.41e-5 0.174 3.15e-3 21.57 2.23e-5 0.254 5.89e-3 31.44 2.43e-5
+Foil
+Base
+0.029 2.16e-3 95.47 5.17e-5 0.087 7.42e-3 321.41 9.04e-5 0.126 1.09e-2 466.20 9.94e-5
++ Re
+0.015 9.81e-4 30.57 4.74e-5 0.053 3.28e-3 60.71 7.97e-5 0.070 5.26e-3 80.15 9.31e-5
++ ReAl
+0.014 5.55e-4 24.15 3.39e-5 0.031 2.18e-3 45.16 7.16e-5 0.038 3.15e-3 60.07 8.40e-5
+U-Net
+Cylinder
+Base
+0.051 1.28e-3 27.48 5.14e-5 0.153 5.55e-3 94.11 1.00e-4 0.234 9.57e-3 172.41 1.26e-4
++ Re
+0.040 1.13e-3 25.84 5.00e-5 0.139 4.00e-3 65.91 8.96e-5 0.207 6.86e-3 100.83 1.13e-4
++ ReAl
+0.045 1.06e-3 19.84 4.77e-5 0.119 3.62e-3 40.91 8.66e-5 0.167 5.56e-3 52.83 1.03e-4
+Controlled cylinder Base
+0.057 9.06e-4 17.12 3.02e-5 0.159 3.87e-3 35.67 5.28e-5 0.235 6.66e-3 50.90 6.20e-5
++ Re
+0.054 9.00e-4 16.51 2.91e-5 0.152 3.74e-3 34.34 5.26e-5 0.228 6.43e-3 49.22 6.18e-5
++ ReAl
+0.051 8.70e-4 16.11 2.81e-5 0.152 3.70e-3 33.94 5.26e-5 0.218 6.33e-3 48.22 6.16e-5
+FSI
+Base
+0.042 3.34e-4 3.43 1.39e-5 0.173 3.00e-3 13.87 2.24e-5 0.293 6.77e-3 29.24 2.57e-5
++ Re
+0.039 3.29e-4 3.53 1.45e-5 0.170 2.93e-3 13.56 2.23e-5 0.279 6.53e-3 27.73 2.55e-5
++ ReAl
+0.036 3.21e-4 3.49 1.35e-5 0.170 2.93e-3 13.34 2.23e-5 0.201 6.33e-3 26.73 2.54e-5
+Foil
+Base
+0.014 6.73e-4 12.94 3.53e-5 0.036 2.33e-3 22.92 8.71e-5 0.044 3.44e-3 33.74 1.07e-4
++ Re
+0.012 5.99e-4 12.46 3.32e-5 0.034 2.33e-3 22.54 8.67e-5 0.043 3.53e-3 33.88 1.06e-4
++ ReAl
+0.012 5.51e-4 12.06 3.15e-5 0.034 2.23e-3 22.44 8.43e-5 0.040 3.35e-3 33.26 1.06e-4
+DPOT
+Cylinder
+Base
+0.061 1.25e-3 28.83 6.64e-5 0.164 5.40e-3 66.68 9.76e-5 0.239 8.59e-3 114.26 1.11e-4
++ Re
+0.054 1.27e-3 29.56 5.54e-5 0.133 4.11e-3 56.62 9.43e-5 0.176 6.01e-3 79.60 1.12e-4
++ ReAl
+0.048 1.12e-3 28.26 4.95e-5 0.123 3.84e-3 53.99 8.82e-5 0.172 6.04e-3 64.48 1.09e-4
+Controlled cylinder Base
+0.083 1.21e-3 33.34 4.98e-5 0.253 7.19e-3 65.26 6.41e-5 0.368 1.22e-2 111.17 6.62e-5
++ Re
+0.062 9.94e-4 25.05 3.86e-5 0.229 5.04e-3 44.68 5.42e-5 0.342 8.91e-3 62.47 6.26e-5
++ ReAl
+0.055 8.84e-4 20.25 2.90e-5 0.154 3.73e-3 43.68 5.25e-5 0.226 6.63e-3 66.28 6.06e-5
+FSI
+Base
+0.078 4.87e-4 8.29 2.10e-5 0.236 4.95e-3 26.01 2.50e-5 0.367 9.57e-3 46.48 2.53e-5
++ Re
+0.043 3.95e-4 9.05 1.46e-5 0.173 3.06e-3 21.13 2.26e-5 0.247 5.61e-3 30.59 2.45e-5
++ ReAl
+0.041 3.75e-4 9.07 1.37e-5 0.162 2.85e-3 20.60 2.19e-5 0.234 5.31e-3 29.08 2.40e-5
+Foil
+Base
+0.024 1.15e-3 45.23 8.14e-5 0.047 4.34e-3 120.24 1.09e-4 0.087 1.22e-2 424.58 9.59e-4
++ Re
+0.015 6.43e-4 26.53 3.75e-5 0.036 3.00e-3 80.07 1.10e-4 0.067 7.97e-3 351.05 5.78e-4
++ ReAl
+0.015 6.15e-4 26.11 3.42e-5 0.033 2.78e-3 73.23 9.37e-5 0.063 7.39e-3 231.77 2.46e-4
+Transolver
+Cylinder
+Base
+0.079 2.02e-3 45.19 7.41e-5 0.291 1.06e-2 381.60 5.78e-4 0.475 1.93e-2 986.86 2.80e-3
++ Re
+0.053 1.26e-3 30.37 5.45e-5 0.173 4.25e-3 169.53 1.28e-4 0.279 6.49e-3 187.00 3.09e-4
++ ReAl
+0.047 1.11e-3 28.29 4.89e-5 0.122 3.97e-3 62.84 8.72e-5 0.172 6.36e-3 75.65 1.05e-4
+Controlled cylinder Base
+0.096 1.86e-3 50.65 4.63e-5 0.339 1.13e-2 422.53 3.20e-4 0.542 1.93e-2 817.56 6.55e-4
++ Re
+0.074 1.10e-3 28.71 3.26e-5 0.195 5.46e-3 92.06 5.64e-5 0.300 9.39e-3 157.28 6.51e-5
++ ReAl
+0.057 9.89e-4 27.24 2.97e-5 0.170 5.05e-3 85.94 5.43e-5 0.261 9.09e-3 140.25 6.31e-5
+FSI
+Base
+0.082 1.25e-3 13.07 1.82e-5 0.246 5.67e-3 55.36 4.63e-5 0.406 1.19e-2 134.49 2.64e-4
++ Re
+0.063 4.13e-4 9.58 1.46e-5 0.196 3.45e-3 32.82 2.32e-5 0.294 6.93e-3 75.85 2.56e-5
++ ReAl
+0.041 3.83e-4 9.35 1.37e-5 0.166 3.24e-3 31.66 2.23e-5 0.251 6.58e-3 54.77 2.46e-5
+Foil
+Base
+0.039 3.91e-3 75.26 1.04e-4 0.115 1.89e-2 422.58 3.12e-4 0.128 1.93e-2 427.76 3.06e-4
++ Re
+0.029 1.33e-3 41.19 5.66e-5 0.083 4.69e-3 83.06 8.64e-5 0.070 5.45e-3 193.00 1.19e-4
++ ReAl
+0.018 1.26e-3 39.04 5.22e-5 0.041 4.32e-3 84.29 8.15e-5 0.049 5.52e-3 96.37 8.16e-5
+18
+
+
+frame 1
+frame 10
+frame 20
+frame 40
+frame 60
+GT
+Base
+ReAl
+GT
+Base
+ReAl
+GT
+Base
+ReAl
+DPOT / Cylinder
+Transolver / Cylinder
+Transolver / Cylinder
+Unet / Foil
+GT
+Base
+ReAl
+Figure 7: More visualizations on the RealPDEBench Real2Real setting. Our ReAl can correct the
+generation trajectory of the Base model.
+19
+
+
+FNO / Foil
+FNO / Foil
+Unet / Foil
+GT
+Base
+ReAl
+GT
+Base
+ReAl
+GT
+Base
+ReAl
+GT
+Base
+ReAl
+DPOT / Cylinder
+frame 1
+frame 5
+frame 10
+frame 15
+frame 20
+Figure 8: Visualizations on the RealPDEBench Sim2Real setting.
+Compared with Real2Real,
+Sim2Real involves a substantially larger distribution shift, making autoregressive rollouts more
+susceptible to error accumulation and long-horizon divergence. We therefore visualize predicted
+Frames 1, 5, 10, 15, and 20, which cover the informative stage before catastrophic rollout failure.
+Our ReAl can rectify the generation trajectory of the Base model.
+20
