@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-18</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-19</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-18 22:01:44 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-19 23:20:38 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日速读8篇论文，聚焦视觉-语言-动作通用策略与扩散模型在机器人控制、离线强化学习中的高效建模。值得关注PRISM的精准强制通用VLA策略，以及MOSAIC对机器人扩散模型的模式与支持感知推理控制。普通读者可先看PRISM概览，再按兴趣跟进扩散策略优化方向。</p>
+<p>今日速读 5 篇论文，其中 3 篇收录进推荐列表；最值得关注的是《Video Diffusion Avatars》（7.0/10），它把视频扩散模型用于可控 3D 数字人；另外两篇均得 6.0/10，分别是混合泊松扩散与机器人流匹配策略。建议先精读数字人这篇，其余速读可等有需要时再细读。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PRISM: Precision Forcing for Generalist Vision-Language-Action Policies">PRISM: Precision Forcing for Generalist Vision-Language-Action Policies</span></li><li><span class="dpr-home-dashboard-paper-title" title="Compositional Average Velocity Modeling for Efficient Diffusion Offline Reinforcement Learning">Compositional Average Velocity Modeling for Efficient Diffusion Offline Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MOSAIC: Mode- and Support-Aware Inference-Time Control of Robot Diffusion Models">MOSAIC: Mode- and Support-Aware Inference-Time Control of Robot Diffusion Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Video Diffusion Avatars: Taming Video Diffusion Models into Controllable 3D Avatars">Video Diffusion Avatars: Taming Video Diffusion Models into Controllable 3D Avatars</span></li><li><span class="dpr-home-dashboard-paper-title" title="Mixed Poisson diffusion models and application to posterior sampling">Mixed Poisson diffusion models and application to posterior sampling</span></li><li><span class="dpr-home-dashboard-paper-title" title="MOSS: Mode-Oriented Source Shaping for Robot Flow Matching Policies">MOSS: Mode-Oriented Source Shaping for Robot Flow Matching Policies</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>8</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
 </section>
 </div>
 

@@ -1,0 +1,1420 @@
+HilbertGen-3D:Hilbert–Multifractal Conditioning for
+Topology-Aware 3D Generation
+Ziyi Zhang1,∗, Shixuan Li2,∗,
+Yorie Nakahira1, Paul Bogdan2, Guannan Qu1
+1Department of Electrical and Computer Engineering, Carnegie Mellon University
+2Ming Hsieh Department of Electrical and Computer Engineering, University of Southern California
+Abstract
+High-fidelity 3D generative modeling underpins game asset creation, medical
+imaging, and VR/AR environmental design, where geometric structure directly
+influences perception and decision-making. Diffusion models represent a pow-
+erful paradigm for point cloud generation. However, existing approaches rely
+heavily on local voxel or patch features and often miss global structural organi-
+zation, and much less work has studied how global conditioning can be used to
+improve generation quality. In this paper, we introduce HilbertGen-3D, a novel
+topology-aware conditional diffusion framework based on Hilbert–Multifractal
+Conditioning (HMC). HMC computes multi-scale voxel measures, serializes them
+via a 3D Hilbert curve to expose structured spatial dependencies, and estimates
+the generalized fractal dimensions from scale-dependent partition functions. We
+encode these signals as global embeddings and multi-scale tokens, and inject them
+into a diffusion denoiser through an efficient bottleneck fusion module. Across
+the Chair, Airplane, and Car categories of ShapeNet, our two conditioning vari-
+ants reduce the absolute deviation of 1-Nearest Neighbor Accuracy (1-NNA)
+from 50% by up to 8.90 percentage points and increase coverage by up to 5.88
+percentage points relative to TopoDiT-3D [6]. This shows that combining local
+density cues with global Hilbert–multifractal structure provides a simple and ef-
+fective recipe for high-fidelity and diverse 3D generation. Code is available at
+https://github.com/shixuanli01/HMC-DiT3D.
+1
+Introduction
+Generative modeling of three-dimensional (3D) point clouds is a central problem in geometric
+learning, with applications spanning shape synthesis, digital content creation, simulation, and 3D
+perception [7, 14]. Diffusion models have recently become powerful tools for this task because they
+can represent highly multimodal shape distributions and scale to expressive neural backbones [5].
+Nevertheless, many existing architectures, such as DiT3D [18], are still primarily driven by local
+geometric operators: they voxelize or patchify the shape, construct local tokens, and rely on the
+denoiser to recover global point distribution. In practice, this can produce shapes with locally plausible
+geometry but weaker global coherence, especially for objects with thin parts, holes, branches, or
+strongly nonuniform mass distributions across scales.
+This limitation suggests that global structural information should explicitly guide the denoising
+process, rather than being left to emerge from local feature aggregation. In this paper, we pro-
+pose HilbertGen-3D, a novel topology-aware framework for 3D point cloud generation based on
+Hilbert–Multifractal Conditioning (HMC). Instead of constructing persistence diagrams, we start
+from multi-scale voxel measures computed on a normalized point cloud. At each scale, we serialize
+*These authors contributed equally to this work.
+40th Conference on Neural Information Processing Systems (NeurIPS 2026).
+arXiv:2610.22720v1  [cs.CV]  15 Oct 2026
+
+
+the voxel grid using a 3D Hilbert mapping, converting the spatial mass distribution into a structured
+one-dimensional sequence. We then exploit the multifractal theory [17, 22, 30, 31] and evaluate
+the partition function across scales and moments to estimate the generalized fractal dimensions
+summarizing how mass concentrates, disperses, and varies across resolutions. Together with the
+Hilbert-ordered sequences themselves, these statistics define an HMC representation of the shape.
+HMC provides two complementary forms of conditioning. A compact global descriptor captures
+the overall multifractal profile of the shape, while windowed embeddings of the Hilbert sequences
+retain structured multi-scale context. We encode these signals into a global embedding and a set
+of HMC conditioning tokens, then inject them into a diffusion denoiser via a memory-efficient
+bottleneck fusion module. This design uses a representation built directly from voxel mass statistics
+to preserve the key insight behind topology-aware conditioning, allowing for global shape information
+to guide denoising. We also verify that HMC improves structural fidelity, sample diversity, and global
+coherence relative to purely local baselines on standard point-cloud generation benchmarks.
+2
+Related Works
+3D generative models.
+Deep generative modeling for 3D shapes has advanced across a range of
+representations, including point clouds, voxels, meshes, and implicit fields [25]. Early point-set
+methods, such as PointFlow [26], modeled shape distributions with hierarchical continuous normal-
+izing flows, while ShapeGF [2] learned gradient fields whose sampling procedure recovers surface
+geometry. Diffusion models then became a dominant paradigm for 3D shape synthesis: PVD [32]
+formulated denoising diffusion directly on point clouds, LION [29] moved diffusion to a hierarchical
+latent space to improve fidelity and enable downstream manipulations, and DiT-3D [18] showed that
+plain diffusion transformers can serve as competitive 3D generators. In parallel, conditional systems
+such as Point-E [20] and Shap-E [9] expanded generation beyond unconditional shape synthesis,
+while GET3D [4] demonstrated high-quality textured mesh generation from image collections. More
+recently, topology-aware 3D diffusion has begun to incorporate persistent homology(PH) features as
+global structural cues [6]. This paper introduces a new approach based on the Hilbert–Multifractal
+Conditioning method, which injects Hilbert-serialized multifractal descriptors as multi-scale struc-
+tural priors for point-cloud generation. Whereas persistent homology captures connected components,
+loops, and voids, HMC captures voxel mass distribution, density heterogeneity, and local spatial
+neighborhoods. Furthermore, persistent homology uses a dedicated topological encoding pipeline,
+while Hilbert sequences can be directly processed by sequence models and bottleneck fusion modules,
+which can exploit prior information about the reference density structure to improve generation
+quality and diversity.
+Hilbert curves and structure-preserving serialization for 3D data.
+Space-filling curves provide
+a principled way to analyze multidimensional geometry. Classical analysis showed that the Hilbert
+curve has strong clustering behavior and can preserve locality better than the z-curve in common query
+settings [19]. This idea has recently reappeared in 3D deep learning as a practical serialization tool
+for irregular point clouds. OctFormer [23] uses octree-based ordering to form efficient local windows
+for transformer processing. Point Transformer V3 explicitly serializes point clouds with z-order and
+Hilbert curves to build efficient grouped attention, arguing that Hilbert ordering offers stronger locality
+preservation [24]. PointMamba [13] similarly leverages space-filling curves to turn unstructured
+point clouds into sequences amenable to linear-time state-space modeling. Point2Point [21] goes
+further by directly learning on Hilbert-sorted point clouds and reports competitive results on both
+analysis and generation tasks. These works use Hilbert order primarily as a computational device for
+tokenization, grouping, or sequence modeling. In contrast, our method uses the Hilbert traversal as
+part of the conditioning signal itself: we serialize multi-scale voxel measures along the curve, extract
+both global multifractal summaries and local Hilbert-window embeddings, and feed these descriptors
+into the denoiser as explicit global structural priors.
+3
+Preliminaries
+We review denoising diffusion probabilistic models for 3D point cloud generation and then introduce
+the Hilbert curve as the locality-preserving space-filling curve used in our conditioning framework.
+2
+
+
+3.1
+Denoising Diffusion Probabilistic Model (DDPM) for 3D Point Clouds
+Following Mo et al. [18] and Guan et al. [6], we model 3D point cloud generation using a
+conditional denoising diffusion probabilistic model (DDPM) [8]. Let X0 ∈RN×3 denote a clean
+point cloud containing N points, and let C denote its associated conditioning information. In
+our model, C includes the Hilbert–Multifractal Conditioning (HMC) representation introduced in
+Section 4. Gaussian distributions and Euclidean norms below are understood on the 3N vectorized
+point coordinates, with I denoting the corresponding identity matrix.
+The forward process gradually perturbs X0 using a prescribed variance schedule {βt}T
+t=1 ⊂(0, 1):
+q(X1:T | X0) =
+T
+Y
+t=1
+q(Xt | Xt−1),
+q(Xt | Xt−1) = N(Xt; √αtXt−1, βtI) ,
+where αt = 1 −βt. Writing ¯αt = Qt
+i=1 αi and ¯α0 = 1, we can sample any intermediate state
+directly as
+Xt = √¯αtX0 +
+√
+1 −¯αt ε,
+ε ∼N(0, I).
+The schedule is chosen so that the terminal distribution is approximately standard Gaussian.
+Generation reverses this corruption through a learned conditional Markov chain:
+pθ(X0:T | C) = p(XT )
+T
+Y
+t=1
+pθ(Xt−1 | Xt, C),
+pθ(Xt−1 | Xt, C) = N
+ Xt−1; µθ(Xt, t, C), σ2
+t I
+
+,
+where p(XT ) = N(0, I) and σ2
+t is a prescribed reverse variance. For t ≥2, common choices are
+σ2
+t = βt and σ2
+t = βt(1 −¯αt−1)/(1 −¯αt) [8]. Rather than predicting the reverse mean directly, we
+use a neural network εθ(Xt, t, C) ∈RN×3 to predict the injected noise, and parameterize the mean
+as [8]
+µθ(Xt, t, C) =
+1
+√αt
+
+Xt −
+βt
+√1 −¯αt
+εθ(Xt, t, C)
+
+.
+The conditional log-likelihood admits the variational lower bound [8]:
+log pθ(X0 | C) ≥Eq(X1:T |X0)
+
+log pθ(X0:T | C)
+q(X1:T | X0)
+
+.
+With fixed reverse variances, the denoising KL terms for t ≥2 in the negative bound reduce to
+time-weighted squared errors in noise prediction. Following the simplified DDPM objective [8], we
+instead use uniform weighting across timesteps:
+LDDPM = E(X0,C),t,ε
+h
+∥ε −εθ(Xt, t, C)∥2
+2
+i
+,
+where (X0, C) is a training shape–condition pair, t ∼Unif{1, . . . , T}, and ε ∼N(0, I) is sampled
+independently. Thus, the implemented noise-prediction loss is a reweighted surrogate rather than
+the unchanged variational objective. For each t, the population minimizer of the squared-error
+objective predicts E[ε | Xt, C]. The rescaled prediction −εθ(Xt, t, C)/√1 −¯αt therefore estimates
+this score, providing a score-matching interpretation of the same denoiser [8]. After training, we
+sample XT ∼N(0, I) and apply the learned reverse transitions for t = T, . . . , 1, holding C fixed, to
+obtain a generated point cloud X0.
+3.2
+Hilbert Curves
+Our denoiser uses the diffusion-transformer backbone of DiT-3D [18]. To construct a separate
+sequence of geometric conditioning signals, we serialize a voxel mass field using a 3D Hilbert
+traversal. This orders voxel cells, rather than the original points, and provides a spatially structured
+input to the HMC condition encoder. A Hilbert curve provides such an ordering. In the continuous
+setting, the Hilbert curve is a space-filling map
+γ : [0, 1] →[0, 1]d.
+3
+
+
+Figure 1: Comparison of point clouds (top row), their persistence diagrams (middle row), and Hilbert-
+ordered mass profiles associated with the sequences cs[t]. The examples illustrate changes in spatial
+mass concentration despite similar coarse topological structure.
+For our purposes, we fix d = 3 in the rest of the paper. Hilbert curves are constructed recursively: a
+unit cube is divided into 2d smaller subcubes, and at a finer level, each octant is recursively traversed
+using an appropriately rotated or reflected lower-order pattern. Its orientation is chosen so that the exit
+from one octant connects to the entry into the next; the same unrotated pattern is not simply repeated
+independently in every octant.. For more detail on the construction, see Moon et al. [19]. As the
+recursion depth increases, the Hilbert curve visits finer and finer spatial cells, and in the limit, it fills
+the entire domain. For computation, we use the discrete 3D Hilbert traversal. At scale s, let Rs = 2s
+and Vs = {0, . . . , Rs −1}3 be a regular voxel grid. A discrete Hilbert ordering is a bijection
+πs : Vs →{0, . . . , R3
+s −1},
+which assigns each voxel a unique one-dimensional index and visits every voxel exactly once. The
+inverse map π−1
+s
+maps a Hilbert index back to its corresponding voxel cell. Thus, Hilbert serialization
+only permutes the voxel values and therefore introduces no additional information loss beyond
+voxelization.
+Locality preservation. The key property of the Hilbert curve is locality preservation. Although
+no one-dimensional ordering can perfectly preserve all Euclidean distances in three dimensions,
+Hilbert order tends to place spatially nearby voxels close to each other in the induced sequence [19].
+Contiguous intervals of Hilbert indices often correspond to compact spatial neighborhoods, and the
+recursive construction makes this property hold across multiple resolutions. Compared with simple
+raster or lexicographic ordering, Hilbert ordering avoids many long spatial jumps and better preserves
+clustered structure. This property is especially useful for point-cloud generation. After a point cloud
+is normalized and voxelized, the Hilbert traversal converts its spatial mass distribution into an ordered
+signal. Coarse recursion levels encode global layout, while deeper recursion levels resolve local
+details such as thin parts, branches, and nonuniform density. Therefore, Hilbert serialization provides
+a natural interface between unordered 3D geometry and sequence-based neural architectures. In our
+method, this ordering is used to construct Hilbert–Multifractal Conditioning tokens that provide the
+denoiser with locality-preserving, multi-scale structural information.
+4
+Methodology
+Overview of HilbertGen-3D. We use point clouds X ∈RN×3 , where N represents the number
+of points with x, y, z coordinates, sampled uniformly from a given surface to represent 3D shapes.
+4
+
+
+Training
+Reference
+point cloud
+Multi-scale
+voxelization
+Raw HMC
+conditions
+Descriptor
+Generalized
+dimensions
+Hilbert sequences
+Inference replaces both raw inputs:
+samples from the training-set bank
+or condition VAE
+Global descriptor branch
+Global HMC embedding
+Hilbert sequence branch
+Window embeddings
+Position, scale, valid length
+Clean point cloud
+Forward noising
+Noisy point cloud
+Voxelization /
+patch embedding
+Geometry tokens
+Global conditioning
+Timestep embedding
++
+AdaLN condition for each block
+Bottleneck fusion
+Learned initialization (once)
+Bottleneck latents
+Keys / values
+Queries
+Down resampler
+DiT blocks on B
+Updated B → next block
+After final block
+Up resampler
+Predicted patch features
+Unpatchify /
+devoxelize
+Predicted noise
+Training loss
+Reverse diffusion
+Generated
+point cloud
+1
+HMC Condition Extraction
+2
+HMC Condition Encoder
+3
+Geometry / Diffusion Branch
+4
+HMC-DiT Denoiser
+5
+Output Head
+HMC conditions
+Geometry / diffusion
+Denoiser / bottleneck
+Output / loss / sampling
+Figure 2: Overview of HilbertGen-3D. Multi-scale voxel measures are serialized along 3D Hilbert
+curves to construct Hilbert-ordered sequences, while generalized fractal dimensions form the global
+descriptor D. Separate encoders produce HMC tokens C and a global HMC embedding gHMC,
+respectively. The noisy point cloud Xt is embedded into geometry tokens Ht, which are fused with
+the projected HMC tokens through bottleneck latents B. Successive DiT blocks update B, with
+adaptive layer normalization conditioned on the timestep embedding Etime(t) and the projected
+global embedding Pg(gHMC). The processed latents update the geometry tokens, and the output
+head unpatchifies and devoxelizes the predicted features to obtain the noise estimate εθ(Xt, t, C) for
+DDPM training and reverse-diffusion sampling.
+HilbertGen-3D initially voxelizes it as input vi ∈RV ×V ×V ×3 where V represents the grid resolution.
+Following DiT-3D [18], the voxel grid is then divided into non-overlapping patches of size p × p × p,
+resulting in a sequence of patch tokens si ∈RL×d with length L = (V/p)3 and embedding dimension
+d that serve as the primary input to the DiT backbone, where the embedding is realized via a learned
+linear projection. In Section 4.1, we introduce locality-preserving density signals along Hilbert curves
+at different scales for local information and generalized dimension for global information, which we
+process through a lightweight transformer encoder to generate the HMC tokens. These tokens pass
+through a bottleneck structure with multiple transformer blocks (DiT block) that employ self-attention
+to update the features, which we discuss in detail in Section 4.2. Finally, to achieve denoising in the
+point cloud space, the voxelized representation is converted back to the original point cloud format
+via devoxelization, yielding the denoised point cloud.
+4.1
+Hilbert serialization and generalized dimensions
+Multi-scale voxel measures.
+Having introduced DDPM-based point-cloud generation and the
+basics of Hilbert curves, we now describe how multi-scale Hilbert occupancy sequences are converted
+into conditioning signals for the diffusion denoiser. We first generate the probability measure from
+the Hilbert curves. Choose a set of scales S = {s1, . . . , sK} with grid resolution Rs = 2s, s ∈S
+and voxel side length εs = 1/Rs. Let Vs be the set of voxels at scale s. Define a nonnegative mass
+per voxel v ∈Vs:
+ms(v) =
+N
+X
+n=1
+1{xn ∈v},
+(1)
+where we compute the sample density in each voxel. We then normalize (1) to obtain a probability
+measure over voxels:
+µs(v) =
+ms(v)
+P
+v′∈Vs ms(v′).
+(2)
+5
+
+
+Hilbert serialization at each scale.
+Let πs : Vs →{0, . . . , |Vs| −1} be a 3D Hilbert mapping,
+and denote its inverse as π−1
+s (t). Define a Hilbert-ordered sequence:
+cs[t] = µs
+ π−1
+s (t)
+
+,
+t = 0, . . . , |Vs| −1.
+(3)
+where we recover the point cloud density along the Hilbert curve. The bottom row of Figure 1
+visualizes density variation along the Hilbert traversal associated with the sequence cs[t]. Intuitively,
+cs[t] signals the point cloud’s relative density and gives a rough indication of its overall shape.
+Partition functions and generalized dimensions.
+For a set of moments Q ⊂R, define the
+scale-dependent partition function
+Zs(q) =
+|Vs|−1
+X
+t=0
+cs[t]q =
+X
+v∈Vs
+µs(v)q,
+q ∈Q.
+(4)
+Define the mass exponent τ(q) [17] that is obtained from the following formula:
+τ(q) =
+P
+s∈S(log εs −log ε)(log Zs(q) −log Z(q))
+P
+s∈S(log εs −log ε)2
+,
+(5)
+where log ε :=
+1
+|S|
+P
+s log εs and log Z(q)) :=
+1
+|S|
+P
+s log Zs(q) denotes the sample average across
+scales in the least-squares. Then the generalized fractal dimensions D(q) are given by:
+D(q) = τ(q)
+q −1,
+q̸ = 1.
+(6)
+Note that when q = 1, D(q) can be computed via the entropy slope method; see e.g. Salat et al.
+[22], for details. The moment order q controls which parts of the density distribution dominate
+the descriptor. Lower orders emphasize the spatial support of the shape: q = 1 corresponds to an
+entropy-like information dimension, and q = 2 is related to correlation dimension. Larger positive q
+values emphasize high-density regions and therefore capture how density concentrates around thick
+parts or repeated structures. In point cloud generation, this gives the denoiser a compact summary of
+whether the object is uniformly distributed, concentrated into a few dense regions, or organized into
+thin, sparse structures. We further define an HMC descriptor vector by concatenating the generalized
+dimensions:
+D =
+ D(q)
+
+q∈Q ∈R|Q|.
+(7)
+We point out that the generalized dimensions summarize global scaling of the voxel density distribu-
+tion and are invariant to voxel ordering.
+HMC condition encoding.
+The Hilbert-ordered sequences (3) and HMC descriptors (7) are encoded
+through two separate branches. Each sequence cs is split into consecutive windows of length w,
+with zero-padding of the final window when necessary. The window embeddings include position,
+scale, and valid-length information. A lightweight Transformer processes the concatenated multi-
+scale window embeddings to produce the HMC tokens C = Eseq({cs}s∈S) ∈RM×d, where
+M = P
+s∈S
+l
+R3
+s
+w
+m
+and Eseq denotes the learned encoder. The resulting embedding C retains
+its window index, although self-attention can incorporate context from other windows and scales.
+Separately, a normalized multilayer perceptron embeds the descriptor into a global HMC embedding
+gHMC = Eglob(D) ∈Rd. During training, both raw inputs are extracted from the clean shape. At
+inference, a paired raw condition is sampled from the training-set bank or generated by the condition
+VAE, then passed through the same encoder. The complete conditioning input C in Section 3.1
+comprises both raw inputs.
+4.2
+Integration into Diffusion Architectures
+We retain the voxel patchification and pointwise output structure of DiT-3D [18] and use the bottleneck
+design of TopoDiT-3D [6] to inject HMC conditions. As shown in Figure 2, the denoiser receives
+geometry tokens Ht ∈RL×d, HMC tokens C ∈RM×d, and a global HMC embedding gHMC ∈Rd.
+The HMC tokens provide attention context via cross-attention, whereas the global embedding controls
+adaptive layer normalization. We first describe direct cross-attention as a reference formulation and
+then the bottleneck fusion used in our model.
+6
+
+
+Cross-attention conditioned on HMC tokens.
+In a Transformer denoiser block, let Ht ∈RL×d
+be the current hidden tokens, and C ∈RM×d the HMC tokens. As a simple conditioning baseline,
+HMC tokens can be injected into each denoising block by cross-attention.
+XAttn(Ht, C) = softmax
+(HtWQ)(CWK)⊤
+√
+d
+
+(CWV ),
+(8)
+and update
+Ht ←Ht + XAttn(Ht, C),
+(9)
+Adaptive layer-norm conditioned on global HMC embedding. Independently of the token-attention
+path, the HMC descriptor embedding modulates the denoiser through adaptive layer normalization.
+Let
+at = Etime(t) + Pg(gHMC),
+(10)
+where Pg is the learned affine projection, and Etime embeds the diffusion timestep. For a token h, we
+use
+AdaLN(h; at) = γ(at) ⊙h −µ(h)
+σ(h)
++ β(at),
+(11)
+where µ(h) and σ(h) are the mean and numerically stabilized standard deviation across the token’s
+features, and γ(·) and β(·) are learned scale and shift functions.
+The cross-attention conditioning is easy to implement, but its cost scales with LM in each conditioned
+block. It is therefore most suitable when the number of HMC tokens is small. This motivates a
+bottleneck fusion design described below.
+Bottleneck fusion via perceiver resampler
+Directly injecting all HMC tokens into the denoising
+transformer can be inefficient. The number of Hilbert sequence tokens grow with the number of
+scales and with the voxel resolution, while voxelized point clouds are sparse and often produce many
+weakly informative patch tokens. Inspired by the bottleneck design of TopoDiT-3D [6], we use a
+Perceiver-style resampler to fuse local geometry tokens with global and multi-scale HMC tokens
+through a fixed-size latent interface.
+We introduce Kb learnable bottleneck latents B ∈RKb×d, where Kb ≪L + M. The bottleneck first
+compresses the concatenated local and HMC context:
+B ←B + XAttn
+ B, [Ht; eC]
+
+,
+(12)
+where eC = PC(C) and PC is the learned projection. The resulting latent tokens B are updated by
+DiT blocks using at for AdaLN modulation. The processed B is then used to update the geometry
+tokens:
+Ht ←Ht + XAttn
+ Ht, B
+
+.
+(13)
+This module serves two purposes. First, it adaptively filters redundant sparse-voxel tokens and keeps
+the main DiT computation independent of the full HMC token length. Second, it provides a compact
+fusion interface between local geometric features and Hilbert-multifractal structural priors. In this
+way, the denoiser receives multi-scale shape information without attending directly to all local and
+condition tokens at every layer.
+5
+Experiments
+In this section, we evaluate HilbertGen-3D and conduct sensitivity experiments to investigate the
+effectiveness of the bottleneck structure and topological information within the point cloud data.
+5.1
+Experiment Setup
+Dataset.
+In line with most prior work [26, 16, 1, 32, 29, 18, 6], we use the ShapeNet dataset as the
+benchmark for 3D point cloud generation [3]. ShapeNet comprises 51, 127 shapes across 55 classes.
+Following prior work, we train HilbertGen-3D on the Chair, Airplane, and Car categories. We show
+further results on Lamp and Vessel in Section A.
+7
+
+
+HilbertGen-3D
+TopoDiT
+DiT3D
+Figure 3: HilbertGen-3d results compared with DiT-3D and TopoDiT-3D. All experiments are
+conducted under same scale.
+Evaluation.
+Following prior work [18, 6], we use Chamfer Distance (CD) and Earth Mover’s
+Distance (EMD) to compute 1-Nearest Neighbor Accuracy (1-NNA) and Coverage (COV). The
+1-NNA metric computes the leave-one-out accuracy of a 1-Nearest Neighbor classifier, with lower
+scores signifying superior generative performance in both quality and diversity. Coverage (COV), on
+the other hand, quantifies the proportion of ground-truth reference point clouds that correspond to
+at least one generated shape. Although COV is highly sensitive to mode dropping and serves as an
+effective measure of diversity, it does not assess the geometric quality of the generated point clouds.
+Implementation.
+To ensure consistency, we adopt the implementation from DiT-3D and TopoDiT-
+3D [18, 6]. The input voxel size is set to 32 × 32 × 32 × 3(V = 32), and we train the models
+for 10, 000 epochs using the Adam optimizer with a learning rate of 1 × 10−4 and a batch size of
+512. In our experiments, we set T = 1000 and use S/4 configuration with a patch size p = 4.
+Specifically, we pick the scale set S = {3, 4, 5} and momentum set Q = {1, 2, 3}. We pick the
+window length w = 64 to generate the HMC token and set the depth of the perceiver resampler to 4
+with bottleneck latent dimension Kb = 128. After training the DiT backbone, we report metrics from
+two versions of the proposed algorithm: in the first version, we construct a bank of HMC tokens from
+the training data, which is then randomly sampled from during generation; in the second version,
+we separately train a variational autoencoder on the training data and then use the VAE to generate
+HMC tokens during inference. The VAE baseline uses latent dimension 64, encoder hidden widths
+(2048, 1024, 512) with SiLU activations, and a decoder with the reversed hidden widths. Its objective
+uses βVAE = 0.05 and unit reconstruction weights. VAE training uses AdamW with initial learning
+rate 10−3, zero weight decay, batch size 256, cosine learning-rate decay, gradient clipping at 1, and
+2000 epochs.
+5.2
+Comparison to Prior Works
+We compare HilbertGen-3D with representative point-cloud generative models in Table 1, reporting
+two variants: Ours-VAE uses VAE-generated HMC conditions, while Ours-bank uses bank-sampled
+HMC conditions. Both variants improve 1-NNA relative to TopoDiT-3D [6] across all three categories
+under both CD and EMD. Here, improvements in 1-NNA refer to reductions in the absolute distance
+from 50, rather than decreases in the raw accuracy. Coverage gains are more dependent on the
+category and conditioning source, with neither variant uniformly outperforming the other.
+For Chair, Ours-VAE achieves the best 1-NNA among all compared methods, reaching 50.25 under
+CD and 48.42 under EMD. These values reduce the absolute distance from 50 by 0.88 and 1.89
+percentage points, respectively, compared with TopoDiT-3D. Ours-bank provides higher coverage
+8
+
+
+Table 1: Experimental results on 3D point cloud generation across chair, airplane, and car categories.
+Metric values are reported as percentages. HilbertGen-3D (VAE) uses VAE-generated HMC condi-
+tions, while HilbertGen-3D (bank) uses bank-sampled HMC conditions. For 1-NNA, values closer
+to 50 are better; for COV, higher values are better. The best entries in each column are shown in
+bold, including ties. Superscripts for both variants report improvements relative to TopoDiT-3D
+in percentage points: reductions in absolute distance from 50 for 1-NNA, and increases for COV.
+Positive improvements are green, negative changes are red, and ties are gray.
+Method
+Chair
+Airplane
+Car
+1-NNA (50 is optimal)
+COV (↑)
+1-NNA (50 is optimal)
+COV (↑)
+1-NNA (50 is optimal)
+COV (↑)
+CD
+EMD
+CD
+EMD
+CD
+EMD
+CD
+EMD
+CD
+EMD
+CD
+EMD
+r-GAN [1]
+83.69
+99.70
+24.27
+15.13
+98.40
+96.79
+30.12
+14.32
+94.46
+99.01
+19.03
+6.539
+l-GAN (CD)
+68.58
+83.84
+41.99
+29.31
+87.30
+93.95
+38.52
+21.23
+66.49
+88.78
+38.92
+23.58
+l-GAN (EMD)
+71.90
+64.65
+38.07
+44.86
+89.49
+76.91
+38.27
+38.52
+71.16
+66.19
+37.78
+45.17
+PointFlow [26]
+62.84
+60.57
+42.90
+50.00
+75.68
+70.74
+47.90
+46.41
+58.10
+56.25
+46.88
+50.00
+SoftFlow [10]
+59.21
+60.05
+41.39
+47.43
+76.05
+65.80
+46.91
+47.90
+64.77
+60.09
+42.90
+44.60
+SetVAE [11]
+58.84
+60.57
+46.83
+44.26
+76.54
+67.65
+43.70
+48.40
+59.94
+59.94
+49.15
+46.59
+DPF-Net [12]
+62.00
+58.53
+44.71
+48.79
+75.18
+65.55
+46.17
+48.89
+62.35
+54.48
+45.74
+49.43
+DPM [16]
+60.05
+74.77
+44.86
+35.50
+76.42
+86.91
+48.64
+33.83
+68.89
+79.97
+44.03
+34.94
+PVD [32]
+57.09
+60.87
+36.68
+49.24
+73.82
+64.81
+48.88
+52.09
+54.55
+53.83
+41.19
+50.56
+LION [29]
+53.70
+52.34
+48.94
+52.11
+67.41
+61.23
+47.16
+49.63
+53.41
+51.14
+50.00
+56.53
+GET3D [4]
+75.26
+72.49
+43.36
+42.77
+-
+-
+-
+-
+75.26
+72.49
+15.04
+18.38
+MeshDiffusion [15]
+53.69
+57.63
+46.00
+46.71
+66.44
+76.26
+47.34
+42.15
+81.43
+87.84
+34.07
+25.85
+DiT-3D [18]
+56.31
+55.82
+47.21
+50.75
+66.21
+63.17
+48.26
+45.89
+68.13
+64.24
+43.44
+44.08
+TopoDiT-3D [6]
+48.87
+46.53
+56.67
+57.12
+57.15
+55.83
+57.05
+54.11
+57.95
+59.09
+55.58
+51.98
+HilbertGen-3D (VAE) 50.25+0.88 48.42+1.89 54.32−2.35 54.83−2.29 56.79+0.36 53.25+2.58 58.17+1.12 59.25+5.14 51.14+6.81 49.81+8.90 53.12−2.46 54.45+2.47
+HilbertGen-3D (bank) 49.01+0.14 47.36+0.83 57.62+0.95 57.98+0.86 54.79+2.36 52.83+3.00 57.92+0.87 58.58+4.47 46.21+4.16 47.54+6.63 56.82+1.24 57.86+5.88
+Table 2: Ablation study on the Airplane category. For 1-NNA, values closer to 50 is better, and for
+COV, higher values are better.
+Method
+1-NNA(50 is optimal)
+COV(↑)
+CD
+EMD
+CD
+EMD
+Ours
+55.57
+53.66
+60.98
+59.27
+w/o HMC tokens
+57.33
+54.76
+58.50
+57.67
+w/o global HMC embedding
+55.84
+53.58
+60.24
+58.25
+w/o bottleneck fusion
+60.00
+54.54
+55.92
+55.83
+than Ours-VAE under both distance measures and achieves the highest COV-CD and COV-EMD of
+57.62 and 57.98, exceeding TopoDiT-3D by 0.95 and 0.86 percentage points, respectively.
+For Airplane, both variants outperform TopoDiT-3D on all four metrics. Ours-bank achieves the
+best 1-NNA-CD and 1-NNA-EMD of 54.79 and 52.83, reducing the corresponding distances from
+50 by 2.36 and 3.00 percentage points relative to TopoDiT-3D. Ours-VAE instead achieves the
+highest coverage, with COV-CD and COV-EMD of 58.17 and 59.25, respectively. These represent
+improvements of 1.12 and 5.14 percentage points over TopoDiT-3D. The two condition sources
+therefore favor different evaluation criteria even within the same category.
+For Car, Ours-VAE achieves the best 1-NNA-CD and 1-NNA-EMD of 51.14 and 49.81. Their
+absolute distances from 50 are only 1.14 and 0.19, corresponding to improvements of 6.81 and 8.90
+percentage points over TopoDiT-3D. Ours-bank achieves the highest coverage under both distance
+measures, reaching 56.82 for COV-CD and 57.86 for COV-EMD, which exceed TopoDiT-3D by 1.24
+and 5.88 percentage points, respectively. The VAE variant does not share this coverage advantage: its
+COV-CD of 53.12 is below TopoDiT-3D, and its COV-EMD of 54.45 is below LION [29].
+Overall, Ours-VAE and Ours-bank each attain the best reported values in six of the twelve columns
+in Table 1. VAE conditioning yields stronger 1-NNA results on Chair and Car, whereas bank
+conditioning provides higher coverage on these categories; the pattern is reversed on Airplane. We
+attribute this to the intrinsic geometric properties of the categories. We present qualitative comparisons
+in Figure 3, with additional category results in Section A. More visualizations of point clouds for all
+categories can be found in Section E.
+9
+
+
+5.3
+Ablation analysis.
+We conduct ablation studies on the Airplane category to examine the contributions of Hilbert
+serialization, generalized-dimension descriptors, and bottleneck fusion. Similar to the sensitivity
+study, we use a batch size of 128 and train for 2000 epochs. Table 2 compares the full model with
+variants that remove each component. The full model achieves the best 1-NNA-CD and both coverage
+metrics, while the variant without generalized dimensions achieves the closest 1-NNA-EMD to 50.
+Throughout this comparison, changes in 1-NNA are interpreted through the absolute distance from
+50, rather than the raw accuracy alone.
+Removing the HMC tokens worsens all four reported metrics. The 1-NNA-CD and 1-NNA-EMD
+increase from 55.57 and 53.66 to 57.33 and 54.76, respectively, increasing their distances from
+50 by 1.76 and 1.10 percentage points. Meanwhile, COV-CD decreases from 60.98 to 58.50, and
+COV-EMD decreases from 59.27 to 57.67, corresponding to reductions of 2.48 and 1.60 percentage
+points. These results support the use of Hilbert serialization for constructing spatially structured
+conditioning signals. Among the tested ablations, removing this component produces the largest
+deterioration in EMD-based 1-NNA.
+Removing the global HMC embedding increases 1-NNA-CD from 55.57 to 55.84, moving it 0.27
+percentage points farther from 50. COV-CD and COV-EMD decrease from 60.98 and 59.27 to 60.24
+and 58.25, respectively, corresponding to reductions of 0.74 and 1.02 percentage points. However,
+1-NNA-EMD improves slightly from 53.66 to 53.58, reducing its distance from 50 by 0.08 percentage
+points. Thus, the global descriptor provides complementary benefits for CD-based distribution
+matching and coverage in this experiment, but does not improve every reported metric.
+Removing bottleneck fusion produces the largest deterioration in CD-based 1-NNA and both coverage
+metrics. The 1-NNA-CD increases from 55.57 to 60.00, moving 4.43 percentage points farther from
+50, while COV-CD and COV-EMD decrease to 55.92 and 55.83, representing reductions of 5.06 and
+3.44 percentage points. The 1-NNA-EMD also worsens, increasing from 53.66 to 54.54 and moving
+0.88 percentage points farther from 50. These results indicate that the fusion architecture is important
+for using HMC conditions effectively in the evaluated configuration.
+Overall, all three components contribute to the full model’s CD-based 1-NNA and coverage ad-
+vantages over the ablated variants. Bottleneck fusion has the largest observed effect on these three
+metrics, while the EMD-based 1-NNA results show a more nuanced pattern. The ablations therefore
+support the combined design without establishing that every component improves every evaluation
+criterion.
+6
+Conclusion
+In this work, we presented HilbertGen-3D, a diffusion framework for point cloud generation based
+on Hilbert–Multifractal Conditioning (HMC). Experiments suggest that HMC is a promising condi-
+tioning strategy for improving global coherence and structural fidelity in generated 3D shapes. More
+broadly, the proposed framework shows that locality-preserving spatial serializations together with
+multi-resolution scaling statistics can serve as an effective alternative to purely local conditioning
+schemes. On the other hand, it shall be noted that, while HilbertGen-3D can effectively generate
+point clouds in settings when prior information of the overall density distribution can be exploited,
+alternative approaches (such as persistent homology) may perform well otherwise. Future directions
+include distilling the diffusion model to reduce computational cost [27] and using Bayesian techniques
+to further improve generation accuracy [28].
+10
+
+
+7
+Acknowledgement
+Ziyi Zhang was supported by Lee-Stanziale Ohana Fellowship. Guannan Qu was supported by NSF
+Grants 2339112, 2512805, AFOSR Grant FA9550261B281, Jane Street, Pennsylvania Infrastructure
+Technology Alliance, CMU Manufacturing Futures Institute. Yorie Nakahira was supported by
+National Science Foundation (NSF) Grant No. ECCS-2442948 (CAREER) and Japan Science and
+Technology Agency (JST): Grant No. JPMJPR2516 (PRESTO). Paul Bogdan was supported by
+the National Science Foundation (NSF) under NSF Award 2243104 under the Center for Complex
+Particle Systems (COMPASS), CAREER Award CPS-1453860, NSF Mid-Career Advancement
+Award BCS-2527046, U.S. Army Research Office (ARO) under Grant No. W911NF-23-1-0111,
+Defense Advanced Research Projects Agency (DARPA) Young Faculty Award and DARPA Director
+Fellowship Award under Grant Number N66001-17-1-4044, DARPA grant HR0011263E153, Intel
+Faculty Awards, and a Northrop Grumman grant. P.B. is also grateful to the National Institutes of
+Health (NIH) for Grants R01 AG079957 and RF1 AG082201. The views, opinions, and/or findings
+in this article are those of the authors and should not be interpreted as official views or policies of the
+Department of Defense, the National Institutes of Health, or the National Science Foundation.
+References
+[1] Panos Achlioptas, Olga Diamanti, Ioannis Mitliagkas, and Leonidas Guibas. Learning represen-
+tations and generative models for 3d point clouds, 2018. URL https://openreview.net/
+forum?id=BJInEZsTb.
+[2] Ruojin Cai, Guandao Yang, Hadar Averbuch-Elor, Zekun Hao, Serge Belongie, Noah Snavely,
+and Bharath Hariharan. Learning gradient fields for shape generation. In Computer Vision –
+ECCV 2020, pages 364–381, 2020.
+[3] Angel X. Chang, Thomas Funkhouser, Leonidas Guibas, Pat Hanrahan, Qixing Huang, Zimo
+Li, Silvio Savarese, Manolis Savva, Shuran Song, Hao Su, Jianxiong Xiao, Li Yi, and Fisher Yu.
+ShapeNet: An Information-Rich 3D Model Repository. Technical Report arXiv:1512.03012
+[cs.GR], Stanford University — Princeton University — Toyota Technological Institute at
+Chicago, 2015.
+[4] Jun Gao, Tianchang Shen, Zian Wang, Wenzheng Chen, Kangxue Yin, Daiqing Li, Or Litany,
+Zan Gojcic, and Sanja Fidler. Get3d: A generative model of high quality 3d textured shapes
+learned from images. In Advances in Neural Information Processing Systems, 2022.
+[5] Shanghua Gao, Pan Zhou, Mingg-Ming Cheng, and Shuicheng Yan. Masked diffusion trans-
+former is a strong image synthesizer. 2023 IEEE/CVF International Conference on Computer
+Vision (ICCV), pages 23107–23116, 2023.
+[6] Zechao Guan, Feng Yan, Shuai Du, Lin Ma, and Qingshan Liu. Topodit-3d: Topology-aware
+diffusion transformer with bottleneck structure for 3d point cloud generation. 05 2025. doi:
+10.48550/arXiv.2505.09140.
+[7] Zekun Hao, Arun Mallya, Serge Belongie, and Ming-Yu Liu. Gancraft: Unsupervised 3d neural
+rendering of minecraft worlds. In Proceedings of the IEEE/CVF International Conference on
+Computer Vision (ICCV), pages 14072–14082, October 2021.
+[8] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. In
+H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin, editors, Advances in
+Neural Information Processing Systems, volume 33, pages 6840–6851. Curran Associates,
+Inc., 2020. URL https://proceedings.neurips.cc/paper_files/paper/2020/file/
+4c5bcfec8584af0d967f1ab10179ca4b-Paper.pdf.
+[9] Heewoo Jun and Alex Nichol. Shap-e: Generating conditional 3d implicit functions. arXiv
+preprint arXiv:2305.02463, 2023.
+[10] Hyeongju Kim, Hyeonseung Lee, Woo Hyun Kang, Joun Yeop Lee, and Nam Soo Kim. Softflow:
+Probabilistic framework for normalizing flow on manifolds. In Advances in Neural Information
+Processing Systems, volume 33, pages 17865–17876, 2020.
+11
+
+
+[11] Jinwoo Kim, Jaehoon Yoo, Juho Lee, and Seunghoon Hong. Setvae: Learning hierarchical
+composition for generative modeling of set-structured data. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition, pages 15168–15177, 2021.
+[12] Roman Klokov, Edmond Boyer, and Jakob Verbeek. Discrete point flow networks for efficient
+point cloud generation. In ECCV 2020, page 694–710, Berlin, Heidelberg, 2020. Springer-
+Verlag. ISBN 978-3-030-58591-4. doi: 10.1007/978-3-030-58592-1_41.
+[13] Dingkang Liang, Xin Zhou, Wei Xu, Xingkui Zhu, Zhikang Zou, Xiaoqing Ye, Xiao Tan, and
+Xiang Bai. Pointmamba: A simple state space model for point cloud analysis. In Advances in
+Neural Information Processing Systems, 2024.
+[14] Or Litany, Alexander M. Bronstein, Michael M. Bronstein, and Ameesh Makadia. Deformable
+shape completion with graph convolutional autoencoders. 2018 IEEE/CVF Conference on
+Computer Vision and Pattern Recognition, pages 1886–1895, 2017.
+[15] Zhen Liu, Yao Feng, Michael J. Black, Derek Nowrouzezahrai, Liam Paull, and Weiyang Liu.
+Meshdiffusion: Score-based generative 3d mesh modeling. In The Eleventh International
+Conference on Learning Representations, 2023.
+[16] Shitong Luo and Wei Hu. Diffusion probabilistic models for 3d point cloud generation. In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pages 2837–2845, 2021.
+[17] Benoit B Mandelbrot. Multifractals and 1/ƒ noise: Wild self-affinity in physics (1963–1976).
+Springer, 2013.
+[18] Shentong Mo, Enze Xie, Ruihang Chu, Lanqing Hong, Matthias Niessner, and Zhenguo Li.
+Dit-3d: Exploring plain diffusion transformers for 3d shape generation. In Advances in Neural
+Information Processing Systems, 2023.
+[19] Bongki Moon, H. V. Jagadish, Christos Faloutsos, and Joel H. Saltz. Analysis of the clustering
+properties of the hilbert space-filling curve. IEEE Transactions on Knowledge and Data
+Engineering, 13(1):124–141, 2001.
+[20] Alex Nichol, Heewoo Jun, Prafulla Dhariwal, Pamela Mishkin, and Mark Chen. Point-e: A
+system for generating 3d point clouds from complex prompts. arXiv preprint arXiv:2212.08751,
+2022.
+[21] Athrva Atul Pandhare.
+Point2point: A framework for efficient deep learning on hilbert
+sorted point clouds with applications in spatio-temporal occupancy prediction. arXiv preprint
+arXiv:2306.16306, 2023.
+[22] Hadrien Salat, Roberto Murcio, and Elsa Arcaute. Multifractal methodology. Physica A:
+Statistical Mechanics and its Applications, 473:467–487, 2017. ISSN 0378-4371. doi: https:
+//doi.org/10.1016/j.physa.2017.01.041. URL https://www.sciencedirect.com/science/
+article/pii/S0378437117300341.
+[23] Peng-Shuai Wang. Octformer: Octree-based transformers for 3d point clouds. ACM Transac-
+tions on Graphics, 42(4):1–11, 2023. doi: 10.1145/3592131.
+[24] Xiaoyang Wu, Li Jiang, Peng-Shuai Wang, Zhijian Liu, Xihui Liu, Yu Qiao, Wanli Ouyang,
+Tong He, and Hengshuang Zhao. Point transformer v3: Simpler faster stronger. In Proceedings
+of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages
+4840–4851, 2024.
+[25] Qun-Ce Xu, Tai-Jiang Mu, and Yong-Liang Yang. A survey of deep learning-based 3d shape
+generation. Computational Visual Media, 9:407–442, 2023. doi: 10.1007/s41095-022-0321-5.
+[26] Guandao Yang, Xun Huang, Zekun Hao, Ming-Yu Liu, Serge Belongie, and Bharath Hariharan.
+Pointflow: 3d point cloud generation with continuous normalizing flows. In Proceedings of the
+IEEE/CVF International Conference on Computer Vision (ICCV), pages 4541–4550, 2019.
+12
+
+
+[27] Shangjian Yin, Zehao Zhao, Kavosh Asadi, Rui Liu, Yuchen Lu, Shike Mei, Hang Cui, Luke
+Simon, Zhouxing Shi, and Hamed Firooz. Recursive self-improvement via on-policy distillation
+for reasoning, 2026. URL https://arxiv.org/abs/2609.30652.
+[28] Chang-Wei Yueh, Andy Zhao, Ashutosh Nayyar, and Rahul Jain. Bayesian learning in episodic
+zero-sum games, 2026. URL https://arxiv.org/abs/2603.20604.
+[29] Xiaohui Zeng, Arash Vahdat, Francis Williams, Zan Gojcic, Or Litany, Sanja Fidler, and Karsten
+Kreis. Lion: Latent point diffusion models for 3d shape generation. In Advances in Neural
+Information Processing Systems, 2022.
+[30] Xiaole Zhang, Vijay Gupta, and Paul Bogdan. A sampling complexity-aware framework for
+discrete-time fractional-order dynamical system identification, 2025. URL https://arxiv.
+org/abs/2501.17499.
+[31] Xiaole Zhang, Ziyi Zhang, Zehao Zhao, Stephen Tu, Guannan Qu, Yorie Nakahira, and Paul
+Bogdan. Learning fractional-order dynamics from a single trajectory, 2026. URL https:
+//arxiv.org/abs/2609.18127.
+[32] Linqi Zhou, Yilun Du, and Jiajun Wu. 3d shape generation and completion through point-
+voxel diffusion. 2021 IEEE/CVF International Conference on Computer Vision (ICCV), pages
+5806–5815, 2021.
+13
+
+
+A
+Additional results
+Table 3: Results on the additional Lamp and Vessel categories. All metric values are reported as
+percentages. Ours-VAE uses VAE-generated HMC conditions, while Ours-Bank uses bank-sampled
+HMC conditions. For 1-NNA, values closer to 50 are better; for COV, higher values are better. The
+best entries in each column are shown in bold, including ties. Green superscripts report improvements
+relative to TopoDiT-3D in percentage points: reductions in absolute distance from 50 for 1-NNA, and
+increases for COV.
+Method
+Lamp
+Vessel
+1-NNA (50 optimal)
+COV (↑)
+1-NNA (50 optimal)
+COV (↑)
+CD
+EMD
+CD
+EMD
+CD
+EMD
+CD
+EMD
+TopoDiT-3D
+58.83
+57.75
+50.43
+49.13
+72.21
+78.96
+32.81
+28.12
+Ours-VAE
+49.28+8.11 48.78+6.53 55.75+5.32 56.61+7.48 56.08+16.13 51.74+27.22 49.31+16.50 53.12+25.00
+Ours-Bank
+47.49+6.32 48.78+6.53 55.60+5.17 58.19+9.06 56.51+15.70 49.05+28.01 54.17+21.36 58.33+30.21
+We further evaluate HilbertGen-3D on the Lamp and Vessel categories in Table 3, reporting both
+VAE-generated and bank-sampled HMC conditions. Both variants outperform TopoDiT-3D [6] on all
+four metrics in both categories. As in the main comparison, improvements in 1-NNA are measured
+by reductions in the absolute distance from 50, rather than decreases in the raw accuracy.
+For Lamp, Ours-VAE achieves the best 1-NNA-CD of 49.28, reducing the distance from 50 by 8.11
+percentage points relative to TopoDiT-3D. Both variants attain a 1-NNA-EMD of 48.78, corresponding
+to an improvement of 6.53 percentage points. Ours-VAE also obtains the highest COV-CD of 55.75,
+compared with 55.60 for Ours-Bank and 50.43 for TopoDiT-3D. Ours-Bank instead achieves the
+highest COV-EMD of 58.19, exceeding TopoDiT-3D by 9.06 percentage points and Ours-VAE by
+1.58 percentage points. Thus, the VAE variant provides better CD-based 1-NNA and slightly higher
+CD-based coverage, while the bank variant provides higher EMD-based coverage.
+For Vessel, Ours-VAE achieves the best 1-NNA-CD of 56.08, reducing the distance from 50 by 16.13
+percentage points relative to TopoDiT-3D. Ours-Bank achieves the best 1-NNA-EMD of 49.05, whose
+distance from 50 is only 0.95, compared with 1.74 for Ours-VAE. These correspond to improvements
+of 28.01 and 27.22 percentage points, respectively, over TopoDiT-3D. Both variants also substantially
+increase coverage. Ours-Bank achieves the highest COV-CD and COV-EMD of 54.17 and 58.33,
+improving upon TopoDiT-3D by 21.36 and 30.21 percentage points. Ours-VAE reaches 49.31 and
+53.12, respectively, which remain above the baseline but below the bank-conditioned results.
+Overall, these additional-category experiments support the effectiveness of HMC conditioning with
+either a learned condition prior or a training-set condition bank. The VAE variant achieves better
+CD-based 1-NNA on both categories, while the bank variant achieves higher EMD-based coverage
+on both and higher CD-based coverage on Vessel. Neither conditioning source is uniformly superior
+across the reported metrics. The full visualizations of these experiments appear in Figure 8 and
+Figure 7.
+B
+Full Parameter Sensitivity Results
+We provide the complete sensitivity results in Table 4. All experiments are conducted on the Airplane
+category with a batch size of 128 and training for 2000 epochs.
+Resampler depth.
+Resampler depth has the largest observed effect among the parameter ranges
+considered. Depth 4 achieves the best 1-NNA-CD of 55.57 and the highest COV-CD and COV-EMD
+of 60.98 and 59.27 within this group. Compared with depth 3, it reduces the distance of 1-NNA-
+CD from 50 by 3.88 percentage points and increases COV-CD and COV-EMD by 4.21 and 1.29
+percentage points. However, depth 3 achieves the closest 1-NNA-EMD to 50, at 53.09, compared
+with 53.66 for depth 4. The weaker results at depth 2 further show that performance does not improve
+monotonically with depth. These observations support depth 4 for the coverage and CD-based criteria
+in this experiment, while retaining an EMD-based 1-NNA advantage for depth 3.
+MLP ratio.
+An MLP ratio of 3 achieves the best 1-NNA-CD, 1-NNA-EMD, and COV-EMD within
+its group, at 55.46, 52.27, and 59.58, respectively. Relative to the ratio-4 baseline, the distances of
+14
+
+
+Table 4: Parameter sensitivity analysis on the Airplane category (mean over four evaluation seeds: 0,
+11, 12, 13). All runs use the normalized training recipe with a batch size of 128 for 2000 epochs;
+conditions are sampled from the train-split HMC bank (Ours-Bank) and scored under the validation
+protocol with N = 664 samples, exact EMD, and no size correction. The baseline setting of each
+group is marked with †. 1-NNA is better when closer to 50, while higher COV is better. The best
+entry in each column within a group is shown in bold, including ties. All values are multiplied by
+100 for readability.
+Parameter
+Setting
+1-NNA (50 optimal)
+COV(↑)
+CD
+EMD
+CD
+EMD
+Resampler depth
+1
+63.67
+55.75
+55.35
+56.88
+2
+66.03
+64.99
+48.58
+46.10
+3
+59.45
+53.09
+56.77
+57.98
+4†
+55.57
+53.66
+60.98
+59.27
+MLP ratio
+2.5
+55.96
+53.01
+61.02
+59.02
+3
+55.46
+52.27
+61.17
+59.58
+3.5
+56.32
+53.53
+61.19
+59.35
+4†
+55.57
+53.66
+60.98
+59.27
+Bottleneck latents
+32
+56.72
+55.40
+60.98
+58.81
+64
+56.57
+52.43
+59.19
+58.65
+96
+55.58
+51.95
+60.75
+59.48
+128†
+55.57
+53.66
+60.98
+59.27
+Scale set
+{3,4}
+56.15
+52.52
+60.52
+59.10
+{3,5}
+56.04
+51.91
+60.33
+58.79
+{3,4,5}†
+55.57
+53.66
+60.98
+59.27
+q orders
+{1}
+56.08
+53.11
+61.31
+59.17
+{1,2}
+57.80
+55.59
+61.17
+57.77
+{1,2,3}†
+55.57
+53.66
+60.98
+59.27
+{1,2,3,4}
+56.99
+52.65
+59.31
+58.29
+the two 1-NNA metrics from 50 decrease by 0.11 and 1.39 percentage points, while COV-CD and
+COV-EMD increase by 0.19 and 0.31 percentage points. Ratio 3.5 yields the highest COV-CD of
+61.19, exceeding ratio 3 by only 0.02 percentage points. Thus, the largest tested MLP ratio is not
+favored by the reported means: ratio 3 improves every metric relative to the baseline and is close
+to the group maximum in the remaining coverage comparison. We have chosen MLP ratio of 4 in
+the hope that smaller step-size, larger batch size, and larger epochs would benefit a slightly more
+complicated model.
+Number of bottleneck latents.
+Increasing the bottleneck length does not yield uniform gains.
+The baseline with 128 latents attains the best 1-NNA-CD of 55.57, but the result with 96 latents is
+nearly identical at 55.58. In contrast, 96 latents achieves the best 1-NNA-EMD and COV-EMD, at
+51.95 and 59.48. Compared with 128 latents, this reduces the EMD-based 1-NNA distance from
+50 by 1.71 percentage points and increases COV-EMD by 0.21 percentage points, while COV-CD
+decreases by 0.23 percentage points. The 32- and 128-latent settings tie for the highest COV-CD at
+the reported precision, although the 32-latent setting has worse 1-NNA under both distances. The
+results therefore show a trade-off between bottleneck length and the different evaluation criteria,
+rather than a consistent advantage for the largest bottleneck.
+Scale selection.
+The full scale set S = {3, 4, 5} achieves the best 1-NNA-CD and both coverage
+metrics within its group. However, the two-scale alternatives yield better 1-NNA-EMD, with {3, 5}
+attaining the closest value to 50 at 51.91. Compared with {3, 5}, the full scale set improves the
+CD-based 1-NNA distance by 0.47 percentage points and increases COV-CD and COV-EMD by
+0.65 and 0.48 percentage points, but worsens the EMD-based 1-NNA distance by 1.75 percentage
+points. Accordingly, retaining all three scales favors coverage and CD-based distribution matching
+in this experiment, but does not improve every measure of distribution matching. Since every
+15
+
+
+Table 5: Exploration studies on multi-class training. All models are trained on the listed classes and
+tested on the chair category. HilbertGen-3D (VAE) samples chair HMC conditions from the chair
+condition VAE, and HilbertGen-3D (Bank) draws them from the chair training bank. For 1-NNA,
+values closer to 50 are better; for COV, higher values are better. DiT-3D-S/4 and TopoDiT-3D-S/4
+results are quoted from TopoDiT-3D.
+Model
+Train
+Test
+1-NNA(50 optimal)
+COV(↑)
+Class
+Class
+CD
+EMD
+CD
+EMD
+DiT-3D-S/4
+Chair
+Chair
+51.99
+49.94
+54.76
+57.37
+Chair,Car
+Chair
+69.87
+65.71
+45.28
+52.20
+Chair,Car,Airplane
+Chair
+75.80
+74.72
+41.46
+47.89
+TopoDiT-3D-S/4
+Chair
+Chair
+49.84
+46.46
+58.28
+60.69
+Chair,Car
+Chair
+60.46
+60.31
+56.17
+56.92
+Chair,Car,Airplane
+Chair
+68.75
+61.21
+50.90
+54.96
+HilbertGen-3D (VAE)-S/4
+Chair
+Chair
+50.25
+48.42
+54.32
+54.83
+Chair,Car
+Chair
+50.03
+49.64
+55.59
+54.42
+Chair,Car,Airplane
+Chair
+51.93
+48.35
+54.22
+53.96
+HilbertGen-3D (Bank)-S/4
+Chair
+Chair
+49.01
+47.36
+57.62
+57.98
+Chair,Car
+Chair
+48.81
+47.79
+57.93
+58.59
+Chair,Car,Airplane
+Chair
+49.36
+47.64
+57.72
+58.03
+tested configuration contains multiple scales, this comparison does not establish an advantage over
+single-scale conditioning.
+Moment-order selection.
+The baseline moment set Q = {1, 2, 3} achieves the best 1-NNA-CD
+and COV-EMD within its group, at 55.57 and 59.27. Using only Q = {1} gives the highest COV-
+CD of 61.31 and also yields a 1-NNA-EMD value closer to 50 than the baseline, at 53.11. The
+set {1, 2, 3, 4} achieves the best 1-NNA-EMD of 52.65, improving its distance from 50 by 1.01
+percentage points relative to the baseline, but reducing COV-CD and COV-EMD by 1.67 and 0.98
+percentage points. Adding moment orders therefore does not produce a monotonic improvement.
+The {1} configuration retains the information-dimension descriptor; it should not be interpreted as
+removing the global HMC descriptor altogether.
+Interpretation and scope.
+The baseline provides a common reference, but the table does not
+identify it as uniformly optimal. In particular, MLP ratio 3 improves all four reported means relative
+to that reference. The groupwise comparisons also do not establish the performance of a configuration
+that combines the individually favorable settings, since interactions between parameter choices are
+not evaluated by these comparisons.
+These results concern Ours-Bank on Airplane under the 2000-epoch training recipe. They do not
+establish the same parameter preferences for Ours-VAE, other categories, or longer training schedules.
+The four seeds are evaluation seeds; the table does not quantify variation across independently trained
+models. Furthermore, without seedwise dispersion estimates, small differences such as 0.01 in
+1-NNA-CD between 96 and 128 latents, or 0.02 in COV-CD between MLP ratios 3 and 3.5, should
+be interpreted as numerical rankings rather than evidence of statistically significant performance
+differences.
+C
+HMC-DiT3D for multi-category generation.
+To investigate how our model behaves when a single network has to serve several categories, we train
+HMC-DiT3D-S/4 on {Chair}, {Chair, Car}, and {Chair, Car, Airplane}, respectively, and test every
+model on the chair category, with the results shown in Table 5. For both baselines, adding categories
+to the training set clearly hurts chair generation: DiT-3D-S/4 drops from 54.76 to 41.46 in COV-CD
+and its 1-NNA-CD rises from 51.99 to 75.80, while TopoDiT-3D-S/4 drops from 58.28 to 50.90
+in COV-CD and its 1-NNA-CD rises from 49.84 to 68.75, since the class label is the only signal
+16
+
+
+Table 6: Computational cost comparison under the S/4 configuration. Sampling time is reported in
+seconds per iteration. Training memory denotes the peak GPU memory usage during training.
+Method
+Model Size
+Sampling Time (s/it) ↓
+Training Memory (GB) ↓
+DiT-3D
+S/4
+8.50
+78.4
+TopoDiT-3D
+S/4
+8.20
+51.2
+Ours
+S/4
+2.60
+51.0
+Table 7: Training time comparison on the chair category under the S/4 configuration. Epoch time is
+reported in seconds per epoch.
+Method
+Model Size
+Epoch Time (s/epoch) ↓
+Relative Speedup
+Topodit
+S/4
+11.8
+1.00×
+Ours
+S/4
+2.3
+5.13×
+that tells these models which category to produce. In contrast, HMC-DiT3D is comparatively stable
+in multi-class training, particularly with bank-sampled conditions. With bank-sampled conditions,
+1-NNA-CD stays within 48.81–49.36 and COV-CD within 57.62–57.93 across the three training sets
+without a clear upward or downward trend. For VAE-sampled conditions, we see a slight downward
+trend: 1-NNA-CD increases from 50.25 to 51.93, while COV-EMD decreases from 54.83 to 53.96.
+However, both methods are still significantly more robust than both benchmarks. We attribute this
+robustness to the HMC conditioning: the multi-scale Hilbert measure sequence of a chair describes
+its geometry explicitly, so the denoiser does not need to infer the category from the label alone, and
+the additional categories do not dilute the chair-specific guidance.
+D
+Computational Cost Analysis
+We further evaluate the computational cost of our method and compare it with representative diffusion-
+transformer baselines, including DiT-3D and TopoDiT-3D. Since all our experiments are conducted
+under the S/4 configuration, we focus on computational efficiency under this setting rather than
+performing an additional model-scale sweep. Following prior work, we report the sampling time in
+seconds per iteration (s/it), and additionally measure the peak GPU memory consumption during
+training. As shown in Table 6, our method achieves a sampling speed of 2.60 s/it, which is shorter
+than the reported S/4 inference time of both DiT-3D and TopoDiT-3D. Meanwhile, our method also
+uses less training memory than both baselines. These results indicate that the proposed design does
+not introduce heavy computational overhead; instead, it maintains efficient inference while reducing
+the practical memory burden during training.
+We also compare the training throughput on the chair category, which is the main category used in
+our controlled analysis. As shown in Table 7, our method requires 2.3 seconds per epoch, while the
+baseline setting requires 11.8 seconds per epoch. This corresponds to a 5.13× training speedup, or
+equivalently a 80.5% reduction in per-epoch training time. Together with the lower peak memory
+usage in Table 6, this shows that our method improves computational efficiency not only during
+sampling, but also during training.
+E
+Result Visualization
+17
+
+
+Figure 4: HilbertGen-3d samples on Chair.
+Figure 5: HilbertGen-3d samples on airplane.
+18
+
+
+Figure 6: HilbertGen-3d samples on car.
+Figure 7: HilbertGen-3d samples on vessel.
+19
+
+
+Figure 8: HilbertGen-3d samples on lamp.
+20
+
+
+F
+Qualitative visualizations of denoising process
+Figure 9: Qualitative visualizations of denoising process for chair generation.
+Figure 10: Qualitative visualizations of denoising process for car generation.
+21
+
+
+Figure 11: Qualitative visualizations of denoising process for airplane generation.
+22
