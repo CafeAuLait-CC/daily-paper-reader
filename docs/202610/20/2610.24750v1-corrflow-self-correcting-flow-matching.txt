@@ -1,0 +1,3642 @@
+Preprint
+CORRFLOW: SELF-CORRECTING FLOW MATCHING
+Hangwei Zhang1, Nathan Rouill´e1,2, Chuanxia Zheng1
+1PVG, Nanyang Technological University
+2T´el´ecom Paris, Institut Polytechnique de Paris
+ABSTRACT
+Flow-matching models generate samples through iterative velocity predictions, but
+typically do not revisit these predictions using the intermediate representations that
+produced them. We introduce CORRFLOW, a self-correcting flow-matching frame-
+work that reuses this information through a lightweight refiner. Under rectified-flow
+interpolation, the error of the one-step clean prediction equals the realized velocity
+residual scaled by the noise level. Motivated by this identity, the refiner learns
+to predict residual corrections from the base model’s clean prediction, condition-
+ing, noise level and hidden states from the same forward pass. The correction
+is added to the base velocity before each sampling update, so subsequent predic-
+tions are made from the corrected state. This requires no additional base-model
+evaluations and only one lightweight refiner evaluation per step. Our theory gives
+conditions under which feature reuse outperforms raw-input affine predictors, re-
+finer training outperforms continued base-model training at matched compute,
+and deployed correction lowers velocity error under its own sampler law. Ex-
+periments on class-conditional image generation, text-to-video generation and
+image-to-video generation show consistent improvements over the corresponding
+base models, including gains in visual quality and physical consistency. Project
+Page: https://fogradio.github.io/corrflow-project.
+1
+INTRODUCTION
+Flow-matching models (Lipman et al., 2023; Liu et al., 2023) generate samples by learning a velocity
+field that transports noise toward the data distribution. Their simple regression objective has shown
+strong results in image (Esser et al., 2024), video (Wan et al., 2025), 3D (Xiang et al., 2025) and
+robotic action (Black et al., 2024). Yet generated content still exhibits structural errors, semantic
+mismatches and physical inconsistencies (Zheng et al., 2025; Sun et al., 2025; Motamed et al.,
+2026; Zhang et al., 2025a). Recent approaches improve generation quality through large-scale
+training (Esser et al., 2024), representation alignment (Yu et al., 2025), self-supervised feature
+learning (Chefer et al., 2026) and reward-based optimization (Yuan et al., 2026). They focus on
+improving the model’s ability by learning only from the final answer, which is limited. This limitation
+can be attributed, in part, to the fact that the model must predict a single velocity to determine the
+next sample state, without any opportunity to review and revise its own predictions.
+We therefore exploit the property that learning should be “refine-in-loop”, in the sense that if a student
+makes a mistake, e.g., in an examination, they should revisit the answer they wrote, the question
+they were asked, and the reasoning they followed. By examining these pieces of context together,
+the student can trace a mistake and determine how to revise it, rather than struggling with a final
+answer (Madaan et al., 2023; Zou et al., 2025). Inspired by the success of self-refinement in large
+language models (LLMs) (Madaan et al., 2023; Shinn et al., 2023), we apply this principle to flow
+matching. A flow-based generator already computes analogous information at each sampling step: an
+estimate of the clean sample→answer, the generation conditions→question and intermediate hidden
+states→internal state. The challenge is to define a correction target that can be supervised during
+training and predicted from these quantities without access to a clean reference during generation.
+In this paper, we introduce CORRFLOW, a self-correcting flow-matching framework that attaches a
+lightweight refiner to the base generator. Our core insight is that the model’s one-step clean prediction
+provides a concrete object for the review, with a direct mathematical connection to the correction we
+seek (Chen et al., 2022). Under rectified-flow interpolation, the error between this prediction and the
+1
+arXiv:2610.24750v1  [cs.CV]  17 Oct 2026
+
+
+Preprint
+Real reference image
+Clean reference
+Clean-data surface (schematic)
+Imperfect clean prediction
+Sampling state
+Noise ε
+Base prediction
+Refiner correction
+Discrepancy
+Refined clean prediction
+Figure 1: CORRFLOW learns from its own imperfect predictions. The base model’s clean
+prediction (blue) deviates from the clean reference (orange arrow). The resulting correction shifts
+the prediction closer to the clean reference by −σκˆr (green arrow), where σ is the noise level and κ
+controls the correction strength. The initial noise is obtained by adding Gaussian noise to the clean
+reference.
+clean sample is exactly realized velocity residual (eq. (4)) scaled by the noise level. This identity
+connects a mistake in the predicted sample to a correction in the velocity field. We first theoretically
+prove the relationship between the realized velocity residual and the clean prediction (section 3.1).
+In practice, the refiner is a transformer that predicts the velocity residual from three sources of
+information: i) the current answer, given by the one-step clean prediction, ii) the circumstances,
+given by the generation condition and noise level, and iii) the internal state, given by hidden states
+from the base model (Epstein et al., 2023). During joint training, clean samples and their sampled
+noise provide residual targets for the refiner, while the base model and refiner optimize separate
+objectives. During generation, the predicted residual adjusts the velocity used by the sampler before
+each state update. All refiner inputs reuse the same base-model forward pass, and each correction
+requires one additional refiner evaluation.
+We empirically apply CORRFLOW to a wide range of applications, including image generation,
+text-to-video generation and image-to-video generation. Figure 1 illustrates how this review shifts
+the model’s clean prediction through a correction of its velocity on image generation. We find that
+training a refiner improves the base model’s performance on aesthetic quality and physics consistency
+of generated content. The strong performance across multiple tasks and datasets shows that velocity
+residual correction is generic. Our contributions are summarized as follows:
+• We introduce CORRFLOW, a self-correcting flow-matching framework that learns velocity
+residuals from the base model’s current prediction, and applies the resulting corrections
+within the sampling loop.
+• We theoretically establish conditions under which reusing base-model representations out-
+performs raw-input affine predictors, refiner training achieves greater residual-risk reduction
+than continued base-model training at matched compute, and deployed correction lowers
+velocity error under its own sampler-induced state law.
+• We evaluate CORRFLOW on image and video generation benchmarks, demonstrating im-
+provements in visual quality and physics consistency.
+2
+RELATED WORKS
+Improving Flow-Matching Generative Models. Many approaches have been proposed to improve
+flow-matching generative models. For representation learning, REPA (Yu et al., 2025) aligns hidden
+states with pretrained visual features, while iREPA (Singh et al., 2025) emphasizes their spatial
+structure. VA-VAE (Yao et al., 2025) aligns VAE latents with visual features, REPA-E (Leng et al.,
+2025) jointly tunes the VAE and diffusion transformer through alignment and RAE (Zheng et al.,
+2026a) generates directly in pretrained representation spaces. Other methods reuse features available
+2
+
+
+Preprint
+within the generative model: SRA and LayerSync (Jiang et al., 2026; Haghighi et al., 2026) use
+deeper features to guide shallower representations, and SRA2 (Wang et al., 2026a) draws on existing
+VAE features. Reward-based methods Flow-GRPO and DanceGRPO (Liu et al., 2025; Xue et al.,
+2025c) use stochastic sampling for online reinforcement learning, while AWM (Xue et al., 2025b)
+and DiffusionNFT (Zheng et al., 2026c) incorporate rewards into flow-matching objectives through
+advantage weighting and paired generations, respectively. CORRFLOW takes a complementary
+approach: it trains a lightweight added-on refiner to predict velocity residuals from the base model’s
+current prediction and hidden states. These residuals directly correct the velocity within the sampling
+loop, without requiring external representation teachers or reward models for refiner training.
+Physics-Aware Video Generation. Several recent works have explored physics-aware video gen-
+eration with flow-matching models. WISA (Wang et al., 2025), PhysVid (Pathak et al., 2026)
+and PhyParam (Li et al., 2026) inject hierarchical, temporally local, or instance-level physical
+conditions. PhysGen (Liu et al., 2024) and PSIVG (Foo et al., 2026) use simulated dynamics as
+guidance. Representation-based methods transfer or jointly learn motion, geometry, semantics and
+latent dynamics, including VideoREPA (Zhang et al., 2025c), PhysAlign (Xiong et al., 2026), Video-
+JAM (Chefer et al., 2025), PHANTOM (Shen et al., 2026), DreamWorld (Tan et al., 2026) and
+MMPhysVideo (Lin et al., 2026). Other approaches use language or feedback, with PhyT2V (Xue
+et al., 2025a) and DiffPhy (Zhang et al., 2025b) introducing inferred physical rules, PhysMaster (Ji
+et al., 2025) and PhyGDPO (Cai et al., 2025) applying pairwise or groupwise preference learning and
+WMReward (Yuan et al., 2026) steering denoising trajectories with a latent-world-model reward at
+inference. In contrast, CORRFLOW learns to correct the base model’s own velocity residuals from its
+predictions and hidden states, without explicit physical parameters or external physics evaluators.
+3
+CORRFLOW
+(a) Step-wise correction
+(b) Lightweight refiner
+Base DiT
+Clean prediction
+Refiner
+Sampler
+Noisy
+sample
+Video
+Self-Attn
+Cross-Attn
+Head
+Fusion
+Projection
+Context
+Figure 2: CORRFLOW overview for video generation. (a) At noise level σ, the refiner predicts
+a residual ˆr from the base DiT’s clean prediction ˆx0 = xσ −σvθ, selected hidden states hL,
+conditioning tokens c and noise-level embedding eσ. Sampling corrects the base velocity as vκ =
+vθ + κˆr with strength κ. (b) The refiner alternates self-attention over clean-prediction tokens with
+cross-attention to projected conditioning and fused hidden-state tokens. Noise conditioning modulates
+its blocks and sample-space output head, while 3D rotary embeddings encode video token coordinates.
+Frames show outputs and cubes denote sample tensors.
+CORRFLOW augments a base flow-matching model fbase with a lightweight refiner that corrects its
+velocity vθ at each sampling step. We use bold upright symbols for samples, bold italic symbols
+for other vectors and tensors and ordinary symbols for scalars. The refiner takes the one-step clean
+prediction ˆx0 = xσ −σvθ, hidden states {hℓ}ℓ∈L, conditioning c and noise-level embedding eσ to
+predict a velocity residual:
+ˆr = frefiner(ˆx0, {hℓ}ℓ∈L, c, eσ),
+vκ = vθ + κˆr,
+(1)
+where κ controls the correction strength.
+3.1
+PRELIMINARIES: FLOW MATCHING AND THE RESIDUAL IT LEAVES BEHIND
+Let x0 ∈RD be the continuous representation of a clean data sample, with encoded conditioning
+c, such as class or text embeddings. The representation uses the sample’s native coordinates or a
+3
+
+
+Preprint
+learned feature space, and D denotes its dimension. Let ε ∼N(0, ID) be independent noise in the
+same space. For a noise level σ ∈[0, 1] the rectified-flow interpolant and its derivative are
+xσ = (1 −σ) x0 + σ ε,
+dxσ
+dσ = ε −x0.
+(2)
+The target flow velocity is v = ε −x0, and the Bayes velocity field is v⋆(x, σ, c) = E[ ε −x0 |
+xσ = x, c ]. The base diffusion model fbase is trained by
+Lbase(θ) = Ex0,c,ε,σ w(σ)
+vθ(xσ, σ, c) −v
+2,
+(3)
+with w(σ) the noise-level weight of the base recipe, where vθ is the output of fbase, parameterized by
+θ. Generation integrates the learned velocity field dx/dσ = vθ(x, σ, c) from σ = 1 to σ = 0 with
+explicit Euler steps on a shifted grid. The base model approximates the Bayes velocity field, while
+each sampled data–noise pair provides a realized target velocity. We call the difference between this
+target and the base prediction the realized velocity residual,
+r = v −vθ(xσ, σ, c) = (ε −x0) −vθ(xσ, σ, c).
+(4)
+This is the mistake we want the refiner frefiner to predict. The base model’s one-step clean prediction
+is available at generation time. Its discrepancy from the clean target is proportional to the realized
+velocity residual, as the following identity shows.
+Clean-prediction identity.
+Taking a single Euler step from xσ all the way to σ = 0 gives the base
+model’s one-step clean prediction, its best current guess at the finished sample,
+ˆx0(xσ, σ, c) = xσ −σ vθ(xσ, σ, c).
+(5)
+Substituting Equation 2 into Equation 5 and using Equation 4,
+ˆx0 −x0 = σ
+ (ε −x0) −vθ
+
+= σ r,
+equivalently
+r = ˆx0 −x0
+σ
+,
+σ > 0.
+(6)
+This identity holds for any predictor vθ and shows that the clean-prediction error is the velocity
+residual r scaled by the noise level σ. It therefore motivates using ˆx0 as the refiner’s primary input,
+expressing the prediction in the clean data space. Although ˆx0 is available at every sampling step, its
+error depends on the unknown clean target. The refiner thus learns to estimate the residual from this
+prediction ˆx0 and the accompanying features hL.
+3.2
+REFINER INPUTS
+Focusing on the current answer in isolation is insufficient, because the same prediction may be correct
+under one condition and a mistake under another, or an artifact that must be repaired at high noise
+may be a legitimate detail at low noise. Therefore, the refiner is given three views of the moment the
+mistake was made:
+The current answer. The one-step clean prediction ˆx0 of Equation 5, tokenized according to the
+sample structure to form the refiner’s trunk tokens. This is the base model’s current estimate
+of the clean sample.
+The circumstances. The conditioning tokens c that encode the task requirements, and the noise
+level σ, which identifies the current position along the denoising trajectory.
+The internal state. The base model’s hidden states {hℓ}ℓ∈L, where L indexes transformer blocks
+selected uniformly across the model’s depth. These readouts capture different stages of the
+computation that produced vθ, and they record how the prediction was assembled rather
+than only what it was.
+Formally, let W
+=
+(xσ, σ, c) denote the base model’s query state, and let Z(W)
+=
+(ˆx0, {hℓ}ℓ∈L, σ, c) be the refiner’s information. The refiner is a network frefiner with parameter
+vector ϕ, written as gϕ, and is trained to predict the residual, ˆr
+=
+gϕ(Z(W))
+≈
+r. Every
+component of Z is from the base model’s conditioning and its existing forward pass. Constructing
+them for the refiner requires no additional base-model evaluation and no access to the clean target at
+generation time.
+4
+
+
+Preprint
+3.3
+REFINER ARCHITECTURE
+CORRFLOW is designed to be a lightweight add-on transformer to a base flow-matching model,
+which estimates the realized velocity residual r. It has its own parameters, totaling approximately
+10% of the base model’s parameter count. It carries the aforementioned information as inputs.
+Token embeddings. Given the clean prediction ˆx0 (eq. (5)), the refiner frefiner first tokenizes it
+according to the sample structure into N tokens and projects them to the refiner width d, obtaining the
+answer tokens tans ∈RN×d. Our image and video implementations use patches for this tokenization.
+To keep the refiner and base model on a common clock, the refiner also consumes the base model’s
+own noise-level embedding eσ at the current noise level σ.
+We also construct the context tokens tctx ∈R(Nc+N)×d from the conditioning c and the hidden states
+{hℓ}ℓ∈L, where Nc is the number of conditioning tokens. In particular, a linear projection maps c
+to the conditioning tokens tc ∈RNc×d. At each token position, we concatenate the hidden states
+from the selected layers along the feature dimension and project them to the refiner width d using a
+multilayer perceptron with a GELU activation,
+tfuse = MLP
+
+concatℓ∈L hℓ
+
+∈RN×d.
+(7)
+This fusion across layers at fixed token positions is a deliberate choice. It keeps the hidden-state
+tokens at N tokens instead of |L|·N, so attention cost does not grow with the number of readouts, and
+it lets the refiner learn which depth to trust at each location rather than committing to a fixed average
+across depths. To combine the two context tokens for the refiner’s cross-attention, we concatenate
+them along the token axis and apply layer normalization,
+tctx = LayerNorm
+
+tc + scond , tfuse + sstate
+
+∈R(Nc+N)×d,
+(8)
+where scond and sstate are learned segment embeddings that mark the two sources.
+Alternating-Attention blocks. We build our lightweight add-on transformer with a stack of B
+Alternating Attention Blocks (AABs), making the refiner focus on the current answer while consulting
+the context in an alternate manner. Specifically, even-indexed blocks apply self-attention to the
+answer tokens tans, using rotary position embeddings defined on the token coordinates of the sample
+representation. Our image and video implementations use two-dimensional spatial coordinates
+and three-dimensional spatiotemporal coordinates, respectively. Odd-indexed blocks apply cross-
+attention to the context tokens tctx, which lets each token incorporate the task requirements and
+the base model’s intermediate representations. Each attention layer is followed by a feed-forward
+network. Following the base model’s adaptive-normalization design, each block uses shift, scale and
+gate parameters derived from the noise-level embedding eσ. Finally, a modulated linear head projects
+the updated answer tokens to residual tokens, which are reassembled into the sample’s original shape.
+3.4
+TRAINING AND INFERENCE
+Objective.
+We train the base model fbase and the refiner frefiner on the same minibatch using separate
+objectives and a single backward pass. In particular, we define the refiner’s loss by a combination of
+a magnitude term and a direction term,
+Lref(ϕ) = E
+h ˆr −sg[r]
+2 + λ
+ 1 −cos
+ ˆr, sg[r]
+i
+,
+(9)
+where sg[·] denotes the stop-gradient operator, ˆr = frefiner(sg[Z(W)]) is the refiner output,
+with r the realized velocity residual defined in Equation 4 and λ controls the weight of the direction
+term. We calculate the cosine similarity by flattening the overall residual field into a single vector per
+sample. The two terms play complementary roles. The squared-error term fits the residual vector,
+coupling its magnitude and direction. When residual directions vary across samples with similar
+refiner inputs, averaging these targets can produce a correction with a smaller magnitude. The cosine
+term explicitly rewards alignment with the target direction and complements this vector regression
+while the correction magnitude is learned. The total training objective is
+L = Lbase(θ) + λref Lref(ϕ),
+(10)
+where θ and ϕ are the base and refiner parameters, respectively. Here λref controls the relative weight
+of the refiner objective.
+5
+
+
+Preprint
+Inference.
+The refiner is applied inside the ordinary sampling loop rather than as a post-process
+on a finished sample. At each denoising step the sampler evaluates the base model on the current
+sample, captures eσ and {hℓ}ℓ∈L from that same evaluation, assembles ˆx0 from Equation 5 and runs
+the refiner once on Z(W). The predicted residual is added to the base velocity with a gain κ,
+vκ = vθ(xσ, σ, c) + κ frefiner(Z(W)),
+(11)
+and the corrected velocity is what the scheduler integrates. Because ˆx0 and {hℓ}ℓ∈L are obtained
+from the state the sampler has actually reached, each correction influences subsequent refiner inputs.
+This adds one refiner forward pass per step without additional base-model evaluations.
+4
+THEORETICAL ANALYSIS
+We analyze three complementary questions: whether frozen base-model features can improve residual
+prediction beyond raw-input predictors, whether refiner training can outperform continued base-
+model training at matched budget and whether a trained correction improves velocity error under the
+state law it induces at deployment.
+Shared residual target. Let X be a finite-dimensional Hilbert sample space, let P be the law of the
+query state W = (xσ, σ, c) and let eP be the joint law of (W, r) at the fixed base checkpoint used
+below. Assume r ∈L2( eP; X) and write ¯r(W) = E e
+P [r | W]. For any f ∈L2(P; X), define
+RP (f) := E e
+P ∥r −f(W)∥2,
+Rirr := E e
+P ∥r −¯r(W)∥2.
+Proposition 1 (Same-target risk decomposition). Every such predictor satisfies
+RP (f) = Rirr + EP ∥f(W) −¯r(W)∥2.
+(12)
+The cross term vanishes because E e
+P [r −¯r(W) | W] = 0. See equations 40 and 41.
+Frozen-feature separation. In the scalar Gaussian witness of Appendix A, let c1, c2 be independent
+uniform signs, put p = c1c2 and take x0 = δp + ξ, where δ > 0 and ξ ∼N(0, 1). The frozen
+representation exposes the interaction through hL = p. With τσ = σ/[(1 −σ)2 + σ2], the one-
+parameter refiner is gb = −bτσp, whereas A contains raw-affine functions of (xσ, c1, c2) with
+arbitrary σ-dependent coefficients.
+Theorem 2 (Frozen-feature advantage). For an explicit ∆aff > 0 defined in Appendix A,
+RP (gδ) = Rirr,
+inf
+a∈A RP (a) = Rirr + ∆aff.
+If bb is ϵopt-suboptimal for Jλ(b) = RP (gb) + λE e
+P Lcos(gb, r), with λ = 0.1, then
+2λ + ϵopt < ∆aff
+=⇒
+RP (gbb) < inf
+a∈A RP (a).
+(13)
+Matched-resource separation.
+Returning to the finite-dimensional space X, we compare two
+runs from the same checkpoint v0: the refiner correction Fr(α) = gϕ0+α(Z(W)) and continued
+base training Fb(α) = vθ0+α(W) −v0(W), with Fj(0) = 0. Under a common ledger C, arm j
+takes Tj = ⌊Ctrain/cj⌋gradient steps and returns fj,η. Write ∆j = supη∈Ej[RP (0) −RP (fj,η)],
+Φj = DFj(0), Hj = Φ∗
+jΦj and bj = Φ∗
+j ¯r.
+Theorem 3 (Finite-ledger refiner separation). Under the local Jacobian, angular-gradient, radius
+and spectral-stability conditions of Appendix B.1, both armwise optima are attained and the actual
+reduction ∆j differs from its tangent approximation ∆lin
+j
+by at most an explicit finite error ej:
+|∆j −∆lin
+j | ≤ej,
+∆lin
+j
+= sup
+η∈Ej
+b∗
+jH†
+j [I −(I −ηHj)2Tj]bj.
+Consequently,
+∆lin
+r
+−er > ∆lin
+b + eb =⇒min
+η∈Er RP (fr,η) < min
+η∈Eb RP (fb,η).
+(14)
+6
+
+
+Preprint
+Own-law deployment.
+Write gϕ for the deployed correction W 7→gϕ(Z(W)). Let Xκ be the
+exact trajectory from the prescribed source under the field v0 + κgϕ. For Σ drawn independently of
+the source and condition from a law q on [0, 1], set Qκ = Law(Xκ(Σ), Σ, C) and define VQ(κ) =
+EQ∥¯r −κgϕ∥2. Here ¯r denotes the deployment version fixed in Appendix C.1.
+Theorem 4 (Own-law velocity improvement). Under the deployment assumptions of Appendix C, let
+M be the first-order alignment margin after trajectory-shift cost and N the second-order correction
+and alignment-shift cost, as defined in Appendix C.3. Then, for every κ ∈[0, ¯κ],
+VQκ(κ) −VQ0(0) ≤−κM + κ2N.
+If M > 0 (hence N > 0), then
+0 < κ ≤¯κ,
+κ < M
+N
+=⇒
+VQκ(κ) < VQ0(0).
+(15)
+5
+EXPERIMENTS
+We evaluate CORRFLOW on a wide range of tasks, including class-conditional image generation,
+text-to-video generation and image-to-video generation. The image experiments test whether learned
+velocity corrections improve an established flow-matching model, while the video experiments
+examine visual quality, temporal consistency and physical plausibility. Red, orange and yellow
+highlight the best, second-best and third-best scores in each column, respectively.
+5.1
+IMAGE GENERATION
+Settings. We study class-conditional generation on ImageNet at 256 × 256 resolution with 1,000
+classes. Our base model is built upon RAEv2 with a frozen DINOv3-L-based representation au-
+toencoder and a pretrained diffusion transformer. Starting from its 80-epoch checkpoint, we jointly
+fine-tune the base transformer and train a randomly initialized refiner for another 80 epochs on the
+ImageNet training split, denoted by 80 + 80 in Table 1. The refiner has 10 transformer blocks with
+width 768 and 12 attention heads, and reads hidden states from base transformer blocks 3, 11, 19 and
+27, using one-based indexing. We retain the base model’s training objective and train the refiner to
+predict the realized velocity residual with squared error and a cosine-direction term weighted by 0.1.
+Both networks use GMuon optimizer with a global batch size of 1,024. The evaluation settings are
+identical to those in Singh et al. (2026).
+Table 1:
+Comparison on ImageNet-256 (Deng et al., 2009) generation. Representation Fr´echet
+Distance (FDr) is reported in three feature spaces.
+Method
+Epochs
+Guidance
+IS ↑
+Representation Fr´echet Distance (FDr) ↓
+ConvNeXt (Liu et al., 2022)
+DINOv2 (Oquab et al., 2023)
+CLIP (Radford et al., 2021)
+RAEv2 (Singh et al., 2026)
+160
+No
+233.9
+1.28
+2.22
+7.18
+SelfFlow (Chefer et al., 2026)
+160
+No
+146.4
+4.81
+7.08
+12.13
+Ours
+80+80
+No
+234.0
+1.24
+2.21
+7.14
+SiT-XL/2 (Ma et al., 2024)
+800
+Yes
+256.7
+2.02
+7.89
+17.69
+RAE-XL (Zheng et al., 2026a)
+800
+Yes
+261.0
+1.79
+2.11
+7.87
+RAEv2 (Singh et al., 2026)
+160
+Yes
+265.0
+0.74
+1.08
+4.85
+SelfFlow (Chefer et al., 2026)
+160
+Yes
+146.8
+4.72
+6.98
+12.16
+Ours
+80+80
+Yes
+266.6
+0.73
+1.03
+4.84
+Results. Table 1 compares CORRFLOW with RAEv2 at a matched budget of 160 total epochs,
+because our 80 + 80 schedule spends 80 epochs on the base checkpoint and 80 epochs on joint
+training. Under this budget, CORRFLOW improves over RAEv2 on IS and on all three FDr metrics,
+both with and without guidance, so the gain comes from the learned residual corrections rather than
+from a longer training schedule. With guidance, CORRFLOW leads on every metric in the table,
+surpassing SiT-XL/2 and RAE-XL trained for 800 epochs. It also outperforms the evaluated SelfFlow
+variant in both guidance settings. Additional results are provided in Section E.1.
+5.2
+TEXT-TO-VIDEO GENERATION
+Settings. We use Wan2.1-T2V-1.3B (Wan et al., 2025) as the base model and jointly adapt its
+transformer with the refiner on video–text pairs from WISA-80K (Wang et al., 2025) and Open-
+7
+
+
+Preprint
+Table 2: Physics-consistent text-to-video generation on VideoPhy2 (Bansal et al., 2026) and Fine-
+PhyEval (Pothiraj et al., 2026). Higher is better for all metrics.
+Method
+VideoPhy2
+FinePhyEval
+ALL
+HARD
+Object
+Action Physics
+Overall
+PC
+SA
+Joint
+PC
+SA
+Joint
+Wan 2.1-14B (Wan et al., 2025)
+60.5 29.0
+24.7
+45.6
+8.3
+3.9
+0.86
+0.53
+0.46
+0.59
+PhysRAG-5B (Cheng et al., 2026)
+65.6 24.7
+21.0
+59.4
+7.2
+4.4
+0.88
+0.49
+0.37
+0.55
+VideoREPA-5B (Zhang et al., 2025c) 73.6 25.8
+23.6
+62.8
+6.7
+5.0
+0.82
+0.37
+0.30
+0.47
+Wan 2.1-1.3B (Wan et al., 2025)
+57.8 30.0
+24.8
+36.7
+11.7
+5.6
+0.84
+0.49
+0.36
+0.54
+DreamWorld-1.3B (Tan et al., 2026)
+53.7 27.0
+20.9
+35.0
+7.8
+3.9
+0.90
+0.53
+0.38
+0.58
+VPT-1.3B (Zheng et al., 2026b)
+55.1 22.5
+22.2
+39.4
+8.3
+5.6
+0.82
+0.44
+0.34
+0.50
+CORRFLOW (Ours)-1.3B
+65.7
+31.3
+27.0
+51.9
+11.0
+6.9
+0.90
+0.55
+0.44
+0.60
+VidHD (Nan et al., 2025). The refiner has 10 transformer blocks with width 1,024 and 16 attention
+heads, and reads hidden states from base blocks 4, 12, 20 and 30, using one-based indexing. The
+final training stage uses 66,572 clips for five epochs with AdamW and a global batch size of 16,
+retaining the base flow-matching objective and a residual objective with cosine-direction weight 0.1.
+We generate 81-frame videos at 480 × 832 resolution with 50 Euler steps and evaluate visual quality
+and temporal consistency with VBench (Huang et al., 2024), and physical plausibility and prompt
+adherence with VideoPhy2 (Bansal et al., 2026) and FinePhyEval (Pothiraj et al., 2026). Section D.2
+provides the training and evaluation details.
+Table 3: VBench (Huang et al., 2024) comparison on selected metrics (0–100, higher is better).
+Method
+SC
+TF
+MS
+AQ
+IQ
+OC
+SR
+TS
+QS
+Total
+VideoREPA-5B (Zhang et al., 2025c) 95.47 98.23 98.54 57.19 59.80 67.56 51.85 22.71 79.96 76.67
+PhysRAG-5B (Cheng et al., 2026)
+96.31 98.71 96.93 56.80 65.56 80.50 77.33 23.18 83.07 80.08
+Wan 2.1-1.3B (Wan et al., 2025)
+91.83 99.17 96.51 57.24 59.14 76.09 62.37 22.23 79.81 76.93
+VideoJAM-1.3B (Chefer et al., 2025) 91.51 99.13 96.05 58.41 62.68 79.22 66.17 24.03 81.18 78.76
+DreamWorld-1.3B (Tan et al., 2026)
+93.62 98.81 98.07 59.59 66.76 81.32 70.47 23.82 83.49 80.97
+VPT-1.3B (Zheng et al., 2026b)
+92.65 98.64 97.85 58.09 63.68 73.43 73.35 22.52 82.26 78.79
+CORRFLOW (Ours)-1.3B
+96.68 99.81 98.85 61.65 68.66 82.81 77.88 24.05 84.69 81.86
+Results. Table 2 reports the VideoPhy2 and FinePhyEval results for physics-consistent text-to-video
+generation. CORRFLOW achieves the highest VideoPhy2 Joint scores on both ALL and HARD,
+increasing them from 24.8 to 27.0 and from 5.6 to 6.9, respectively, over Wan2.1-T2V-1.3B. It also
+achieves the highest FinePhyEval Overall score of 0.60, with improvements in object, action and
+physics scores over the same base model. On VBench (table 3), CORRFLOW leads the compared
+methods on Quality Score and Overall Score, reaching 84.69 and 81.86. Figure 3 shows the same
+advantage in the generated frames, where CORRFLOW carries each prompted interaction to its
+physical outcome, dropping the domino into the mug and landing the coin in the metal cup, while
+the baselines lose the object or drift away from the prompted action. These results show that the
+adapted model improves both general video quality and the joint satisfaction of semantic and physical
+requirements. Section E.2 analyzes the full metric breakdown.
+5.3
+IMAGE-TO-VIDEO GENERATION
+Settings. We use Wan2.2-TI2V-5B (Wan et al., 2025) as the base model, with the same training
+data, objectives, optimization and five-epoch schedule as in Section 5.2. We enable first-frame
+image conditioning for 40% of training examples and use text-only conditioning for the remainder.
+The refiner has 13 transformer blocks with width 2,048 and 32 attention heads, reading hidden
+states from the same base blocks as in text-to-video generation. We evaluate on the 198 image–
+text pairs of Physics-IQ Verified (R¨adsch et al., 2026; Motamed et al., 2026), generating 81-frame
+8
+
+
+Preprint
+Figure 3:
+Qualitative comparison on text-to-video generation.
+Each scenario compares
+VideoREPA-5B, VPT-1.3B and CORRFLOW (Ours) under the same text prompt, with frames sampled
+at 0%, 25%, 50%, 75% and 100% of each generated video. The prompts are drawn from VBench
+(amusement park), FinePhyEval (a domino dropped into a mug) and VideoPhy2 (a somersault on a
+bouncy castle, a coin caught in a metal cup).
+videos at 704 × 1248 resolution with the same sampling configuration as in text-to-video generation.
+Section D.3 details the image conditioning, training and evaluation.
+Table 4: Physics-IQ Verified (R¨adsch et al., 2026) results on the image-to-video track. All evaluations
+are without LLM usage. All scores are percentages, and higher is better for every metric.
+Method
+Spatial Spatio-temporal Weighted Spatial MSE Score Verified Score
+P-Video-19B (Pruna AI, 2026)
+38.60
+16.40
+22.90
+23.30
+25.30
+Wan2.2-5B (Wan et al., 2025)
+35.89
+26.44
+22.96
+25.54
+27.71
+WMReward-5B (Yuan et al., 2026)
+36.47
+22.38
+19.79
+27.26
+26.48
+VLIPP-5B (Yang et al., 2025)
+40.51
+19.09
+23.66
+26.48
+27.43
+PhysRAG-5B (Cheng et al., 2026)
+36.46
+22.07
+20.22
+23.41
+25.54
+CORRFLOW (Ours)-5B
+43.43
+26.37
+24.74
+29.24
+30.95
+Figure 4: Qualitative comparison on the Physics-IQ Verified image-to-video track. Each scenario
+compares WMReward-5B, PhysRAG-5B and CORRFLOW (Ours), which share the Wan2.2-TI2V-5B
+base model and receive the same settings. Temporal order is from left to right. The left scenario shows
+a statuette’s shadow under a moving light, and the right scenario shows a knife slicing a mandarin.
+Results. Table 4 reports the Physics-IQ Verified results. CORRFLOW achieves the highest Verified
+Score of 30.95, and leads on Spatial, Weighted Spatial and MSE Score. These results indicate closer
+agreement with the ground-truth videos in motion coverage and frame appearance. Figure 4 illustrates
+shadow and object consistency, with the statuette’s shadow tracking the moving light and the blade
+separating the mandarin into halves. Section E.3 provides the metric breakdown and qualitative
+analysis.
+9
+
+
+Preprint
+5.4
+ABLATION STUDY
+We conduct a number of ablations to nanalyze the contribution of each component. All variants are
+built on WAN-2.1-T2V-1.3B (Wan et al., 2025) and follow the same training protocol. Specifically,
+each model is trained for five epochs on the same 1,000 samples from WISA-80K (Wang et al., 2025).
+We evaluate on a disjoint set of 50 WISA-80K samples selected to provide approximately uniform
+coverage over the physical categories. We report visual quality and consistency metrics from VBench,
+together with its aggregate Quality Score. Results are reported in Table 5.
+Table 5: Component ablations (%, higher is better). Colors rank the four-decimal scores in Table 10,
+which also expands the metric names.
+Method
+AQ
+BC
+IQ
+OC
+SC
+QS
+w/o time-step
+51.5
+92.4
+63.7
+58.5
+91.2
+79.7
+w/o self-attention
+48.9
+92.1
+60.4
+58.1
+90.0
+78.5
+w/o cross-attention
+48.5
+91.4
+60.7
+58.2
+90.2
+78.5
+w/o hidden-state MLP
+49.3
+92.4
+63.6
+58.2
+90.9
+79.3
+w/o refiner
+51.3
+92.5
+62.0
+59.1
+91.3
+78.6
+v input
+50.4
+92.4
+63.7
+60.2
+91.7
+79.8
+w/o condition
+51.5
+92.7
+61.2
+58.1
+91.0
+79.8
+Ours
+52.6
+93.6
+64.3
+61.8
+92.6
+80.3
+The full model achieves the highest Quality Score and leads on all visual quality and consistency
+metrics. Removing cross-attention causes the largest score drop, closely followed by self-attention,
+highlighting the value of context and spatiotemporal interactions in the base model’s prediction.
+Removing either the refiner or hidden-state MLP reduces Quality Score and Overall Consistency,
+supporting refinement and fusion of hidden states across depths. The remaining ablations produce
+smaller but consistent score decreases. Removing noise-level conditioning or replacing the clean
+prediction ˆx0 with the velocity prediction vθ lowers aggregate performance, supporting the value
+of noise-level information and explicit clean-sample estimates. Removing text conditioning lowers
+Quality Score and notably weakens Overall Consistency, suggesting its role in semantic alignment.
+6
+CONCLUSION
+We introduced CORRFLOW, a self-correcting flow-matching framework that learns velocity residuals
+from the base model’s clean prediction, conditioning and hidden states. A lightweight refiner
+corrects the velocity within the sampling loop. Our theory identifies conditions under which feature
+reuse improves residual prediction, refiner training outperforms continued base-model training at
+matched compute, and the deployed correction lowers own-law velocity error. We demonstrate that
+CORRFLOW achieves state-of-the-art performance across multiple benchmarks including image
+generation, text-to-video generation, and image-to-video generation. We hope CORRFLOW will be a
+useful tool for the community to advance research in flow-matching-based generative modeling.
+10
+
+
+Preprint
+REFERENCES
+Hritik Bansal, Clark Peng, Yonatan Bitton, Roman Goldenberg, Aditya Grover, and Kai-Wei Chang.
+Videophy-2: A challenging action-centric physical commonsense evaluation in video generation.
+In International Conference on Learning Representations, volume 2026, pp. 118456–118470,
+2026.
+Kevin Black, Noah Brown, Danny Driess, Adnan Esmail, Michael Equi, Chelsea Finn, Niccolo Fusai,
+Lachy Groom, Karol Hausman, Brian Ichter, et al. π0: A vision-language-action flow model for
+general robot control. CoRR, abs/2410.24164, 2024. URL https://doi.org/10.48550/
+arXiv.2410.24164.
+Yuanhao Cai, Kunpeng Li, Menglin Jia, Jialiang Wang, Junzhe Sun, Feng Liang, Weifeng Chen, Felix
+Juefei-Xu, Chu Wang, Ali Thabet, et al. Phygdpo: Physics-aware groupwise direct preference
+optimization for physically consistent text-to-video generation. arXiv preprint arXiv:2512.24551,
+2025.
+Hila Chefer, Uriel Singer, Amit Zohar, Yuval Kirstain, Adam Polyak, Yaniv Taigman, Lior Wolf,
+and Shelly Sheynin. Videojam: Joint appearance-motion representations for enhanced motion
+generation in video models. arXiv preprint arXiv:2502.02492, 2025.
+Hila Chefer, Patrick Esser, Dominik Lorenz, Dustin Podell, Vikash Raja, Vinh Tong, Antonio Torralba,
+and Robin Rombach. Self-supervised flow matching for scalable multi-modal synthesis. arXiv
+preprint arXiv:2603.06507, 2026.
+Ting Chen, Ruixiang Zhang, and Geoffrey Hinton. Analog bits: Generating discrete data using
+diffusion models with self-conditioning. arXiv preprint arXiv:2208.04202, 2022.
+Kexu Cheng, Zicheng Liu, Mingju Gao, Chunhe Song, and Hao Tang.
+Physrag: Enhancing
+physics-awareness in video generation via retrieval-augmented generation.
+arXiv preprint
+arXiv:2606.26916, 2026.
+Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. Imagenet: A large-scale
+hierarchical image database. In 2009 IEEE conference on computer vision and pattern recognition,
+pp. 248–255. Ieee, 2009.
+Dave Epstein, Allan Jabri, Ben Poole, Alexei Efros, and Aleksander Holynski. Diffusion self-
+guidance for controllable image generation. Advances in Neural Information Processing Systems,
+36:16222–16239, 2023.
+Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas M¨uller, Harry Saini, Yam
+Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al. Scaling rectified flow transformers
+for high-resolution image synthesis. In Proceedings of the International Conference on Machine
+Learning, 2024.
+Lin Geng Foo, Mark He Huang, Alexandros Lattas, Stylianos Moschoglou, Thabo Beeler, and
+Christian Theobalt. Physical simulator in-the-loop video generation. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp. 4301–4311, 2026.
+Yasaman Haghighi, Bastien Van Delft, Mariam Hassan, and Alexandre Alahi. Layersync: Self-
+aligning intermediate layers. In International Conference on Learning Representations, volume
+2026, pp. 29918–29950, 2026.
+Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter. Gans
+trained by a two time-scale update rule converge to a local nash equilibrium. Advances in neural
+information processing systems, 30, 2017.
+Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing
+Wu, Qingyang Jin, Nattapol Chanpaisit, et al. Vbench: Comprehensive benchmark suite for video
+generative models. In 2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition
+(CVPR), pp. 21807–21818. IEEE, 2024.
+11
+
+
+Preprint
+Sadeep Jayasumana, Srikumar Ramalingam, Andreas Veit, Daniel Glasner, Ayan Chakrabarti, and
+Sanjiv Kumar. Rethinking fid: Towards a better evaluation metric for image generation. In 2024
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pp. 9307–9315.
+IEEE, 2024.
+Sihui Ji, Xi Chen, Xin Tao, Pengfei Wan, and Hengshuang Zhao. Physmaster: Mastering physical
+representation for video generation via reinforcement learning. arXiv preprint arXiv:2510.13809,
+2025.
+Dengyang Jiang, Mengmeng Wang, Liuzhuozheng Li, Lei Zhang, Haoyu Wang, Wei Wei, Guang Dai,
+Yanning Zhang, and Jingdong Wang. Representation alignment for diffusion transformers without
+external components. In The Fourteenth International Conference on Learning Representations,
+2026.
+Xingjian Leng, Jaskirat Singh, Yunzhong Hou, Zhenchang Xing, Saining Xie, and Liang Zheng.
+Repa-e: Unlocking vae for end-to-end tuning with latent diffusion transformers. In 2025 IEEE/CVF
+International Conference on Computer Vision (ICCV), pp. 18262–18272. IEEE, 2025.
+Yanxun Li, Hao Wen, Bingze Song, Jiashu Zhu, Aiming Hao, Chubin Chen, Jintao Chen, Jiahong Wu,
+Xiangxiang Chu, and Miao Wang. Learning explicit physical parameter control and benchmarking
+for video generation. arXiv preprint arXiv:2607.18924, 2026.
+Shubo Lin, Xuanyang Zhang, Wei Cheng, Weiming Hu, Gang Yu, and Jin Gao. Mmphysvideo:
+Physically plausible video generation through joint rgb-perception modeling. arXiv preprint
+arXiv:2604.02817, 2026.
+Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow
+matching for generative modeling. In ICLR, 2023.
+Jie Liu, Gongye Liu, Jiajun Liang, Yangguang Li, Jiaheng Liu, Xintao Wang, Pengfei Wan, Di Zhang,
+and Wanli Ouyang. Flow-grpo: Training flow matching models via online rl. Advances in neural
+information processing systems, 38:40783–40818, 2025.
+Shaowei Liu, Zhongzheng Ren, Saurabh Gupta, and Shenlong Wang. Physgen: Rigid-body physics-
+grounded image-to-video generation. In European Conference on Computer Vision, pp. 360–378.
+Springer, 2024.
+Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow straight and fast: Learning to generate and
+transfer data with rectified flow. In ICLR, 2023.
+Zhuang Liu, Hanzi Mao, Chao-Yuan Wu, Christoph Feichtenhofer, Trevor Darrell, and Saining
+Xie. A convnet for the 2020s. In 2022 IEEE/CVF conference on computer vision and pattern
+recognition (CVPR), pp. 11966–11976. IEEE, 2022.
+Nanye Ma, Mark Goldstein, Michael S Albergo, Nicholas M Boffi, Eric Vanden-Eijnden, and
+Saining Xie. Sit: Exploring flow and diffusion-based generative models with scalable interpolant
+transformers. In European Conference on Computer Vision, pp. 23–40. Springer, 2024.
+Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri
+Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, et al. Self-refine: Iterative refinement
+with self-feedback. NeurIPS, 36:46534–46594, 2023.
+Saman Motamed, Laura Culp, Kevin Swersky, Priyank Jaini, and Robert Geirhos. Do generative video
+models understand physical principles? In 2026 IEEE/CVF Winter Conference on Applications of
+Computer Vision (WACV), pp. 948–958. IEEE, 2026.
+Kepan Nan, Rui Xie, Penghao Zhou, Tiehan Fan, Zhenheng Yang, Zhijie Chen, Xiang Li, Jian Yang,
+and Ying Tai. Openvid-1m: A large-scale high-quality dataset for text-to-video generation. In
+International conference on learning representations, volume 2025, pp. 1045–1064, 2025.
+Maxime Oquab, Timoth´ee Darcet, Th´eo Moutakanni, Huy Vo, Marc Szafraniec, Vasil Khalidov,
+Pierre Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, et al. Dinov2: Learning
+robust visual features without supervision. arXiv preprint arXiv:2304.07193, 2023.
+12
+
+
+Preprint
+Saurabh Pathak, Elahe Arani, Mykola Pechenizkiy, and Bahram Zonooz. Physvid: Physics aware
+local conditioning for generative video models. arXiv preprint arXiv:2603.26285, 2026.
+Atin Pothiraj, Jaemin Cho, Yue Zhang, Elias Stengel-Eskin, and Mohit Bansal. Physics question
+scene graph: Fine-grained evaluation of physical plausibility in text-to-video generation. arXiv
+preprint arXiv:2606.25306, 2026.
+Pruna AI. Introducing p-video: Fast and cheap video generation. Pruna AI Blog, 2026. URL
+https://www.pruna.ai/blog/p-video-fast-cheap-draft.
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal,
+Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al. Learning transferable visual
+models from natural language supervision. In Proceedings of the International Conference on
+Machine Learning, pp. 8748–8763. PmLR, 2021.
+Tim R¨adsch, Yuki M Asano, Hilde Kuehne, Stefan Bauer, Priyank Jaini, Robert Geirhos, and
+Carsten T L¨uth. Physics-iq verified. arXiv preprint arXiv:2606.18943, 2026.
+Tim Salimans, Ian Goodfellow, Wojciech Zaremba, Vicki Cheung, Alec Radford, and Xi Chen.
+Improved techniques for training gans. Advances in neural information processing systems, 29,
+2016.
+Ying Shen, Jerry Xiong, Tianjiao Yu, and Ismini Lourentzou. Phantom: Physics-infused video gener-
+ation via joint modeling of visual and latent physical dynamics. arXiv preprint arXiv:2604.08503,
+2026.
+Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion:
+Language agents with verbal reinforcement learning. Advances in neural information processing
+systems, 36:8634–8652, 2023.
+Jaskirat Singh, Xingjian Leng, Zongze Wu, Liang Zheng, Richard Zhang, Eli Shechtman, and Saining
+Xie. What matters for representation alignment: Global information or spatial structure? In The
+Fourteenth International Conference on Learning Representations, 2025.
+Jaskirat Singh, Boyang Zheng, Zongze Wu, Richard Zhang, Eli Shechtman, and Saining Xie. Im-
+proved baselines with representation autoencoders. arXiv preprint arXiv:2605.18324, 2026.
+Kaiyue Sun, Kaiyi Huang, Xian Liu, Yue Wu, Zihan Xu, Zhenguo Li, and Xihui Liu. T2v-compbench:
+A comprehensive benchmark for compositional text-to-video generation. In 2025 IEEE/CVF
+Conference on Computer Vision and Pattern Recognition (CVPR), pp. 8406–8416. IEEE, 2025.
+Boming Tan, Xiangdong Zhang, Ning Liao, Yuqing Zhang, Shaofeng Zhang, Xue Yang, Qi Fan,
+and Yanyong Zhang. Dreamworld: Unified world modeling in video generation. arXiv preprint
+arXiv:2603.00466, 2026.
+Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu,
+Haiming Zhao, Jianxiao Yang, et al. Wan: Open and advanced large-scale video generative models.
+arXiv preprint arXiv:2503.20314, 2025.
+Jing Wang, Ao Ma, Ke Cao, Jun Zheng, Jiasong Feng, Zhanjie Zhang, Wanyuan Pang, and Xiaodan
+Liang. Wisa: World simulator assistant for physics-aware text-to-video generation. Advances in
+Neural Information Processing Systems, 38:5388–5416, 2025.
+Mengmeng Wang, Dengyang Jiang, Liuzhuozheng Li, Yucheng Lin, Guojiang Shen, Xiangjie Kong,
+Yong Liu, Guang Dai, and Jingdong Wang. Sra 2: Variational autoencoder self-representation
+alignment for efficient diffusion training. arXiv preprint arXiv:2601.17830, 2026a.
+Shuai Wang, Zhi Tian, Weilin Huang, and Limin Wang. Ddt: Decoupled diffusion transformer.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pp.
+40633–40642, 2026b.
+Sanghyun Woo, Shoubhik Debnath, Ronghang Hu, Xinlei Chen, Zhuang Liu, In So Kweon, and
+Saining Xie. Convnext v2: Co-designing and scaling convnets with masked autoencoders. In 2023
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pp. 16133–16142.
+Ieee, 2023.
+13
+
+
+Preprint
+Ge Wu, Shen Zhang, Ruijing Shi, Shanghua Gao, Zhenyuan Chen, Lei Wang, Zhaowei Chen,
+Hongcheng Gao, Yao Tang, Ming-Ming Cheng, et al. Representation entanglement for generation:
+Training diffusion transformers is much easier than you think. Advances in Neural Information
+Processing Systems, 38:7714–7743, 2026.
+Jianfeng Xiang, Zelong Lv, Sicheng Xu, Yu Deng, Ruicheng Wang, Bowen Zhang, Dong Chen, Xin
+Tong, and Jiaolong Yang. Structured 3d latents for scalable and versatile 3d generation. In CVPR,
+June 2025.
+Zhexiao Xiong, Yizhi Song, Liu He, Wei Xiong, Yu Yuan, Feng Qiao, and Nathan Jacobs. Physalign:
+Physics-coherent image-to-video generation through feature and 3d representation alignment.
+arXiv preprint arXiv:2603.13770, 2026.
+Qiyao Xue, Xiangyu Yin, Boyuan Yang, and Wei Gao. Phyt2v: Llm-guided iterative self-refinement
+for physics-grounded text-to-video generation. In 2025 IEEE/CVF Conference on Computer Vision
+and Pattern Recognition (CVPR), pp. 18826–18836. IEEE, 2025a.
+Shuchen Xue, Chongjian Ge, Shilong Zhang, Yichen Li, and Zhi-Ming Ma. Advantage weighted
+matching: Aligning rl with pretraining in diffusion models. arXiv preprint arXiv:2509.25050,
+2025b.
+Zeyue Xue, Jie Wu, Yu Gao, Fangyuan Kong, Lingting Zhu, Mengzhao Chen, Zhiheng Liu, Wei
+Liu, Qiushan Guo, Weilin Huang, et al. Dancegrpo: Unleashing grpo on visual generation. arXiv
+preprint arXiv:2505.07818, 2025c.
+Jiawei Yang, Zhengyang Geng, Xuan Ju, Yonglong Tian, and Yue Wang. Representation fr´echet loss
+for visual generation. arXiv preprint arXiv:2604.28190, 2026.
+Xindi Yang, Baolu Li, Yiming Zhang, Zhenfei Yin, Lei Bai, Liqian Ma, Zhiyong Wang, Jianfei Cai,
+Tien-Tsin Wong, Huchuan Lu, et al. Vlipp: Towards physically plausible video generation with
+vision and language informed physical prior. In 2025 IEEE/CVF International Conference on
+Computer Vision (ICCV), pp. 12360–12370. IEEE, 2025.
+Jingfeng Yao, Bin Yang, and Xinggang Wang. Reconstruction vs. generation: Taming optimization
+dilemma in latent diffusion models. In 2025 IEEE/CVF Conference on Computer Vision and
+Pattern Recognition (CVPR), pp. 15703–15712. IEEE, 2025.
+Sihyun Yu, Sangkyung Kwak, Huiwon Jang, Jongheon Jeong, Jonathan Huang, Jinwoo Shin, and
+Saining Xie. Representation alignment for generation: Training diffusion transformers is easier than
+you think. In ICLR, 2025. URL https://openreview.net/forum?id=DJSZGGZYVi.
+Jianhao Yuan, Xiaofeng Zhang, Felix Friedrich, Nicolas Beltran-Velez, Melissa Hall, Reyhane
+Askari-Hemmat, Xiaochuang Han, Nicolas Ballas, Michal Drozdzal, and Adriana Romero-Soriano.
+Inference-time physics alignment of video generative models with latent world models. arXiv
+preprint arXiv:2601.10553, 2026.
+Hangwei Zhang, Armando Fortes, Tianyi Wei, and Xingang Pan. Boosting monocular metric depth
+estimation via bokeh rendering. arXiv preprint arXiv:2512.12425, 2025a.
+Ke Zhang, Cihan Xiao, Jiacong Xu, Yiqun Mei, and Vishal M Patel. Think before you diffuse:
+Infusing physical rules into video diffusion. arXiv preprint arXiv:2505.21653, 2025b.
+Xiangdong Zhang, Jiaqi Liao, Shaofeng Zhang, Fanqing Meng, Xiangpeng Wan, Junchi Yan, and
+Yu Cheng. Videorepa: Learning physics for video generation through relational alignment with
+foundation models. Advances in Neural Information Processing Systems, 38:122647–122676,
+2025c.
+Boyang Zheng, Nanye Ma, Shengbang Tong, and Saining Xie. Diffusion transformers with represen-
+tation autoencoders. In International Conference on Learning Representations, volume 2026, pp.
+35791–35820, 2026a.
+Dian Zheng, Ziqi Huang, Hongbo Liu, Kai Zou, Yinan He, Fan Zhang, Lulu Gu, Yuanhan Zhang,
+Jingwen He, Wei-Shi Zheng, et al. Vbench-2.0: Advancing video generation benchmark suite for
+intrinsic faithfulness. arXiv preprint arXiv:2503.21755, 2025.
+14
+
+
+Preprint
+Guangting Zheng, Haojing Chen, Hao Li, Jingtao Zhang, Zhen Yang, Xiaosong Jia, Xue Yang,
+Shaofeng Zhang, and Yanyong Zhang. Enhancing video physical consistency via role-aware joint
+training and modality-decoupled denoising. arXiv preprint arXiv:2607.04653, 2026b.
+Kaiwen Zheng, Huayu Chen, Haotian Ye, Haoxiang Wang, Qinsheng Zhang, Kai Jiang, Hang Su,
+Stefano Ermon, Jun Zhu, and Ming-Yu Liu. Diffusionnft: Online diffusion reinforcement with
+forward process. In International Conference on Learning Representations, volume 2026, pp.
+134129–134150, 2026c.
+Jiaru Zou, Yikun Ban, Zihao Li, Yunzhe Qi, Ruizhong Qiu, Ling Yang, and Jingrui He. Transformer
+copilot: Learning from the mistake log in llm fine-tuning. Advances in Neural Information
+Processing Systems, 38:159927–159967, 2025.
+15
+
+
+Preprint
+APPENDIX CONTENTS
+A Frozen-Feature Analysis
+17
+A.1
+Setting and assumptions
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+17
+A.2
+Main result
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+18
+A.3
+Proof
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+18
+A.4
+Useful specializations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+22
+B
+Matched-Resource Comparison: Proof
+23
+B.1
+Full setting and local certificate . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+23
+B.2
+Finite-budget perturbation and separation
+. . . . . . . . . . . . . . . . . . . . . .
+24
+C Deployment Analysis: Gain, Sampler Law and Endpoint
+28
+C.1
+Deployment setting . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+28
+C.2
+Exact gain quadratic and improvement interval
+. . . . . . . . . . . . . . . . . . .
+28
+C.3
+Own-law velocity improvement
+. . . . . . . . . . . . . . . . . . . . . . . . . . .
+29
+C.4
+From velocity error to endpoint distance . . . . . . . . . . . . . . . . . . . . . . .
+32
+D Implementation Details
+34
+D.1
+Image Generation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+34
+D.2 Text-to-Video Generation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+36
+D.3
+Image-to-Video Generation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+38
+E
+More Results
+39
+E.1
+More Results on ImageNet Generation . . . . . . . . . . . . . . . . . . . . . . . .
+39
+E.2
+More Results on Text-to-Video Generation . . . . . . . . . . . . . . . . . . . . . .
+40
+E.3
+More Results on Image-to-Video Generation . . . . . . . . . . . . . . . . . . . . .
+42
+E.4
+Full-Precision Ablation Results . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+43
+F
+Reproducibility Statement
+43
+16
+
+
+Preprint
+A
+FROZEN-FEATURE ANALYSIS
+This appendix establishes an exact population-risk separation for a linear readout of a frozen nonlinear
+feature relative to predictors that are affine in the raw inputs.
+A.1
+SETTING AND ASSUMPTIONS
+We work in one active coordinate of the sample space. Samples, velocities, residuals and hidden
+readouts in this construction are scalar and use ordinary symbols. The conditioning vector is bold.
+Let c = (c1, c2), write p := ψ(c) := c1c2 and fix δ > 0. For σ ∈[0, 1], define
+s2
+σ := (1 −σ)2 + σ2,
+ℓσ := 2σ −1
+s2σ
+,
+τσ := σ
+s2σ
+.
+Assumption 1 (Conditional-Gaussian XOR witness). The variables c1, c2 are independent and
+uniform on {−1, 1}. The variables ξ, ε ∼N(0, 1) are independent of each other and of (c, σ), and
+x0 := δp + ξ,
+xσ := (1 −σ)x0 + σε,
+u := ε −x0.
+Assumption 2 (Independent Noise Level). The variable σ ∼q is independent of (c, ξ, ε), where q is
+a Borel probability measure with topological support exactly [0, 1].
+Let (Ω, F, P) be the underlying probability space carrying these variables. Write W := (xσ, σ, c)
+and let PW := P ◦W −1 be its law. The frozen base velocity, its one-step clean prediction from
+Equation 5 and the realized residual label are
+vθ(W) := ℓσxσ,
+bx0(W) := xσ −σvθ(W),
+r := u −vθ(W).
+Assumption 3 (Frozen base and product feature). The base is frozen with velocity vθ(W) = ℓσxσ.
+Its captured representation is the deterministic map Φ(W) := (bx0(W), hL(W), σ, c) with hidden
+coordinate hL(W) = c1c2. The base velocity readout omits this coordinate, while the scalar
+AdaLN-modulated class G may read it.
+Define
+u⋆(W) := E[u | W],
+¯r(W) := E[r | W] = u⋆(W) −vθ(W).
+All expectations below are with respect to P. For every square-integrable W-measurable predictor f,
+R(f) := E[(f(W) −r)2],
+Rirr := E[(r −¯r(W))2].
+In the notation of Section 4, P = PW and eP = P ◦(W, r)−1. In this scalar specialization, the frozen
+checkpoint v0 corresponds to vθ and RP = R.
+The one-parameter hidden-feature class, viewed as induced predictors on W, is
+G := {gb : b ∈R},
+gb(W) := −bτσhL(W).
+Each gb uses only Φ(W). As an oracle enlargement of the intended raw linear readouts, let
+A :=
+n
+a0(σ) + ax(σ)xσ + a1(σ)c1 + a2(σ)c2 : a0, ax, a1, a2 are Borel measurable,
+and the induced predictor lies in L2(PW )
+o
+.
+The intended one-scalar raw-input comparator families at the same trainable-readout budget are
+subclasses of A. For nested-class comparisons we use the convention inf ∅= +∞.
+For scalars a, b, define the zero-stabilized cosine loss by
+cos0(a, b) :=
+ab/(|a||b|),
+ab̸ = 0,
+0,
+ab = 0,
+Lcos(a, b) := 1 −cos0(a, b).
+For λ = 0.1, set
+Jλ(b) := E
+
+(gb(W) −r)2 + λLcos(gb(W), r)
+
+.
+Assumption 4 (Cosine-regularized population fit). For a stated tolerance ϵopt ≥0, the trained
+coefficient bb ∈R satisfies
+Jλ(bb) ≤inf
+b∈R Jλ(b) + ϵopt.
+Define the structural constants
+S := Eσ∼q[τ 2
+σ],
+∆aff := δ2Eσ∼q
+
+τ 2
+σ
+s2
+σ
+s2σ + (1 −σ)2δ2
+
+.
+17
+
+
+Preprint
+A.2
+MAIN RESULT
+Theorem 5 (Detailed frozen-feature advantage). Under Assumptions 1– 4, the following statements
+hold.
+1. For every σ < 1,
+xσ =
+s2
+σ
+1 −σ bx0,
+whereas bx0 = 0 at σ = 1. On the full interval,
+bx0 −x0 = σr.
+Thus r = (bx0 −x0)/σ for σ > 0, with the direct continuous endpoint values r = ε at σ = 0
+and r = −x0 at σ = 1. Moreover,
+u⋆(W) = ℓσxσ −τσδp,
+¯r(W) = −τσδp.
+2. The irreducible risk and structural constants satisfy
+Rirr = Eσ∼q[s−2
+σ ] ∈[1, 2],
+0 < S < ∞,
+0 < ∆aff < ∞.
+For every b ∈R,
+R(gb) = Rirr + S(b −δ)2,
+inf
+a∈A R(a) = Rirr + ∆aff.
+In particular, gδ = ¯r and R(gδ) = Rirr.
+3. The fitted coefficient satisfies
+S(bb −δ)2 ≤2λ + ϵopt.
+If the static scalar condition
+2λ + ϵopt < ∆aff
+holds, then
+R(gbb) < inf
+a∈A R(a).
+For every intended equal-budget raw comparator class B ⊆A, the same condition also
+gives
+R(gbb) < inf
+f∈B R(f).
+4. For every finite d ≥1, the embedding ιd(z) = (z, 0, . . . , 0) preserves the feature-risk curve,
+the raw-affine infimum, the cosine-regularized objective and the strict trained-risk margin.
+These identities give the hidden-feature refiner’s population L2(P) risk and its margin relative to the
+specified raw-affine classes. The parameters δ, q, λ and ϵopt determine the feature curvature S, the
+raw-affine gap ∆aff and the additive excess-risk bound.
+The product feature represents the conditional Bayes residual exactly. The noise law q weights the
+risk across noise levels, with full support ensuring positive feature curvature S and raw-affine gap
+∆aff. The cosine weight λ and optimization tolerance ϵopt bound the fitted predictor’s excess risk.
+The strict scalar condition places this bound below the raw-affine gap, certifying the trained refiner’s
+advantage.
+Theorem 5 is the detailed version of the main-text Theorem 2.
+A.3
+PROOF
+Proof. We prove the scalar conclusions in four steps. The finite-dimensional preservation statement
+is verified in the embedding paragraph below.
+18
+
+
+Preprint
+Step 1: Residual interface and conditional Bayes residual.
+Since
+s2
+σ = 2
+
+σ −1
+2
+2
++ 1
+2 ≥1
+2,
+all denominators below are nonzero. Moreover,
+1 −σℓσ = s2
+σ −σ(2σ −1)
+s2σ
+= 1 −σ
+s2σ
+,
+which proves the displayed clean-prediction formula and its inverse for σ < 1:
+bx0 = 1 −σ
+s2σ
+xσ,
+xσ =
+s2
+σ
+1 −σ bx0.
+Direct substitution gives bx0 = x0 at σ = 0 and bx0 = 0 at σ = 1. The interpolation identity also
+gives, without division,
+bx0 −x0 = xσ −σvθ −x0 = σ(ε −x0 −vθ) = σr.
+Consequently, r = (bx0 −x0)/σ for every σ > 0. The direct residual definition gives r = ε at zero
+and r = −x0 at one, which agree with the continuous endpoint extension.
+To compute the conditional mean, center the observation as
+Yσ := xσ −(1 −σ)δp = (1 −σ)ξ + σε
+and introduce its orthogonal complement
+Nσ := (1 −σ)ε −σξ.
+Since p is measurable with respect to c and
+Yσ = xσ −(1 −σ)δp,
+xσ = Yσ + (1 −σ)δp,
+the tuples W = (xσ, σ, c) and (Yσ, σ, c) generate the same sigma-field. Conditional on (σ, c), the
+vector (Yσ/sσ, Nσ/sσ) is standard Gaussian with independent coordinates, because it is obtained
+from (ξ, ε) by the orthogonal transformation
+
+Yσ/sσ
+Nσ/sσ
+
+= 1
+sσ
+
+1 −σ
+σ
+−σ
+1 −σ
+ 
+ξ
+ε
+
+.
+Because (ξ, ε) is independent of (σ, c), the fixed-t Gaussian regression above defines a conditional
+kernel for every value of (σ, c). The displayed coefficient functions are Borel and integrable because
+s2
+σ ≥1/2. Since W and (Yσ, σ, c) generate the same sigma-field, these kernels give the Borel
+conditional versions
+E[ξ | W] = 1 −σ
+s2σ
+Yσ,
+E[ε | W] = σ
+s2σ
+Yσ.
+Using u = ε −ξ −δp and 1 + (1 −σ)ℓσ = τσ gives
+u⋆(W) = ℓσxσ −τσδp,
+¯r(W) = u⋆(W) −vθ(W) = −τσδp.
+Moreover, conditional on (σ, c), the normalized coordinate Nσ/sσ is independent of Yσ/sσ. Condi-
+tioning additionally on W, equivalently on (Yσ, σ, c), therefore leaves its Gaussian law unchanged.
+The same calculation yields
+r −¯r(W) = Nσ
+s2σ
+,
+(r −¯r(W)) | W ∼N
+ 0, s−2
+σ
+
+.
+Therefore
+Rirr = Eσ∼q[s−2
+σ ].
+(16)
+Since s2
+σ ∈[1/2, 1], this quantity belongs to [1, 2].
+19
+
+
+Preprint
+Step 2: Same-target decomposition and feature oracle.
+The following decomposition holds
+on any probability space with r ∈L2(P) and f(W) ∈L2(P). Set ¯r(W) := E[r | W] and
+η := r −¯r(W). Conditional Jensen’s inequality gives
+E[¯r(W)2] ≤E[r2].
+Thus η and f(W) −¯r(W) belong to L2, and their product is integrable by Cauchy–Schwarz. The
+defining orthogonality property of conditional expectation gives
+E[(f(W) −¯r(W))η] = E[(f(W) −¯r(W))E[η | W]] = 0.
+Expanding the square therefore yields
+R(f) = Rirr + E[(f(W) −¯r(W))2].
+This also proves the scalar case of equation 12. For a finite-dimensional X, choose an orthonormal
+basis and apply the same identity to each coordinate of r and f(W). Conditional expectation acts
+coordinatewise, and summing the coordinate identities gives the squared-norm identity in equation 12.
+Returning to the present Gaussian witness, since p2 = 1 and gb −¯r = (δ −b)τσp, we obtain
+R(gb) = Rirr + S(b −δ)2.
+In particular, gδ = ¯r pointwise for the chosen Borel version. The bound 0 ≤τσ ≤2 gives S ≤4.
+Since τ 2
+σ is continuous and strictly positive on (0, 1], the full support of q gives S > 0. More
+explicitly, for K = [1/2, 3/4], one has q(K) > 0, τ 2
+σ ≥1/4 on K and hence
+S ≥1
+4q(K) > 0.
+Step 3: Exact raw-affine projection.
+For each t ∈[0, 1], let Et denote expectation over (c, ξ, ε)
+with the noise level fixed at σ = t. By independence of σ, every nonnegative or integrable Borel
+function H satisfies
+E[H] =
+Z
+[0,1]
+Et[H] q(dt).
+Fix t ∈[0, 1], put mt := 1 −t and define
+Vt := s2
+t + m2
+tδ2,
+dt := δ2τ 2
+t
+s2
+t
+Vt
+.
+Under the fixed-noise law, the Gram matrix of (1, c1, c2, xt) is diagonal with diagonal (1, 1, 1, Vt),
+because
+Et[xt] = 0,
+Et[x2
+t] = Vt,
+Et[xtc1] = Et[xtc2] = Et[c1c2] = 0.
+The target-design moments are
+Et[¯r] = Et[¯rc1] = Et[¯rc2] = 0,
+Et[¯rxt] = −mtτtδ2,
+Et[¯r2] = τ 2
+t δ2.
+Consequently, for Aα := α0 + αxxt + α1c1 + α2c2, completion of the square gives
+Et[(Aα −¯r)2] = α2
+0 + α2
+1 + α2
+2 + Vt
+
+αx + mtτtδ2
+Vt
+2
++ dt.
+This identity also holds at t = 0, 1, where d0 = 0 and d1 = δ2. The pointwise minimizer is therefore
+a⋆
+0 = a⋆
+1 = a⋆
+2 = 0,
+a⋆
+x(t) = −mtτtδ2
+Vt
+.
+Equivalently, let
+a⋆
+t := −mtτtδ2
+Vt
+xt,
+e⋆
+t := ¯r −a⋆
+t .
+The displayed moment identities give
+Et[e⋆
+t ] = Et[e⋆
+t c1] = Et[e⋆
+t c2] = Et[e⋆
+t xt] = 0.
+Thus a⋆
+t is the conditional L2 projection of ¯r onto the raw-affine design, and
+Et[(e⋆
+t )2] = dt.
+20
+
+
+Preprint
+Because Vt ≥s2
+t ≥1/2, these coefficients are continuous and bounded on [0, 1]. Moreover,
+sup
+t∈[0,1]
+Et[x2
+t] = sup
+t∈[0,1]
+Vt ≤1 + δ2.
+Thus the induced predictor a⋆(W) = a⋆
+x(σ)xσ is square-integrable and belongs to A. For every
+a ∈A with coefficient functions a0, ax, a1, a2, the same diagonal Gram calculation applied to a(W)2
+gives
+Z
+[0,1]
+ a0(t)2 + a1(t)2 + a2(t)2 + Vtax(t)2
+q(dt) = E[a(W)2] < ∞.
+Hence the conditional square-completion identity may be integrated with respect to q(dt), giving
+E[(a(W) −¯r(W))2] =
+Z
+[0,1]
+"
+a0(t)2 + a1(t)2 + a2(t)2
++ Vt
+
+ax(t) + (1 −t)τtδ2
+Vt
+2
++ dt
+#
+q(dt).
+Consequently,
+E[(a(W) −¯r(W))2] ≥
+Z
+[0,1]
+dt q(dt).
+The coefficient choice a⋆makes every squared term vanish for all t ∈[0, 1], including both endpoints,
+so equality is attained. Therefore,
+inf
+a∈A E[(a(W) −¯r(W))2] = Et∼q[dt] = ∆aff.
+Applying the same-target decomposition gives
+inf
+a∈A R(a) = Rirr + ∆aff.
+The bounds 0 ≤dt ≤δ2τ 2
+t ≤4δ2 prove finiteness. Moreover, dt is continuous and strictly positive
+for every t > 0. Full support of q therefore gives ∆aff > 0. Explicitly, on K = [1/2, 3/4],
+dt ≥
+δ2
+2(4 + δ2),
+∆aff ≥
+δ2
+2(4 + δ2)q(K) > 0.
+Equivalently, define the squared conditional correlation
+ρ2
+t := Corrt(p, xt)2 = m2
+tδ2
+Vt
+.
+The conditional gap satisfies
+dt = Vart(¯r)(1 −ρ2
+t),
+so it is exactly the product-feature energy unexplained by the raw-affine projection. The raw-affine
+projection explains the fraction ρ2
+t of the conditional Bayes-residual energy, while the hidden product
+feature represents the target exactly.
+Step 4: Transfer the fitted objective to strict risk separation.
+The zero-stabilized cosine loss is
+measurable and lies in [0, 2]. Therefore, for every b,
+R(gb) ≤Jλ(b) ≤R(gb) + 2λ.
+Using Assumption 4 and comparing with the oracle coefficient b = δ gives
+R(gbb) ≤Jλ(bb)
+≤inf
+b Jλ(b) + ϵopt
+≤Jλ(δ) + ϵopt
+≤Rirr + 2λ + ϵopt.
+21
+
+
+Preprint
+Combining this bound with the exact feature-risk curve yields
+S(bb −δ)2 ≤2λ + ϵopt,
+|bb −δ| ≤
+r
+2λ + ϵopt
+S
+.
+(17)
+For every b the exact class margin is
+inf
+a∈A R(a) −R(gb) = ∆aff −S(b −δ)2.
+(18)
+Since S > 0 and ∆aff > 0, this identity gives the exact coefficient interval for strict advantage:
+R(gb) < inf
+a∈A R(a)
+⇐⇒
+|b −δ| <
+r
+∆aff
+S .
+(19)
+The condition 2λ+ϵopt < ∆aff places the fitted coefficient in this interval by equation 17. Evaluating
+at bb proves
+inf
+a∈A R(a) −R(gbb) ≥∆aff −(2λ + ϵopt).
+(20)
+Under the stated scalar condition this margin is strictly positive. If B ⊆A, then infa∈A R(a) ≤
+inff∈B R(f), which proves the final claim. The fourth conclusion follows from the finite-dimensional
+embedding argument below.
+A.4
+USEFUL SPECIALIZATIONS
+Uniform noise law.
+If q is uniform on [0, 1], use
+z := 2σ −1,
+s2
+σ = 1 + z2
+2
+,
+dσ = 1
+2dz.
+Then
+Rirr =
+Z 1
+−1
+1
+1 + z2 dz = π
+2 ,
+while the odd part of (z + 1)2 integrates to zero and
+S =
+Z 1
+−1
+(z + 1)2
+2(1 + z2)2 dz = 1
+2
+Z 1
+−1
+1
+1 + z2 dz = π
+4 .
+Thus
+Rirr = π
+2 ,
+S = π
+4 ,
+R(gb) = π
+2 + π
+4 (b −δ)2.
+(21)
+Consequently,
+|bb −δ| ≤
+2
+√π
+p
+2λ + ϵopt.
+Finite-dimensional embedding.
+The witness uses one active sample coordinate so that every
+source of the risk gap is visible. Fix a finite d ≥1 and define
+ιd : R →Rd,
+ιd(z) := (z, 0, . . . , 0),
+r(d) := ιd(r),
+¯r(d) := ιd(¯r).
+For a scalar predictor f, write f (d) := ιd ◦f and set
+Rd(f (d)) := E
+h
+∥f (d)(W) −r(d)∥2
+2
+i
+.
+The embedded classes are
+Gd := {g(d)
+b
+: b ∈R},
+Ad := {a(d) : a ∈A}.
+Since ιd preserves inner products, norms and pointwise distances,
+E[r(d) | W] = ¯r(d),
+Rd(g(d)
+b ) = R(gb),
+Rd(a(d)) = R(a).
+22
+
+
+Preprint
+The map a 7→a(d) is a bijection from A to Ad. Therefore
+inf
+a(d)∈Ad
+Rd(a(d)) = Rirr + ∆aff,
+g(d)
+δ
+= ¯r(d).
+For y, z ∈Rd, define
+cos0,d(y, z) :=
+⟨y, z⟩/(∥y∥2∥z∥2),
+∥y∥2∥z∥2 > 0,
+0,
+∥y∥2∥z∥2 = 0,
+and Lcos,d := 1 −cos0,d. Define
+Jλ,d(b) := E
+h
+∥g(d)
+b (W) −r(d)∥2
+2 + λLcos,d(g(d)
+b (W), r(d))
+i
+.
+The same isometry gives Jλ,d(b) = Jλ(b) for every b. Consequently, if 2λ + ϵopt < ∆aff, then
+Rd(g(d)
+bb ) <
+inf
+a(d)∈Ad
+Rd(a(d)),
+with margin at least ∆aff −(2λ + ϵopt), independently of d. This is an isometric embedding of the
+scalar witness, not a claim about a general multidimensional data model.
+B
+MATCHED-RESOURCE COMPARISON: PROOF
+This section proves that a refiner’s tangent risk-reduction advantage transfers to its trained output
+when the advantage exceeds the two perturbation bounds, as stated in Theorem 3. Unsubscripted
+norms of random correction maps are those of L2(P; X). Norms inside an expectation are sample-
+space norms, while parameter and operator norms have their usual finite-dimensional meanings.
+Linear operators retain ordinary uppercase symbols, while parameter vectors and vector-valued fields
+are bold.
+B.1
+FULL SETTING AND LOCAL CERTIFICATE
+Let X be a finite-dimensional real Hilbert space. Write W = (XΣ, Σ, C) for the current noisy sample,
+noise level and conditioning vector, and let P be its law. Let U denote the realized interpolation
+velocity. At a fixed base checkpoint v0, define
+r = U −v0(W),
+eP = Law(W, r),
+¯r(W) = E e
+P [r | W],
+s = ∥r∥L2( e
+P ;X) < ∞.
+(22)
+For f ∈L2(P; X), set
+RP (f) = E e
+P ∥r −f(W)∥2.
+(23)
+The refiner and continued-base correction families are
+Fr(α)(W) = gϕ0+α(Z(W)),
+Fb(α)(W) = vθ0+α(W) −v0(W),
+(24)
+where Fj(0) = 0 and Z(W) is computed only from the current state and frozen base computation,
+as in Section 3.2.
+A componentwise ledger C = (Ctrain, Cstate, Cdeploy) is fixed before either run. If one update of
+arm j ∈{r, b} costs cj > 0, its charged horizon is
+Tj =
+Ctrain
+cj
+
+.
+(25)
+Both runs must fit the declared optimizer-state and inference budgets. Their population objectives are
+Lb(α) = 1
+2RP (Fb(α)),
+Lr(α) = 1
+2RP (Fr(α)) + λ∠A(α),
+λ∠= 0.1,
+(26)
+where A is the population angular penalty induced by the implemented thresholded cosine loss. For a
+candidate step η > 0, define
+αη
+j,0 = 0,
+αη
+j,t+1 = αη
+j,t −η∇Lj(αη
+j,t),
+fj,η = Fj(αη
+j,Tj).
+(27)
+At the checkpoint, let
+Φj = Jj(0),
+Hj = Φ∗
+jΦj,
+bj = Φ∗
+j ¯r,
+(28)
+where Jj(α) = DFj(α). The zero-initialized tangent recursion is
+βη
+j,t+1 = (I −ηHj)βη
+j,t + ηbj,
+βη
+j,0 = 0.
+(29)
+23
+
+
+Preprint
+Assumption 5 (Finite-budget local certificate). For each arm there are finite Rj, Kj, Λj ≥0 such
+that Fj is continuously differentiable on ∥α∥≤Rj and
+∥Jj(α)∥op ≤Kj,
+∥Jj(α) −Jj(α′)∥op ≤Λj∥α −α′∥.
+(30)
+On the refiner ball, A is continuously differentiable and ∥∇A(α)∥≤G∠< ∞. Define
+qb = 0,
+qr = λ∠G∠,
+Γj = Kj(s + KjRj) + qj,
+ωj = ΛjRj(s + KjRj) + 1
+2KjΛjR2
+j + qj.
+(31)
+Each Ej(C) is a nonempty compact subset of a common compact range E0(C) ⊂(0, ∞) fixed before
+the runs. For a fixed ζstab ∈(0, 2), every η ∈Ej(C) satisfies
+η∥Hj∥op ≤2 −ζstab,
+ηTjΓj ≤Rj.
+(32)
+The Jacobian bound Kj controls output sensitivity, and Λj controls the linearization remainder. The
+angular-gradient bound contributes qj to the refiner’s update and perturbation bounds. The two
+step-size conditions keep the tangent recursion stable and both parameter sequences inside the radius
+Rj through the charged horizon Tj. Compact candidate sets ensure that each optimized risk reduction
+is attained.
+Define the actual and tangent risk reductions by
+∆j(C, η) = RP (0) −RP (fj,η),
+∆j(C) =
+sup
+η∈Ej(C)
+∆j(C, η),
+∆lin
+j (C, η) = b∗
+jH†
+j [I −(I −ηHj)2Tj]bj,
+∆lin
+j (C) =
+sup
+η∈Ej(C)
+∆lin
+j (C, η).
+(33)
+Finally, put
+εj(C, η) = 1
+2ΛjR2
+j + KjηTjωj,
+ej(C) =
+sup
+η∈Ej(C)
+2(s + KjRj)εj(C, η).
+(34)
+B.2
+FINITE-BUDGET PERTURBATION AND SEPARATION
+Proposition 6 (Finite-budget tangent certificate). Under Assumption 5, for every j ∈{r, b} and
+η ∈Ej(C),
+∥αη
+j,t∥, ∥βη
+j,t∥≤tηΓj ≤Rj
+(0 ≤t ≤Tj),
+(35)
+and
+∥Fj(αη
+j,Tj) −Φjβη
+j,Tj∥≤εj(C, η).
+(36)
+The tangent reduction is exactly
+RP (0) −RP (Φjβη
+j,Tj) = b∗
+jH†
+j [I −(I −ηHj)2Tj]bj.
+(37)
+Consequently,
+|∆j(C, η) −∆lin
+j (C, η)| ≤2(s + KjRj)εj(C, η),
+(38)
+and
+|∆j(C) −∆lin
+j (C)| ≤ej(C).
+(39)
+The actual and tangent optimized reductions are attained on their respective candidate sets.
+Proof. We derive the tangent reduction and control the perturbation caused by the actual updates
+through the full charged horizon.
+Step 1: Establish the common risk geometry.
+We first record the common risk geometry. With
+ηr = r −¯r(W), conditional expectation gives E[ηr | W] = 0. Hence every state-measurable
+h ∈L2(P; X) satisfies
+E⟨h(W), ηr⟩= E⟨h(W), E[ηr | W]⟩= 0.
+(40)
+Expanding the square yields
+RP (h) = E∥r −¯r∥2 + ∥¯r −h∥2,
+RP (0) −RP (h) = 2⟨¯r, h⟩−∥h∥2.
+(41)
+Jensen’s inequality also gives ∥¯r∥≤s.
+24
+
+
+Preprint
+Step 2: Keep the actual and tangent iterates in the certified ball.
+For an in-ball parameter, the
+line-segment formula and Fj(0) = 0 give
+Fj(α) =
+Z 1
+0
+Jj(uα)[α], du,
+∥Fj(α)∥≤Kj∥α∥.
+(42)
+Let
+ϑj(α) =
+λ∠∇A(α),
+j = r,
+0,
+j = b.
+(43)
+Differentiating equation 41 through Fj gives
+∇Lj(α) = Jj(α)∗(Fj(α) −¯r) + ϑj(α).
+(44)
+Thus ∥∇Lj(α)∥≤Γj whenever ∥α∥≤Rj. Since ∥Φj∥op ≤Kj, the tangent gradient satisfies
+∥Hjβ −bj∥= ∥Φ∗
+j(Φjβ −¯r)∥≤Kj(KjRj + s) ≤Γj
+(45)
+whenever ∥β∥≤Rj. Starting from zero, simultaneous induction in the two recursions now gives
+∥αη
+j,t+1∥, ∥βη
+j,t+1∥≤(t + 1)ηΓj.
+(46)
+The pre-run radius condition makes the right side at most Rj through Tj, completing the induction
+and proving equation 35.
+Step 3: Solve the tangent recursion and compute its risk reduction.
+We next solve the tangent
+recursion. The operator Hj = Φ∗
+jΦj is positive semidefinite. Moreover, bj ⊥ker Hj because
+ker Hj = ker Φj. If Hjuk = λkuk, the stability certificate gives
+|1 −ηλk| ≤1,
+∥(I −ηHj)t∥op ≤1.
+(47)
+The null eigenspaces have zero loading. A finite geometric sum on every positive eigenspace therefore
+yields
+βη
+j,t = H†
+j [I −(I −ηHj)t]bj.
+(48)
+Substitution into equation 41 gives
+X
+k:λk>0
+|⟨uk, bj⟩|2
+λk
+[1 −(1 −ηλk)2Tj],
+(49)
+which is exactly equation 37.
+Step 4: Bound the parameter and output perturbations.
+It remains to transfer the tangent
+formula to the actual run. The Jacobian Lipschitz condition and the integral formula give
+∥Fj(α) −Φjα∥≤1
+2Λj∥α∥2.
+(50)
+At the same parameter define ξj(α) = ∇Lj(α) −(Hjα −bj). Direct subtraction of the two
+gradients gives
+ξj(α) = [Jj(α) −Φj]∗(Fj(α) −¯r)
++ Φ∗
+j(Fj(α) −Φjα) + ϑj(α).
+(51)
+For ∥α∥≤Rj, the three displayed terms are bounded by ΛjRj(s + KjRj), 1
+2KjΛjR2
+j and qj.
+Hence
+∥ξj(α)∥≤ωj.
+(52)
+Writing dj,t = αη
+j,t −βη
+j,t and subtracting the two recursions gives
+dj,t+1 = (I −ηHj)dj,t −ηξj(αη
+j,t),
+dj,0 = 0.
+(53)
+Equations 35, 47 and 52 imply
+∥dj,t∥≤η
+t−1
+X
+ℓ=0
+∥ξj(αη
+j,ℓ)∥≤ηtωj.
+(54)
+Adding and subtracting Φjαη
+j,Tj, then using equation 50, proves equation 36.
+25
+
+
+Preprint
+Step 5: Transfer the output bound to risk reductions.
+Let f = fj,η and e
+f = Φjβη
+j,Tj. Both
+have norm at most KjRj. The polarization identity and equation 41 give
+|RP (f) −RP ( e
+f)| ≤∥f −e
+f∥(2∥¯r∥+ ∥f∥+ ∥e
+f∥)
+≤2(s + KjRj)εj(C, η),
+(55)
+which proves equation 38. Applying | sup u −sup v| ≤sup |u −v| on the same armwise candidate
+set proves equation 39.
+Step 6: Establish attainment on the candidate sets.
+Finally, the actual gradient is continuous
+on the certified ball. Finite induction in equation 27 makes the terminal actual output continuous
+in η. The tangent terminal output is a finite matrix polynomial in η. Both reductions are therefore
+continuous on the nonempty compact set Ej(C), so their optima are attained.
+Proof of Theorem 3. We transfer the certified tangent margin to the actual runs, then construct an
+instance satisfying all the stated conditions.
+Step 1: Transfer the tangent advantage to trained risk.
+Proposition 6 proves the finite-horizon
+iterate and output bounds, the exact tangent formula and the optimized error certificate. Its two-sided
+bounds and the strict margin give the positive chain
+∆r ≥∆lin
+r
+−er > ∆lin
+b + eb ≥∆b.
+(56)
+Both reductions use the common baseline RP (0). Subtracting equation 56 from that baseline and
+using attainment proves equation 14.
+Step 2: Construct and bound the angular objective.
+We finish by constructing the stated
+nonempty instance. Let (ζ1, ζ2) ∼N(0, I2) and let e ∈X be a unit vector. For α = (α1, α2), put
+sα = α1ζ1 + α2ζ2.
+(57)
+With prediction sαe, target βζ2e and the implemented strict threshold τ, the population angular
+objective is exactly
+Aβ(α) = 1 −E[sgn(sαζ2)1{|sα| > τ, |ζ2| > τ/β}] .
+(58)
+We verify the gradient envelope consumed below.
+Let φ(t) = (2π)−1/2e−t2/2 and Φ(t) =
+R ∞
+t
+φ(s) ds denote the standard Gaussian density and upper-tail function. Write α = ρ(cos ϑ, sin ϑ)
+and t = τ/ρ. Conditioning the signed integrand on the standard normal Zϑ = cos ϑ ζ1 + sin ϑ ζ2,
+define mϑ(z) as its conditional expectation given Zϑ = z. Since |mϑ| ≤1, differentiation of
+Z
+|z|>t
+mϑ(z)φ(z) dz
+(59)
+at the moving cutoff gives
+|∂ρAβ| ≤2τ
+ρ2 φ(τ/ρ) ≤
+4
+e
+√
+2π τ .
+(60)
+For the angular derivative, use polar Gaussian coordinates
+(ζ1, ζ2) = R(cos ϕ, sin ϕ).
+(61)
+At each R > τ/ρ, put γR = arccos(τ/(ρR)) and let qR(ϕ) be the signed target mask, which is
+bounded by one and satisfies qR(ϕ + π) = −qR(ϕ). The conditional angular average is
+1
+π
+Z ϑ+γR
+ϑ−γR
+qR(ϕ) dϕ.
+(62)
+Translating this interval changes the integral at rate at most 2/π. Integration against the polar
+Gaussian density therefore gives
+1
+ρ|∂ϑAβ| ≤2
+πρe−τ 2/(2ρ2) ≤
+2
+π√e τ .
+(63)
+26
+
+
+Preprint
+For fixed (ρ, ϑ) with ρ < β, cutoff intersections occur at at most four radii and have zero polar
+measure. The uniform translation bound above therefore permits dominated differentiation in R. We
+also have
+|Aβ(α) −1| ≤2Φ(τ/ρ) = o(ρ)
+as ρ ↓0,
+(64)
+and both displayed derivative bounds converge uniformly to zero. Away from the two cutoff collisions
+α = ±β(0, 1), the same cutoff integrals vary continuously. Thus on every ball ∥α∥≤R < β, the
+objective is continuously differentiable, ∇Aβ(0) = 0 and
+∥∇Aβ(α)∥≤
+
+4
+e
+√
+2π +
+2
+π√e
+
+τ −1 < τ −1.
+(65)
+Step 3: Realize the correction heads on a sampler state.
+We now realize these coordinates
+through a state of the linear-interpolant flow. Draw ξ ∼N(0, Id) for d ≥2, take X0 = 0 and
+deterministic C, let Σ be uniform on [0, 1] and set
+Xσ = σξ,
+U = ξ.
+(66)
+Let ζ1, ζ2 be two orthonormal coordinates of ξ. For σ > 0, define
+v0(Xσ, σ, C) = ξ −βζ2e.
+(67)
+The time law assigns zero mass to σ = 0, where the checkpoint can be defined arbitrarily. The current
+state recovers ξ = Xσ/σ, so the stored feature (ζ1, ζ2) is a deterministic function of the current base
+input. Moreover,
+r = ¯r = βζ2e,
+s = β.
+(68)
+Use the actual two-coordinate heads
+Fr(α) = (α1ζ1 + α2ζ2)e,
+Fb(α) = (α1ζ1 + √κ α2ζ2)e,
+0 < κ < 1.
+(69)
+Their Jacobians are constant, so Kj = 1 and Λj = 0. Independence and unit variances give
+Hr = I2,
+br = (0, β)⊤,
+Hb = diag(1, κ),
+bb = (0, √κ β)⊤.
+(70)
+Step 4: Choose admissible parameters and equal resource charges.
+Set τ = 10−8, G∠= τ −1,
+Q∠= λ∠G∠, choose β ≥4Q∠and then choose
+κ = 1
+4,
+η = 1
+4,
+ζstab = 1,
+Rb = β
+3 ,
+Rr = β + Q∠
+3
+.
+(71)
+Equation 65 applies on the refiner ball because Rr ≤5β/12 < β. Choose symmetric two-parameter
+linear-head schedules with common measured update and state charges c∗and m∗. Let d∗be the
+added refiner inference charge and declare C = (c∗, m∗, d∗). Both arms fit this ledger and have
+horizon one. Fixing the common candidate set to {1/4} before either run gives
+η∥Hj∥op = 1
+4 ≤1,
+ηΓb = Rb,
+ηΓr = Rr.
+(72)
+Thus every local and resource condition is satisfied.
+Step 5: Verify the strict risk-reduction margin.
+Finally, equation 37 on the loaded eigendirection
+gives
+∆lin
+r
+= β2[1 −(1 −1/4)2] = 7
+16β2,
+∆lin
+b = β2[1 −(1 −1/16)2] = 31
+256β2.
+(73)
+Since Λj = 0, we have ωb = 0, ωr = Q∠, εb = 0 and εr = Q∠/4. Therefore
+eb = 0,
+er = 2(β + Rr)Q∠
+4
+= Q∠(4β + Q∠)
+6
+.
+(74)
+The tangent gap is 81β2/256, while
+er
+β2 = 1
+6
+Q∠
+β
+
+4 + Q∠
+β
+
+≤17
+96 < 81
+256.
+(75)
+This proves the strict margin and completes the theorem.
+27
+
+
+Preprint
+C
+DEPLOYMENT ANALYSIS: GAIN, SAMPLER LAW AND ENDPOINT
+This section establishes how the correction gain controls deployed velocity error and endpoint
+distance. We first derive an exact gain quadratic at a fixed state law. We then couple the base and
+corrected trajectories to certify velocity improvement under each sampler’s own law. Finally, we
+analyze how velocity corrections accumulate along the trajectory and derive an exact endpoint gain
+identity for affine–Gaussian flows.
+C.1
+DEPLOYMENT SETTING
+Fix the trained pair and let Ddep denote the full deployment domain. Write gϕ for the composite
+deployed correction W 7→gϕ(Z(W)). Fix a measurable reference velocity field
+u⋆: Ddep →X
+such that
+u⋆(W) = E[U | W]
+P-almost surely.
+Set
+¯r = u⋆−v0.
+For a state law Q and a gain κ ≥0, define the deployed velocity error relative to this reference field,
+together with its alignment and energy coefficients,
+VQ(κ) = EQ∥¯r −κgϕ∥2,
+AQ = EQ⟨¯r, gϕ⟩,
+BQ = EQ∥gϕ∥2.
+(76)
+On the training law these connect to the risk used above. Taking h = κgϕ in equation 41 gives
+RP (κgϕ) = E e
+P ∥r −¯r∥2 + VP (κ),
+(77)
+so VP is the entire part of the training risk that the gain moves.
+The deployed sampler determines its state law through its trajectory. Running Equation 11 from the
+prescribed Gaussian source with the composite field v0 + κgϕ, let Xκ(σ) denote the exact trajectory
+in the sampler orientation σ : 1 →0 and put
+Qκ = Law
+ Xκ(Σ), Σ, C
+
+,
+Σ ∼q.
+(78)
+Here q is a probability law on [0, 1], and Σ is independent of the source and condition. The law Q0 is
+visited by the uncorrected sampler. We compare these two deployment laws directly in Appendix C.3.
+Assumption 6 (Training-law moments). The realized residual satisfies r ∈L2( eP; X), and the
+deployed correction satisfies gϕ ∈L2(P; X). The specified field ¯r agrees with E e
+P [r | W] P-almost
+surely. Conditional Jensen’s inequality therefore gives ¯r ∈L2(P; X).
+Assumption 7 (Deployment ODE well-posedness). For a fixed gain radius ¯κ > 0, the family of
+deployed velocity fields
+{v0 + κgϕ : κ ∈[0, ¯κ]}
+is measurable in σ and globally Lipschitz in the state, with a common integrable Lipschitz enve-
+lope. Their values at one reference state admit a common integrable envelope over the same gain
+range. Consequently, their exact ODEs admit unique global solutions on [0, 1], and the laws Qκ of
+equation 78 are well-defined for every κ ∈[0, ¯κ].
+C.2
+EXACT GAIN QUADRATIC AND IMPROVEMENT INTERVAL
+At a fixed state law, the deployed velocity error is an exact quadratic in the gain. Residual–correction
+alignment AQ determines the initial slope, and correction energy BQ determines the curvature.
+Together, they specify the improvement interval and its optimal gain.
+Proposition 7 (Exact gain quadratic). Let Q be a probability law with EQ∥¯r∥2 < ∞and EQ∥gϕ∥2 <
+∞. Then, for every κ ∈[0, ∞),
+VQ(κ) −VQ(0) = −2κAQ + κ2BQ.
+(79)
+Proof. We verify finiteness of every term before expanding the squared velocity error.
+28
+
+
+Preprint
+Step 1: Establish integrability on the deployment law.
+First, AQ is a finite real number, BQ ∈
+[0, ∞), VQ(κ) < ∞for every finite κ ≥0 and
+|AQ| ≤VQ(0)1/2B1/2
+Q .
+(80)
+By definition VQ(0) = EQ∥¯r∥2 < ∞and BQ = EQ∥gϕ∥2 ∈[0, ∞). Cauchy–Schwarz in L2(Q; X)
+gives
+EQ|⟨¯r, gϕ⟩| ≤
+ EQ∥¯r∥21/2 EQ∥gϕ∥21/2 < ∞,
+which makes AQ finite and proves equation 80. For a finite gain the pointwise bound ∥¯r −κgϕ∥2 ≤
+2∥¯r∥2 + 2κ2∥gϕ∥2 has an integrable right side, so VQ(κ) < ∞.
+Step 2: Expand the gain quadratic at the fixed law.
+Pointwise in the state, ∥¯r −κgϕ∥2 =
+∥¯r∥2 −2κ⟨¯r, gϕ⟩+ κ2∥gϕ∥2. Step 1 makes all three terms integrable and the left side finite, so
+taking Q-expectations and subtracting VQ(0) gives equation 79. Under Q, alignment sets the linear
+coefficient and correction energy sets the quadratic coefficient.
+Proposition 8 (Sharp gain boundaries). Under Proposition 7, exactly one of the following holds.
+(i) If BQ = 0, then gϕ = 0 Q-almost surely, AQ = 0 and VQ(κ) = VQ(0) for every κ ≥0.
+(ii) If BQ > 0 and AQ ≤0, then VQ(κ) > VQ(0) for every κ > 0.
+(iii) If BQ > 0 and AQ > 0, then
+VQ(κ) < VQ(0)
+⇐⇒
+0 < κ < 2AQ
+BQ
+,
+(81)
+with equality exactly at the two endpoints κ = 0 and κ = 2AQ/BQ, and VQ(κ) > VQ(0)
+for every larger gain.
+Proof. If BQ = 0, the nonnegative variable ∥gϕ∥2 has zero expectation and vanishes Q-almost
+surely. Then AQ = 0 and ¯r −κgϕ = ¯r Q-almost surely for every κ, which is case (i).
+Suppose BQ > 0. Factoring equation 79 gives
+VQ(κ) −VQ(0) = κ
+ κBQ −2AQ
+
+.
+(82)
+If AQ ≤0 and κ > 0, then κBQ > 0 and −2AQ ≥0, so both factors are positive, which is case (ii).
+If AQ > 0 and κ > 0, the sign of equation 82 is the sign of κBQ −2AQ, which is negative, zero, or
+positive according as κ is below, equal to, or above 2AQ/BQ. The separate factor κ supplies equality
+at κ = 0. This is case (iii).
+Corollary 9 (Unique optimal gain). If AQ > 0 and BQ > 0, the unique minimizer of κ 7→VQ(κ)
+on [0, ∞) is
+κ⋆= AQ
+BQ
+,
+VQ(κ⋆) = VQ(0) −
+A2
+Q
+BQ
+≥0.
+(83)
+Proof. Completing the square in equation 79 gives
+VQ(κ) = VQ(0) −
+A2
+Q
+BQ
++ BQ
+
+κ −AQ
+BQ
+2
+.
+The last term is nonnegative and vanishes at exactly one scalar, which is positive because AQ > 0
+and therefore lies in the allowed domain. Substitution gives the displayed value, and equation 80
+gives A2
+Q/BQ ≤VQ(0), which is the stated nonnegativity.
+C.3
+OWN-LAW VELOCITY IMPROVEMENT
+The next theorem establishes a gain interval over which the corrected sampler achieves lower velocity
+error than the base sampler, with each field evaluated under its own state law. Coupling the trajectories
+through the same initial noise and condition lets us control their displacement using spatial regularity.
+Combining this displacement bound with the fixed-law gain identity gives the comparison between
+Qκ and Q0.
+29
+
+
+Preprint
+Coupled trajectories.
+Let X1 be the prescribed Gaussian source and C the shared condition. For
+each κ ∈[0, ¯κ], use the exact descending ODEs
+dX0(σ)
+dσ
+= v0(X0(σ), σ, C),
+X0(1) = X1,
+(84)
+dXκ(σ)
+dσ
+= v0(Xκ(σ), σ, C) + κgϕ(Xκ(σ), σ, C),
+Xκ(1) = X1.
+(85)
+Sample the same independent Σ ∼q for both trajectories. Their respective marginals are Q0 and Qκ
+as defined in equation 78. Write A0 := AQ0 for the alignment along the baseline trajectory.
+Assumption 8 (Uniform bounds and spatial regularity). The bounds below control the magnitude
+and spatial variation of the residual ¯r. The reference velocity u⋆determines this field through
+¯r = u⋆−v0. There is a deterministic common domain that, on an event of probability one, contains
+the coupled trajectories simultaneously for every σ ∈[0, 1] and κ ∈[0, ¯κ]. On this domain, finite
+nonnegative constants Rr, G, Lr, Lg, L0 satisfy
+∥¯r(x, σ, c)∥≤Rr,
+∥gϕ(x, σ, c)∥≤G,
+(86)
+and, for any two states x, y in the domain at the same (σ, c),
+∥¯r(x, σ, c) −¯r(y, σ, c)∥≤Lr∥x −y∥,
+(87)
+∥gϕ(x, σ, c) −gϕ(y, σ, c)∥≤Lg∥x −y∥,
+(88)
+∥v0(x, σ, c) −v0(y, σ, c)∥≤L0∥x −y∥.
+(89)
+The constants are uniform in the noise level, condition, source realization and gain throughout the
+stated range.
+Assumption 7 supplies existence and uniqueness. Assumption 8 quantifies how the correction moves
+the trajectory and how this displacement affects residual error and alignment across the common
+deployment domain.
+The following theorem gives the full quantitative certificate summarized in the main-text Theorem 4.
+Theorem 10 (Detailed own-law velocity certificate). Under Assumptions 7 and 8, define
+H0(σ) :=
+
+
+
+eL0(1−σ) −1
+L0
+,
+L0 > 0,
+1 −σ,
+L0 = 0,
+KQ := G EΣ∼q[H0(Σ)].
+(90)
+Set
+LV := 2RrLr,
+LA := LrG + RrLg,
+M := 2A0 −LV KQ,
+N := G2 + 2LAKQ.
+(91)
+Then for every κ ∈[0, ¯κ],
+VQκ(κ) −VQ0(0) ≤−κM + κ2N.
+(92)
+If M > 0, then N > 0, and every gain satisfying
+0 < κ ≤¯κ,
+κ < M
+N
+(93)
+gives the strict comparison
+VQκ(κ) < VQ0(0).
+(94)
+Each velocity field is therefore evaluated under the state law generated by its own sampler.
+Proof. Fix κ ∈[0, ¯κ] and use the common-source coupling throughout.
+30
+
+
+Preprint
+Step 1: Bound the trajectory displacement.
+The integral form of equation 85, with the common
+source cancelled, gives
+∥Xκ(σ) −X0(σ)∥≤
+Z 1
+σ
+∥v0(Xκ(s), s, C) −v0(X0(s), s, C)∥ds
++ κ
+Z 1
+σ
+∥gϕ(Xκ(s), s, C)∥ds
+≤L0
+Z 1
+σ
+∥Xκ(s) −X0(s)∥ds + κG(1 −σ).
+(95)
+To handle the descending orientation, put t = 1 −σ and φ(t) = ∥Xκ(1 −t) −X0(1 −t)∥. Then
+φ(t) ≤L0
+Z t
+0
+φ(s) ds + κGt.
+For L0 > 0, Gr¨onwall’s inequality yields
+φ(t) ≤κG
+
+t + L0
+Z t
+0
+seL0(t−s) ds
+
+= κGeL0t −1
+L0
+.
+For L0 = 0, the preceding integral inequality directly gives φ(t) ≤κGt. Thus
+∥Xκ(σ) −X0(σ)∥≤κGH0(σ),
+E∥Xκ(Σ) −X0(Σ)∥≤κKQ.
+(96)
+The expectation uses the shared source, condition and sampled noise level.
+Step 2: Control the change in baseline error.
+Suppressing the fixed arguments (σ, c), the residual
+bounds give
+∥¯r(x)∥2 −∥¯r(y)∥2 ≤
+ ∥¯r(x)∥+ ∥¯r(y)∥
+
+∥¯r(x) −¯r(y)∥
+≤2RrLr∥x −y∥= LV ∥x −y∥.
+Applying this inequality to the coupled states in equation 96 gives
+VQκ(0) −VQ0(0) = E
+
+∥¯r(Xκ(Σ), Σ, C)∥2 −∥¯r(X0(Σ), Σ, C)∥2
+≤LV E∥Xκ(Σ) −X0(Σ)∥≤κLV KQ.
+(97)
+Step 3: Control the change in alignment.
+At the same fixed (σ, c),
+⟨¯r(x), gϕ(x)⟩−⟨¯r(y), gϕ(y)⟩
+
+≤
+⟨¯r(x) −¯r(y), gϕ(x)⟩
+ +
+⟨¯r(y), gϕ(x) −gϕ(y)⟩
+
+≤(LrG + RrLg)∥x −y∥= LA∥x −y∥.
+Taking expectations under the coupling therefore yields
+AQκ ≥A0 −LAE∥Xκ(Σ) −X0(Σ)∥≥A0 −κLAKQ.
+(98)
+Step 4: Combine the fixed-law gain and the trajectory shift.
+The uniform bounds give BQκ ≤G2
+and VQκ(0) ≤R2
+r for every allowed gain, including zero. Step 1 of the proof of Proposition 7 makes
+all the risks and coefficients finite. We may therefore apply Proposition 7 at the single law Q = Qκ
+and then add the change in baseline error:
+VQκ(κ) −VQ0(0)
+=
+
+VQκ(κ) −VQκ(0)
+
++
+
+VQκ(0) −VQ0(0)
+
+≤−2κAQκ + κ2BQκ + κLV KQ
+≤−2κ(A0 −κLAKQ) + κ2G2 + κLV KQ
+= −κ(2A0 −LV KQ) + κ2(G2 + 2LAKQ) = −κM + κ2N.
+(99)
+This proves equation 92. If M > 0, then A0 > 0. Were G = 0, the correction would vanish along the
+baseline trajectory and force A0 = 0. Hence G > 0 and N ≥G2 > 0. For the gains in equation 93,
+−κM + κ2N = κ(−M + κN) < 0, proving equation 94.
+31
+
+
+Preprint
+Meaning of the certificate.
+The constant KQ converts the correction gain into a bound on expected
+trajectory displacement. The constants LV and LA translate this displacement into bounds on the
+change in squared baseline residual and residual–correction alignment, respectively. The first-order
+margin M = 2A0 −LV KQ balances the alignment benefit along the baseline trajectory against
+the bound on baseline-error change caused by trajectory displacement. The condition M > 0
+ensures that the alignment benefit exceeds this displacement cost. The second-order coefficient
+N = G2 + 2LAKQ accounts for correction magnitude and the bound on alignment change along
+the shifted trajectory. Choosing κ < M/N makes the certified first-order benefit dominate these
+second-order costs. The resulting bound accounts for both the correction and its induced trajectory
+shift, establishing lower velocity error under the corrected sampler’s own state law. Appendix C.4
+next analyzes how velocity corrections accumulate into endpoint displacement.
+C.4
+FROM VELOCITY ERROR TO ENDPOINT DISTANCE
+The own-law velocity certificate of Theorem 10 does not by itself imply endpoint improvement.
+Endpoint displacement depends on how velocity errors accumulate over the trajectory. The following
+proposition identifies the role of temporal cancellation, which motivates the endpoint gain analysis
+below.
+Proposition 11 (Temporal cancellation and endpoint displacement). There is a one-dimensional
+instance with state-independent ideal, base and corrected fields, satisfying Assumption 7 on one
+sampler interval, in which the corrected field has strictly smaller integrated squared velocity error
+and a strictly smaller one-sided path-length bound than the base field, while its terminal W2 distance
+from the ideal law is strictly larger.
+Proof. Reparameterize the sampler interval by t = 1 −σ ∈[0, 1], so that t = 0 is the prescribed
+source and t = 1 is the generated endpoint. This substitution preserves squared velocity error. Let µ
+be any square-integrable law on R, draw Z ∼µ and use the same Z as the source of all three flows.
+Take the ideal drift to be zero, take
+b(t) =
++1,
+0 ≤t < 1
+2,
+−1,
+1
+2 ≤t ≤1,
+(100)
+as the base drift, fix any gain κce ∈(0, ¯κ] and define the correction by g(t) = ( 1
+2 −b(t))/κce, so that
+the corrected drift is the constant 1
+2. All three drifts are measurable, bounded and state independent,
+hence Lipschitz in the state with constant zero, so they meet Assumption 7.
+Direct integration of ˙X⋆= 0, ˙X0 = b and ˙Xce = 1
+2 from the common source gives
+X⋆
+t = Z,
+X0
+t =
+Z + t,
+0 ≤t ≤1
+2,
+Z + 1 −t,
+1
+2 ≤t ≤1,
+Xce
+t
+= Z + t
+2,
+(101)
+so that X⋆
+1 = X0
+1 = Z and Xce
+1
+= Z + 1
+2. The base drift integrates to zero because its two
+half-interval contributions cancel.
+Because both velocity errors are state independent, evaluating them under any common state law
+gives
+Z 1
+0
+E|0 −b(t)|2 dt = 1,
+Z 1
+0
+E
+0 −1
+2
+
+2
+dt = 1
+4,
+(102)
+and the one-sided path-length bounds from the common-source coupling are
+R 1
+0 |b| dt = 1 and
+R 1
+0
+1
+2 dt = 1
+2. For the endpoints, equation 101 gives π⋆
+1 = π0
+1 = µ while πce
+1 is µ translated by 1
+2. The
+translation coupling gives W2(πce
+1 , π⋆
+1) ≤1
+2, and for any finite-cost coupling (Y, Y ′) of the two laws
+Jensen’s inequality gives E|Y −Y ′|2 ≥|EY −EY ′|2 = 1
+4. Hence
+W2(π0
+1, π⋆
+1) = 0,
+W2(πce
+1 , π⋆
+1) = 1
+2.
+(103)
+These values prove the stated strict inequalities. The signed drift integral determines endpoint
+displacement in this construction, while squared velocity error measures the drift’s energy over
+time.
+32
+
+
+Preprint
+For affine–Gaussian flows with a common linear part, the correction shifts the endpoint mean by an
+explicit displacement. We use this structure to derive an exact endpoint gain identity. The common
+linear part propagates the correction through the fundamental solution, and a state-independent cor-
+rection preserves covariance by translating each conditional law. The square-integrability conditions
+make the averaged endpoint quadratic finite.
+Assumption 9 (Exact affine–Gaussian endpoint specialization). Conditionally on C = c, the
+ideal and base sampler ODEs are affine Gaussian with a common linear part M(σ)x, a common
+conditional endpoint covariance and an additive drift difference. For PC-almost every c, the common
+linear coefficient and the ideal additive drift are integrable in σ on [0, 1], so the ideal ODE has a
+unique global solution from the prescribed Gaussian source. The deployed correction gϕ(σ, c) is
+state independent. Let Ψ(σ, s) be the common fundamental solution of ˙x = M(σ)x, let m⋆
+0(c) and
+m0
+0(c) be the ideal and base conditional endpoint means and put E0(c) = m⋆
+0(c) −m0
+0(c) and
+G(c) =
+Z 0
+1
+Ψ(0, s) gϕ(s, c) ds,
+(104)
+in the sampler orientation. Both E0 and G belong to L2(PC; X).
+Proposition 12 (Endpoint displacement and covariance preservation). Under Assumptions 7 and 9,
+for PC-almost every c and every finite gain κ in the exact-flow domain, the conditional endpoint law
+πκ
+0 (· | c) of the corrected sampler satisfies
+mκ
+0(c) = m0
+0(c) + κG(c),
+Cov
+ X⋆
+0(c)
+
+= Cov
+ X0
+0(c)
+
+= Cov
+ Xκ
+0(c)
+
+= Ξ0(c).
+(105)
+Proof. Fix a condition c and suppress it. Since the correction is state independent, the base and
+corrected conditional fields are x 7→M(σ)x + b0(σ) and x 7→M(σ)x + b0(σ) + κgϕ(σ, c),
+respectively. Let X1 be the prescribed common Gaussian source. Variation of constants applied
+directly in the descending orientation gives
+X0
+0 = Ψ(0, 1)X1 +
+Z 0
+1
+Ψ(0, s)b0(s) ds,
+Xκ
+0 = Ψ(0, 1)X1 +
+Z 0
+1
+Ψ(0, s)
+
+b0(s) + κgϕ(s, c)
+
+ds = X0
+0 + κG(c).
+Taking conditional expectations gives the first display of equation 105. The same identity is a
+pathwise translation under the common-source coupling, and κG(c) is deterministic once c is fixed,
+so Xκ
+0 −mκ
+0(c) = X0
+0 −m0
+0(c) and the corrected and base conditional covariances agree. The ideal
+and base endpoint covariances agree by Assumption 9, which gives the common Ξ0(c).
+The terminal-value problem fixes the integration direction from one to zero. For example, if M ≡0
+and gϕ(s, c) ≡g, then equation 104 gives G(c) = −g, and the corrected descending flow ends at
+X0
+0 −κg.
+Proposition 13 (Exact endpoint gain quadratic). Under Assumption 9 and Proposition 12, put
+Aend = EC⟨E0, G⟩,
+Bend = EC∥G∥2 ≥0.
+(106)
+Then for every finite gain κ in the exact-flow domain,
+ECW 2
+2
+ πκ
+0 , π⋆
+0
+
+−ECW 2
+2
+ π0
+0, π⋆
+0
+
+= −2κAend + κ2Bend.
+(107)
+Proof. We first compute the transport distance for a common covariance, then apply the mean
+displacement and average over conditions.
+Step 1: Compute the Wasserstein distance for a common covariance.
+For any m, n ∈X and
+any positive-semidefinite covariance operator Ξ on X,
+W 2
+2
+ N(m, Ξ), N(n, Ξ)
+
+= ∥m −n∥2.
+(108)
+The identity includes singular Ξ and the Dirac case Ξ = 0.
+Let Z ∼N(0, Ξ), which is well defined for singular Ξ, and set X = m + Z and Y = n + Z. This
+is a coupling of the two laws with E∥X −Y∥2 = ∥m −n∥2, which gives the upper bound. For
+the matching lower bound, let ( eX, eY) be any coupling. If its quadratic cost is infinite the bound is
+immediate, and otherwise Jensen’s inequality for z 7→∥z∥2 gives E∥eX −eY∥2 ≥∥E( eX −eY)∥2 =
+∥m −n∥2. Taking the infimum over couplings gives equation 108 for every positive-semidefinite Ξ.
+33
+
+
+Preprint
+Step 2: Apply the conditional endpoint mean displacement.
+Proposition 12 gives m⋆
+0(c) −
+mκ
+0(c) = E0(c) −κG(c) and a covariance Ξ0(c) shared by all three conditional endpoint laws.
+Step 1 therefore gives, for PC-almost every c,
+W 2
+2
+ πκ
+0 (· | c), π⋆
+0(· | c)
+
+= ∥E0(c)−κG(c)∥2,
+W 2
+2
+ π0
+0(· | c), π⋆
+0(· | c)
+
+= ∥E0(c)∥2. (109)
+These identities express the conditional endpoint distances as squared norms of mean displacements.
+Step 3: Average the exact quadratic over conditions.
+We now average over conditions. Assump-
+tion 9 makes E0 and G strongly measurable and square integrable, so both maps in equation 109 are
+measurable, and ∥E0 −κG∥2 ≤2∥E0∥2 +2κ2∥G∥2 makes both integrable. Cauchy–Schwarz gives
+EC|⟨E0, G⟩| ≤(EC∥E0∥2)1/2(EC∥G∥2)1/2 < ∞. Every term is therefore a finite real number,
+and the pointwise identity ∥E0 −κG∥2 −∥E0∥2 = −2κ⟨E0, G⟩+ κ2∥G∥2 may be integrated.
+Substituting equation 109 gives equation 107.
+Corollary 14 (Endpoint gain window). Under Proposition 13, the corrected sampler has strictly
+smaller averaged squared endpoint distance than the base sampler exactly when Bend > 0, Aend > 0
+and
+0 < κ < 2Aend
+Bend
+,
+(110)
+with equality at both endpoints of that interval and strict degradation beyond it. The unique optimal
+gain is Aend/Bend. If Bend = 0, then G = 0 almost surely and every gain ties. If E0 = 0 almost
+surely, then Aend = 0 and every positive gain with Bend > 0 strictly increases the endpoint distance.
+Proof. Equation 107 has the same shape as equation 79 with Aend and Bend in place of AQ and BQ,
+so Proposition 8 and Corollary 9 apply verbatim to the scalar function κ 7→ECW 2
+2 (πκ
+0 , π⋆
+0). For the
+last statement, if E0 = 0 almost surely then ⟨E0, G⟩= 0 almost surely, so Aend = 0 and case (ii)
+of Proposition 8 applies. Step 1 of the proof of Proposition 13 covers every positive-semidefinite
+conditional covariance Ξ0, including singular cases.
+D
+IMPLEMENTATION DETAILS
+We expand the settings in Sections 5.1–5.3, covering model configurations, optimization, inference
+and evaluation.
+D.1
+IMAGE GENERATION
+Model configuration.
+We build on the released ImageNet-256 RAEv2 checkpoint (Singh et al.,
+2026) trained for 80 epochs. The representation autoencoder uses the DINOv3-L encoder with
+seven-layer feature aggregation and a pretrained ViT-XL decoder. We keep the encoder, decoder
+and latent normalization statistics fixed throughout adaptation. Each image is represented by a
+16 × 16 grid of 1,024-dimensional latent vectors. The base transformer processes these vectors with
+latent patch size 1, using 28 blocks of width 1,440 with 20 attention heads, followed by a two-block
+diffusion head of width 2,048 with 16 attention heads. Its internal guidance branch reads the features
+after block 8. The refiner uses 10 blocks of width 768, 12 attention heads and an MLP expansion
+ratio of 4. It takes the predicted clean latent, noise-level and class embeddings and hidden states from
+base blocks 3, 11, 19 and 27, with block indices counted from one. We initialize the refiner from
+scratch and zero-initialize its output projection, so its initial velocity correction is zero.
+Training.
+The base retains its flow-matching objective, including supervision of the internal
+guidance branch. Training noise levels follow the base configuration: we draw a logit-normal variable
+with underlying Gaussian mean 0 and standard deviation 1, then apply the same factor-8 shift used
+for sampling below. The refiner minimizes the mean squared error to the realized velocity residual,
+together with a cosine-direction term of weight 0.1. Its overall loss weight is 1. We detach the
+residual target and all base-model inputs to the refiner, so the refiner loss updates only the refiner and
+the base is updated by its own objective. Both networks use GMuon with momentum 0.95, Nesterov
+updates, zero weight decay and gradient-norm clipping at 1. The base and refiner learning rates warm
+up from zero over 0.2 epochs to 2 × 10−5 and 4 × 10−4, respectively, then decay linearly to 2 × 10−6
+34
+
+
+Preprint
+and 4 × 10−5 at the end of the 80-epoch adaptation. We train with a global batch size of 1,024 on
+eight NVIDIA H200 GPUs, using bfloat16 mixed precision, 64 images per GPU per microbatch and
+two gradient-accumulation steps. The full 80-epoch adaptation comprises 100,080 optimizer steps
+and takes approximately 42 hours on a single node, including periodic evaluation and checkpointing.
+Class-conditioning dropout is 0.1, and exponential moving average (EMA) weights are maintained
+separately for both networks with decay 0.9995.
+Sampling and deployment.
+At test time, we use the EMA weights and generate 50,000 images,
+with 50 images for each of the 1,000 classes. We start from standard Gaussian latent noise and take
+100 Euler steps on the base model’s shifted noise schedule. Specifically, a uniform grid si = 1−i/100,
+for i = 0, . . . , 100, is mapped to noise levels σi = 8si/(1 + 7si). The shift factor 8 follows the
+released configuration,
+p
+(1024 · 16 · 16)/4096. The model predicts clean latents, which the sampler
+converts to velocities using a denominator max(σ, 0.05) for numerical stability. We evaluate both
+without guidance and with RAEv2’s internal guidance at scale 1.78 over σ ∈[0.1, 1]. In both settings,
+the refiner correction uses gain κ = 1 within σ ∈[0.15, 0.92] and is zero outside this interval. When
+guidance is enabled, we add the refiner correction to the velocity after the guidance operation. We
+decode the final latent with the frozen decoder and compute all metrics from the resulting 8-bit RGB
+images.
+Baselines.
+The published-baseline rows in Table 7 cover SiT-XL/2, DDT-XL, SiT-XL/2-REPA,
+LightningDiT, REG, REPA-E and RAE-XL. We use their reported evaluations from FD-loss (Yang
+et al., 2026), whose representation-distance results are also reproduced by RAEv2 (Singh et al.,
+2026). That evaluation generates 50,000 images from official checkpoints with the corresponding
+official sampling code, balancing the sample count across classes and using method-specific inference
+settings. Table 6 summarizes the sampling budgets and guidance mechanisms. The six VAE-based
+methods use 250 sampling steps with classifier-free guidance (CFG), while RAE-XL uses 50 Euler
+steps and AutoGuidance from a separately trained weaker model. These published results therefore
+retain their original sampling budgets and guidance configurations.
+Table 6: Evaluation configurations for all seven published image-generation baselines in Table 7.
+Steps count sampler updates. CFG combines conditional and unconditional predictions, while
+AutoGuidance combines a main model with a weaker model.
+Method
+Image representation
+Steps
+Guidance
+SiT-XL/2 (Ma et al., 2024)
+SD-VAE
+250
+CFG
+DDT-XL (Wang et al., 2026b)
+SD-VAE
+250
+CFG
+SiT-XL/2-REPA (Yu et al., 2025)
+SD-VAE
+250
+CFG
+LightningDiT (Yao et al., 2025)
+VA-VAE
+250
+CFG
+REG (Wu et al., 2026)
+SD-VAE
+250
+CFG
+REPA-E (Leng et al., 2025)
+Jointly tuned VAE
+250
+CFG
+RAE-XL (Zheng et al., 2026a)
+DINOv2-B RAE
+50
+AutoGuidance
+The RAEv2 models with different training epochs use the same frozen autoencoder, EMA weights,
+100-step sampler, class-balanced sample count and guidance configuration as CORRFLOW. This
+comparison isolates the effect of deploying the refiner at a fixed base checkpoint. For SelfFlow (Chefer
+et al., 2026), we evaluate a local adaptation of its self-supervised flow-matching objective to the
+same frozen DINOv3-L representation autoencoder. This baseline uses a 30-block transformer of
+width 1,280 with 20 attention heads, a dual-noise mixing ratio of 0.25 and representation alignment
+of weight 0.8 between student block 9 and EMA-target block 21. We use EMA weights, the same
+100-step shifted Euler grid and 50,000 class-balanced images. The unguided runs disable guidance,
+and the guided runs use CFG at scale 1.5 over σ ∈[0, 0.7]. The SelfFlow rows report this local
+RAEv2-latent adaptation rather than the original paper’s ImageNet configuration.
+Inception-based metrics.
+We report Inception Score (IS, higher is better) (Salimans et al., 2016)
+and Fr´echet Inception Distance (FID, lower is better) (Heusel et al., 2017). IS measures the confidence
+and marginal diversity of Inception-v3 class predictions on generated images. For a generated image
+x, let p(y | x) be the classifier distribution over class labels y, and let p(y) be its marginal over
+generated samples. Then IS = exp
+ ExKL(p(y | x)∥p(y))
+
+, where KL denotes Kullback–Leibler
+35
+
+
+Preprint
+divergence. Our evaluator shuffles the generated samples before splitting them into ten equal groups
+and averages the resulting scores. FID compares the mean and covariance of generated and real images
+in the 2,048-dimensional Inception-v3 feature space. For our local evaluations, both metrics use the
+Inception-v3-compatible extractor in the RAEv2 evaluation package, with its released ImageNet-256
+reference statistics for FID.
+Representation-based metrics.
+We also report Representation Fr´echet Distance (FDr, lower
+is better) in ConvNeXt, DINOv2 and CLIP feature spaces. These metrics compare generated
+distributions through complementary supervised, self-supervised and image–text representations.
+Following the normalized-distance convention of FD-loss (Yang et al., 2026), each table entry is a
+ratio rather than a raw Fr´echet distance. For a frozen feature extractor ϕ, let (µG, ΣG) and (µR, ΣR)
+denote the feature mean vector and covariance operator of generated images G and the real training
+reference R. We compute
+FDϕ(G, R) = ∥µG −µR∥2
+2 + Tr
+
+ΣG + ΣR −2
+ Σ1/2
+R ΣGΣ1/2
+R
+1/2
+,
+(111)
+and normalize it by the distance from real ImageNet validation images V to the same training
+reference,
+FDr,ϕ(G) = FDϕ(G, R)
+FDϕ(V, R) .
+(112)
+The ConvNeXt column uses spatially averaged ConvNeXt V2-Base features (Woo et al., 2023) at
+input resolution 224 × 224. The DINOv2 and CLIP columns use the class-token features of DINOv2
+ViT-L/14 (Oquab et al., 2023) and OpenAI CLIP ViT-L/14 (Radford et al., 2021), respectively,
+both evaluated at 256 × 256 resolution. All three feature vectors have dimension 1,024. We retain
+the released extractor-specific normalization and reference statistics, using bicubic resizing with
+antialiasing when resizing is needed. The normalization constants in equation 112 are 56.87, 14.19
+and 5.60 for ConvNeXt, DINOv2 and CLIP, respectively. A value of 1 corresponds to the real
+validation-set reference in that feature space. We report the three distances individually to expose
+differences between representations.
+D.2
+TEXT-TO-VIDEO GENERATION
+Model configuration.
+We build on Wan2.1-T2V-1.3B (Wan et al., 2025), keeping its pretrained
+video variational autoencoder (VAE) and UMT5-XXL text encoder fixed while updating the full base
+transformer and the refiner. The base transformer has 30 blocks of width 1,536 with 12 attention
+heads. The VAE maps an 81-frame video at 480 × 832 resolution to a latent tensor with 16 channels,
+21 temporal positions and spatial size 60 × 104. Both networks use latent patches of size 1 × 2 × 2,
+giving 32,760 tokens in the same spatiotemporal order. The refiner has 10 blocks of width 1,024, 16
+attention heads and an MLP expansion ratio of 4. Its blocks alternate between self-attention with three-
+dimensional rotary position embeddings and cross-attention to text and base-model features. The base
+model’s noise-level embedding modulates each refiner block through adaptive layer normalization.
+We read hidden states after base blocks 4, 12, 20 and 30, corresponding to zero-based code indices 3,
+11, 19 and 29. At each token position, we concatenate the four 1,536-dimensional states and fuse them
+with a 6144 →1024 →1024 MLP with a GELU activation. We project the 4,096-dimensional text
+embeddings to the same width, add learned segment embeddings to distinguish text from hidden-state
+features and concatenate the two token sequences before layer normalization. The refiner processes
+the one-step clean prediction and maps its output back to a velocity residual of the original latent
+shape. It contains 146.58 million parameters, approximately 10.3% of the 1.419-billion-parameter
+base transformer. The combined transformer and refiner contain 1.566 billion parameters, excluding
+the frozen VAE and text encoder.
+Data and preprocessing.
+The final training mixture contains 46,572 WISA-80K clips and 20,000
+curated OpenVidHD clips, for 66,572 video–text pairs. The WISA subset retains clips with visual-
+quality scores of at least 4.0 and motion scores of at least 0.1. For WISA, we concatenate the
+video caption with its physical-law annotation, following the dataset’s level-B conditioning. For
+OpenVidHD (Nan et al., 2025), we use the supplied caption. We shuffle the concatenated datasets
+without additional source reweighting. Each training example contains 81 frames sampled uniformly
+across the complete clip, preserving the temporal extent of the depicted event. Short clips reuse
+36
+
+
+Preprint
+sampled frame indices to obtain the same length. We resize frames while preserving their aspect ratio
+and center-crop them to 480 × 832 before VAE encoding.
+Training.
+We jointly train the base model and refiner for five epochs on the processed 66,572-clip
+dataset using AdamW, with learning rates of 5×10−6 and 10−4, respectively, momentum coefficients
+(0.9, 0.999) and weight decay 0.01. The learning rates start at one-third of these values for five
+scheduler steps and then remain at the nominal rates. Training uses four NVIDIA H200 GPUs with a
+global batch size of 16, bfloat16 mixed precision and gradient checkpointing, taking approximately
+201 hours including checkpointing. The base uses the scheduler-weighted flow-matching loss, while
+the refiner minimizes residual mean squared error plus a cosine-direction loss weighted by 0.1, with
+unit overall refiner-loss weight. All three benchmarks use the resulting paired weights.
+Sampling and deployment.
+We generate 81-frame videos at 480 × 832 resolution and save them at
+16 frames per second. Sampling starts from standard Gaussian latent noise and uses 50 Euler updates
+with noise shift 5 and classifier-free guidance (CFG) scale 5. For si = 1 −i/50, with i = 0, . . . , 50,
+the noise grid is σi = 5si/(1 + 4si). We use the fixed Wan negative prompt and apply the refiner to
+the positive text branch with gain κ = 0.2 when σ ∈[0.15, 0.92]. Let v+ and v−denote the base
+velocities conditioned on the benchmark prompt and negative prompt, respectively, and let ˆr+ denote
+the positive-branch residual prediction. At active steps, the guided velocity is
+vsample = v−+ 5
+ v+ + 0.2ˆr+ −v−
+
+= v−+ 5(v+ −v−) + ˆr+.
+(113)
+Thus the branch-level gain yields a unit-strength residual contribution to the guided velocity. We
+recompute the clean prediction and hidden states from the current latent at every active step. The base
+runs in bfloat16 and the refiner in float32, and the frozen VAE decodes the final latent to RGB frames.
+VBench.
+We use the released VBench prompt suite and evaluators (Huang et al., 2024) to measure
+16 dimensions of video quality and text alignment. Seven dimensions measure visual quality and
+temporal behavior, and nine measure semantic consistency. Tables 8 and 9 display dimension
+scores on a 0–100 scale. Quality Score and Semantic Score use the benchmark’s dimension-specific
+normalization and weights, and Overall Score combines them with weights 0.8 and 0.2, respectively.
+Temporal Flickering measures resistance to frame-to-frame flicker, so a larger score indicates better
+temporal stability. Dynamic Degree measures the presence of motion through optical flow and
+complements Motion Smoothness, which evaluates temporal regularity.
+VideoPhy2.
+We evaluate the 590-prompt test set, including its 180-prompt HARD subset, with
+the released VideoPhy2 automatic evaluator (Bansal et al., 2026). Generation uses the benchmark’s
+expanded captions, while scoring uses the original action captions. The evaluator assigns ratings
+from 1 to 5 for physical commonsense (PC) and semantic adherence (SA). The PC and SA columns
+report the percentage of ratings at least 4, and Joint reports the percentage satisfying both thresholds.
+Joint therefore measures whether the requested event is depicted with plausible physics, combining
+two requirements that the separate scores assess individually.
+FinePhyEval.
+We evaluate all 65 FinePhyEval prompts using their released question
+graphs (Pothiraj et al., 2026). These graphs decompose each event into object existence, action exe-
+cution and physical behavior. Our local evaluation uses GPT-5.5 to answer the fixed questions from
+sampled video frames in the two-step PQSG question-answering procedure. A failed prerequisite
+propagates failure to dependent questions, so a physics judgment also requires the relevant objects
+and actions to be present. Object, Action and Physics are the fractions of satisfied questions in each
+category after this propagation, with all questions retained in their respective denominators. Overall
+is the corresponding fraction across all questions, weighting categories by their question counts. All
+four scores lie between 0 and 1.
+Comparison methods.
+We compare with the released Wan2.1 models and methods that adapt
+video generators for motion or physical consistency, including VideoJAM (Chefer et al., 2025),
+DreamWorld (Tan et al., 2026), VPT (Zheng et al., 2026b), VideoREPA (Zhang et al., 2025c) and
+PhysRAG (Cheng et al., 2026), as available for each benchmark. The model-size suffixes identify
+the base-generator family, while the refiner parameter count is reported above. The tables combine
+published benchmark results with local evaluations of released implementations, retaining method-
+specific generation settings.
+37
+
+
+Preprint
+D.3
+IMAGE-TO-VIDEO GENERATION
+Model configuration.
+We build on Wan2.2-TI2V-5B (Wan et al., 2025), whose base transformer
+has 30 blocks of width 3,072 with 24 attention heads. As in Appendix D.2, we freeze the video VAE
+and text encoder and update the full base transformer together with the refiner. The Wan2.2 VAE
+encodes an 81-frame training video at 704 × 1248 resolution into 48 latent channels with 21 temporal
+positions and spatial size 30 × 52. The refiner uses 13 blocks of width 2,048 with 32 attention heads.
+Its latent patch size, MLP expansion ratio, alternating attention blocks, hidden-state selection and
+conditioning design are the same as in text-to-video generation. To match the larger base features, its
+fusion MLP maps the concatenated hidden states through 12288 →2048 →2048, and its noise-level
+projection accepts 3,072-dimensional embeddings. The refiner predicts a 48-channel velocity residual
+and is initialized from scratch with a zero-initialized output projection.
+Training.
+The training mixture, caption construction, frame sampling and spatial preprocessing
+are the same as in Appendix D.2. We also use the same five-epoch schedule, global batch size,
+AdamW configuration, learning rates, loss weights, mixed precision and gradient checkpointing.
+For each training example, we enable image conditioning with probability 0.4 by encoding the first
+sampled frame with the frozen VAE. For these examples, we replace the first temporal latent with
+this clean image latent and assign its tokens noise level zero in the base transformer. Both the base
+flow-matching loss and the refiner residual loss are computed over the remaining temporal latents.
+The other examples use text conditioning alone. We detach the residual target and base-model inputs
+to the refiner, so each network is updated by its own objective. Training begins on 16 NVIDIA H200
+GPUs with one clip per GPU and resumes after 4,200 optimizer steps on four H200 GPUs with four
+gradient-accumulation steps, preserving the global batch size of 16. We evaluate the paired base and
+refiner weights at the end of the fifth epoch.
+Sampling and image conditioning.
+We generate at 704 × 1248 resolution, using the same video
+length, frame rate, Euler sampler, noise grid, CFG scale, negative prompt, refiner gain and active
+noise interval as in Appendix D.2. The positive-branch correction follows equation 113, and the base
+and refiner use the same inference precisions as in text-to-video generation. For each benchmark
+example, we supply the released image at the start of the continuation and its corresponding text
+prompt, including the benchmark’s fixed-camera instructions and action description. We resize the
+image to the generation resolution, encode it with the frozen VAE and keep its latent fixed at the first
+temporal position. We restore this condition in the refiner’s clean prediction and after every sampling
+update.
+Physics-IQ Verified.
+The image-to-video evaluation covers 66 physical scenarios from three camera
+viewpoints, yielding 198 image–text pairs. We retain the first 80 frames of each generated video for
+the benchmark’s five-second evaluation at 16 frames per second. The released evaluator compares
+generated continuations with recorded reference videos at 540 × 960 resolution, using motion masks
+and RGB frames without an LLM judge. Spatial measures the intersection-over-union of regions that
+exhibit motion anywhere in the clip. Spatio-temporal measures motion-mask overlap at corresponding
+frames, while Weighted Spatial compares how frequently each pixel belongs to a moving region.
+MSE measures the mean squared difference between generated and reference RGB frames.
+For each scenario and viewpoint, the evaluator normalizes these measurements by the corresponding
+comparison between two real recordings of the same event. The three overlap metrics are divided by
+this real-to-real reference, while MSE uses the inverse ratio so that higher is better. Each normalized
+component is clipped to [0, 1], and Verified Score averages the four components and then the scenario–
+viewpoint pairs. Table 4 reports all scores on a 0–100 scale. All rows in Table 4 use the benchmark’s
+setting without LLM support.
+Yuan et al. (2026) describe two inference-time uses of the WMReward signal: gradient guidance,
+which steers each denoising trajectory with the reward gradient, and Best-of-N selection, which draws
+multiple guided samples and keeps the one with the highest reward. We enable only reward guidance
+and generate a single sample per condition, without Best-of-N selection. Because Yuan et al. (2026)
+attribute most of their Physics-IQ improvement to the selection step, the WMReward row is expected
+to score below their guidance-plus-selection results. This choice keeps the comparison at a matched
+sampling budget. The other baselines are run using their default configurations as released.
+38
+
+
+Preprint
+E
+MORE RESULTS
+E.1
+MORE RESULTS ON IMAGENET GENERATION
+E.1.1
+QUANTITATIVE RESULTS
+Table 7 extends the comparison in Table 1 with additional methods, training budgets, base-only
+evaluations and FID scores.
+Table 7: Comparison on ImageNet-256 (Deng et al., 2009) generation. For published baselines, the
+FID column reports guided FID (gFID) as in the original papers. Models are evaluated with and
+without guidance as indicated. For our method, 80 + 40 and 80 + 80 indicate that we start from the
+80-epoch RAEv2 checkpoint and train our refiner for an additional 40 and 80 epochs, respectively.
+“Ours (base only)” evaluates the corresponding base model without the refiner at inference and reports
+the total base-model training epochs. Representation Fr´echet Distance (FDr) is reported in the feature
+spaces of ConvNeXt (Liu et al., 2022), DINOv2 (Oquab et al., 2023) and CLIP (Radford et al., 2021).
+Method
+Epochs
+Guidance
+IS ↑
+FID ↓
+Representation Fr´echet Distance (FDr) ↓
+ConvNeXt
+DINOv2
+CLIP
+Published baselines
+SiT-XL/2 (Ma et al., 2024)
+800
+Yes
+256.7
+2.12
+2.02
+7.89
+17.69
+DDT-XL (Wang et al., 2026b)
+800
+Yes
+309.3
+1.26
+1.02
+4.26
+13.86
+SiT-XL/2-REPA (Yu et al., 2025)
+800
+Yes
+306.1
+1.42
+1.22
+4.27
+12.65
+LightningDiT (Yao et al., 2025)
+800
+Yes
+294.3
+1.42
+1.09
+3.76
+10.21
+REG (Wu et al., 2026)
+800
+Yes
+302.9
+1.54
+1.14
+3.45
+10.86
+REPA-E (Leng et al., 2025)
+800
+Yes
+298.3
+1.17
+1.28
+2.44
+6.28
+RAE-XL (Zheng et al., 2026a)
+800
+Yes
+261.0
+1.16
+1.79
+2.11
+7.87
+Evaluations without guidance
+RAEv2 (Singh et al., 2026)
+80
+No
+225.21
+1.6038
+1.4127
+2.3965
+7.3809
+RAEv2 (Singh et al., 2026)
+120
+No
+230.53
+1.5317
+1.3050
+2.2879
+7.2028
+SelfFlow (Chefer et al., 2026)
+120
+No
+144.58
+4.8232
+4.8635
+7.1880
+12.2924
+Ours
+80+40
+No
+231.96
+1.5582
+1.2818
+2.2635
+7.2213
+RAEv2 (Singh et al., 2026)
+160
+No
+233.94
+1.5070
+1.2753
+2.2226
+7.1804
+SelfFlow (Chefer et al., 2026)
+160
+No
+146.37
+4.7480
+4.8110
+7.0750
+12.1329
+Ours
+80+80
+No
+234.02
+1.5367
+1.2396
+2.2051
+7.1445
+Evaluations with guidance
+RAEv2 (Singh et al., 2026)
+80
+Yes
+260.44
+1.0567
+0.7745
+1.1020
+5.2134
+RAEv2 (Singh et al., 2026)
+120
+Yes
+265.54
+1.0235
+0.7451
+1.0732
+4.8667
+SelfFlow (Chefer et al., 2026)
+120
+Yes
+145.03
+4.7948
+4.8228
+7.0984
+12.2674
+Ours
+80+40
+Yes
+264.95
+1.0446
+0.7475
+1.0869
+4.8648
+RAEv2 (Singh et al., 2026)
+160
+Yes
+264.97
+1.0337
+0.7363
+1.0797
+4.8549
+SelfFlow (Chefer et al., 2026)
+160
+Yes
+146.79
+4.6462
+4.7155
+6.9849
+12.1602
+Ours
+80+80
+Yes
+266.60
+1.0593
+0.7258
+1.0339
+4.8415
+E.1.2
+QUALITATIVE RESULTS
+Figures 5 and 6 compare selected samples from Self-Flow, RAEv2 and CORRFLOW on class-
+conditional ImageNet generation at 256 × 256 resolution across eight categories. In these examples,
+CORRFLOW produces clearer object structures and more recognizable category-specific details,
+including the lattice of shoji screens, the heads and handles of hatchets and the gills of axolotls.
+At the same 160-epoch base-model training budget, CORRFLOW improves all three FDr metrics over
+RAEv2 both with and without guidance, consistent with the clearer shoji lattices, hatchet geometry
+and axolotl gills in Figures 5 and 6. With guidance, IS increases from 264.97 to 266.60 and DINOv2
+FDr decreases from 1.0797 to 1.0339, although FID worsens from 1.0337 to 1.0593 (Table 7).
+The base model exhibits a similar discrepancy: continuing RAEv2 fine-tuning from 120 to 160
+total epochs raises guided FID from 1.0235 to 1.0337, while ConvNeXt and CLIP FDr continue to
+decrease. These discrepancies suggest practical saturation of FID as a perceptual ranking signal in
+this regime near 1, where small score differences are an unreliable standalone indicator of generation
+quality. FID compares only the means and covariances of Inception-v3 features, so improvements
+in object structure and fine detail need not yield a lower score. Jayasumana et al. (2024) document
+disagreements between FID and human judgments and show that FID can fail to track progressive
+visual improvements, while Singh et al. (2026) observe that incremental gFID gains provide little
+39
+
+
+Preprint
+Figure 5: Qualitative results on ImageNet at 256 × 256 resolution. Columns show shoji, plate rack,
+hatchet and marmoset. Row groups show Self-Flow (Selfflow), RAEv2 and CORRFLOW (Ours).
+Each method–category block contains four samples in a 2 × 2 grid, giving 48 images in total. All
+three base DiTs are trained for 160 epochs. The CORRFLOW refiner is trained for 80 epochs.
+practical signal for strong RAEv2 models. The consistent improvements across complementary
+representation spaces, together with the visual examples, support the benefit of learned residual
+corrections beyond what FID alone captures.
+E.2
+MORE RESULTS ON TEXT-TO-VIDEO GENERATION
+E.2.1
+QUANTITATIVE RESULTS
+Tables 8 and 9 report the full VBench results for the methods in Table 3, covering all 16 evaluation
+dimensions and the quality, semantic and overall scores.
+Table 8: VBench results (Part 1/2): consistency, motion and object-level metrics. All scores are
+reported on a 0–100 scale.
+Method
+Subject
+Consistency
+Background
+Consistency
+Temporal
+Flickering
+Motion
+Smoothness
+Dynamic
+Degree
+Aesthetic
+Quality
+Imaging
+Quality
+Object
+Class
+Multiple
+Objects
+Human
+Action
+VideoREPA-5B (Zhang et al., 2025c)
+95.47
+95.10
+98.23
+98.54
+47.22
+57.19
+59.80
+67.56
+40.32
+83.00
+PhysRAG-5B (Cheng et al., 2026)
+96.31
+95.66
+98.71
+96.93
+81.94
+56.80
+65.56
+80.50
+75.00
+63.00
+Wan 2.1-1.3B (Wan et al., 2025)
+91.83
+94.71
+99.17
+96.51
+65.00
+57.24
+59.14
+76.09
+53.66
+74.60
+VideoJAM-1.3B (Chefer et al., 2025)
+91.51
+96.01
+99.13
+96.05
+73.88
+58.41
+62.68
+79.22
+59.66
+79.20
+DreamWorld-1.3B (Tan et al., 2026)
+93.62
+94.95
+98.81
+98.07
+79.16
+59.59
+66.76
+81.32
+65.03
+81.20
+VPT-1.3B (Zheng et al., 2026b)
+92.65
+97.27
+98.64
+97.85
+70.83
+58.09
+63.68
+73.43
+51.92
+74.80
+CORRFLOW (Ours)-1.3B
+96.68
+96.95
+99.81
+98.85
+63.54
+61.65
+68.66
+82.81
+67.72
+78.00
+Visual quality and temporal consistency.
+CORRFLOW achieves the highest VBench Quality Score
+(84.69) and Overall Score (81.86) among the compared methods. Relative to Wan2.1-T2V-1.3B,
+these gains are 4.88 and 4.93 points, respectively. The improvements span both individual-frame
+quality and consistency over time. Imaging Quality increases from 59.14 to 68.66, Aesthetic Quality
+from 57.24 to 61.65 and Subject Consistency from 91.83 to 96.68. Temporal Flickering and Motion
+40
+
+
+Preprint
+Figure 6: Qualitative results on ImageNet at 256 × 256 resolution. Columns show axolotl, Papillon,
+Miniature Poodle and Komondor. Row groups show Self-Flow (Selfflow), RAEv2 and CORRFLOW
+(Ours). Each method–category block contains four samples in a 2 × 2 grid, giving 48 images in total.
+All three base DiTs are trained for 160 epochs. The CORRFLOW refiner is trained for 80 epochs.
+Table 9: VBench results (Part 2/2): appearance, style and overall scores. All scores are reported on a
+0–100 scale.
+Method
+Color
+Spatial
+Relationship
+Scene
+Appearance
+Style
+Temporal
+Style
+Overall
+Consistency
+Quality
+Score
+Semantic
+Score
+Overall
+Score
+VideoREPA-5B (Zhang et al., 2025c)
+86.12
+51.85
+32.27
+21.37
+22.71
+24.20
+79.96
+63.53
+76.67
+PhysRAG-5B (Cheng et al., 2026)
+93.95
+77.33
+15.55
+22.00
+23.18
+23.18
+83.07
+68.12
+80.08
+Wan 2.1-1.3B (Wan et al., 2025)
+89.93
+62.37
+20.03
+22.91
+22.23
+24.25
+79.81
+65.43
+76.93
+VideoJAM-1.3B (Chefer et al., 2025)
+88.92
+66.17
+28.34
+22.67
+24.03
+25.01
+81.18
+69.08
+78.76
+DreamWorld-1.3B (Tan et al., 2026)
+92.61
+70.47
+29.71
+22.14
+23.82
+24.87
+83.49
+70.89
+80.97
+VPT-1.3B (Zheng et al., 2026b)
+86.99
+73.35
+20.13
+20.87
+22.52
+23.42
+82.26
+64.91
+78.79
+CORRFLOW (Ours)-1.3B
+91.71
+77.88
+25.15
+20.98
+24.05
+24.31
+84.69
+70.55
+81.86
+Smoothness also improve, reaching 99.81 and 98.85. Together, these metrics indicate that the adapted
+model improves the appearance of generated frames while maintaining more coherent subjects and
+smoother temporal evolution. Compared with DreamWorld, the strongest alternative by Overall Score
+in this table, CORRFLOW improves Quality Score by 1.20 points and Overall Score by 0.89 points.
+Semantic alignment and composition.
+CORRFLOW improves prompt alignment across object
+identity, composition and action. Relative to Wan2.1-T2V-1.3B, Object Class rises from 76.09 to
+82.81, Multiple Objects from 53.66 to 67.72 and Spatial Relationship from 62.37 to 77.88. These
+improvements support more accurate rendering of the requested entities and their arrangement,
+and Semantic Score increases from 65.43 to 70.55. Human Action increases from 74.60 to 78.00,
+and Temporal Style from 22.23 to 24.05. The gains therefore extend from the identity and spatial
+arrangement of objects to the actions and temporal style specified by the prompt.
+Physical plausibility with semantic adherence.
+On VideoPhy2 (Table 2), CORRFLOW improves
+the ALL-set PC score from 57.8 to 65.7 and SA from 30.0 to 31.3 relative to Wan2.1-T2V-1.3B.
+Joint increases by 2.2 percentage points to 27.0, the highest score in the comparison. This Joint score
+41
+
+
+Preprint
+also exceeds those of Wan2.1-14B (24.7) and VideoREPA (23.6). On HARD, CORRFLOW raises
+PC from 36.7 to 51.9 and Joint from 5.6 to 6.9, corresponding to gains of 15.2 and 1.3 percentage
+points. The improvements on both test splits show that more generated videos depict the requested
+event while satisfying physical commonsense.
+Object, action and physics requirements.
+FinePhyEval provides a complementary decomposition
+of these gains. Relative to Wan2.1-T2V-1.3B, CORRFLOW improves Object from 0.84 to 0.90, Action
+from 0.49 to 0.55, Physics from 0.36 to 0.44 and Overall from 0.54 to 0.60. It ties DreamWorld
+on Object and obtains the highest Action and Overall scores among the compared methods. Its
+Overall score of 0.60 also exceeds the 0.59 achieved by Wan2.1-14B. The question-graph metric
+rewards physical behavior together with the objects and actions on which it depends. The gains across
+all three categories therefore support more complete realization of the requested physical events,
+complementing the visual and temporal improvements measured by VBench.
+E.2.2
+QUALITATIVE RESULTS
+Figures 7, 8 and 9 provide additional qualitative comparisons of VideoREPA, VPT, PhysRAG and
+CORRFLOW (Ours). The five examples cover domino interactions, multiple-object composition,
+canoe paddling, jetski racing and parasailing. For each case, rows follow this method order from
+top to bottom, and columns show five frames sampled at evenly spaced relative positions across
+each video, progressing from left to right. The text below each case gives the corresponding prompt
+description.
+E.3
+MORE RESULTS ON IMAGE-TO-VIDEO GENERATION
+E.3.1
+QUANTITATIVE RESULTS
+Aggregate physical consistency.
+CORRFLOW achieves the highest Verified Score in Table 4,
+reaching 30.95 compared with 27.71 for Wan2.2-5B. The gain is 3.24 points over the base model
+and 4.47, 3.52 and 5.41 points over WMReward, VLIPP and PhysRAG, respectively. This score
+combines motion-region agreement, temporal overlap and frame reconstruction after normalization
+by variation between real recordings.
+Motion coverage and frame appearance.
+Relative to Wan2.2-5B, CORRFLOW increases Spatial
+from 35.89 to 43.43 and Weighted Spatial from 22.96 to 24.74. These gains indicate closer agreement
+with the reference in both the regions traversed by moving objects and the fraction of time each
+region exhibits motion. MSE Score increases from 25.54 to 29.24, indicating improved agreement
+in RGB frame appearance under the benchmark’s normalization. CORRFLOW leads the compared
+methods on all three metrics, supporting the aggregate improvement across complementary aspects
+of the generated continuation.
+E.3.2
+QUALITATIVE RESULTS
+Figure 4 compares CORRFLOW with WMReward and PhysRAG under the same image and text
+conditions. In the moving-light example, CORRFLOW retains a recognizable statuette silhouette
+across the displayed frames as its shadow changes position. The mandarin example shows the knife
+and fruit remaining identifiable through the slicing motion. These examples illustrate object and
+shadow consistency alongside the motion and appearance metrics above.
+Figures 10 and 11 extend this comparison to three additional scenarios, with ground-truth videos
+(GT) alongside WAN, VLIPP, WMReward, PhysRAG and CORRFLOW. The paper-in-water example
+shows how each method depicts the paper after release and preserves the surrounding scene, while the
+mirror examples show the relationship between object motion and its reflection. Each row presents
+five video frames in temporal order.
+Figure 12 adds a bouncing tennis ball and a blue ball rolling from a table onto glass, with the same
+six rows per case. These examples show how each model continues object motion from the initial
+frame. Red boxes mark the visible balls and adjacent reflections in the four baseline methods, while
+GT and CORRFLOW remain unmarked.
+42
+
+
+Preprint
+Figure 7: Qualitative results on text-to-video generation. The upper case shows a rubber duck
+among dominoes, and the lower case shows a skateboard and a surfboard. Within each case, rows
+show VideoREPA, VPT, PhysRAG and Ours from top to bottom. Each row contains five frames
+sampled at evenly spaced relative positions across the video, ordered from left to right.
+E.4
+FULL-PRECISION ABLATION RESULTS
+Table 10 reports all ablations from Section 5.4 on the original 0–1 scale with four decimal places.
+Table 5 displays the same scores as percentages with three significant digits, while retaining the
+ranking colors determined at four-decimal precision. Rounding can make distinct scores appear
+tied. For example, the Imaging Quality scores of 0.6369 and 0.6368 both display as 63.7%, and the
+Quality Scores of 0.7980 and 0.7979 both display as 79.8%.
+F
+REPRODUCIBILITY STATEMENT
+To support reproducibility, Section 3 specifies the refiner architecture, residual training objective and
+inference procedure of CORRFLOW. Appendix D documents the pretrained models, training data,
+preprocessing, optimization hyperparameters, hardware and sampling settings for image, text-to-
+video and image-to-video generation, together with the benchmark protocols and metric definitions.
+Section 5.4 describes the ablation setup, and Appendix E.4 provides the corresponding scores at full
+43
+
+
+Preprint
+Figure 8:
+Qualitative results on text-to-video generation. The upper case shows a canoeist
+paddling across a lake, and the lower case shows two jetskis racing side by side. Within each case,
+rows show VideoREPA, VPT, PhysRAG and Ours from top to bottom. Each row contains five frames
+sampled at evenly spaced relative positions across the video, ordered from left to right.
+Table 10: Component ablations at four-decimal precision (0–1, higher is better). Column abbreviations
+match Table 5. Colors indicate the top three scores in each column.
+Method
+Aesthetic
+Quality (AQ)
+Background
+Consistency (BC)
+Imaging
+Quality (IQ)
+Overall
+Consistency (OC)
+Subject
+Consistency (SC)
+Quality
+Score (QS)
+w/o time-step
+0.5147
+0.9236
+0.6369
+0.5850
+0.9120
+0.7970
+w/o self-attention
+0.4892
+0.9213
+0.6043
+0.5812
+0.9000
+0.7854
+w/o cross-attention
+0.4848
+0.9144
+0.6066
+0.5821
+0.9022
+0.7846
+w/o hidden-state MLP
+0.4928
+0.9238
+0.6359
+0.5817
+0.9086
+0.7928
+w/o refiner
+0.5129
+0.9249
+0.6204
+0.5914
+0.9126
+0.7863
+v input
+0.5038
+0.9238
+0.6368
+0.6021
+0.9174
+0.7980
+w/o condition
+0.5154
+0.9274
+0.6123
+0.5812
+0.9102
+0.7979
+Ours
+0.5260
+0.9359
+0.6425
+0.6179
+0.9260
+0.8026
+precision. The assumptions and complete proofs underlying the theoretical results in Section 4 are
+provided in Appendices A, B and C.
+44
+
+
+Preprint
+Figure 9: Qualitative results on text-to-video generation. The prompt describes a parasailer with
+an orange parachute being pulled across the ocean by a speedboat. Rows show VideoREPA, VPT,
+PhysRAG and Ours from top to bottom. Each row contains five frames sampled at evenly spaced
+relative positions across the video, ordered from left to right.
+Figure 10: Additional image-to-video comparison on Physics-IQ Verified: paper falling into
+water. A grabber releases crumpled paper into a bowl of water. Rows show GT, WAN, VLIPP,
+WMReward, PhysRAG and CORRFLOW (Ours). Each row contains five video frames in temporal
+order.
+45
+
+
+Preprint
+Figure 11: Additional image-to-video comparisons on Physics-IQ Verified: motion and reflec-
+tions. The upper case shows a suspended tennis ball being lowered in front of a mirror, and the lower
+case shows a tennis ball rolling toward a kettlebell beside a mirror. Within each case, rows show GT,
+WAN, VLIPP, WMReward, PhysRAG and CORRFLOW (Ours). Each row contains five video frames
+in temporal order.
+46
+
+
+Preprint
+Figure 12: Additional image-to-video comparisons on Physics-IQ Verified: ball motion. The
+upper case shows a bouncing tennis ball near a ramp, and the lower case shows a blue ball rolling
+from a table onto glass. Within each case, rows show GT, WAN, VLIPP, WMReward, PhysRAG and
+CORRFLOW (Ours). Each row contains five video frames in temporal order. Red boxes highlight
+visible balls and adjacent reflections in the four baselines after the initial frame.
+47

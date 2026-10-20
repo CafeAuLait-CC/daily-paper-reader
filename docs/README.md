@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-19</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-20</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-19 23:20:38 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-20 21:59:12 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日速读 5 篇论文，其中 3 篇收录进推荐列表；最值得关注的是《Video Diffusion Avatars》（7.0/10），它把视频扩散模型用于可控 3D 数字人；另外两篇均得 6.0/10，分别是混合泊松扩散与机器人流匹配策略。建议先精读数字人这篇，其余速读可等有需要时再细读。</p>
+<p>今日精选 5 篇，精读 2 篇、速读 3 篇，聚焦人—物交互与流匹配两大方向。最值得看的是《ULIFLOW》（9.0）提出的统一潜空间人—物交互流，以及《CorrFlow》（8.0）用流匹配做自我纠错，二者都指向“生成+校正”一体化的建模思路。普通读者可先看这两篇精读，再从 DreamHMR、MOMO 等速读篇目按兴趣延伸到视频与声音驱动的人体运动。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ULIFLOW: Unified Latent Human-Object Interaction Flow">ULIFLOW: Unified Latent Human-Object Interaction Flow</span></li><li><span class="dpr-home-dashboard-paper-title" title="CorrFlow: Self-Correcting Flow Matching">CorrFlow: Self-Correcting Flow Matching</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Video Diffusion Avatars: Taming Video Diffusion Models into Controllable 3D Avatars">Video Diffusion Avatars: Taming Video Diffusion Models into Controllable 3D Avatars</span></li><li><span class="dpr-home-dashboard-paper-title" title="Mixed Poisson diffusion models and application to posterior sampling">Mixed Poisson diffusion models and application to posterior sampling</span></li><li><span class="dpr-home-dashboard-paper-title" title="MOSS: Mode-Oriented Source Shaping for Robot Flow Matching Policies">MOSS: Mode-Oriented Source Shaping for Robot Flow Matching Policies</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DreamHMR: From Video Generation to Human Motion Modeling via Structural Focusing">DreamHMR: From Video Generation to Human Motion Modeling via Structural Focusing</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rethinking the design space of Vanilla Pixel Diffusion Transformers">Rethinking the design space of Vanilla Pixel Diffusion Transformers</span></li><li><span class="dpr-home-dashboard-paper-title" title="MOMO: Human Motion from Moving Sounds">MOMO: Human Motion from Moving Sounds</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
 </section>
 </div>
 
