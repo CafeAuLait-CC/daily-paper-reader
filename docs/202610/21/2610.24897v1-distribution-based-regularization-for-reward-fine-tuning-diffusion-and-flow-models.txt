@@ -1,0 +1,3515 @@
+Preprint.
+DISTRIBUTION-BASED
+REGULARIZATION
+FOR
+RE-
+WARD FINE-TUNING DIFFUSION AND FLOW MODELS
+Romeo Passaro∗,1,2
+Jeongjae Lee∗,3,4,5
+Jong Chul Ye3
+Michael M. Bronstein1,2
+Yoshua Bengio4,5
+Alexander Tong2,†
+Danyal Rehman2,4,5,†
+1University of Oxford
+2AITHYRA
+3KAIST
+4Mila – Qu´ebec AI Institute
+5Universit´e de Montr´eal
+∗Equal contribution; ordering determined by a random draw.
+†Corresponding authors.
+ABSTRACT
+Reward fine-tuning is an effective way to adapt pretrained diffusion and flow-
+matching models to downstream objectives, but aggressive optimization often
+leads to mode collapse and distributional drift.
+Existing methods attempt to
+control this drift with reverse-KL regularization, implemented as an ℓ2 penalty
+on the velocity field; however, this functions by indirectly constraining sampling
+dynamics rather than directly acting on the generated distribution. To address
+this, we propose DFR (Distributional Functional Rewards), which augments the
+task reward with a distribution-dependent, per-sample reward that acts explicitly
+on the generated distribution.
+Formally, we generalize the KL-regularized
+objective from expected rewards, which are linear in the model’s distribution, to
+convex functionals of it. The first variation of this objective defines an effective,
+distribution-dependent reward that directly penalizes deviation from the pretrained
+distribution. This formulation yields additive per-sample rewards for the Fr´echet
+distance (FD), maximum mean discrepancy (MMD), and DreamSim diversity,
+recovering several recently proposed rewards as special cases. Across various
+text-to-image fine-tuning tasks, DFR matches the peak reward of KL-tuned
+baselines while increasing diversity by up to 29% at equal or lower drift.
+Code: https://github.com/jaylee2000/dfr
+1
+INTRODUCTION
+Diffusion and flow-matching models (Sohl-Dickstein et al., 2015; Ho et al., 2020; Song et al., 2021;
+Lipman et al., 2023; Liu et al., 2023; Albergo et al., 2023; Peluchetti, 2023) have become a dominant
+paradigm for generative modeling across various data modalities, including images (Rombach
+et al., 2022; Labs et al., 2025), videos (Wan et al., 2025), and molecular structures (Abramson
+et al., 2024). These models learn stochastic or deterministic dynamics that transport a simple source
+distribution to a complex target distribution. However, downstream applications rarely value all
+samples equally: the goal is often to shift probability mass toward high-reward samples, while
+preserving the diversity and capabilities of the pretrained model. Reward fine-tuning achieves this
+by adapting the pretrained model toward a downstream reward (Uehara et al., 2024).
+For non-differentiable rewards, existing approaches broadly fall into two families: (1) Trajec-
+tory-based methods, which formulate sampling as a multi-step Markov decision process (MDP),
+treating each step of the sampling process as an action (Black et al., 2024; Fan et al., 2023); and
+(2) ELBO-based methods, which instead treat the final sample as the action and approximate
+its intractable log-likelihood with an evidence lower bound (McAllister et al., 2026). Recently,
+ELBO-based methods have emerged as particularly attractive options for large-scale text-to-image
+fine-tuning, reporting up to ∼50× faster training than trajectory-based methods at comparable
+reward and image quality (Zheng et al., 2026; Xue et al., 2026; Bergmeister et al., 2026).
+Across both families, however, reward maximization alone does not specify which properties of
+the pretrained distribution ought to be preserved. In particular, optimizing toward increasingly
+high-reward samples can reduce sample diversity and move the generated distribution away from the
+1
+arXiv:2610.24897v1  [cs.LG]  17 Oct 2026
+
+
+Preprint.
+pretrained model. Existing methods often address this tension through KL regularization, typically
+implemented as an ℓ2 penalty between the fine-tuned and pretrained velocity fields (Fan et al., 2023;
+Liu et al., 2025b). However, this regularization acts on the model’s sampling dynamics, whereas the
+properties of ultimate interest—diversity and retention of the pretrained distribution—are properties
+of its output distribution. This raises the natural question:
+Can we regularize the generated distribution directly during reward fine-tuning?
+We answer this question affirmatively with Distributional Functional Rewards (DFR), a gen-
+eral framework for distribution-regularized reward fine-tuning.
+DFR unifies trajectory- and
+ELBO-based methods by augmenting reward optimization with objectives defined directly on the
+generated distribution. This allows models to improve reward while better preserving the pretrained
+distribution. Our main contributions are:
+• A unified framework for distribution-regularized reward fine-tuning.
+DFR generalizes
+KL-regularized reward optimization to convex functionals of the clean-sample distribution,
+including maximum mean discrepancy (MMD), Fr´echet distance (FD), and diversity objectives.
+Their first variations induce distribution-dependent per-sample reward corrections, enabling direct
+control of the generated distribution in both trajectory- and ELBO-based methods.
+• Improved distribution preservation at matched reward. On GenEval and OCR with SD3.5-M,
+DFR reduces drift from the pretrained model by up to 12% and increases diversity by up to
+29% relative to KL-regularized baselines at matched reward, while training 36–41× faster than
+Flow-GRPO.
+• Compatibility with both feature- and latent-space objectives.
+We instantiate DFR with
+feature-space objectives such as FD and DreamSim diversity, as well as latent-space MMD,
+demonstrating strong performance even without the use of pretrained feature encoders.
+• Minimal overhead over KL-regularized fine-tuning. Compared with KL-tuned RAM, DFR
+adds little training cost: DFR-MMD reaches GenEval 0.95 with only 7% more training time than
+RAM (β = 3) while achieving 9% higher diversity, and DFR-DS reaches OCR 0.96 with only
+1% more time than RAM (β = 5) while achieving 17% higher diversity.
+2
+BACKGROUND
+2.1
+FLOW-BASED MODELS
+Flow-based models—including diffusion and flow-matching frameworks (Lipman et al., 2023;
+Song et al., 2021)—learn a time-dependent velocity field vθ(xt, t) that transports samples between
+a source distribution, typically Gaussian noise ϵ ∼N(0, I), and the data distribution x0 ∼pdata.
+For the commonly used linear path xt = (1 −t)x0 + tϵ, the corresponding target velocity is simply
+˙xt = ϵ −x0. The velocity field is therefore learned by weighted regression toward this target:
+LFM(θ) = Et,x0,ϵ
+h
+w(t) ∥vθ(xt, t) −(ϵ −x0)∥2
+2
+i
+,
+(1)
+where w(t) > 0 is a timestep-dependent weighting function. At inference, samples are generated
+by drawing ϵ ∼N(0, I) and integrating the learned dynamics backward from t = 1 to t = 0. We
+denote the frozen pretrained velocity field by vref and the endpoint distribution induced by vθ under
+the chosen sampler by pθ(x0), omitting conditioning for brevity. This integration takes the form
+of an SDE for diffusion models and an ODE for flow-matching models; we refer the reader to Tong
+et al. (2023); Liu et al. (2025b) for a more detailed equivalence between the two formulations.
+2.2
+REWARD FINE-TUNING VIA POLICY GRADIENTS
+Reward fine-tuning adapts a pretrained generative model to a downstream reward while regularizing
+deviations from the pretrained distribution.1
+This is most often formulated as KL-regularized
+reward maximization:
+max
+θ
+Ex0∼pθ[r(x0)] −βDKL (pθ(x0) ∥pref(x0)) ,
+(2)
+1See Uehara et al. (2025) for a review of inference-time reward alignment.
+2
+
+
+Preprint.
+High-reward, more diverse
+High-reward, more aligned
+Figure 1: Top: RAM achieves high rewards at the cost of sample diversity and distributional fidelity, whereas
+DFR matches—and often surpasses—its rewards while preserving diversity and FID relative to the pretrained
+distribution. Bottom: DFR more closely mirrors the pretrained SD3.5 distribution, generating a wider diversity
+of images relative to RAM across multiple seeds for the same prompt: “A zebra to the right of a fire hydrant.”
+where β > 0 controls the reverse-KL regularization strength, and pθ and pref are the endpoint dis-
+tributions of the fine-tuned and pretrained models, respectively. For non-differentiable rewards, the
+gradient of the expected rewards can be evaluated using the REINFORCE identity (Williams, 1992):
+∇θEx0∼pθ[r(x0)] = Ex0∼pθ [(r(x0) −b)∇θ log pθ(x0)] ,
+(3)
+where b is a sample-independent baseline used to reduce variance, and the difference r(x0) −b
+defines the advantage. In practice, advantages are often normalized within groups of samples from
+the same prompt (Shao et al., 2024), while clipped likelihood ratios can further stabilize training
+optimization (Schulman et al., 2017).
+For flow-based models, however, the marginal log-likelihood log pθ(x0) is intractable. Trajectory-
+based methods replace it with the per-step transition likelihoods of a stochastic sampler. ELBO-
+based methods instead replace it with −LFM(θ; x0), the loss of Eq. (1) evaluated on a single gener-
+ated sample. For suitable w(t), this is an evidence lower bound up to an additive constant (McAllis-
+ter et al., 2026; Choi et al., 2026). Substituting it into Eq. (3) gives online reward-weighted regres-
+sion (RWR): the model is trained with the flow-matching loss on its own samples, each weighted
+by its advantage (Fan et al., 2025; Xue et al., 2026). We build on RAM (Bergmeister et al., 2026),
+which takes this form. See Appendix B for a detailed derivation of these equivalences.
+Regularization. While trajectory- and ELBO-based methods differ in how they estimate the reward
+gradient, both typically approximate the reverse-KL term in Eq. (2) using a squared velocity anchor:
+Lanchor(θ) = E
+h
+∥vθ(xt, t) −vref(xt, t)∥2
+2
+i
+.
+(4)
+For Gaussian transition kernels, a time-weighted form of Eq. (4) equals the KL divergence between
+the path distributions of the fine-tuned and pretrained samplers, which upper-bounds the reverse-KL
+divergence of Eq. (2) (Fan et al., 2023, Equation 7).
+3
+
+
+Preprint.
+2.3
+DISTRIBUTIONAL MEASURES
+Fr´echet distance (FD). For a feature encoder ϕ, let µp and Σp denote the mean and covariance of
+ϕ(x) under x ∼p. The Fr´echet distance (FD) compares the first two feature moments of p and q:
+FD(p, q) ≜∥µp −µq∥2
+2 + tr
+
+Σp + Σq −2
+ Σ1/2
+q
+ΣpΣ1/2
+q
+1/2
+.
+(5)
+Maximum mean discrepancy (MMD) is a classical kernel two-sample discrepancy (Gretton et al.,
+2006). For a chosen kernel k(·, ·),
+MMD2
+k(p, q) = Ex,x′∼p[k(x, x′)] + Ey,y′∼q[k(y, y′)] −2Ex∼p
+y∼q[k(x, y)],
+(6)
+where a characteristic kernel ensures MMDk(p, q) = 0 if and only if p = q. Note, MMD requires
+no feature encoder and can be computed directly in latent space.
+DreamSim diversity.
+DreamSim (Fu et al., 2023) is a perceptual distance trained to align
+with human judgments of visual similarity.
+Given the normalized DreamSim feature z(x) =
+ϕDS(x)/∥ϕDS(x)∥2, DreamSim diversity (Domingo-Enrich et al., 2025) is the mean pairwise cosine
+distance between independent samples, which equals the total variance of the normalized features:
+DivDS(p) = Ex,x′∼p
+
+1 −z(x)⊤z(x′)
+
+= 1 −
+Ex∼p[z(x)]
+2
+2 = tr Covx∼p[z(x)].
+(7)
+3
+DFR: DISTRIBUTIONAL REGULARIZATION FOR REWARD FINE-TUNING
+The velocity anchor in Eq. (4) only indirectly controls the reverse-KL divergence in Eq. (2), as it
+penalizes changes in the sampling dynamics even when the endpoint distribution pθ is unchanged.
+In ELBO-based methods, heuristic time weighting at forward-noised states further weakens this
+correspondence. We nevertheless retain the velocity anchor for training stability and to limit drift,
+yet we complement it with a term that acts directly on the generated distribution. Importantly,
+the two objectives are compatible: the optimal fine-tuned process preserves the pretrained model’s
+conditional noising process (demonstrated in Appendix C.2).
+We generalize the KL-regularized objective of Eq. (2) from expected rewards to convex function-
+als of the generated distribution (Section 3.1). The first variation of such a functional acts as a
+per-sample reward, which any policy gradient method can optimize without further changes (Sec-
+tion 3.2), and instantiate the framework with MMD, FD, and DreamSim diversity (Section 3.3).
+3.1
+DISTRIBUTIONAL REGULARIZATION THROUGH CONVEX FUNCTIONALS
+Let F : P(X) →R be a convex functional of the generated distribution. Consider the entropy-
+regularized optimization problem
+p⋆= arg min
+p∈P(X)
+(F(p) + β DKL(p∥pref)) ,
+β > 0.
+(8)
+For a signed measure η on X with η(X) = 0, the first-order change of F along η defines the
+functional derivative δF
+δp (p, ·) : X →R through
+lim
+ε→0
+F(p + εη) −F(p)
+ε
+≜
+Z δF
+δp (p, x) η(dx).
+(9)
+Since η integrates to zero, δF
+δp is defined only up to an additive constant. Under standard regularity
+and integrability assumptions, this (strictly) convex minimization problem has a unique minimum.
+Standard variational calculus techniques identify the unique minimizer with the following equation:
+p⋆(x) =
+1
+Z(p⋆) pref(x) exp
+
+−1
+β
+δF
+δp (p⋆, x)
+
+,
+(10)
+where Z(p⋆) is the normalizing constant. Eq. (10) is generally an implicit fixed point condition
+because the functional derivative may itself depend on p⋆. We refer the reader to Hu et al. (2021) for
+a formal treatment of this problem, and to Appendix C.1 for a looser derivation. We apply this result
+4
+
+
+Preprint.
+to two choices of F: the expected reward, and the expected reward with a convex distributional
+penalty.
+Expected rewards as the linear case. Standard expected reward maximization, Eq. (2), corre-
+sponds to F(p) = −Ex∼p[r(x)], which is linear in p with first variation −r(x). Eq. (10) then
+reduces to the familiar exponential tilt:
+p⋆(x) = 1
+Z pref(x) exp
+r(x)
+β
+
+,
+(11)
+whose right-hand side has no dependence on p⋆.
+Distribution-level effective reward. Distributionally regularized reward maximization corresponds
+to
+F(p) = −Ex∼p[r(x)] + λ R(p),
+λ ≥0,
+(12)
+where R(p) is a convex functional that measures how far p is from pref. For brevity, we omit its
+dependence on the fixed pref. This F is no longer linear but remains convex in p, with first variation
+δF
+δp (p, x) = −r(x) + λ δR
+δp (p, x),
+(13)
+which, unlike in the linear case, depends on p. We call its negative the effective reward2:
+reff(x; p) ≜r(x) + λ rR(x; p),
+rR(x; p) ≜−δR
+δp (p, x).
+(14)
+Substituting Eq. (14) into Eq. (10) gives
+p⋆(x) =
+1
+Z(p⋆) pref(x) exp
+reff(x; p⋆)
+β
+
+.
+(15)
+This is the exponential tilt of Eq. (11) with r replaced by reff, so the penalty acts exactly like an
+additional reward. Unlike Eq. (11), it cannot be evaluated directly, because reff depends on the
+unknown p⋆. We therefore approach p⋆by gradient descent, evaluating reff at the current model
+instead.
+3.2
+OPTIMIZING DISTRIBUTIONAL FUNCTIONALS VIA POLICY GRADIENTS
+We minimize F(pθ) over the generator parameters θ; the reverse-KL term of Eq. (8) is handled
+separately below. An infinitesimal change in θ perturbs the distribution in the direction η = ∇θpθ,
+which has zero total mass, so the definition in Eq. (9) gives the chain rule
+∇θF(pθ) =
+Z δF
+δp (pθ, x) ∇θpθ(x) dx.
+(16)
+Using ∇θpθ = pθ∇θ log pθ and Eq. (14),
+−∇θF(pθ) = Ex∼pθ [reff(x; pθ) ∇θ log pθ(x)] .
+(17)
+This is the REINFORCE identity of Eq. (3) with reff in place of r. As in the ordinary chain rule, the
+derivative is evaluated at the current pθ and is not itself differentiated: reff(x; pθ) is a scalar weight
+attached to each sample, and no gradient flows through R or any feature extractor it uses.
+In practice, we draw a group of samples from pθ, estimate rR(xi; pθ) for each sample from the
+statistics of that group (denoted ˆp), and add λ rR to the sample’s advantage (Algorithm 1, shaded
+line). Since Ex∼pθ[∇θ log pθ(x)] = 0, adding a constant to reff leaves the gradient unchanged; the
+additive constant left free in Eq. (9) is the baseline b of Eq. (3), which is why we may center rR
+within each group.
+Application to flow models. We use RAM (Bergmeister et al., 2026), the state-of-the-art ELBO-
+based method, as our base framework. The score in Eq. (17) is replaced by the ELBO surrogate
+2Here and below, the argument after the semicolon is the distribution at which the derivative is taken,
+and x is the sample at which it is evaluated. For example, R(p) =
+1
+2∥Ex∼p[z(x)]∥2
+2 gives rR(x; p) =
+−z(x)⊤Ex′∼p[z(x′)].
+5
+
+
+Preprint.
+Algorithm 1 Online RWR with DFR. The shaded line is the only change to the baseline.
+Require: pretrained velocity vref; target reward r; distributional functional R; coefficients β, 1/α,
+λ; group size G
+1: θ ←θref,
+θold ←θref
+2: for each iteration do
+3:
+for each prompt c do
+4:
+Sample a group {xi
+0}G
+i=1 ∼pθold(· | c)
+5:
+Ai ←
+ r(xi
+0, c) −meanj r(xj
+0, c)
+
+/σr
+▷group-centered advantage
+6:
+Ai ←Ai + λ
+ rR(xi
+0; ˆp) −meanj rR(xj
+0; ˆp)
+
+▷rR = −δR/δp
+7:
+end for
+8:
+for each sample (x0, c, A), with t ∼p(t) and ϵ ∼N(0, I) do
+9:
+xt ←(1 −t) x0 + tϵ,
+vfwd ←ϵ −x0
+10:
+vtgt ←sg
+
+vθ + β (vref −vθ) + 1
+αA (vfwd −vold)
+
+▷all velocities at (xt, t, c)
+11:
+Take a gradient step on ∥vθ(xt, t, c) −vtgt∥2
+2
+12:
+end for
+13:
+Update θold as a lagged (EMA) copy of θ
+14: end for
+−∇θLFM(θ; x) alluded to in Eq. (1), and the reverse-KL term in Eq. (8) by Lanchor(θ) (Eq. (4)).
+The complete training pipeline is provided in Algorithm 1.
+Algorithm 1 implements the population formulation with three finite-sample choices. All quantities
+are conditional: R is applied to pθ(· | c) and averaged over conditions c, which we omit for brevity.
+The distributional reward is centered within each group and added to the normalized task advantage
+rather than to r before normalization; the two differ only in the rescaling of λ by the advantage scale.
+The population statistics entering rR are estimated from the group of G samples for MMD and
+DreamSim diversity, excluding the sample itself from pairwise averages, and from an exponential
+moving average of feature moments pooled over prompts for FD (detailed in Appendix C.6.3).
+3.3
+INSTANTIATIONS: MMD, FD, DREAMSIM DIVERSITY
+We instantiate R with three functionals: (1) the MMD reward, our primary choice, which requires
+no pretrained encoder; (2) the FD reward; and (3) the DreamSim reward. The latter two show
+that DFR subsumes recently proposed diversity and FD-based rewards as special cases; Section 4
+evaluates all three under the same protocol. All three functionals are convex in p (Appendix C.4),
+so the analysis in Section 3.1 applies directly (for FD, see the remark in Appendix C.6.3).
+MMD reward. Let ψ : X →Rm be a fixed injective map and b ∈(0, 2), and define
+ρb(x, y) = ∥ψ(x) −ψ(y)∥b
+2.
+(18)
+We use the identity map for ψ, meaning ρb reduces to a power of the Euclidean distance in latent
+space and requires no pretrained encoder, although an encoder could be used instead. The corre-
+sponding MMD can be written as
+MMD2
+kb(p, pref) = E x∼p
+y∼pref [ρb(x, y)] −1
+2Ex,x′∼p [ρb(x, x′)] −1
+2Ey,y′∼pref [ρb(y, y′)] .
+(19)
+The proof is in Appendix C.3. Consider the MMD functional RMMD(p, pref) = MMD2
+kb(p, pref).
+Proposition 1 (MMD reward). A representative of the negative functional derivative of RMMD is
+rMMD(x; p, pref) = Ex′∼p [ρb(x, x′)] −Ey∼pref [ρb(x, y)] .
+(20)
+The proof is given in Appendix C.5. The two terms in Eq. (20) have complementary roles. The
+first is a repulsive term that rewards samples far from other samples generated by the current model,
+thereby discouraging collapse. The second is an attractive term that penalizes samples far from the
+pretrained distribution, thereby limiting distributional drift.
+FD reward. DFR also recovers FD-based reward augmentation. With µp, Σp as in Section 2.3,
+consider the FD functional RFD(p) = FD(p, pref) of Eq. (5).
+6
+
+
+Preprint.
+Proposition 2 (FD reward). Assume the covariance matrices are positive definite and define
+Gp = I −Σ1/2
+q
+
+Σ1/2
+q
+ΣpΣ1/2
+q
+−1/2
+Σ1/2
+q
+(21)
+for q ≡pref. A representative of the negative functional derivative of RFD is
+rFD(x; p) = −
+
+2(µp −µq)⊤f + (f −µp)⊤Gp(f −µp)
+
+.
+(22)
+The proof is given in Appendix C.6. The two terms in Eq. (22) have complementary roles. The
+first penalizes shifts in the population feature mean, while the second corrects changes in feature
+covariance.
+DreamSim diversity reward. DFR also recovers pairwise perceptual diversity rewards. With z(x)
+defined in Section 2.3, the cosine similarity between two samples is z(x)⊤z(x′). We consider the
+population-average cosine-similarity functional RDS(p) = 1
+2(1 −DivDS(p)) of Eq. (7).
+Proposition 3 (DreamSim reward). A representative of the negative functional derivative of RDS is
+rDS(x; p) = −z(x)⊤Ex′∼p[z(x′)].
+(23)
+The proof is given in Appendix C.7.
+4
+EXPERIMENTS
+We evaluate whether DFR improves the trade-off between reward and reward hacking beyond what
+tuning the reverse-KL coefficient of the baseline can achieve.
+4.1
+SETUP
+Tasks and methods. We fine-tune Stable Diffusion 3.5 Medium (SD3.5-M; Esser et al., 2024) on
+two tasks: (1) Compositional generation (GenEval; Ghosh et al., 2023), with reward thresholds 0.95
+and 0.96, and (2) Visual text rendering (OCR), with threshold 0.96. We adopt RAM (Bergmeister
+et al., 2026) as the ELBO-based framework on which DFR builds on. We sweep its reverse-KL co-
+efficient β over {1, . . . , 4} for GenEval and {2, . . . , 6} for OCR. DFR-MMD, DFR-FD, and DFR-
+DS augment RAM with the distributional rewards introduced in Section 3.3 (Algorithm 1). For each
+variant, we use the largest β for which RAM reaches the highest reward threshold, or the next smaller
+value when the distributional reward itself provides substantial regularization toward the pretrained
+model. All configurations are trained with three random seeds under identical compute budgets.
+Baselines.
+We compare DFR against other ELBO- and trajectory-based methods includ-
+ing DiffusionNFT (Zheng et al., 2026), AWM (Xue et al., 2026), RSM (Lee et al., 2026), and
+Flow-GRPO (Liu et al., 2025b) on both the compositional generation and visual text rendering tasks.
+Protocol. Because reward hacking intensifies over the course of optimization, we compare models
+at matched target reward levels. For each seed, we evaluate the first checkpoint that reaches a given
+threshold; a configuration is considered to reach that threshold only if all three seeds do so.
+Metrics.
+Following Liu et al. (2025d;c); Domingo-Enrich et al. (2025), we measure reward
+hacking by drift and diversity, each computed per-prompt over 64 images. Drift is the Fr´echet
+distance to the 64 images of pref in Inception-v3 and DINOv2 features. Diversity is measured by
+DreamSim diversity, computed with its DINO and OpenCLIP branches. Preference rewards such as
+ImageReward (Xu et al., 2023) and PickScore (Kirstain et al., 2023) are reported but not used, since
+they score each image in isolation and cannot detect a model that generates near-identical images
+for every seed. Two configurations are tied on a metric if their means differ by at most the larger of
+their standard deviations; otherwise, the configuration with the better mean wins. Entries computed
+with an encoder that a DFR instance uses in its reward, or a closely related one, are counted as
+neither wins nor losses.
+Consequently, the main text reports the OpenCLIP branch, which no
+instance trains on. Additional training, evaluation, and baseline details are provided in Appendix D.
+7
+
+
+Preprint.
+Table 1: Fine-tuning on GenEval, compared at matched GenEval (Section 4.1). Peak is the highest threshold
+it reaches or, if none, its mean GenEval at the evaluated checkpoints; “–” marks a threshold not reached on
+every seed. Speedup is the time to reach 0.95 relative to Flow-GRPO. Entries of the form a/b report results
+on the GenEval test prompts (a) and on DrawBench (b); RAM and DFR entries are means over three seeds
+with SD beneath, and existing methods are single checkpoints evaluated at 0.95. Blue marks a DFR entry that
+wins against every RAM configuration reaching the same threshold; struck-through entries are computed with
+an encoder related to that instance’s reward and are not compared.
+GenEval 0.95
+GenEval 0.96
+Method
+Peak
+Speedup (↑)
+FID (↓)
+FD-DINOv2 (↓)
+DreamSim (↑)
+FID (↓)
+FD-DINOv2 (↓)
+DreamSim (↑)
+SD3.5-M
+0.63
+–
+–
+–
+0.302/0.274
+Trajectory-based
+Flow-GRPO
+1.0
+114.32/125.61
+1019/997
+0.155/0.189
+RSM§
+6.25
+132.82/154.29
+1271/1310
+0.142/0.183
+ELBO-based
+AWM∗
+8.0
+158.88/183.71
+1412/1578
+0.095/0.132
+DiffusionNFT
+24.0
+144.36/159.22
+1352/1437
+0.109/0.143
+DiffusionNFT (multi)‡
+2.28
+145.06/175.20
+1468/1702
+0.102/0.106
+RAM (β = 1)
+0.95
+52.3
+132.93/144.77
+±16.19/16.96
+1211/1236
+±116/185
+0.163/0.193
+±0.021/0.021
+–
+–
+–
+RAM with larger β
+RAM (β = 2)
+0.96
+57.2
+±6.1
+116.99/122.78
+±1.69/1.02
+1078/1002
+±34/11
+0.170/0.208
+±0.009/0.006
+119.87/125.99
+±2.03/3.89
+1066/1023
+±31/33
+0.174/0.213
+±0.006/0.006
+RAM (β = 3)
+0.95
+43.9
+±4.9
+113.19/122.06
+±2.83/1.84
+1030/991
+±11/9
+0.184/0.214
+±0.006/0.010
+–
+–
+–
+RAM (β = 4)
+0.94
+–
+–
+–
+–
+–
+–
+–
+Ours
+DFR-MMD (β = 2)
+0.96
+41.1
+±9.1
+111.20/120.64
+±4.10/6.17
+990/967
+±27/52
+0.200/0.224
+±0.015/0.011
+110.75/121.67
+±3.04/6.05
+992/977
+±5/47
+0.196/0.221
+±0.011/0.009
+DFR-FD (β = 2)
+0.96
+35.7
+±4.6
+111.02/117.09
+±2.00/4.88
+980/932
+±20/46
+0.199/0.231
+±0.003/0.006
+111.95/120.40
+±4.11/4.05
+994/969
+±46/38
+0.193/0.223
+±0.011/0.013
+DFR-DS (β = 2)
+0.96
+40.4
+±5.2
+114.60/121.86
+±1.64/4.22
+1034/992
+±37/82
+0.218/0.233
+±0.007/0.010
+114.47/124.11
+±0.31/3.88
+1052/1007
+±8/45
+0.225/0.240
+±0.022/0.018
+§RSM jumps from 0.94 to 0.97 between consecutive checkpoints, so we evaluate it at 0.94.
+∗AWM’s default configuration uses a 1.5× larger effective batch size per step; we match the batch size to the other methods.
+‡Released checkpoint (GenEval 0.94), sampled at its prescribed guidance scale of 1.0.
+Table 2: Fine-tuning on OCR, compared at OCR reward 0.96. Columns and markings are as in Table 1, except
+that entries report results on the OCR test prompts (a) and on DrawBench (b), and Time is the time to reach
+0.96 relative to RAM (β = 2).
+OCR 0.96
+Method
+Peak
+Time (↓)
+FID (↓)
+FD-DINOv2 (↓)
+DreamSim (↑)
+SD3.5-M
+0.59
+–
+–
+–
+0.258/0.274
+RAM (β = 2)
+0.96
+1.00
+219.07/131.38
+±24.04/7.71
+1270/1040
+±232/84
+0.128/0.245
+±0.010/0.009
+RAM (β = 3)
+0.95
+–
+–
+–
+–
+RAM (β = 4)
+0.96
+1.85
+±0.23
+138.04/100.94
+±6.73/4.36
+667/751
+±46/56
+0.185/0.249
+±0.004/0.005
+RAM (β = 5)
+0.96
+2.05
+±0.09
+136.78/97.16
+±5.35/2.14
+662/721
+±39/21
+0.192/0.252
+±0.005/0.003
+RAM (β = 6)
+0.95
+–
+–
+–
+–
+DFR-MMD (β = 4)
+0.96
+2.50
+±0.19
+124.87/95.37
+±0.83/1.60
+597/708
+±5/16
+0.197/0.261
+±0.006/0.008
+DFR-FD (β = 4)
+0.96
+2.70
+±0.34
+121.46/94.56
+±4.52/1.20
+585/705
+±20/13
+0.213/0.255
+±0.004/0.008
+DFR-DS (β = 5)
+0.96
+2.08
+±0.22
+136.13/99.23
+±4.59/3.20
+653/743
+±37/27
+0.224/0.281
+±0.008/0.003
+4.2
+RESULTS
+DFR moves beyond the β trade-off. Every DFR instance lies beyond RAM’s β path, with less drift
+and/or more diversity (Figure 2). Further, DFR also wins or ties against all RAM configurations that
+reaches the same threshold on every drift and diversity metric (Tables 1 and 2). The gap is widest at
+the highest threshold, GenEval 0.96: among RAM configurations only β = 2 reaches it, whereas all
+three DFR instances do, with lower drift (FID 111–114 vs. 120) and higher diversity (0.193–0.225
+vs. 0.174). On OCR, DFR-MMD and DFR-FD drift the least, and DFR-DS is the most diverse.
+The instances behave as their rewards predict.
+The DreamSim reward is purely repulsive,
+whereas MMD and FD rewards also pull samples toward pref (Section 3.3). Accordingly, on ev-
+ery task and threshold, DFR-DS attains the highest diversity of the three instances but the smallest
+reduction in drift, while DFR-MMD and DFR-FD reduce drift the most. On OCR, for example,
+DFR-DS matches RAM (β = 5) in FID (136 vs. 137), while raising diversity by 17%, whereas
+8
+
+
+Preprint.
+120
+140
+Drift: FD-Inception ↓
+0.150
+0.175
+0.200
+0.225
+0.250
+Diversity: DreamSim ↑
+β=1
+β=2
+β=3
+not reached:
+β=4
+GenEval 0.95
+110
+115
+120
+Drift: FD-Inception ↓
+0.175
+0.200
+0.225
+0.250
+0.275
+β=2
+not reached:
+β=1, β=3, β=4
+GenEval 0.96
+150
+200
+250
+Drift: FD-Inception ↓
+0.15
+0.20
+0.25
+β=2
+β=4
+β=5
+not reached:
+β=3, β=6
+OCR 0.96
+RAM (β path)
+DFR-MMD
+DFR-FD
+DFR-DS
+Figure 2: Drift versus diversity at matched reward. Tuning β moves RAM along a path (grey) that ends where
+a larger β no longer reaches the threshold. Every DFR instance lies above or to the left of the end of the path.
+DFR-MMD and DFR-FD lower FID to 121–125 despite running at the smaller β = 4. The attrac-
+tive term also acts as additional regularization: on OCR, DFR-DS trains as fast as RAM at the same
+β, whereas DFR-MMD and DFR-FD require a smaller β to reach the threshold and still take longer.
+DFR-MMD matches DFR-FD without an encoder. DFR-MMD computes its reward on SD3.5-
+M’s own VAE latents with eight reference samples per prompt, whereas DFR-FD relies on three
+pretrained encoders, precomputed reference statistics, and a per-encoder calibration. Despite this,
+DFR-MMD ties DFR-FD on every drift metric at every threshold, matches its diversity on GenEval,
+and reaches the thresholds at least as fast, although it is less diverse on OCR (0.197 vs. 0.213).
+DFR adds modest cost. Distributional rewards add only 3–9% to the time per training step. Reach-
+ing a threshold takes longer than RAM at the same β, but the cost is comparable to that of reducing
+drift by raising β. Image quality and prompt generalization are also preserved: ImageReward and
+PickScore remain comparable to those of the RAM configurations that reach the same threshold.
+5
+RELATED WORK
+Regularization for reward fine-tuning. Most reward fine-tuning methods for flow-based models
+use the velocity anchor in Eq. (4), which constrains the sampling dynamics rather than pθ itself
+(Section 3.1). DDRL (Ye et al., 2025) instead regularizes toward an off-policy data distribution
+using the forward-KL divergence, implemented through an ELBO objective on real data or
+pretrained-model samples. Flow Density Control (De Santi et al., 2025) also optimizes functionals
+of the generated distribution, using gradients of the effective reward. DFR instead uses the effective
+reward only as a scalar signal in policy-gradient updates, without differentiating through it, which
+makes it directly applicable to non-differentiable rewards, and we provide extensive empirical
+evidence of scalability through systematic experiments on SD3.5-M.
+Diversity and distributional rewards.Objectives defined as functionals of a distribution have been
+studied in reinforcement learning (Hazan et al., 2019; Zhang et al., 2020). Several works augment
+the target reward with diversity or distributional signals.
+GARDO (He et al., 2025) increases
+the rewards of high-quality samples far from their nearest neighbors, while DiverseGRPO (Liu
+et al., 2025a) assigns bonuses based on semantic-cluster sizes; neither signal is derived from an
+explicit distributional objective. DRIFT (Liu et al., 2026) rewards each sample by its mean squared
+DreamSim distance to the other samples in its group, which coincides with the DreamSim instance
+of DFR (see Appendix C.7).
+Other methods match a prescribed target distribution. LOO-FID (Baran et al., 2026) and Miao et al.
+(2024) reward samples by their leave-one-out change in, respectively, the FD to real-image statistics
+and the MMD to curated reference images; these are finite-difference estimates of the corresponding
+first variations (Appendix C.6.2). kCGM (Diamant & Trippe, 2026) minimizes MMD to a target
+feature distribution using an estimator of the form in Eq. (16). DistWise (Li et al., 2026) uses the
+FID between a large generated set and real data as a distribution-level reward, while DRAGON (Bai
+et al., 2025) contrasts positive and negative generation sets under distribution-level rewards. In these
+9
+
+
+Preprint.
+methods, matching a real or curated target distribution—typically in a pretrained feature space—
+is itself the objective. By contrast, DFR derives per-sample rewards as first variations of convex
+functionals of pθ, yielding the explicit objective in Eq. (12), where deviation from the pretrained
+model distribution regularizes target-reward maximization alongside the KL anchor. Consequently,
+DFR requires neither an image dataset nor, for its MMD instance, a pretrained encoder.
+6
+CONCLUSION
+In this work, we introduce Distributional Functional Rewards (DFR), a general-purpose framework
+for reward fine-tuning that complements KL regularization with objectives defined directly on
+the model’s output distribution.
+By deriving per-sample rewards from the first variations of
+distributional functionals, DFR provides explicit control over diversity and distributional drift.
+Our findings clearly demonstrate that KL regularization has a limited effective range: beyond it,
+stronger regularization slows optimization, limits reward improvement, and/or destabilizes training.
+On two distinct tasks: compositional generation and visual text rendering, we find that DFR
+consistently improves the reward–distribution trade-off beyond what is attainable by tuning the KL
+coefficient alone. At matched task reward, every evaluated DFR variant improves diversity, reduces
+drift, or both, while matching or improving all eligible distributional metrics relative to KL-only
+RAM baselines that reach the same reward threshold. These gains require only a simple reward
+augmentation, adding 3–9% overhead per training step, while not relying on a pretrained encoder.
+Overall, DFR enables reward fine-tuning to achieve high task rewards, while better preserving
+diversity and remaining closer to the pretrained model distribution than KL regularization alone.
+Limitations and future work.
+Although presented as a general-purpose reward fine-tuning
+framework, our experiments are focused on validation in image settings; extending DFR to other
+modalities such as video and molecular structures is a natural next step to more effectively evaluate
+the generalization of the framework. Further, since the distributional reward regularizes toward
+pref, it preserves the pretrained model’s biases along with its diversity, so its coefficient λ must
+be tuned jointly with β.
+Balancing DFR’s repulsive and attractive terms more carefully is a
+promising direction for improving this trade-off. Our characterization of the optimum assumes
+exact optimization of the population objective, which the ELBO surrogate and the finite-sample
+estimates of the distributional rewards approximate in practice.
+ACKNOWLEDGMENTS
+We thank Yeonwoo Cha for running baseline experiments and for early discussions, and Jaemoo
+Choi and Hyungjin Chung for early discussions.
+10
+
+
+Preprint.
+REFERENCES
+Josh Abramson, Jonas Adler, Jack Dunger, Richard Evans, Tim Green, Alexander Pritzel, Olaf Ron-
+neberger, Lindsay Willmore, Andrew J. Ballard, Joshua Bambrick, and et al. Accurate structure
+prediction of biomolecular interactions with alphafold 3. Nature, 630(8016):493–500, May 2024.
+doi: 10.1038/s41586-024-07487-w.
+Michael S. Albergo, Nicholas M. Boffi, and Eric Vanden-Eijnden. Stochastic interpolants: A unify-
+ing framework for flows and diffusions. arXiv preprint 2303.08797, 2023.
+Yatong Bai, Jonah Casebeer, Somayeh Sojoudi, and Nicholas J. Bryan. DRAGON: Distributional re-
+wards optimize diffusion generative models. Transactions on Machine Learning Research, 2025.
+ISSN 2835-8856. URL https://openreview.net/forum?id=gobhDku03J.
+Orhun Bugra Baran, Melih Kandemir, and Ramazan Gokberk Cinbis. Policy-based tuning of au-
+toregressive image models with instance- and distribution-level rewards, 2026. URL https:
+//arxiv.org/abs/2603.23086.
+Andreas Bergmeister, Stefanie Jegelka, Nikolas N¨usken, Carles Domingo-Enrich, and Jakiw Pid-
+strigach. Reinforce adjoint matching: Scaling rl post-training of diffusion and flow-matching
+models, 2026. URL https://arxiv.org/abs/2605.10759.
+R. Bhatia. Matrix Analysis. Graduate Texts in Mathematics. Springer New York, 1996. ISBN
+9780387948461. URL https://books.google.ca/books?id=F4hRy1F1M6QC.
+Mikołaj Bi´nkowski, Dougal J. Sutherland, Michael Arbel, and Arthur Gretton.
+Demystifying
+MMD GANs. In International Conference on Learning Representations, 2018. URL https:
+//openreview.net/forum?id=r1lUOzWCW.
+Kevin Black, Michael Janner, Yilun Du, Ilya Kostrikov, and Sergey Levine. Training diffusion
+models with reinforcement learning. In The Twelfth International Conference on Learning Rep-
+resentations, 2024. URL https://openreview.net/forum?id=YCWjhGrJFD.
+Jaemoo Choi, Yuchen Zhu, Wei Guo, Petr Molodyk, Bo Yuan, Jinbin Bai, Yi Xin, Molei Tao, and
+Yongxin Chen. Rethinking the design space of reinforcement learning for diffusion models: On
+the importance of likelihood estimation beyond loss design, 2026. URL https://arxiv.
+org/abs/2602.04663.
+Kevin Clark, Paul Vicol, Kevin Swersky, and David J. Fleet. Directly fine-tuning diffusion models
+on differentiable rewards. In The Twelfth International Conference on Learning Representations,
+2024. URL https://openreview.net/forum?id=1vmSEVL19f.
+Valentin De Bortoli, Alexandre Galashov, J. Swaroop Guntupalli, Guangyao Zhou, Kevin Murphy,
+Arthur Gretton, and Arnaud Doucet. Distributional diffusion models with scoring rules. In Pro-
+ceedings of the 42nd International Conference on Machine Learning, 2025.
+Riccardo De Santi, Marin Vlastelica, Ya-Ping Hsieh, Zebang Shen, Niao He, and Andreas Krause.
+Flow density control: Generative optimization beyond entropy-regularized fine-tuning. In Ad-
+vances in Neural Information Processing Systems, 2025.
+Nathaniel L. Diamant and Brian L. Trippe. Calibrating generative models to feature distributions
+with mmd finetuning, 2026. URL https://arxiv.org/abs/2606.19496.
+Carles Domingo-Enrich, Michal Drozdzal, Brian Karrer, and Ricky T. Q. Chen. Adjoint matching:
+Fine-tuning flow and diffusion generative models with memoryless stochastic optimal control.
+In The Thirteenth International Conference on Learning Representations, 2025. URL https:
+//openreview.net/forum?id=xQBRrtQM8u.
+Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas M¨uller, Harry Saini, Yam
+Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al. Scaling rectified flow transformers
+for high-resolution image synthesis. arXiv preprint arXiv:2403.03206, 2024. URL https:
+//arxiv.org/abs/2403.03206.
+11
+
+
+Preprint.
+Jiajun Fan, Shuaike Shen, Chaoran Cheng, Yuxin Chen, Chumeng Liang, and Ge Liu.
+Online
+reward-weighted fine-tuning of flow matching with wasserstein regularization. In The Thirteenth
+International Conference on Learning Representations, 2025. URL https://openreview.
+net/forum?id=2IoFFexvuw.
+Ying Fan, Olivia Watkins, Yuqing Du, Hao Liu, Moonkyung Ryu, Craig Boutilier, Pieter Abbeel,
+Mohammad Ghavamzadeh, Kangwook Lee, and Kimin Lee. Reinforcement learning for fine-
+tuning text-to-image diffusion models. In Thirty-seventh Conference on Neural Information Pro-
+cessing Systems, 2023. URL https://openreview.net/forum?id=8OTPepXzeh.
+Dan Friedman and Adji Bousso Dieng. The vendi score: A diversity evaluation metric for machine
+learning, 2023. URL https://arxiv.org/abs/2210.02410.
+Stephanie Fu, Netanel Yakir Tamir, Shobhita Sundaram, Lucy Chai, Richard Zhang, Tali Dekel,
+and Phillip Isola. Dreamsim: Learning new dimensions of human visual similarity using syn-
+thetic data. In Thirty-seventh Conference on Neural Information Processing Systems, 2023. URL
+https://openreview.net/forum?id=DEiNSfh1k7.
+Dhruba Ghosh, Hannaneh Hajishirzi, and Ludwig Schmidt. GenEval: An object-focused framework
+for evaluating text-to-image alignment. In Thirty-seventh Conference on Neural Information Pro-
+cessing Systems Datasets and Benchmarks Track, 2023. URL https://openreview.net/
+forum?id=Wbr51vK331.
+Arthur Gretton, Karsten Borgwardt, Malte Rasch, Bernhard Sch¨olkopf, and Alex Smola.
+A
+kernel method for the two-sample-problem.
+In B. Sch¨olkopf, J. Platt, and T. Hoff-
+man (eds.), Advances in Neural Information Processing Systems, volume 19. MIT Press,
+2006.
+URL https://proceedings.neurips.cc/paper_files/paper/2006/
+file/e9fb2eda3d9c55a0d89c98d6c54b5b3e-Paper.pdf.
+Elad Hazan, Sham Kakade, Karan Singh, and Abby Van Soest. Provably efficient maximum entropy
+exploration. In International Conference on Machine Learning, 2019.
+Haoran He, Yuxiao Ye, Jie Liu, Jiajun Liang, Zhiyong Wang, Ziyang Yuan, Xintao Wang, Hangyu
+Mao, Pengfei Wan, and Ling Pan. Gardo: Reinforcing diffusion models without reward hacking,
+2025. URL https://arxiv.org/abs/2512.24138.
+Xiaoxuan He, Siming Fu, Yuke Zhao, Wanli Li, Jian Yang, Dacheng Yin, Fengyun Rao, and
+Bo Zhang. TempFlow-GRPO: When timing matters for GRPO in flow models. In The Fourteenth
+International Conference on Learning Representations, 2026. URL https://openreview.
+net/forum?id=7mCo3R3Wyn.
+Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochre-
+iter.
+Gans trained by a two time-scale update rule converge to a local nash equilibrium.
+In I. Guyon, U. Von Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and
+R. Garnett (eds.), Advances in Neural Information Processing Systems, volume 30. Curran
+Associates, Inc., 2017.
+URL https://proceedings.neurips.cc/paper_files/
+paper/2017/file/8a1d694707eb0fefe65871369074926d-Paper.pdf.
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+Denoising diffusion probabilistic models.
+In
+H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin (eds.), Advances in Neu-
+ral Information Processing Systems, volume 33, pp. 6840–6851. Curran Associates, Inc.,
+2020.
+URL https://proceedings.neurips.cc/paper_files/paper/2020/
+file/4c5bcfec8584af0d967f1ab10179ca4b-Paper.pdf.
+Kaitong Hu, Zhenjie Ren, David ˇSiˇska, and Łukasz Szpruch. Mean-field langevin dynamics and
+energy landscape of neural networks. Annales de l’Institut Henri Poincar´e, Probabilit´es et Statis-
+tiques, 57(4):2043–2065, 2021. doi: 10.1214/20-AIHP1140.
+Nai-Chieh Huang, Ping-Chun Hsieh, Kuo-Hao Ho, and I-Chen Wu. PPO-Clip attains global op-
+timality: Towards deeper understandings of clipping. In Proceedings of the AAAI Conference
+on Artificial Intelligence, volume 38, pp. 12600–12607, 2024. doi: 10.1609/aaai.v38i11.29154.
+URL https://ojs.aaai.org/index.php/AAAI/article/view/29154.
+12
+
+
+Preprint.
+Sadeep Jayasumana, Srikumar Ramalingam, Andreas Veit, Daniel Glasner, Ayan Chakrabarti, and
+Sanjiv Kumar. Rethinking fid: Towards a better evaluation metric for image generation. In 2024
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pp. 9307–9315,
+2024. doi: 10.1109/CVPR52733.2024.00889.
+Yuval Kirstain, Adam Polyak, Uriel Singer, Shahbuland Matiana, Joe Penna, and Omer Levy. Pick-
+a-pic: an open dataset of user preferences for text-to-image generation. In Proceedings of the
+37th International Conference on Neural Information Processing Systems, NIPS ’23, Red Hook,
+NY, USA, 2023. Curran Associates Inc.
+Branislav Kveton, Anup Rao, Subhojyoti Mukherjee, Krishna Kumar Singh, and Viet Dac Lai.
+Advantageflow: Advantage-weighted least squares for rl in flow models, 2026. URL https:
+//arxiv.org/abs/2605.26013.
+Tuomas Kynk¨a¨anniemi, Tero Karras, Samuli Laine, Jaakko Lehtinen, and Timo Aila.
+Im-
+proved precision and recall metric for assessing generative models.
+In H. Wallach,
+H. Larochelle,
+A. Beygelzimer,
+F. d'Alch´e-Buc,
+E. Fox,
+and R. Garnett (eds.),
+Ad-
+vances in Neural Information Processing Systems, volume 32. Curran Associates, Inc.,
+2019.
+URL https://proceedings.neurips.cc/paper_files/paper/2019/
+file/0234c510bc6d908b28c70ff313743079-Paper.pdf.
+Black Forest Labs, Stephen Batifol, Andreas Blattmann, Frederic Boesel, Saksham Consul, Cyril
+Diagne, Tim Dockhorn, Jack English, Zion English, Patrick Esser, Sumith Kulal, Kyle Lacey,
+Yam Levi, Cheng Li, Dominik Lorenz, Jonas M¨uller, Dustin Podell, Robin Rombach, Harry Saini,
+Axel Sauer, and Luke Smith. Flux.1 kontext: Flow matching for in-context image generation and
+editing in latent space, 2025. URL https://arxiv.org/abs/2506.15742.
+Jeongjae Lee and Jong Chul Ye. PCPO: Proportionate credit policy optimization for preference
+alignment of image generation models. In The Fourteenth International Conference on Learning
+Representations, 2026. URL https://openreview.net/forum?id=alY08iknli.
+Jeongjae Lee, Jinho Chang, Jeongsol Kim, and Jong Chul Ye. Reward score matching: Unifying
+reward-based fine-tuning for flow and diffusion models, 2026. URL https://arxiv.org/
+abs/2604.17415.
+Junzhe Li, Yutao Cui, Tao Huang, Yinping Ma, Chun Fan, Miles Yang, and Zhao Zhong. MixGRPO:
+Unlocking flow-based GRPO efficiency with mixed ODE-SDE, 2025. URL https://arxiv.
+org/abs/2507.21802.
+Ruihang Li, Mengde Xu, Shuyang Gu, Leigang Qu, Fuli Feng, Han Hu, and Wenjie Wang. Op-
+timizing visual generative models via distribution-wise rewards.
+In Forty-third International
+Conference on Machine Learning, 2026. URL https://openreview.net/forum?id=
+dxi8kGgKMM.
+Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow
+matching for generative modeling. In The Eleventh International Conference on Learning Repre-
+sentations, 2023. URL https://openreview.net/forum?id=PqvMRDCJT9t.
+Henglin Liu, Huijuan Huang, Jing Wang, Chang Liu, Xiu Li, and Xiangyang Ji.
+Diversegrpo:
+Mitigating mode collapse in image generation via diversity-aware grpo, 2025a. URL https:
+//arxiv.org/abs/2512.21514.
+Jie Liu, Gongye Liu, Jiajun Liang, Yangguang Li, Jiaheng Liu, Xintao Wang, Pengfei Wan,
+Di Zhang, and Wanli Ouyang. Flow-GRPO: Training flow matching models via online RL. In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025b. URL
+https://openreview.net/forum?id=oCBKGw5HNf.
+Jinmei Liu, Haoru Li, Zhenhong Sun, Chaofeng Chen, Yatao Bian, Bo Wang, Daoyi Dong, Chunlin
+Chen, and Zhi Wang. Beyond the dirac delta: Mitigating diversity collapse in reinforcement
+fine-tuning for versatile image generation, 2026. URL https://arxiv.org/abs/2601.
+12401.
+13
+
+
+Preprint.
+Xingchao Liu, Chengyue Gong, and qiang liu. Flow straight and fast: Learning to generate and
+transfer data with rectified flow. In The Eleventh International Conference on Learning Repre-
+sentations, 2023. URL https://openreview.net/forum?id=XVjTT1nw5z.
+Zhen Liu, Tim Z. Xiao, Carles Domingo-Enrich, Weiyang Liu, and Dinghuai Zhang. Value gra-
+dient guidance for flow matching alignment. In The Thirty-ninth Annual Conference on Neural
+Information Processing Systems, 2025c. URL https://openreview.net/forum?id=
+6MmOy2Ji8V.
+Zhen Liu, Tim Z. Xiao, Weiyang Liu, Yoshua Bengio, and Dinghuai Zhang. Efficient diversity-
+preserving diffusion alignment via gradient-informed GFlownets.
+In The Thirteenth Interna-
+tional Conference on Learning Representations, 2025d. URL https://openreview.net/
+forum?id=Aye5wL6TCn.
+Weijian Luo, Tianyang Hu, Shifeng Zhang, Jiacheng Sun, Zhenguo Li, and Zhihua Zhang. Diff-
+instruct: A universal approach for transferring knowledge from pre-trained diffusion models.
+Advances in Neural Information Processing Systems, 36, 2024.
+David McAllister, Songwei Ge, Brent Yi, Chung Min Kim, Ethan Weber, Hongsuk Choi, Haiwen
+Feng, and Angjoo Kanazawa. Flow matching policy gradients. In The Fourteenth International
+Conference on Learning Representations, 2026. URL https://openreview.net/forum?
+id=eoEmoKoQpJ.
+Zichen Miao, Jiang Wang, Ze Wang, Zhengyuan Yang, Lijuan Wang, Qiang Qiu, and Zicheng
+Liu. Training diffusion models towards diverse image generation with reinforcement learning. In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 10844–10853, June 2024.
+Stefano Peluchetti. Non-denoising forward-time diffusions. arXiv preprint arXiv:2312.14589, 2023.
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Bj¨orn Ommer. High-
+resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF Con-
+ference on Computer Vision and Pattern Recognition, pp. 10684–10695, 2022.
+Tim Salimans, Thomas Mensink, Jonathan Heek, and Emiel Hoogeboom. Multistep distillation
+of diffusion models via moment matching, 2024. URL https://arxiv.org/abs/2406.
+04103.
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy
+optimization algorithms, 2017. URL https://arxiv.org/abs/1707.06347.
+Dino Sejdinovic, Bharath Sriperumbudur, Arthur Gretton, and Kenji Fukumizu. Equivalence of
+distance-based and RKHS-based statistics in hypothesis testing.
+The Annals of Statistics, 41
+(5):2263 – 2291, 2013. doi: 10.1214/13-AOS1140. URL https://doi.org/10.1214/
+13-AOS1140.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang,
+Mingchuan Zhang, YK Li, Y Wu, et al. Deepseekmath: Pushing the limits of mathematical
+reasoning in open language models. arXiv preprint arXiv:2402.03300, 2024.
+Jeongwoo Shin, Dongsoo Shin, Yuchen Zhu, Wei Guo, Yongxin Chen, Joonseok Lee, Jaewoong
+Choi, and Jaemoo Choi. Efficient adjoint matching for fine-tuning diffusion models, 2026. URL
+https://arxiv.org/abs/2605.11480.
+Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli. Deep unsupervised
+learning using nonequilibrium thermodynamics. In Francis Bach and David Blei (eds.), Pro-
+ceedings of the 32nd International Conference on Machine Learning, volume 37 of Proceedings
+of Machine Learning Research, pp. 2256–2265, Lille, France, 07–09 Jul 2015. PMLR. URL
+https://proceedings.mlr.press/v37/sohl-dickstein15.html.
+Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben
+Poole. Score-based generative modeling through stochastic differential equations. In Interna-
+tional Conference on Learning Representations, 2021. URL https://openreview.net/
+forum?id=PxTIG12RRHS.
+14
+
+
+Preprint.
+George Stein, Jesse Cresswell, Rasa Hosseinzadeh, Yi Sui, Brendan Ross, Valentin Villecroze,
+Zhaoyan Liu, Anthony L Caterini, Eric Taylor, and Gabriel Loaiza-Ganem.
+Exposing flaws
+of generative model evaluation metrics and their unfair treatment of diffusion models.
+In
+A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (eds.), Advances in
+Neural Information Processing Systems, volume 36, pp. 3732–3784. Curran Associates, Inc.,
+2023.
+URL https://proceedings.neurips.cc/paper_files/paper/2023/
+file/0bc795afae289ed465a65a3b4b1f4eb7-Paper-Conference.pdf.
+Alexander Tong, Nikolay Malkin, Kilian Fatras, Lazar Atanackovic, Yanlei Zhang, Guillaume
+Huguet, Guy Wolf, and Yoshua Bengio. Simulation-free schr ”odinger bridges via score and
+flow matching, July 2023.
+Masatoshi Uehara, Yulai Zhao, Tommaso Biancalani, and Sergey Levine.
+Understanding rein-
+forcement learning-based fine-tuning of diffusion models: A tutorial and review, 2024. URL
+https://arxiv.org/abs/2407.13734.
+Masatoshi Uehara, Yulai Zhao, Chenyu Wang, Xiner Li, Aviv Regev, Sergey Levine, and Tom-
+maso Biancalani. Inference-time alignment in diffusion models with reward-guided generation:
+Tutorial and review, 2025. URL https://arxiv.org/abs/2501.09685.
+Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu,
+Haiming Zhao, Jianxiao Yang, Jianyuan Zeng, Jiayu Wang, Jingfeng Zhang, Jingren Zhou, Jinkai
+Wang, Jixuan Chen, Kai Zhu, Kang Zhao, Keyu Yan, Lianghua Huang, Mengyang Feng, Ningyi
+Zhang, Pandeng Li, Pingyu Wu, Ruihang Chu, Ruili Feng, Shiwei Zhang, Siyang Sun, Tao Fang,
+Tianxing Wang, Tianyi Gui, Tingyu Weng, Tong Shen, Wei Lin, Wei Wang, Wei Wang, Wenmeng
+Zhou, Wente Wang, Wenting Shen, Wenyuan Yu, Xianzhong Shi, Xiaoming Huang, Xin Xu, Yan
+Kou, Yangyu Lv, Yifei Li, Yijing Liu, Yiming Wang, Yingya Zhang, Yitong Huang, Yong Li, You
+Wu, Yu Liu, Yulin Pan, Yun Zheng, Yuntao Hong, Yupeng Shi, Yutong Feng, Zeyinzi Jiang, Zhen
+Han, Zhi-Fan Wu, and Ziyu Liu. Wan: Open and advanced large-scale video generative models,
+2025. URL https://arxiv.org/abs/2503.20314.
+R. J. Williams. Simple statistical gradient-following algorithms for connectionist reinforcement
+learning. Machine Learning, 8:229–256, 1992.
+Jiazheng Xu, Xiao Liu, Yuchen Wu, Yuxuan Tong, Qinkai Li, Ming Ding, Jie Tang, and Yuxiao
+Dong. ImageReward: learning and evaluating human preferences for text-to-image generation.
+In Proceedings of the 37th International Conference on Neural Information Processing Systems,
+pp. 15903–15935, 2023.
+Yilun Xu, Weili Nie, and Arash Vahdat. One-step diffusion models with f-divergence distribution
+matching, 2025. URL https://arxiv.org/abs/2502.15681.
+Yixian Xu, Yuanrui Zhang, Shengjie Luo, Liwei Wang, and Di He. Designing reinforcement learn-
+ing for diffusion models: A unified path-space view, 2026. URL https://arxiv.org/abs/
+2608.14430.
+Shuchen Xue, Chongjian GE, Shilong Zhang, Yichen Li, and Zhi-Ming Ma. Advantage weighted
+matching: Aligning RL with pretraining in diffusion models.
+In Forty-third International
+Conference on Machine Learning, 2026. URL https://openreview.net/forum?id=
+nLY2pOYBrJ.
+Zeyue Xue, Jie Wu, Yu Gao, Fangyuan Kong, Lingting Zhu, Mengzhao Chen, Zhiheng Liu, Wei Liu,
+Qiushan Guo, Weilin Huang, and Ping Luo. DanceGRPO: Unleashing grpo on visual generation,
+2025. URL https://arxiv.org/abs/2505.07818.
+Jiawei Yang, Zhengyang Geng, Xuan Ju, Yonglong Tian, and Yue Wang. Representation fr´echet
+loss for visual generation, 2026. URL https://arxiv.org/abs/2604.28190.
+Haotian Ye, Kaiwen Zheng, Jiashu Xu, Puheng Li, Huayu Chen, Jiaqi Han, Sheng Liu, Qinsheng
+Zhang, Hanzi Mao, Zekun Hao, Prithvijit Chattopadhyay, Dinghao Yang, Liang Feng, Maosheng
+Liao, Junjie Bai, Ming-Yu Liu, James Zou, and Stefano Ermon.
+Data-regularized reinforce-
+ment learning for diffusion models at scale, 2025. URL https://arxiv.org/abs/2512.
+04332.
+15
+
+
+Preprint.
+Tianwei Yin, Micha¨el Gharbi, Richard Zhang, Eli Shechtman, Fr´edo Durand, William T Freeman,
+and Taesung Park. One-step diffusion with distribution matching distillation. In CVPR, 2024a.
+Tianwei Yin, Micha¨el Gharbi, Taesung Park, Richard Zhang, Eli Shechtman, Fredo Durand, and
+William T. Freeman. Improved distribution matching distillation for fast image synthesis, 2024b.
+URL https://arxiv.org/abs/2405.14867.
+Junyu Zhang, Alec Koppel, Amrit Singh Bedi, Csaba Szepesv´ari, and Mengdi Wang. Variational
+policy gradient method for reinforcement learning with general utilities. In Advances in Neural
+Information Processing Systems, 2020.
+Richard Zhang, Phillip Isola, Alexei A. Efros, Eli Shechtman, and Oliver Wang. The unreasonable
+effectiveness of deep features as a perceptual metric. In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition (CVPR), June 2018.
+Kaiwen Zheng, Huayu Chen, Haotian Ye, Haoxiang Wang, Qinsheng Zhang, Kai Jiang, Hang Su,
+Stefano Ermon, Jun Zhu, and Ming-Yu Liu. DiffusionNFT: Online diffusion reinforcement with
+forward process. In The Fourteenth International Conference on Learning Representations, 2026.
+URL https://openreview.net/forum?id=VJZ477R89F.
+Linqi Zhou, Stefano Ermon, and Jiaming Song.
+Inductive moment matching.
+In Forty-second
+International Conference on Machine Learning, 2025. URL https://openreview.net/
+forum?id=pwNSUo7yUb.
+16
+
+
+Preprint.
+A
+EXTENDED RELATED WORK
+Differentiable rewards. When the reward is differentiable, its gradient can be propagated directly
+through the generative process. DRaFT (Clark et al., 2024) backpropagates through the sampling
+chain, optionally truncating the gradient to the final steps, whereas ReFL (Xu et al., 2023) backprop-
+agates through a single late denoising step from which the clean sample is predicted directly. Adjoint
+Matching (Domingo-Enrich et al., 2025) formulates fine-tuning as stochastic optimal control under
+a memoryless noise schedule, whose optimum solves Eq. (2), and regresses the velocity toward a
+target defined by an adjoint state that propagates the reward gradient backward along the trajectory.
+Shin et al. (2026) reduce its cost using a linear base drift, enabling few-step deterministic sampling
+and a closed-form adjoint. VGG-Flow (Liu et al., 2025c) matches the difference between fine-tuned
+and pretrained velocities to the gradient of a learned value function, while ∇-GFlowNet (Liu et al.,
+2025d) derives gradient-informed GFlowNet objectives; both seek to preserve the pretrained prior
+and sample diversity. For broader unifying perspectives on reward fine-tuning, we refer readers to
+Uehara et al. (2024); Choi et al. (2026); Lee et al. (2026); Xu et al. (2026).
+Non-differentiable rewards. Trajectory-based methods formulate denoising as a multi-step MDP
+and apply policy gradients to per-step transition likelihoods (Black et al., 2024; Fan et al., 2023;
+Liu et al., 2025b; Xue et al., 2025). Because these likelihoods require stochastic transitions, the
+sampling ODE is converted to an SDE with the same marginals. Li et al. (2025); He et al. (2026)
+improve efficiency by restricting stochastic sampling and optimization to a subset of timesteps.
+ELBO-based methods instead treat the final sample as a single action and replace its intractable log-
+likelihood log pθ(x0) with the ELBO surrogate −LFM(θ), producing an online reward-weighted
+regression objective on forward-noised samples (McAllister et al., 2026; Fan et al., 2025; Xue et al.,
+2026). Although this gives a biased estimator of the exact policy gradient, it is empirically effec-
+tive. Methods derived from other perspectives reduce to the same objective (Zheng et al., 2026;
+Bergmeister et al., 2026); Appendix B gives these reductions in a common notation. By decoupling
+optimization from sampling, ELBO-based methods can substantially accelerate reward maximiza-
+tion relative to trajectory-based methods (Choi et al., 2026).
+Distributional discrepancies as training losses. Several few-step distillation methods match the
+output distribution of a student generator to that of a pretrained teacher, through the integral reverse-
+KL divergence (Luo et al., 2024; Yin et al., 2024a;b), general f-divergences (Xu et al., 2025), or mo-
+ment matching (Salimans et al., 2024). Other works match the data distribution directly. Zhou et al.
+(2025) train few-step generators from scratch with an MMD-based moment-matching objective, and
+De Bortoli et al. (2025) learn the full conditional distribution of clean data given a noisy state with
+scoring rules such as the energy score, rather than regressing its mean. FD-loss (Yang et al., 2026)
+post-trains generators by minimizing the Fr´echet distance to real data in a representation space.
+A.1
+MEASURING FIDELITY AND DIVERSITY
+Distribution-level fidelity. FID (Heusel et al., 2017) compares generated and real images through
+the Fr´echet distance between Gaussian fits to their Inception-v3 features. Its limitations have moti-
+vated several alternatives. Stein et al. (2023) find that Inception features align poorly with human
+judgments of modern generators and recommend DINOv2 features instead. KID (Bi´nkowski et al.,
+2018) and CMMD (Jayasumana et al., 2024) replace FD with MMD, which drops the Gaussian
+assumption and admits an unbiased estimator. Precision and recall (Kynk¨a¨anniemi et al., 2019) sep-
+arate fidelity from coverage by estimating the support of each distribution with k-nearest-neighbor
+balls in feature space.
+Diversity. LPIPS (Zhang et al., 2018) and DreamSim (Fu et al., 2023) compare images through
+deep features calibrated to human similarity judgments. LPIPS mainly reflects low-level differences
+such as color and texture, whereas DreamSim also captures layout, pose, and semantic content. The
+mean pairwise perceptual distance within a set of samples is a common diversity measure in reward
+fine-tuning (Domingo-Enrich et al., 2025; Liu et al., 2025d;c). The Vendi Score (Friedman & Dieng,
+2023) instead measures the effective number of distinct samples, as the exponential of the entropy
+of the eigenvalues of the normalized similarity matrix.
+17
+
+
+Preprint.
+B
+UNIFYING ONLINE RWR
+Several recent ELBO-based methods have different motivations, but their updates reduce to the
+same online reward-weighted regression (RWR) objective (Lee et al., 2026; Kveton et al., 2026;
+Choi et al., 2026). This appendix derives the reduction for ORW-CFM-W2, FPO, AWM, RAM,
+DiffusionNFT, and AdvantageFlow, and summarizes it in Table 3.
+Notation. We translate every method into the conventions of Section 2.1 and Algorithm 1. Time
+t = 0 is clean data and t = 1 is noise 3 , with xt = (1 −t) x0 + tϵ, ϵ ∼N(0, I), and vfwd = ϵ −x0
+. We write vθ, vold, and vref for the velocities of the current, lagged, and pretrained models, all
+evaluated at (xt, t), and omit conditioning. Rollouts are drawn as x0 ∼pθold, with θold = θ for
+on-policy methods, and timesteps are sampled from a distribution p(t), i.e., t ∼p(t). As in the main
+text, β is the coefficient of the anchor to vref; we write γ for the coefficient of the anchor to vold. The
+reward enters through a scalar weight f(r(x0), t). For most methods f = A(x0)/α, where A is the
+group-normalized advantage and 1/α a reward coefficient; for ORW-CFM-W2, f = exp(r(x0)/α).
+Unified gradient.
+Setting aside clipping and loss transformations, which we discuss for each
+method, every method below updates θ along
+g(θ) = Et,x0,ϵ
+h
+2(∇θvθ)⊤
+β (vθ −vref)
+|
+{z
+}
+ref. anchor
++ γ (vθ −vold)
+|
+{z
+}
+old anchor
++ f(r(x0), t) (v• −vfwd)
+|
+{z
+}
+RWR
+i
+,
+(24)
+v• ∈{vθ, vold},
+where the sampling distribution of x0 is held fixed when differentiating. Eq. (24) is exactly the
+gradient of the regression loss
+Et,x0,ϵ
+vθ −sg
+h
+vθ + β (vref −vθ) + γ (vold −vθ) + f(r(x0), t) (vfwd −v•)
+i
+2
+2,
+(25)
+since the stop-gradient leaves only 2(∇θvθ)⊤(vθ −sg[·]). For v• = vθ it is also exactly the gradient
+of the sum of squares E
+
+f ∥vθ −vfwd∥2
+2 + β∥vθ −vref∥2
+2 + γ∥vθ −vold∥2
+2
+
+, in which the weight f
+does not depend on θ.
+We call two objectives equivalent when their gradients agree up to a positive constant factor, which
+can be absorbed into the learning rate. A recurring case is several methods that multiply every term
+of their loss by the same positive time weight w(t). We absorb this weight into the time distribution,
+replacing Et∼p[w(t) h(t)] by Et∼˜p[h(t)], where ˜p(t) = p(t) w(t)/Z and Z = Et∼p[w(t)]. Since Z
+does not depend on θ, the two are equivalent. Finally, some reductions hold exactly only at θ = θold,
+i.e., for on-policy updates; these are marked with an asterisk in Table 3.
+Table 3: Online RWR methods as instances of the unified gradient, Eq. (24). Methods marked with ∗reduce
+exactly only at θ = θold (Appendix B.6); all other reductions are exact identities. Time weights are relative to
+t ∼U(0, 1): sampling t ∼p(t) is equivalent to uniform sampling with weight p(t).
+Method
+β
+γ
+f
+v•
+Time weight
+Details
+ORW-CFM-W2
+their α
+0
+exp(r/α)
+vθ
+1
+App. B.1
+FPO∗
+0
+0
+A
+vθ
+˜wFPO(t)
+App. B.2
+AWM∗,†
+their β
+0
+A
+vθ
+wAWM(t)
+App. B.3
+RAM§
+1
+0
+A/α
+vold
+2t
+App. B.4
+DiffusionNFT
+0‡
+1
+˜A/ζ
+vold
+1
+App. B.5
+AdvantageFlow
+their λ
+1.1 or 1 −˜A
+˜A
+vθ
+t2
+App. B.5
+Algorithm 1 (ours)
+β
+0
+(A + λ ¯rR)/α
+vold
+2t
+Sec. 3.2
+†Follows its Equations 13, 15, and 16; its main experiments anchor to an EMA of the online model instead.
+§Follows its official implementation; its Equation 17 has v• = vθ.
+‡Its official implementation adds a small reference anchor, i.e., β > 0.
+3ORW-CFM-W2 and FPO denote clean data at time 1; we substitute t 7→1 −t.
+18
+
+
+Preprint.
+B.1
+ORW-CFM-W2
+ORW-CFM-W2 (Fan et al., 2025) minimizes a reward-weighted flow-matching loss plus an anchor
+to the pretrained velocity (Fan et al., 2025, Equation 10). Their reward weight exp(τ r) and anchor
+coefficient α correspond to our f = exp(r(x0)/α) and β, and rollouts are drawn from the current
+model, i.e., θold = θ. Their loss is therefore exactly the sum-of-squares form below Eq. (25), with
+γ = 0 and v• = vθ (Table 3).
+B.2
+FPO
+For each rollout x0 ∼pθold with advantage A = A(x0), FPO draws Nmc pairs (ti,ϵi) with ti ∼
+U(0, 1) and evaluates theϵ-prediction loss ℓθ(ti,ϵi) = wFPO(ti) ∥ˆϵθ(xti, ti)−ϵi∥2
+2, where wFPO(t) >
+0 is the weighting of McAllister et al. (2026, Equation 14). Rewriting the model’s prediction as
+ˆϵθ = xt + (1 −t) vθ gives ˆϵθ −ϵ = (1 −t)(vθ −vfwd), and hence
+ℓθ(t,ϵ) = ˜wFPO(t) ∥vθ −vfwd∥2
+2,
+˜wFPO(t) = wFPO(t) (1 −t)2.
+(26)
+The ratio and the clipped objective are (McAllister et al., 2026, Algorithm 1, lines 9–10)
+ˆρθ = exp
+
+−1
+Nmc
+Nmc
+X
+i=1
+
+ℓθ(ti,ϵi)−ℓθold(ti,ϵi)
+
+,
+LFPO(θ) = −min
+ ˆρθA, clip(ˆρθ, 1−ξ, 1+ξ) A
+
+,
+(27)
+where we negate FPO’s objective to obtain a loss to be minimized.
+At θ = θold, ˆρθ = 1 lies strictly inside [1 −ξ, 1 + ξ], so no rollout is clipped, and ∇θ ˆρθ =
+ˆρθ∇θ log ˆρθ = ∇θ log ˆρθ. The gradient of Eq. (27) is therefore
+∇θLFPO(θold) = −A ∇θ log ˆρθ =
+1
+Nmc
+Nmc
+X
+i=1
+2 ˜wFPO(ti) (∇θvθ)⊤A (vθ −vfwd),
+(28)
+with the velocities in the i-th term evaluated at (xti, ti). Averaging over (ti,ϵi) and absorbing
+˜wFPO(t) into the time distribution, this is exactly Eq. (24) with β = γ = 0, f = A, v• = vθ,
+and p(t) ∝˜wFPO(t). For θ̸ = θold, the importance ratio and clipping modify this gradient (Ap-
+pendix B.6).
+B.3
+AWM
+AWM (Xue et al., 2026) uses the same importance ratio and clipping as FPO (Appendix B.6), but
+with a velocity-prediction loss and an additional anchor to the pretrained model. The regression loss
+entering the ratio is (Xue et al., 2026, Equation 15)
+ℓθ(t,ϵ) = wAWM(t) ∥vθ −vfwd∥2
+2,
+(29)
+averaged over Nmc pairs (ti,ϵi), and the anchor is β wAWM(t) ∥vθ −vref∥2
+2, whose coefficient coin-
+cides with our β (Xue et al., 2026, Equations 13 and 16). With PPO clipping, which the paper omits
+from its algorithm for simplicity but its implementation includes, the full loss is
+LAWM(θ) = −min
+ ˆρθA, clip(ˆρθ, 1 −ξ, 1 + ξ) A
+
++
+β
+Nmc
+Nmc
+X
+i=1
+wAWM(ti) ∥vθ −vref∥2
+2,
+(30)
+with ˆρθ as in Eq. (37) and ¯ℓθ the average of Eq. (29).
+As for FPO, at θ = θold we have ˆρθ = 1, no rollout is clipped, and the ratio term contributes
+−A ∇θ log ˆρθ = A ∇θ¯ℓθ. Hence
+∇θLAWM(θold) =
+1
+Nmc
+Nmc
+X
+i=1
+2 wAWM(ti) (∇θvθ)⊤
+A (vθ −vfwd) + β (vθ −vref)
+
+,
+(31)
+with the velocities in the i-th term evaluated at (xti, ti). The weight wAWM(t) multiplies both terms,
+so absorbing it into the time distribution, this is exactly Eq. (24) with γ = 0, f = A, v• = vθ, and
+p(t) ∝wAWM(t). For θ̸ = θold, see Appendix B.6.
+19
+
+
+Preprint.
+Caveat. In its public implementation4, AWM replaces the loss inside the ratio, Eq. (29), by a
+concave transform of the squared error, which it calls a generalized Huber loss:
+ℓθ(t,ϵ) =
+t
+h  1
+D∥vθ −vfwd∥2
+2 + δ
+1/2 −δ1/2i
+1/2
+,
+δ = 10−10,
+(32)
+where D is the data dimension. This transform is not described in the paper.
+B.4
+RAM
+RAM (Bergmeister et al., 2026) derives its objective from stochastic optimal control (SOC), but
+approximates the path-cost correction term by zero; this approximation is what reduces the objective
+to reward-weighted regression. Note that without the correction, the SOC formulation is poorly
+justified. Therefore, we instead analyze the objective RAM optimizes in practice (Bergmeister et al.,
+2026, Equation 17),
+LRAM(θ) = Et∼p(t), x0∼pθold,ϵ
+vθ −sg
+
+vref + A (vfwd −vθ)
+
+2
+2,
+p(t) = 2t,
+(33)
+where we write A for the group-normalized advantage that RAM denotes by r. With β = 1, the
+terms vθ and −β vθ inside the stop-gradient of Eq. (25) cancel, so Eq. (33) is exactly Eq. (25) with
+β = 1, γ = 0, f = A, and v• = vθ.
+In its implementation, RAM makes two changes: it scales the advantage by a reward coefficient
+1/α, and evaluates the velocity inside the RWR term at the lagged parameters, using vold in place of
+vθ. The implemented loss, E
+vθ −sg
+
+vref + A
+α (vfwd −vold)
+2
+2, is therefore Eq. (25) with β = 1,
+γ = 0, f = A/α, and v• = vold. Note that this is equivalent to Algorithm 1 with β = 1 and λ = 0.
+B.5
+DIFFUSIONNFT & ADVANTAGEFLOW
+DiffusionNFT. With clipped advantage ˜A = clip(A, −1, 1), the loss is
+LNFT(θ) = Et,x0∼pθold,ϵ
+h
+1+ ˜
+A
+2
+(1−ζ) vold+ζ vθ−vfwd
+2
+2+ 1−˜
+A
+2
+(1+ζ) vold−ζ vθ−vfwd
+2
+2
+i
+, (34)
+where we have rewritten their β with ζ(∈{1, 0.1}) (Zheng et al., 2026, Equation 5). Lee et al.
+(2026, Appendix H.2.1) shows that Eq. (34) is exactly ζ2 times Eq. (25) with β = 0, γ = 1,
+f = ˜A/ζ, and v• = vold, up to a θ-independent constant. Their public implementation additionally
+adds a small anchor to the pretrained velocity, βNFT∥vθ −vref∥2
+2 with default βNFT = 10−4, which is
+not part of the paper; it corresponds to some β > 0 in Eq. (25), whose exact value depends on the
+implementation’s loss scaling and on the adaptive weighting discussed below5.
+AdvantageFlow (Kveton et al., 2026, Equation 5) states its objective in terms of the clean-sample
+prediction ˆx0 = xt −t v. Since ˆx0 −x0 = t (v −vfwd), every term carries a factor t2, which we
+absorb into the time distribution p(t). The resulting objective is equivalent to Eq. (25) with f = ˜A
+and v• = vθ. AdvantageFlow sets γ so that the total coefficient ˜A + γ + β is positive for every
+sample, e.g., γ = 1.1 or γ = 1 −˜A, which makes each per-sample loss strictly convex in the
+prediction (Kveton et al., 2026, Section 3.3).
+Caveat. DiffusionNFT replaces the time weighting of the flow-matching loss by an adaptive self-
+normalization, which it motivates as an alternative to manual tuning of the weighting (Zheng et al.,
+2026, page 6). Each of the two squared errors in Eq. (34) is divided by the stop-gradient of its mean
+absolute x0-prediction error. Since ˆx0 = xt −t v gives ˆx0 −x0 = t (v −vfwd), the first and second
+terms acquire the weights
+ω1 =
+t
+sg
+ mean
+(1 −ζ) vold + ζ vθ −vfwd
+,
+ω2 =
+t
+sg
+ mean
+(1 + ζ) vold −ζ vθ −vfwd
+.
+(35)
+4AWM official implementation
+5DiffusionNFT official implementation
+20
+
+
+Preprint.
+At θ = θold, both residuals equal vold−vfwd, so ω1 = ω2 and the gradient is that of Eq. (34) multiplied
+by a per-sample factor. Away from θold, however, ω1̸ = ω2, and the two terms no longer combine
+into Eq. (25). Differentiating the weighted terms directly, the coefficient of the RWR direction
+vold −vfwd becomes
+˜f = ζ
+2
+
+(1 + ˜A) ω1 −(1 −˜A) ω2
+
+,
+(36)
+which is no longer proportional to ˜A: a rollout with ˜A = 0 still receives the weight ζ(ω1 −ω2)/2.
+The adaptive weighting therefore changes the scale and update direction.
+B.6
+IMPORTANCE SAMPLING RATIOS AND CLIPPING
+FPO and AWM weight each rollout’s regression loss by an estimated importance ratio and clip it as
+in PPO (Schulman et al., 2017). We describe the effect for a rollout x0 with advantage A. Let ¯ℓθ be
+its regression loss averaged over Nmc pairs (ti,ϵi), e.g., the average of Eq. (26), and
+ˆρθ = exp
+ −(¯ℓθ −¯ℓθold)
+
+,
+L(θ) = −min
+ ˆρθA, clip(ˆρθ, 1 −ξ, 1 + ξ) A
+
+.
+(37)
+Since ¯ℓθ is only an ELBO surrogate for −log pθ(x0), up to a θ-independent constant, ˆρθ estimates
+the likelihood ratio pθ(x0)/pθold(x0) rather than equaling it.
+Clipping. If A > 0 and ˆρθ > 1 + ξ, or A < 0 and ˆρθ < 1 −ξ, the minimum in Eq. (37) selects
+the clipped branch, which is constant in θ, and the rollout contributes no gradient. In the other two
+cases the minimum selects ˆρθA. Clipping thus stops updating a rollout once its ratio has moved past
+1 ± ξ in the direction favored by A, a trust region around θold.
+Importance sampling ratio. When the rollout is not clipped, using ∇θ ˆρθ = ˆρθ∇θ log ˆρθ,
+∇θL(θ) = −A ˆρθ ∇θ log ˆρθ = ˆρθ A ∇θ¯ℓθ,
+(38)
+i.e., the RWR gradient A ∇θ¯ℓθ multiplied by the per-rollout factor ˆρθ. At θ = θold, ˆρθ = 1 and no
+rollout is clipped, which is why the reductions of FPO and AWM hold exactly there. Away from
+θold, the step is reweighted by ˆρθ and truncated by clipping, and Eq. (24) captures neither.
+Log-ratio surrogate. Huang et al. (2024) show that PPO clipping is a hinge loss on ρ −1, and that
+ρ −1 can be replaced by other functions that change sign at ρ = 1, such as log ρ; PCPO (Lee & Ye,
+2026) reports that d
+log ρ is a lower-variance estimator than ˆρ for ρ for diffusion models. Replacing
+ˆρθ by log ˆρθ + 1 in Eq. (37) turns the unclipped gradient into −A ∇θ log ˆρθ = A ∇θ¯ℓθ for every θ,
+removing the multiplicative factor ˆρθ. Clipping log ˆρθ + 1 to [1 −ξ, 1 + ξ] is the same as clipping
+log ˆρθ to [−ξ, ξ], so the trust region remains.
+C
+DISTRIBUTIONAL REWARDS: PROOFS AND DETAILS
+Throughout this appendix, we interchangeably use q ≡pref for brevity.
+C.1
+INFORMAL DERIVATION OF THE FIRST-ORDER CONDITION
+We derive Eq. (10) formally, assuming p⋆has a density that is positive wherever pref is, and that the
+functional derivative of Eq. (9) exists; Hu et al. (2021, Proposition 2.5) give a rigorous version under
+conditions on F and pref.
+Write V(p) = F(p) + β DKL(p∥pref). The functional derivative of the KL term is
+δ
+δp DKL(p∥pref)(x) = log p(x)
+pref(x) + 1,
+(39)
+since, writing the KL divergence as
+R
+p log(p/pref) dx and differentiating under the integral,
+d
+dεDKL(p + εη∥pref)
+
+ε=0 = d
+dε
+Z  p(x) + εη(x)
+
+log p(x) + εη(x)
+pref(x)
+dx
+
+ε=0
+(40)
+=
+Z
+∂
+∂u
+h
+u log
+u
+pref(x)
+i
+u=p(x) · d
+dε
+ p(x) + εη(x)
+
+dx
+(41)
+=
+Z 
+log p(x)
+pref(x) + 1
+
+η(x) dx.
+(42)
+21
+
+
+Preprint.
+If p⋆minimizes V, then for every zero-mass η such that p⋆+ εη remains a probability measure for
+small ε of either sign,
+0 = d
+dεV(p⋆+ εη)
+
+ε=0 =
+Z δF
+δp (p⋆, x) + β log p⋆(x)
+pref(x)
+
+η(dx),
+(43)
+where the +1 of Eq. (39) has dropped out because η(X) = 0. A function whose integral against
+every zero-mass η vanishes is constant, so
+δF
+δp (p⋆, x) + β log p⋆(x)
+pref(x) = c
+for all x,
+(44)
+and solving for p⋆gives p⋆(x) ∝pref(x) exp
+ −1
+β
+δF
+δp (p⋆, x)
+
+, with the constant c absorbed into
+Z(p⋆). Convexity of F and strict convexity of the KL term make V strictly convex; therefore, the
+stationary point is the unique minimizer.
+C.2
+BACKWARD CONSISTENCY.
+By the chain rule for relative entropy,
+DKL
+ P∥Pref
+
+= DKL
+ P0∥pref
+
++ Ex0∼P0 [DKL(P(dx1:T | x0)∥Pref(dx1:T | x0))] .
+(45)
+Because F depends only on the clean-endpoint marginal, the conditional KL is minimized by
+P⋆(dx1:T | x0) = Pref(dx1:T | x0).
+(46)
+The optimal process therefore changes the distribution of clean samples, while preserving the
+pretrained conditional noising process. Equivalently, its backward kernels coincide with those of the
+pretrained model. This posterior-preservation property was established by Uehara et al. (2024, The-
+orem 3) and underlies forward-process fine-tuning methods like DiffusionNFT (Zheng et al., 2026).
+C.3
+ENERGY DISTANCE AS AN MMD
+Following the energy score construction of De Bortoli et al. (2025), we construct the kernel behind
+RMMD and show that its squared MMD equals Eq. (19). Let ψ : X →Rm be a fixed injective map
+and b ∈(0, 2), and define
+ρb(x, y) = ∥ψ(x) −ψ(y)∥b
+2.
+(47)
+Consider distributions with a finite b-moment, Ex∼p∥ψ(x)∥b
+2 < ∞, so that every expectation of ρb
+is finite. The function ρb is of negative type (Sejdinovic et al., 2013, Proposition 3) and induces the
+positive definite distance-induced kernel
+kb(x, y) = 1
+2 [ρb(x, xa) + ρb(y, xa) −ρb(x, y)] ,
+(48)
+where xa ∈X is an arbitrary anchor (Sejdinovic et al., 2013, Section 4.1). The squared MMD
+does not depend on the choice of xa and equals half of the energy distance (Sejdinovic et al., 2013,
+Theorem 22), given as Eq. (19).
+C.4
+CONVEXITY OF THE DISTRIBUTIONAL FUNCTIONALS
+Section 3.1 requires R to be convex along mixtures: for pt = (1 −t)p0 + tp1 and t ∈[0, 1],
+R(pt) ≤(1 −t)R(p0) + tR(p1). We verify this for the three instances of Section 3.3.
+MMD. Let ν = p −q. By Eq. (6), RMMD(p) = Q(ν) :=
+RR
+kb(x, y) ν(dx) ν(dy), a quadratic
+form in the signed measure ν. Because kb is positive definite, Q(ν) ≥0 for every signed measure
+ν with finite b-moment. Since p 7→ν is affine, νt = (1 −t)ν0 + tν1, and expanding the quadratic
+form,
+Q(νt) = (1 −t)Q(ν0) + tQ(ν1) −t(1 −t) Q(ν0 −ν1) ≤(1 −t)Q(ν0) + tQ(ν1).
+(49)
+DreamSim diversity. Let m(p) = Ep[z] ∈Rd, so that RDS(p) =
+1
+2∥m(p)∥2
+2. Since m(pt) =
+(1 −t)m(p0) + t m(p1), and for any m0, m1,
+1
+2∥(1 −t)m0 + t m1∥2
+2 = (1 −t) 1
+2∥m0∥2
+2 + t 1
+2∥m1∥2
+2 −t(1 −t) 1
+2∥m0 −m1∥2
+2
+(50)
+≤(1 −t) 1
+2∥m0∥2
+2 + t 1
+2∥m1∥2
+2,
+(51)
+22
+
+
+Preprint.
+RDS is convex.
+FD. Expanding the two p-dependent terms of Eq. (5) separately,
+∥µp −µq∥2
+2 = ∥µp∥2
+2 −2µ⊤
+p µq + ∥µq∥2
+2,
+(52)
+Tr Σp = Tr
+ Ep[ff ⊤]
+
+−Tr
+ µpµ⊤
+p
+
+= Ep∥f∥2
+2 −∥µp∥2
+2,
+(53)
+where the last equality uses Tr(vv⊤) = ∥v∥2
+2. Adding the two, the ∥µp∥2
+2 terms cancel:
+∥µp −µq∥2
+2 + Tr Σp = Ep∥f∥2
+2 −2µ⊤
+p µq + ∥µq∥2
+2.
+(54)
+Both Ep∥f∥2
+2 and µp = Ep[f] are expectations under p and hence linear in p, so this sum is affine in
+p. Substituting into Eq. (5) and writing g(A) := Tr
+ Σ1/2
+q
+A Σ1/2
+q
+1/2,
+RFD(p) = Ep∥f∥2
+2 −2µ⊤
+p µq + ∥µq∥2
+2 + Tr Σq
+|
+{z
+}
+affine in p
+−2 g(Σp).
+(55)
+It remains to show that p 7→g(Σp) is concave.
+First, we show that p 7→Σp is concave in the Loewner order, i.e., Σpt ⪰(1 −t)Σp0 + t Σp1. To see
+this, write Mi = Epi[ff ⊤] and µi = µpi for i ∈{0, 1}, so that Σpi = Mi −µiµ⊤
+i . Expectations
+are linear in p, so under the mixture
+Ept[ff ⊤] = (1 −t)M0 + t M1,
+µpt = (1 −t)µ0 + t µ1,
+(56)
+and therefore
+Σpt = (1 −t)M0 + t M1 −µptµ⊤
+pt.
+(57)
+The mixture of the covariances is
+(1 −t)Σp0 + t Σp1 = (1 −t)M0 + t M1 −(1 −t)µ0µ⊤
+0 −t µ1µ⊤
+1 .
+(58)
+The M terms coincide, so the difference is
+Σpt −
+
+(1 −t)Σp0 + t Σp1
+
+= (1 −t)µ0µ⊤
+0 + t µ1µ⊤
+1 −µptµ⊤
+pt.
+(59)
+Expanding the last term,
+µptµ⊤
+pt = (1 −t)2µ0µ⊤
+0 + t2µ1µ⊤
+1 + t(1 −t)
+ µ0µ⊤
+1 + µ1µ⊤
+0
+
+,
+(60)
+and substituting into Eq. (59) with (1 −t) −(1 −t)2 = t(1 −t) and t −t2 = t(1 −t),
+Σpt −
+
+(1 −t)Σp0 + t Σp1
+
+= t(1 −t)µ0µ⊤
+0 + t(1 −t)µ1µ⊤
+1 −t(1 −t)
+ µ0µ⊤
+1 + µ1µ⊤
+0
+
+(61)
+= t(1 −t)(µ0 −µ1)(µ0 −µ1)⊤.
+(62)
+Since t(1 −t) ≥0 and vv⊤is positive semidefinite for any vector v, the right-hand side is positive
+semidefinite.
+Second, g is nondecreasing and concave on positive semidefinite matrices: A 7→Σ1/2
+q
+AΣ1/2
+q
+is lin-
+ear and order preserving, the matrix square root is operator monotone and operator concave (Bhatia,
+1996, Theorem V.1.9), and the trace is linear and order preserving. Hence
+g(Σpt) ≥g
+ (1 −t)Σp0 + tΣp1
+
+≥(1 −t) g(Σp0) + t g(Σp1),
+(63)
+using monotonicity with Eq. (62) and then concavity. Thus −2g(Σp) is convex, and RFD is convex.
+C.5
+MMD REWARD
+Proposition 1 (MMD reward). A representative of the negative functional derivative of RMMD is
+rMMD(x; p, pref) = Ex′∼p [ρb(x, x′)] −Ey∼pref [ρb(x, y)] .
+(20)
+23
+
+
+Preprint.
+We use q ≡pref. Also, assume p, q have finite b-moments, so that every expectation is finite 6.
+Name the three terms of Eq. (19):
+T1(p) =
+ZZ
+ρ(x, y) p(dx) q(dy),
+(64)
+T2(p) =
+ZZ
+ρ(x, x′) p(dx) p(dx′),
+(65)
+T3 =
+ZZ
+ρ(y, y′) q(dy) q(dy′),
+(66)
+so that RMMD(p) = T1(p) −1
+2T2(p) −1
+2T3, with T3 independent of p. Let η be a signed measure
+with η(X) = 0 and replace p by p + εη.
+T1 is linear in p:
+T1(p + εη) = T1(p) + ε
+Z hZ
+ρ(x, y) q(dy)
+i
+η(dx) = T1(p) + ε
+Z
+Ey∼q ρ(x, y) η(dx).
+(67)
+T2 is quadratic in p. Expanding the product (p + εη)(p + εη),
+T2(p + εη) = T2(p) + ε
+ZZ
+ρ(x, x′) η(dx) p(dx′) + ε
+ZZ
+ρ(x, x′) p(dx) η(dx′)
++ ε2
+ZZ
+ρ(x, x′) η(dx) η(dx′)
+(68)
+= T2(p) + 2ε
+Z hZ
+ρ(x, x′) p(dx′)
+i
+η(dx) + O(ε2)
+(69)
+= T2(p) + 2ε
+Z
+Ex′∼p ρ(x, x′) η(dx) + O(ε2),
+(70)
+where we use the symmetry ρ(x, x′) = ρ(x′, x).
+Combining, and dividing by ε,
+lim
+ε→0
+RMMD(p + εη) −RMMD(p)
+ε
+=
+Z h
+Ey∼q ρ(x, y) −Ex′∼p ρ(x, x′)
+i
+η(dx).
+(71)
+Comparing with Eq. (9), a representative of the functional derivative is
+δRMMD
+δp
+(p, x) = Ey∼q [ρb(x, y)] −Ex′∼p [ρb(x, x′)],
+(72)
+and its negative is Eq. (20).
+C.6
+FD REWARD
+C.6.1
+PROOF OF PROPOSITION 2
+Proposition 2 (FD reward). Assume the covariance matrices are positive definite and define
+Gp = I −Σ1/2
+q
+
+Σ1/2
+q
+ΣpΣ1/2
+q
+−1/2
+Σ1/2
+q
+(21)
+for q ≡pref. A representative of the negative functional derivative of RFD is
+rFD(x; p) = −
+
+2(µp −µq)⊤f + (f −µp)⊤Gp(f −µp)
+
+.
+(22)
+Proof. Write f = ϕ(x) and recall RFD(p) = FD(p, pref) from Eq. (5), with µp, Σp the feature
+mean and covariance under p. RFD depends on p only through its feature mean and covariance.
+We first differentiate the functional with respect to these two statistics, and then apply the functional
+chain rule with respect to p.
+6For experiments in this paper, latent values are bounded and thus satisfy this mild assumption.
+24
+
+
+Preprint.
+Derivatives with respect to the moments. The derivative with respect to the mean is:
+∂RFD
+∂µp
+= 2(µp −µq).
+(73)
+For the covariance derivative, define
+S = Σ1/2
+q
+ΣpΣ1/2
+q
+.
+(74)
+Under the positive-definiteness assumption of Proposition 2, the standard matrix differential identity
+d Tr(S1/2) = 1
+2 Tr
+
+S−1/2dS
+
+(75)
+gives, since dS = Σ1/2
+q
+(dΣp)Σ1/2
+q
+,
+d Tr(S1/2) = 1
+2 Tr
+
+S−1/2Σ1/2
+q
+(dΣp)Σ1/2
+q
+
+(76)
+= 1
+2 Tr
+
+Σ1/2
+q
+S−1/2Σ1/2
+q
+dΣp
+
+.
+(77)
+The covariance-dependent part of Eq. (5) is Tr(Σp)−2 Tr(S1/2). The first term contributes I, while
+the calculation above shows that the second contributes −Σ1/2
+q
+S−1/2Σ1/2
+q
+. Hence
+∂RFD
+∂Σp
+= I −Σ1/2
+q
+
+Σ1/2
+q
+ΣpΣ1/2
+q
+−1/2
+Σ1/2
+q
+=: Gp.
+(78)
+Functional derivative with respect to p. Consider a signed perturbation η of p satisfying η(X) = 0.
+The induced first-order change in the mean is
+dµp[η] =
+Z
+f(x) η(dx).
+(79)
+For the covariance, using Σp = Ep[ff ⊤] −µpµ⊤
+p gives
+dΣp[η] =
+Z
+f(x)f(x)⊤η(dx) −dµp[η] µ⊤
+p −µp dµp[η]⊤
+(80)
+=
+Z 
+f(x)f(x)⊤−f(x)µ⊤
+p −µpf(x)⊤
+η(dx).
+(81)
+Since η(X) = 0, we may add the x-independent matrix µpµ⊤
+p inside the integral without changing
+its value. Therefore,
+dΣp[η] =
+Z
+(f(x) −µp)(f(x) −µp)⊤η(dx).
+(82)
+Applying the chain rule with Eqs. (73), (78), (79), and (82),
+dRFD(p, q)[η] = 2(µp −µq)⊤dµp[η] + ⟨Gp, dΣp[η]⟩F
+(83)
+=
+Z h
+2(µp −µq)⊤f(x) +
+
+Gp, (f(x) −µp)(f(x) −µp)⊤
+F
+i
+η(dx)
+(84)
+=
+Z h
+2(µp −µq)⊤f(x) + (f(x) −µp)⊤Gp(f(x) −µp)
+i
+η(dx),
+(85)
+where the last equality uses ⟨G, zz⊤⟩F = z⊤Gz.
+Reading off the integrand, a representative of δRFD/δp is the bracket, and its negative is Eq. (22).
+25
+
+
+Preprint.
+C.6.2
+CONNECTION TO LEAVE-ONE-OUT FD
+We next relate the FD reward to a leave-one-out (LOO), or jackknife, construction. Consider the
+empirical distribution pN of N samples with features {fi}N
+i=1, mean
+µ = 1
+N
+N
+X
+i=1
+fi,
+(86)
+and covariance
+Σ = 1
+N
+N
+X
+i=1
+(fi −µ)(fi −µ)⊤.
+(87)
+Let pN\i denote the empirical distribution obtained after removing sample i, and define the centered
+feature
+zi := fi −µ.
+(88)
+The leave-one-out mean is
+µ\i = Nµ −fi
+N −1
+= µ −
+zi
+N −1,
+(89)
+and therefore
+µ\i −µ = −
+zi
+N −1.
+(90)
+The corresponding leave-one-out covariance can be written exactly as
+Σ\i =
+N
+N −1Σ −
+N
+(N −1)2 ziz⊤
+i .
+(91)
+Hence
+Σ\i −Σ =
+1
+N −1Σ −
+N
+(N −1)2 ziz⊤
+i .
+(92)
+We now expand FD to first order around the moments (µ, Σ) of the full empirical population. View-
+ing FD as a function of its mean and covariance,
+RFD(pN\i, q) −RFD(pN, q) ≈
+∂RFD
+∂µ
+⊤
+(µ\i −µ) +
+∂RFD
+∂Σ , Σ\i −Σ
+
+F
+.
+(93)
+For the mean contribution, Eqs. (73) and (90) give
+∂RFD
+∂µ
+⊤
+(µ\i −µ) = 2(µ −µq)⊤
+
+−
+zi
+N −1
+
+(94)
+= −
+2
+N −1(µ −µq)⊤zi.
+(95)
+For the covariance contribution, Eqs. (78) and (92) give
+∂RFD
+∂Σ , Σ\i −Σ
+
+F
+=
+
+G,
+1
+N −1Σ −
+N
+(N −1)2 ziz⊤
+i
+
+F
+(96)
+=
+1
+N −1⟨G, Σ⟩F −
+N
+(N −1)2 ⟨G, ziz⊤
+i ⟩F
+(97)
+=
+1
+N −1⟨G, Σ⟩F −
+N
+(N −1)2 z⊤
+i Gzi,
+(98)
+where we used ⟨G, zz⊤⟩F = z⊤Gz.
+Combining Eqs. (95) and (98) yields
+RFD(pN\i, q) −RFD(pN, q) ≈−
+2
+N −1(µ −µq)⊤zi
++
+1
+N −1⟨G, Σ⟩F −
+N
+(N −1)2 z⊤
+i Gzi.
+(99)
+26
+
+
+Preprint.
+Using
+N
+(N −1)2 =
+1
+N −1 + O(N −2),
+(100)
+the sample-dependent part of Eq. (99) becomes
+−
+1
+N −1
+
+2(µ −µq)⊤zi + z⊤
+i Gzi
+
++ O(N −2).
+(101)
+Since zi = fi −µ, replacing 2(µ −µq)⊤zi by 2(µ −µq)⊤fi changes the expression only by the
+sample-independent constant −2(µ −µq)⊤µ. Therefore,
+RFD(pN\i, q) −RFD(pN, q) =
+1
+N −1rFD(xi; pN) + CN + O(N −2),
+(102)
+where CN is independent of i and
+rFD(xi; pN) = −
+
+2(µ −µq)⊤fi + (fi −µ)⊤G(fi −µ)
+
+.
+(103)
+Thus, to first order in 1/N, the FD reward in Proposition 2 agrees with the leave-one-out change
+in FD up to a common scale and a sample-independent additive constant. The additive constant
+disappears under reward centering, while the common scale can be absorbed into the reward coef-
+ficient. Computationally, this avoids evaluating FD separately for every leave-one-out population:
+the per-sample rewards share the same population moments and matrix G.
+LOO-FID (Baran et al., 2026) computes this leave-one-out difference directly, and differs from
+Proposition 2 in two respects. First, its reference moments are those of real images rather than pref.
+Second, it uses per-dimension variances in place of full covariances, i.e., Σp = diag(σ2
+p,i), Σq =
+diag(σ2
+q,i). With this specification, G reduces to diag(1 −σq,i/σp,i).
+C.6.3
+NUMERICAL STABILIZATION
+The main numerical difficulty arises from the covariance component of the FD reward,
+Gp = I −Σ1/2
+q
+S−1/2Σ1/2
+q
+,
+S = Σ1/2
+q
+ΣpΣ1/2
+q
+.
+(104)
+While the FD value itself contains S1/2, its reward requires S−1/2, which can strongly amplify
+errors in small eigenvalues. We therefore regularize the covariance estimates using shrinkage.
+Covariance shrinkage. Small covariance eigenvalues are stabilized by applying the same shrinkage
+map to the generated and reference covariances:
+eΣ = (1 −ν)Σ + ν τI,
+τ = Tr(Σ)
+d
+,
+0 ≤ν < 1.
+(105)
+Shrinkage suppresses noisy low-variance directions while preserving the matching fixed point: if
+Σp = Σq, then eΣp = eΣq.
+Let
+eGp = I −eΣ1/2
+q
+
+eΣ1/2
+q
+eΣpeΣ1/2
+q
+−1/2 eΣ1/2
+q
+.
+(106)
+Because the shrinkage target τ = Tr(Σ)/d itself depends on the covariance, simply substituting eGp
+for Gp does not give the exact gradient of FD between the shrunk covariances. From
+deΣp = (1 −ν)dΣp + ν
+d Tr(dΣp)I,
+(107)
+the corresponding corrected matrix is
+Geff
+p
+= (1 −ν) eGp + ν
+d Tr( eGp)I.
+(108)
+We therefore replace Gp by Geff
+p in the covariance term of the reward. This retains the exact score-
+function gradient of the FD objective computed using the shrunk covariances. At the matching fixed
+point, eGp = Geff
+p
+= 0.
+27
+
+
+Preprint.
+Remark: FD with within-prompt covariance. In the FD experiments, µp is the feature mean over
+all prompts and Σp is the within-prompt covariance Ec[Cov(f | c)]: in both the moments and the
+covariance term of Eq. (22), features are centered at the mean of their prompt group. The covariance
+over all prompts would also include the variation between prompts, which is not the diversity we
+want to preserve, and a separate covariance for each prompt cannot be estimated from G = 24
+samples. With this choice, the FD functional is not convex in p. The gradient identity of Eq. (17)
+and Algorithm 1 do not rely on convexity and are unaffected, but the minimizer of Eq. (8) is no
+longer guaranteed to be unique.
+Moment estimation and diagnostics. Following Yang et al. (2026), we estimate the generated
+moments using an exponential moving average of the raw first and second moments,
+µp ←κµp + (1 −κ)µbatch,
+Mp ←κMp + (1 −κ)Mbatch,
+(109)
+and form Σp = Mp −µpµ⊤
+p . The EMA decouples the population used to estimate the covariance
+from the current minibatch size, providing a substantially larger effective sample population for
+the FD statistics. All covariance construction and eigendecomposition operations are performed in
+double precision.
+Calibration of the FD coefficient. We build the reference statistics once from 25 × 1152 samples
+of pref at the training sampling settings. For each feature space i, we divide the FD by its noise floor
+Di, the FD between two disjoint halves of the reference samples, so that each space is measured
+in units of its own finite-sample noise. In a run that logs the FD reward without optimizing it, we
+measure each space’s reward spread relative to the advantage spread, si, after the moment EMA
+has turned over (training steps 20–30). We weight the spaces by wi = ¯s/si so that they contribute
+equally, and set λ = ϕ/sw, where sw is the spread of the weighted combined reward, accounting for
+the correlation between spaces. The FD reward then contributes a fraction ϕ of the advantage spread
+at the calibration point; the realized fraction varies over training. The moment EMA uses κ = 0.95
+and covariance shrinkage ν = 0.02.
+C.7
+DREAMSIM DIVERSITY REWARD
+Proposition 3 (DreamSim reward). A representative of the negative functional derivative of RDS is
+rDS(x; p) = −z(x)⊤Ex′∼p[z(x′)].
+(23)
+Proof. Assume ϕDS(x)̸ = 0 for every x, so that z(x) is defined, and write
+s(x, x′) = z(x)⊤z(x′)
+(110)
+for the cosine similarity. Since ∥z(x)∥2 = 1, |s(x, x′)| ≤1, so every integral of s against finite
+(signed) measures below is finite; unlike Appendix C.5, no moment assumption on p is needed.
+By Eq. (7), 1 −DivDS(p) = Ex,x′∼p[s(x, x′)], so
+RDS(p) = 1
+2
+ZZ
+s(x, x′) p(dx) p(dx′).
+(111)
+This has the form of the term T2 in Appendix C.5, with ρb replaced by s and an overall factor 1
+2.
+Let η be a signed measure with η(X) = 0 and finite total variation |η|(X), and replace p by p + εη.
+Expanding the product (p + εη)(p + εη) in Eq. (111),
+RDS(p + εη) = RDS(p) + ε
+2
+ZZ
+s(x, x′) η(dx) p(dx′) + ε
+2
+ZZ
+s(x, x′) p(dx) η(dx′)
++ ε2
+2
+ZZ
+s(x, x′) η(dx) η(dx′).
+(112)
+The two first-order terms are equal: renaming the integration variables x ↔x′ in the second and
+using the symmetry s(x, x′) = s(x′, x) turns it into the first.
+RDS(p+εη) = RDS(p)+ε
+Z hZ
+s(x, x′) p(dx′)
+i
+η(dx)+ ε2
+2
+ZZ
+s(x, x′) η(dx) η(dx′). (113)
+28
+
+
+Preprint.
+Since |s| ≤1, its ε2 coefficient is bounded in absolute value by 1
+2 |η|(X)2. Therefore,
+lim
+ε→0
+RDS(p + εη) −RDS(p)
+ε
+=
+Z
+Ex′∼p
+
+s(x, x′)
+
+η(dx).
+(114)
+Because z(x) does not depend on x′, it can be taken out of the inner expectation:
+Ex′∼p
+
+s(x, x′)
+
+= Ex′∼p
+
+z(x)⊤z(x′)
+
+= z(x)⊤Ex′∼p[z(x′)].
+(115)
+Comparing with Eq. (9), a representative of the functional derivative is
+δRDS
+δp
+(p, x) = z(x)⊤Ex′∼p[z(x′)],
+(116)
+and its negative is Eq. (23).
+Group estimate. For a group {xi}G
+i=1 of i.i.d. samples from p, the population mean m(p) is esti-
+mated from the other samples in the group, excluding the sample itself (Section 3.2):
+ˆrDS(xi) = −
+1
+G −1
+X
+j̸=i
+z(xi)⊤z(xj).
+(117)
+Conditionally on xi, each xj with j̸ = i is an independent draw from p, so
+E
+
+ˆrDS(xi)
+ xi
+= −z(xi)⊤m(p) = rDS(xi; p)
+(118)
+exactly; including j = i would instead add the sample-independent term −∥z(xi)∥2
+2/G = −1/G
+and rescale by (G −1)/G. Moreover, adding and subtracting 1 inside the sum,
+ˆrDS(xi) =
+1
+G −1
+X
+j̸=i
+h
+1 −z(xi)⊤z(xj)
+i
+−1,
+(119)
+so up to the constant −1, which group centering removes, the estimate is the mean DreamSim cosine
+distance from xi to the other samples in its group.
+DRIFT (Liu et al., 2026, Section 5.3 and Appendix C) rewards each sample with the average squared
+embedding distance to the other samples in its group, d(xi) =
+1
+G−1
+P
+j̸=i ∥E(xi)−E(xj)∥2
+2. With
+the normalized DreamSim feature E = z, ∥z(xi) −z(xj)∥2
+2 = 2 −2 z(xi)⊤z(xj), so d(xi) =
+2 ˆrDS(xi) + 2 for every sample: after group centering, DRIFT’s reward is 2ˆrDS, and the factor 2 is
+absorbed into λ. DRIFT additionally clips this reward and standardizes its advantage separately.
+D
+EXPERIMENT DETAILS
+D.1
+EVALUATION METRICS
+Drift. We measure drift against pref rather than against a fixed real dataset, which separates the
+change induced by fine-tuning from the pretrained model’s own mismatch with real data. Computing
+FD per prompt and then averaging measures this change within each conditional distribution, rather
+than in the marginal over prompts. Its absolute values are far larger than standard FD values and are
+meaningful only relative to one another. We compute avg(FD-64) with Inception-v3 and DINOv2
+ViT-L/14, and DreamSim diversity with DINO ViT-B/16 and OpenCLIP ViT-B/32.
+Held-out metrics. DFR-FD computes its reward with ConvNeXt-V2, SigLIP2, and CLIP ViT-
+L/14 features, and DFR-DS with the DINO ViT-B/16 branch of DreamSim. A metric is not held
+out for an instance if it is computed with one of that instance’s encoders or a closely related one,
+because the instance optimizes a closely related quantity during training. We therefore strike through
+DreamSim’s DINO branch and DINOv2 FD, a later model of the same self-supervised family, for
+DFR-DS. DreamSim’s OpenCLIP branch remains held out for DFR-FD: it is a ViT-B/32 trained
+on different data and fine-tuned for perceptual similarity, not the CLIP ViT-L/14 that DFR-FD uses.
+Struckout entries are not counted as wins or losses. DFR-MMD compares SD3.5-M’s own VAE
+latents and uses no pretrained feature encoder, so every metric is held out for it.
+29
+
+
+Preprint.
+D.2
+EVALUATION PROTOCOL
+Checkpoint selection. During training, we evaluate the target reward every 10 steps on the task’s
+full test prompt set. This curve is used to select checkpoints: when all three seeds possess a check-
+point that reaches the threshold within the compute budget, it is considered successful. The full
+tables (Appendix D.6) also report configurations that do not reach a threshold: seeds that reach it
+are evaluated at their first checkpoint that reaches it and the others at their peak, taking the earliest
+on ties. Steps is the mean number of training steps to the threshold over the seeds that reach it, from
+which Appendix D.7 derives the speedups.
+Evaluation prompts and sampling. From the GenEval test set (“g”; 2,212 prompts), DrawBench
+(“d”; 1,000), and the OCR test set (“o”; 1,018), we draw a fixed random subset of 256 prompts
+each. Models fine-tuned on GenEval are evaluated on g and d, and models fine-tuned on OCR on o
+and d. For every prompt, every model generates 64 images from the same 64 initial-noise seeds, at
+512 × 512 resolution with 20 sampling steps and guidance scale 4.5; multi-reward DiffusionNFT is
+sampled at its prescribed scale of 1.0. We run the transformer and text encoders in FP16 and decode
+with the VAE in FP32.
+Statistics. RAM and DFR entries are the mean ± sample SD over three seeds; existing methods
+are single checkpoints and are reported without SD. Two configurations are tied on a metric if their
+means, as displayed, differ by at most the larger of their two SDs, and otherwise the one with the
+better mean wins. In the ImgRwd and PickScore columns of the full tables (Appendix D.6), red
+marks a value significantly below SD3.5-M’s by the same criterion; for single-seed methods, we use
+the median seed SD of the RAM rows.
+D.3
+COMPUTE BUDGET
+All runs of a task use the same compute: a fixed wall-clock budget of 288 GPU hours for GenEval
+and 144 for OCR. The distributional rewards add little time per training step. Measured on this
+hardware, DFR-FD and DFR-DS are within 3% of RAM, and DFR-MMD takes approximately 9%
+longer, mostly for the pairwise distances within each group and to the reference samples. Within the
+same budget, DFR-MMD therefore completes correspondingly fewer steps. Speedups in Table 1
+include this overhead.
+D.4
+HYPERPARAMETERS
+DFR coefficients. Each instance adds its group-centered reward rR to the normalized advantage
+with coefficient λ (Algorithm 1), so λ is in units of the task advantage. DFR-MMD uses the energy
+kernel with exponent b = 1.75 on SD3.5-M’s normalized VAE latents, with M = 8 reference sam-
+ples per prompt from pref. DFR-DS uses the DINO branch of DreamSim with distances normalized
+to [0, 1]. DFR-FD combines three feature spaces, each measured in units of its own noise floor, so
+its raw scale is not interpretable; we instead set λ = ϕ/sw, where ϕ is the fraction of the advantage
+spread that the FD reward contributes and sw is calibrated once per task (Appendix C.6.3). The
+tables use λ = 0.55 (MMD), ϕ = 0.07 (FD), and λ = 3 (DS) on GenEval, and λ = 1.5, ϕ = 0.09,
+and λ = 4 on OCR.
+Choice of β. We add DFR at the largest β for which RAM reaches the highest threshold on every
+seed. DFR-DS keeps this β: its diversity reward does not measurably slow reward optimization,
+so it adds diversity at no cost in speed rather than acting as further regularization. DFR-MMD and
+DFR-FD also pull the policy toward pref; on OCR they no longer reach the threshold on every seed
+at β = 5, so we use β = 4.
+D.5
+BASELINES
+We compare with ELBO-based DiffusionNFT and AWM, and with trajectory-based Flow-GRPO
+and zeroth-order RSM. For Flow-GRPO, we use the original released GenEval checkpoint (revision
+5efdfea). For multi-reward DiffusionNFT, we use the released checkpoint, and sample at its
+prescribed guidance scale of 1.0. We reproduce GenEval-only DiffusionNFT, AWM, and RSM with
+one seed each, using their released code and default settings, with the exception that we adjust
+AWM’s effective batch size configuration to match other methods. We evaluate each reproduced
+30
+
+
+Preprint.
+Table 4: Training hyperparameters, shared by RAM and every DFR instance on both tasks. Only β and the
+DFR terms differ between configurations.
+Hyperparameter
+Value
+Base model
+SD3.5-M
+Fine-tuning
+LoRA, rank 32, scaling 64
+Optimizer
+AdamW
+Learning rate
+3 × 10−4
+Adam (β1, β2)
+(0.9, 0.99)
+Weight decay
+10−4
+Precision
+FP16 mixed precision
+Prompts per training step
+48
+Group size G (samples per prompt)
+24
+Optimizer steps per training step
+1
+Sampling during training
+20 steps, guidance scale 2.0, 512 × 512
+Loss timesteps per sample
+8, sampled with weight decreasing linearly toward low
+noise
+Advantage
+group-centered, divided by the reward SD over the
+training step
+Advantage scale 1/α
+100
+Lagged policy vold
+EMA of the trained weights, decay 0.9
+Reverse-KL coefficient β
+swept (Section 4.1)
+Validation
+every 10 steps, guidance scale 4.5
+run at its first checkpoint whose test reward reaches 0.95; RSM’s reward jumps from 0.94 to 0.97
+between consecutive checkpoints, so we evaluate it at 0.94. Their speedups are those reported by
+the respective papers (Appendix D.7).
+D.6
+FULL TABLE
+Tables 5 and 6 extend Tables 1 and 2 with the DINO branch of DreamSim, held-out preference
+rewards, and the number of training steps to each threshold. They also include the configurations
+that do not reach a threshold on every seed, evaluated at the first checkpoint that reaches it or, failing
+that, at their peak (Appendix D.2); these rows are evaluated at a lower reward and are therefore not
+used to color the DFR entries.
+DreamSim branches. The DINO branch agrees with the OpenCLIP branch reported in the main
+text: on GenEval, DFR-MMD and DFR-FD win against every RAM configuration reaching the
+same threshold on the test prompts at both thresholds, and on OCR they tie or win.
+Preference rewards. No DFR instance scores significantly below SD3.5-M on GenEval, whereas
+several existing methods do on DrawBench. On OCR, RAM (β = 2) falls significantly below
+SD3.5-M on both preference rewards and both prompt sets, consistent with the instability of small β
+(Appendix D.9); DFR-DS and RAM (β = 5) are marginally below it in PickScore on DrawBench.
+Multi-reward training. Multi-reward DiffusionNFT, trained on PickScore and related preference
+rewards in addition to GenEval, raises both preference rewards well above those of every other
+method, yet drifts more than GenEval-only DiffusionNFT in DINOv2 features (1468/1702 versus
+1352/1437) and is no more diverse (0.102/0.106 versus 0.109/0.143). Training on more rewards is
+therefore not in itself a remedy for distribution drift or mode collapse.
+D.7
+SPEEDUPS
+Table 7 lists the speedups over Flow-GRPO reported by existing methods and derives ours: we
+measure the time to reach the threshold relative to RAM (β = 1) on GenEval and RAM (β = 2)
+on OCR, as training steps times the time per step on the same hardware (Appendix D.3), and scale
+RAM’s reported speedup accordingly.
+31
+
+
+Preprint.
+Table 5: All metrics for models fine-tuned on GenEval, at thresholds 0.95 and 0.96. Reward is the threshold for
+configurations that reach it and, otherwise, the mean GenEval at the evaluated checkpoints; Steps is the mean
+number of training steps to the threshold. Entries of the form a/b report results on the GenEval test prompts (a)
+and on DrawBench (b), as means over three seeds with SD beneath; existing methods are single checkpoints.
+Greyed-out rows (†) do not reach the threshold on every seed. Blue and struck-through entries are as in Table 1;
+in the ImgRwd (ImageReward) and PickScore columns, red marks a value significantly below that of SD3.5-M
+(Appendix D.2).
+Method
+Reward
+Steps (↓)
+FID (↓)
+FD-DINOv2 (↓)
+DreamSim-DINO (↑)
+DreamSim-OpenCLIP (↑)
+ImgRwd (↑)
+PickScore (↑)
+GenEval, threshold 0.95
+SD3.5-M
+0.63
+–
+–
+–
+0.405/0.372
+0.302/0.274
+0.840/0.859
+0.872/0.863
+Flow-GRPO
+0.95
+–
+114.32/125.61
+1019/997
+0.224/0.274
+0.155/0.189
+1.222/1.013
+0.883/0.862
+RSM§
+0.94
+–
+132.82/154.29
+1271/1310
+0.184/0.249
+0.142/0.183
+1.082/0.838
+0.869/0.851
+AWM∗
+0.95
+–
+158.88/183.71
+1412/1578
+0.124/0.173
+0.095/0.132
+1.028/0.573
+0.869/0.840
+DiffusionNFT
+0.96
+–
+144.36/159.22
+1352/1437
+0.151/0.204
+0.109/0.143
+1.232/1.091
+0.876/0.851
+DiffusionNFT (multi)‡
+0.94
+–
+145.06/175.20
+1468/1702
+0.143/0.141
+0.102/0.106
+1.481/1.457
+0.931/0.915
+RAM (β = 1)
+0.95
+157
+±55
+132.93/144.77
+±16.19/16.96
+1211/1236
+±116/185
+0.225/0.276
+±0.037/0.027
+0.163/0.193
+±0.021/0.021
+1.151/1.013
+±0.109/0.152
+0.872/0.857
+±0.010/0.010
+RAM (β = 2)
+0.95
+143
+±15
+116.99/122.78
+±1.69/1.02
+1078/1002
+±34/11
+0.239/0.301
+±0.019/0.012
+0.170/0.208
+±0.009/0.006
+1.209/1.069
+±0.016/0.014
+0.880/0.865
+±0.002/0.001
+RAM (β = 3)
+0.95
+187
+±21
+113.19/122.06
+±2.83/1.84
+1030/991
+±11/9
+0.260/0.310
+±0.009/0.011
+0.184/0.214
+±0.006/0.010
+1.226/1.082
+±0.020/0.009
+0.884/0.866
+±0.002/0.001
+RAM (β = 4)†
+0.94
+210
+±28
+115.49/126.77
+±7.07/14.99
+1059/1053
+±107/168
+0.249/0.305
+±0.030/0.023
+0.181/0.220
+±0.015/0.012
+1.204/0.964
+±0.044/0.157
+0.884/0.862
+±0.003/0.007
+DFR-MMD (β = 2, λ = 0.55)
+0.95
+183
+±40
+111.20/120.64
+±4.10/6.17
+990/967
+±27/52
+0.295/0.326
+±0.025/0.014
+0.200/0.224
+±0.015/0.011
+1.200/1.049
+±0.042/0.043
+0.882/0.863
+±0.005/0.003
+DFR-FD (β = 2)
+0.95
+223
+±29
+111.02/117.09
+±2.00/4.88
+980/932
+±20/46
+0.282/0.332
+±0.005/0.007
+0.199/0.231
+±0.003/0.006
+1.199/1.034
+±0.013/0.048
+0.882/0.866
+±0.003/0.002
+DFR-DS (β = 2)
+0.95
+197
+±25
+114.60/121.86
+±1.64/4.22
+1034/992
+±37/82
+0.325/0.344
+±0.017/0.012
+0.218/0.233
+±0.007/0.010
+1.185/1.032
+±0.018/0.041
+0.881/0.863
+±0.006/0.005
+GenEval, threshold 0.96
+SD3.5-M
+0.63
+–
+–
+–
+0.405/0.372
+0.302/0.274
+0.840/0.859
+0.872/0.863
+RAM (β = 1)†
+0.95
+195
+±49
+127.57/137.62
+±8.73/10.49
+1171/1166
+±86/108
+0.229/0.277
+±0.012/0.016
+0.161/0.190
+±0.007/0.008
+1.208/1.057
+±0.053/0.056
+0.875/0.859
+±0.008/0.005
+RAM (β = 2)
+0.96
+210
+±20
+119.87/125.99
+±2.03/3.89
+1066/1023
+±31/33
+0.249/0.310
+±0.004/0.005
+0.174/0.213
+±0.006/0.006
+1.202/1.046
+±0.035/0.060
+0.884/0.865
+±0.003/0.002
+RAM (β = 3)†
+0.95
+220
+113.91/121.93
+±6.49/5.44
+1041/993
+±49/53
+0.254/0.308
+±0.006/0.006
+0.181/0.214
+±0.005/0.008
+1.231/1.087
+±0.019/0.008
+0.885/0.866
+±0.004/0.003
+RAM (β = 4)†
+0.95
+–
+116.29/129.16
+±6.13/13.02
+1065/1073
+±102/156
+0.247/0.305
+±0.030/0.023
+0.180/0.221
+±0.015/0.011
+1.201/0.955
+±0.037/0.147
+0.884/0.862
+±0.004/0.007
+DFR-MMD (β = 2)
+0.96
+223
+±47
+110.75/121.67
+±3.04/6.05
+992/977
+±5/47
+0.290/0.321
+±0.021/0.015
+0.196/0.221
+±0.011/0.009
+1.209/1.030
+±0.016/0.025
+0.884/0.864
+±0.002/0.001
+DFR-FD (β = 2)
+0.96
+260
+±26
+111.95/120.40
+±4.11/4.05
+994/969
+±46/38
+0.273/0.319
+±0.021/0.018
+0.193/0.223
+±0.011/0.013
+1.209/1.027
+±0.005/0.032
+0.883/0.865
+±0.004/0.003
+DFR-DS (β = 2)
+0.96
+240
+±44
+114.47/124.11
+±0.31/3.88
+1052/1007
+±8/45
+0.332/0.349
+±0.028/0.019
+0.225/0.240
+±0.022/0.018
+1.170/0.984
+±0.046/0.082
+0.878/0.860
+±0.004/0.004
+†Not every seed reaches the threshold; Steps averages the seeds that do.
+§, ∗, ‡ as in Table 1; multi-reward DiffusionNFT is trained on PickScore and closely related preference rewards, so its held-out rewards are
+struck through.
+Table 6: All metrics for models fine-tuned on OCR, at threshold 0.96. Columns and markings are as in Table 5,
+except that entries report results on the OCR test prompts (a) and on DrawBench (b).
+Method
+Reward
+Steps (↓)
+FID (↓)
+FD-DINOv2 (↓)
+DreamSim-DINO (↑)
+DreamSim-OpenCLIP (↑)
+ImgRwd (↑)
+PickScore (↑)
+OCR, threshold 0.96
+SD3.5-M
+0.59
+–
+–
+–
+0.307/0.372
+0.258/0.274
+1.004/0.859
+0.863/0.863
+RAM (β = 2)
+0.96
+67
+±12
+219.07/131.38
+±24.04/7.71
+1270/1040
+±232/84
+0.248/0.347
+±0.016/0.010
+0.128/0.245
+±0.010/0.009
+0.545/0.712
+±0.251/0.133
+0.849/0.855
+±0.009/0.004
+RAM (β = 3)†
+0.95
+100
+±0
+149.72/104.84
+±5.66/3.13
+728/798
+±40/58
+0.272/0.349
+±0.019/0.011
+0.167/0.246
+±0.007/0.004
+1.039/0.894
+±0.054/0.048
+0.869/0.862
+±0.003/0.002
+RAM (β = 4)
+0.96
+123
+±15
+138.04/100.94
+±6.73/4.36
+667/751
+±46/56
+0.291/0.355
+±0.010/0.008
+0.185/0.249
+±0.004/0.005
+1.062/0.922
+±0.064/0.045
+0.867/0.862
+±0.003/0.002
+RAM (β = 5)
+0.96
+137
+±6
+136.78/97.16
+±5.35/2.14
+662/721
+±39/21
+0.292/0.358
+±0.003/0.004
+0.192/0.252
+±0.005/0.003
+1.040/0.886
+±0.043/0.030
+0.867/0.861
+±0.002/0.001
+RAM (β = 6)†
+0.95
+180
+±28
+121.69/93.58
+±5.38/2.03
+565/695
+±31/26
+0.285/0.345
+±0.006/0.011
+0.192/0.244
+±0.003/0.010
+1.100/0.928
+±0.031/0.023
+0.871/0.863
+±0.002/0.002
+DFR-MMD (β = 4)
+0.96
+153
+±12
+124.87/95.37
+±0.83/1.60
+597/708
+±5/16
+0.300/0.367
+±0.006/0.012
+0.197/0.261
+±0.006/0.008
+1.057/0.862
+±0.005/0.017
+0.868/0.861
+±0.001/0.001
+DFR-FD (β = 4)
+0.96
+183
+±23
+121.46/94.56
+±4.52/1.20
+585/705
+±20/13
+0.295/0.359
+±0.009/0.010
+0.213/0.255
+±0.004/0.008
+1.097/0.886
+±0.062/0.057
+0.870/0.861
+±0.004/0.004
+DFR-DS (β = 5)
+0.96
+143
+±15
+136.13/99.23
+±4.59/3.20
+653/743
+±37/27
+0.355/0.399
+±0.010/0.004
+0.224/0.281
+±0.008/0.003
+1.013/0.837
+±0.035/0.024
+0.864/0.858
+±0.002/0.001
+†Not every seed reaches the threshold; Steps averages the seeds that do.
+D.8
+HELD-OUT REWARDS
+Figure 3 evaluates checkpoints of RAM (β = 1) every 30 steps with the protocol of Appendix D.2.
+Within the first 30 steps, ImageReward rises from 0.84 to 1.12 on the GenEval prompts and from
+0.86 to 1.03 on DrawBench, while DreamSim diversity falls from 0.302 to 0.179 and from 0.274 to
+0.186. Over the rest of training, ImageReward keeps rising on the GenEval prompts, to 1.19–1.23
+from step 120 on, and stays between 0.98 and 1.09 on DrawBench, while diversity stays far below
+SD3.5-M’s, at 0.155–0.168 and 0.174–0.201 from step 60 on. ImageReward thus rates a model
+higher than SD3.5-M even after its diversity on the GenEval prompts has roughly halved: it scores
+each image in isolation and does not register that the images for a prompt have become alike. We
+therefore report held-out rewards (Appendix D.6) but do not use them to measure reward hacking.
+32
+
+
+Preprint.
+Table 7: Speedups. Top: speedups over Flow-GRPO reported by the respective papers. Bottom: measured
+from our runs. Time is the number of steps to the threshold multiplied by the time per step, both relative to the
+RAM configuration stated in each block. GenEval speedups divide the reported speedup of RAM (β = 1) by
+Time; OCR has no Flow-GRPO reference and reports Time only. Means with SD beneath are over seeds; “–”
+marks a threshold not reached on every seed.
+Method
+Speedup
+Source
+Flow-GRPO
+1
+reference
+RSM
+6.25
+5× over TempFlow-GRPO (Lee et al., 2026), which reports 1.25×
+over Flow-GRPO (He et al., 2026)
+AWM
+8
+reported by Xue et al. (2026)
+DiffusionNFT
+24
+reported by Zheng et al. (2026)
+DiffusionNFT (multi)
+2.28
+reported by Choi et al. (2026)
+RAM (β = 1)
+52.3
+50× fewer steps, times the ratio of time per step (Bergmeister et al.,
+2026)
+Method
+Steps (per seed)
+Time per step
+Time (↓)
+Speedup (↑)
+GenEval, threshold 0.95; Time relative to RAM (β = 1)
+RAM (β = 1)
+160/100/210
+1.00
+1.00
+52.3
+RAM (β = 2)
+160/140/130
+1.00
+0.91
+±0.10
+57.2
+±6.1
+RAM (β = 3)
+210/180/170
+1.00
+1.19
+±0.13
+43.9
+±4.9
+RAM (β = 4)
+–
+1.00
+–
+–
+DFR-MMD (β = 2)
+230/160/160
+1.09
+1.27
+±0.28
+41.1
+±9.1
+DFR-FD (β = 2)
+240/240/190
+1.03
+1.47
+±0.19
+35.7
+±4.6
+DFR-DS (β = 2)
+200/170/220
+1.03
+1.29
+±0.17
+40.4
+±5.2
+OCR, threshold 0.96; Time relative to RAM (β = 2)
+RAM (β = 2)
+60/80/60
+1.00
+1.00
+–
+RAM (β = 3)
+–
+1.00
+–
+–
+RAM (β = 4)
+110/120/140
+1.00
+1.85
+±0.23
+–
+RAM (β = 5)
+140/130/140
+1.00
+2.05
+±0.09
+–
+RAM (β = 6)
+–
+1.00
+–
+–
+DFR-MMD (β = 4)
+160/140/160
+1.09
+2.50
+±0.19
+–
+DFR-FD (β = 4)
+170/210/170
+0.98
+2.70
+±0.34
+–
+DFR-DS (β = 5)
+160/130/140
+0.97
+2.08
+±0.22
+–
+D.9
+TRAINING STABILITY ACROSS β
+Training is unstable at both ends of the range of β, in different ways (Figure 4). At β = 1, runs
+disagree: the seed SDs of FD at the evaluated checkpoints are 3–10× those at β ∈{2, 3} (Table 5),
+and the reward dips by up to 0.037 below its running maximum, but every dip recovers and no seed
+collapses within the budget. On OCR, the smallest β = 2 likewise has FD seed SDs 4–6× those at
+β ∈{4, 5} (Table 6). At β = 4 of GenEval, training collapses: every seed peaks between steps 170
+and 240 and then declines. On OCR, larger β plateaus rather than collapses: RAM peaks at 0.950
+at β = 8 and 0.923 at β = 12.
+E
+ADDITIONAL RESULTS
+E.1
+QUALITATIVE COMPARISON BETWEEN GENERATED IMAGES
+We demonstrate that DFR produces a distribution that more closely matches that of the base SD3.5
+model (see below). For the donut example, DFR preserves the color of the glaze better than the
+33
+
+
+Preprint.
+0
+100
+200
+300
+Step
+0.9
+1.0
+1.1
+1.2
+1.3
+ImageReward ↑
+0.14
+0.16
+0.18
+0.20
+0.22
+0.24
+0.26
+0.28
+0.30
+DreamSim diversity ↑
+ImageReward
+DreamSim diversity
+GenEval prompts
+DrawBench prompts
+Figure 3: ImageReward (left axis) and DreamSim diversity (right axis) of RAM (β = 1) during training on
+GenEval, on the GenEval (solid) and DrawBench (dashed) prompts, evaluated every 30 steps; step 0 is SD3.5-
+M. Mean over three seeds with ±1 SD bands.
+0
+100
+200
+300
+Step
+0.75
+0.80
+0.85
+0.90
+0.95
+GenEval
+min 0.006
+(step 260)
+RAM (β = 1)
+RAM (β = 4)
+(a) GenEval.
+0
+100
+200
+300
+Step
+0.75
+0.80
+0.85
+0.90
+0.95
+OCR
+RAM (β = 1)
+RAM (β = 2)
+RAM (β = 4)
+RAM (β = 8)
+RAM (β = 12)
+(b) OCR.
+Figure 4: Target reward on held-out prompts during RAM training. Left: GenEval at β = 1 and β = 4, with
+one line per seed and the target indicated at 0.95. At β = 1, no seed collapses within the training budget; at
+β = 4, every seed declines after peaking, and one collapses. Right: OCR for β ∈{1, 2, 4, 8, 12}, using 1
+seed for each coefficient and a target of 0.96. The weakly regularized β = 1 run collapses after reaching its
+peak, whereas the more strongly regularized runs remain stable over their observed training ranges, at the cost
+of slower reward improvement for β = 8 and β = 12.
+RAM baseline. For the four-clock example, DFR captures both the clock colors and the mix of
+Roman and Arabic numerals, whereas the RAM baseline collapses these variations. These examples
+qualitatively highlight the strengths of DFR.
+E.2
+SAMPLES FROM BASELINES
+We include samples generated from the base SD3.5 model, RAM, and DFR below.
+34
+
+
+Preprint.
+$
+
+	
+
+
+
+
+
+
+
+
+	
+
+# "%"""!&%
+Figure 5: DFR qualitatively appears closer to the pretrained distribution; the colour of the glazing on the donut
+is preserved in DFR, while this does not hold for the RAM baseline.
+'
+
+	
+
+
+
+
+
+
+
+
+	
+
+%!$($$  $)&#$"'
+Figure 6: DFR captures both the clock colors and the mix of Roman and Arabic numerals, preserving variations
+from the pretrained SD3.5 distribution, whereas the RAM baseline collapses these variations.
+35
+
+
+Preprint.
+! $  #%$# &
+##
+
+
+
+
+	
+
+
+
+
+
+! $   %"#
+! $  ( '"!
+! $  #$ !#
+! $  !))
+
+! $  ! $$!$
+ %$
+! $   %$
+! $  $' $"#
+! $  #' '
+
+! $  $"%$ 
+#$
+! $   "
+""" $
+! $  '$
+!%"!
+! $   " "
+! $  " ' "
+! $   %" #
+! $  !#$ !#
+! $  "$ 
+"#
+! $   % '
+&#
+! $   &
+! $  !%"!"
+#
+*&
+Figure 7: Sample images generated for diverse prompts across various seeds using the base SD3.5 model.
+36
+
+
+Preprint.
+& %)%%(*!)(%+
+("!(
+
+
+
+	
+
+
+
+
+
+
+& %)%%%*' $(
+& %)%%-##%,!'&#$
+& %)%%()%&(!$
+& %)%%&!..$
+$ 
+& %)%%&%))&#$)
+$%$*)
+& %)%%%$*)
+& %)%%),%)'!$(
+& %)%%($,! #%,
+"$!
+& %)%%)'*"#)%
+(##)
+& %)%%$%'$ $
+$'$''%)
+& %)%%, !) $
+$&*'&#
+& %)%%$%'$%'$
+& %)%%'%,$%'$
+& %)%%%*'#%"(
+& %)%%&!$"()%&(!$
+& %)%%'! )%
+'!(
+& %)%%%* #%,
++(
+& %)%%$%+$$
+& %)%%&*'&#'
+/$+#
+Figure 8: Sample images generated for diverse prompts across various seeds using the RAM baseline.
+37
+
+
+Preprint.
+#"&""%'&%"(
+%%
+
+
+
+
+	
+
+
+
+
+
+#"&"""'$!%
+#"&""*  ")$# !
+#"&""%&"#%!
+#"&""#++!
+!
+#"&""#"&&# !&
+!"!'&
+#"&"""!'&
+#"&""&)"&$!%
+#"&""%!) ")
+!
+#"&""&$' &"
+%  &
+#"&""!"$!!
+!$!$$"&
+#"&"")&!
+!#'$# 
+#"&""!"$!"$!
+#"&""$")!"$!
+#"&"""'$ "%
+#"&""#!%&"#%!
+#"&""$&"
+$%
+#"&"""' ")
+(%
+#"&""!"(!!
+#"&""#'$# $
+,!( 
+Figure 9: Sample images generated for diverse prompts across various seeds using DFR.
+38
