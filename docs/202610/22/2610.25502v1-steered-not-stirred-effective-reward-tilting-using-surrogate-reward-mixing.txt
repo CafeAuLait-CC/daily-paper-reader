@@ -1,0 +1,4036 @@
+Preprint. Under Review.
+STEERED NOT STIRRED: EFFECTIVE REWARD TILTING
+USING SURROGATE REWARD MIXING
+Alec Sargood1,2∗
+Olivia Gallup1,3
+Georg Maierhofer4
+Noam Ghenassia1
+Paul Duckworth1
+Krisztina Sinkovics1∗∗Avishek Joey Bose5,6∗∗
+1InstaDeep
+2University College London
+3University of Oxford
+4University of Cambridge
+5Imperial College London
+6Mila–Québec AI Institute
+ABSTRACT
+Continuous-time generative models, from diffusion models, flow matching, and
+now flow maps, owe their practical value to high-fidelity generation and steerability.
+In many applications, a ground-truth latent “oracle” reward R∗is unavailable
+or expensive to evaluate, e.g., human judgments or experimental measurements.
+Although the oracle reward is not directly observable, it can often be approximated
+through multiple cheaper surrogates that, individually, provide incomplete
+characterizations but collectively reveal substantial information about the
+downstream task. In this paper, we present a method for composing such surrogates
+to steer a pretrained model toward the distribution tilted by an unavailable R∗.
+Given a small feedback set of oracle rankings or numerical rewards, we introduce
+Mixing And Reward Tilting for INference-time Improvement (MARTINI), which
+learns a surrogate composition for plug-and-play use with standard inference-time
+steering methods. Our theory characterizes surrogate information limits and
+relates population recovery error to ideal-target KL at small tilt strength. For
+preferences, the bound additionally accounts for an irreducible mismatch between
+the Plackett–Luce population target and the conditional mean.
+Experiments
+demonstrate improved oracle-tilt fidelity in language generation and ImageNet
+alignment, and improved joint pose accuracy and validity in protein–ligand
+cofolding, without inference-time oracle queries.
+1
+INTRODUCTION
+In many real-world deployments, generative models are judged not only by sample fidelity to the
+pretraining distribution, but by whether their generations satisfy downstream task-specific objec-
+tives (Zhang et al., 2026). Consequently, it remains imperative to align generative models to desired
+rewards through algorithmic frameworks such as inference-time steering or post-training (Uehara
+et al., 2025) that, in effect, sharpen the model distribution on samples with high downstream utility,
+where that utility is too costly or inaccessible to supervise at pretraining scale. The central discrepancy
+between pre-training and downstream task alignment, therefore, requires high-quality post-training
+data under an oracle reward, whose acquisition is often bottlenecked due to high collection costs (Gao
+et al., 2023), from capturing the nature of human preferences (Rafailov et al., 2023; Ethayarajh et al.,
+2024) to experimental measurements needed to evaluate biomolecular design (Pathak et al., 2025).
+In lieu of carte blanche access to a reward oracle that is perfectly predictive of a desired downstream
+task, practitioners often have access to multiple weakly informative signals in the form of surrogate or
+proxy reward models. In text-to-image generation, for example, human preferences are approximated
+by aesthetic, alignment, and learned preference scores such as, ImageReward (Xu et al., 2023),
+CLIP (Radford et al., 2021), and PickScore (Kirstain et al., 2023). In molecular and protein design,
+physical plausibility checks (Buttenschoen et al., 2024) and machine-learned interatomic poten-
+tials (Wood et al., 2025) similarly serve as proxies for physical assays or high-fidelity simulations.
+In each example, cheap proxy reward signals are individually imperfect and only weakly correlated
+∗alec.sargood.23@ucl.ac.uk
+∗∗Joint last authors.
+1
+arXiv:2610.25502v1  [cs.LG]  18 Oct 2026
+
+
+Preprint. Under Review.
+p0
+t = 0
+t = 1
+denoising time
+xt
+Base prompt: “golden retriever”
+Steering prompt: “golden retriever running on a sandy beach”
+g(R) steer
+R1 steer
+R2 steer
+look-ahead ̂x1
+M A R T I N I
+p1
+q*
+qg
+qR1
+qR2
+reward tilt at t = 1
+g(R)-steered
+R1-steered
+base sample
+Figure 1: MARTINI learns a surrogate composition g ◦R from limited offline oracle feedback and uses it to steer
+toward qg, aiming to approximate the gold reward tilt q∗. At inference, MARTINI steers without querying R∗.
+with the true downstream task, yet collectively they contain substantial information and often
+complementary evidence for successful candidates. Despite this promise—including the potential to
+mitigate reward hacking (Coste et al., 2024; Eisenstein et al., 2023)—existing inference-time steering
+methods for diffusion and flow-matching models are largely formulated around a single surrogate
+reward. As a result, a key missing development is a principled framework for composing multiple
+proxies to recover the latent oracle objective, rather than standard multi-objective optimization that
+treats surrogates as separate objectives. This motivates a fundamental question: How can multiple
+weak reward surrogates be composed to steer a pretrained diffusion or flow model towards the
+reward-tilted distribution favored by an unavailable oracle?
+Present work. We study steering toward the reward-tilted distribution of a latent oracle reward,
+R∗, available only on a small annotated feedback set, using multiple cheap surrogates and no query
+access to R∗at inference. More precisely, we formulate two settings representative of real-world
+use, in which the feedback set supplies either preference rankings over candidate samples or direct
+scalar reward values. We introduce MARTINI (Mixing And Reward Tilting for INference-time
+Improvement, Figure 1), which learns a composition of the surrogates from that feedback and allows
+plug-and-play deployment in existing reward steering frameworks. MARTINI exploits complementary
+surrogate information to improve steering toward R∗, targeting a different solution concept from
+Pareto optimization. We summarize our main contributions as follows:
+1. Methods. We develop a novel algorithm in MARTINI that exploits the problem structure of
+steering towards a gold reward R∗, witnessed only on a feedback set, by learning a composition
+function over cheap reward surrogates that can readily interface with existing steering pipelines.
+2. Theory.
+We characterize the information limit of the surrogates and identify the exact
+KL-optimal composition. Conditional-mean regression minimizes recovery error and the leading
+small-guidance KL coefficient. We also bound reward gain and gap, and relate preference fitting
+to these quantities through the discrepancy between its population target and the conditional mean.
+3. Results. We evaluate MARTINI on language generation, ImageNet text alignment, and protein–
+ligand cofolding, as well as toy experiments, spanning FKS (Singhal et al., 2025), FMRG (Huang
+et al., 2026), MFM (Potaptchik et al., 2026), and Itô steering (Pan et al., 2026) methods.
+2
+BACKGROUND AND PRELIMINARIES
+Notation. We denote by X = Rd the state space of the generative dynamics and by p1 the
+data distribution on this space, using embedded representations for discrete data. A reward is a
+scalar function R : X →R. A superscript asterisk marks the gold reward R∗, unqueryable at
+inference. We use R to denote the vector of k surrogate rewards R = (R1, . . . , Rk) : X →Rk,
+and r = (r1, . . . , rk) ∈Rk values it takes. A composition function g : Rk →R turns the surrogates
+2
+
+
+Preprint. Under Review.
+into a scalar reward on X, i.e., g ◦R : x 7→g(R(x)) while G denotes the function class used to
+fit the composition. For a reward R and inverse temperature β > 0, we denote qR ∝p1 exp(βR) as
+its induced tilt. All such tilts assign zero probability to sets of zero p1-probability. In particular, we
+define q∗:= qR∗as the gold tilt and correspondingly qg := qg◦R the g-composition tilt. KL(p ∥q)
+is the Kullback–Leibler divergence, while conditional moments of R∗given R are denoted by:
+µ := Ep1[R∗| R], v := Varp1(R∗| R), and ¯v := Ep1[v], so that µ is the best surrogate estimate of
+R∗, v is the variance of R∗that remains once the surrogates are known, and ¯v the expected variance.
+Specifically, ¯v quantifies the additional information about R∗that the surrogates do not contain.
+Finally, SCC and PCC denote the Spearman and Pearson correlation coefficients, respectively.
+2.1
+STOCHASTIC INTERPOLANTS AND INFERENCE STEERING
+Stochastic interpolants, such as flow matching (Lipman et al., 2022; Liu, 2022; Albergo and Vanden-
+Eijnden, 2023) and diffusion models (Ho et al., 2020; Song et al., 2021), transport samples from
+a tractable prior p0, e.g., N(0, I), to a data distribution p1 ∈P(X), typically represented by a dataset
+Dtrain = {xi}N
+i=1 of N samples. These models then construct an interpolant It := αtx1 + σtx0,
+that connects independent samples x0 ∼p0, x1 ∼p1 and induces the marginal law pt := Law(It).
+This interpolant can be constructed in different ways: Flow matching regresses a velocity network
+uϕ : Rd × [0, 1] →Rd against the interpolant velocity ˙It = ˙αtx1 + ˙σtx0. Diffusion models learn
+endpoint denoisers ˆx1(xt, t) := Dϕ(xt, t) ≈E[x1 | It = xt], or implicitly parametrize the Stein
+score ∇log pt(xt). Sampling can then be performed by integrating the probability flow ODE
+˙xt = uϕ(xt, t), or by simulating an SDE with the same marginals and terminal law p1,ϕ, respectively:
+dxt =
+h
+uϕ(xt, t) + c2
+t
+2 ∇log pt(xt)
+i
+dt + ct dWt,
+x0 ∼p0,
+(1)
+where ct > 0 is the diffusion coefficient and Wt is the standard Wiener process on Rd.
+Steering. Given a perfectly trained diffusion model with terminal law p1,ϕ
+d= p1, inference-time
+steering seeks to target the reward-tilted qR without further retraining. SDE methods achieve this
+by adding a Doob h-transform drift βc2
+t ∇xtVt with Vt(xt) = β−1 log E[exp(βR(x1)) | xt], while
+sequential Monte-Carlo schemes (Doucet et al., 2001) propagate particles and resample by look-ahead
+reward potentials R(ˆx1(xt)). Finally, few-step optimal-control methods treat the velocity as a control
+and modify the velocity by pushing samples along ∇R, also using a look-ahead reward estimate.
+Flow maps. Rather than integrating the probability-flow ODE step-by-step, one can train a flow map,
+X : [0, 1]2 × X →X, Xt,s(x) := X(t, s, x). A flow map jumps a state from time t to s along the
+ODE trajectory, Xt,s(xt) = xs, and is naturally parametrized via the average velocity ut,s for s̸ = t,
+Xt,s(xt) = xt+(s−t) ut,s(xt), with ut,s given by: ut,s(xt) = (s−t)−1 R s
+t uϕ(xτ, τ) dτ. As s →t
+the average velocity recovers the instantaneous one, lims→t ut,s(xt) = uϕ(xt, t). We can distill flow
+maps from a pretrained model, or directly from data, using Lagrangian, Eulerian, or Progressive
+distillation or losses. The one-step map ˆx1(xt) = Xt,1(xt) provides a fast look-ahead to the endpoint,
+so we can evaluate a reward on a predicted sample without integrating the remaining trajectory.
+Continuous treatment of discrete data. Let V be a vocabulary and L a sequence length, such that
+token sequences satisfy y ∈VL. Here, X = RL×|V|, where d = L|V|, and we use tokenwise one-hot
+encoder Enc : VL →X with the tokenwise argmax decoder Dec : X →VL (Lee et al., 2026a),
+such that p1 is the distribution of one-hot embeddings Enc(VL) ⊂X. Since Dec(Enc(y)) = y,
+this representation preserves the text distribution exactly. We apply the preceding interpolant and
+flow-map construction to p1, with x1 = Enc(y) and x0 ∼N(0, I). The intermediate marginals pt
+have smooth densities and converge in distribution to p1 as t →1. Learned continuous terminal
+predictions are then decoded by tokenwise argmax. Rewards on one-hot encodings are defined by
+the corresponding text rewards.
+2.2
+PREFERENCE MODELLING
+Preference learning aims to fit a latent utility h from relative rankings rather than scalar-valued scores
+(as in, e.g., regression tasks), by minimizing a negative log-likelihood (NLL). The Bradley–Terry (BT)
+model (Bradley and Terry, 1952) models pairwise rankings p(xi ≻xj) = σ(h(xi) −h(xj)), with
+σ the logistic sigmoid function. The Plackett–Luce (PL) model (Plackett, 1975; Luce, 1959) extends
+3
+
+
+Preprint. Under Review.
+this to a full ranking π of a candidate set S of size m, decomposed into a sequence of softmax choices
+over the items not yet selected, pPL(π | h, S) = Qm−1
+i=1 exp(h
+ xπ(i)
+
+)
+ Pm
+i′=i exp
+ h
+ xπ(i′)
+
+,
+recovering BT at m = 2 and is invariant to additive constants. Such models are pervasive in LLM
+post-training: annotators rank responses to a prompt, and the goal is to align the model to human
+judgements of quality using RL or direct preference optimization (Schulman et al., 2017; Rafailov
+et al., 2023).
+3
+METHOD
+MARTINI learns a composition of fixed surrogates from an offline feedback set Dfeedback, distinct
+from the generator’s training data Dtrain. Feedback consists of numerical oracle rewards or rankings;
+the fitted composition drives inference-time steering without oracle queries.
+3.1
+PROBLEM SETUP
+At a given tilt strength β > 0, we seek a surrogate tilt qg approximating q∗∝p1 exp(βR∗),
+using k cheap surrogates stacked together as R. We reiterate that R∗is not available at inference;
+instead, we only have knowledge of the gold reward through a feedback set Dfeedback. We seek
+gopt ∈arg ming KL(q∗∥qg) over measurable compositions with finite, positive tilt normalizers.
+In practice, we fit g ∈G from Dfeedback. Performance depends on the surrogate information,
+composition class, and feedback budget. We consider two feedback regimes.
+(i) Value feedback. R∗returns scores: Dfeedback = {(xi, R∗(xi))}n
+i=1, where Dfeedback represents
+a budget of expensive evaluations. The feedback is cardinal, namely the scale of R∗is known.
+(ii) Preference feedback. R∗is seen only through order: Dfeedback = {(S(j), π(j))}M
+j=1 comprises
+M query groups of m ≥2 samples, S(j) ∼p⊗m
+1
+, and π(j) is the preferred order. Rankings are
+drawn independently across groups from the PL model of §2.2 at the gold reward score:
+π(j) ∼p∗
+PL(· | S(j)),
+p∗
+PL(π | S) := pPL(π | R∗, S) =
+m−1
+Y
+i=1
+exp(R∗ xπ(i)
+
+)
+Pm
+i′=i exp
+ R∗ xπ(i′)
+.
+(2)
+Equivalently, by the Gumbel-sort construction (Yellott, 1977), π(j) is obtained by perturbing each
+candidate’s oracle score with independent standard Gumbel noise and sorting in descending order.
+By the shift invariance of pPL, preferences constrain R∗only up to an additive constant.
+Relation to multi-objective optimization. In multi-objective optimization (MOO), the Rj are
+distinct objectives. For maximized rewards, x dominates x′ if Rj(x) ≥Rj(x′) for every j, with
+at least one strict inequality. Undominated feasible candidates form the Pareto set, where their reward
+vectors form the Pareto front, and scalarizations express trade-offs among the objectives.
+Our surrogates instead provide imperfect information about one oracle R∗. A candidate can dominate
+another on every surrogate yet receive a lower oracle reward, so the surrogate Pareto set can exclude
+the oracle optimum (lemmas 4 and 5 and Figure 2). We therefore allow nonmonotone compositions,
+although no composition can recover information absent from its inputs. Further discussions are in §K.
+3.2
+TRAINING MARTINI
+Given Dfeedback drawn from p1, MARTINI learns a composition g offline using a value or preference
+loss, with the map g ◦R compatible with any inference steering approach without querying R∗.
+Value feedback. For numerical evaluations of R∗, the fitting objective is the mean squared error:
+LMSE(g) = 1
+n
+n
+X
+i=1
+(g(R(xi)) −R∗(xi))2
+xi ∼Dfeedback.
+(3)
+Over unrestricted measurable compositions, the population counterpart of Equation (3) is minimized
+by g ◦R = µ, a quantity whose steering advantage to q∗we theoretically establish in §3.3.
+4
+
+
+Preprint. Under Review.
+−1
+0
+1
+a
+−1
+0
+1
+b
+R∗optimum
+Pareto point
+(a) R∗in candidate space
+-9
+-7
+-5
+-4
+-3
+−1.50
+−1.25
+−1.00
+−0.75
+R1 (higher is better)
+−1.50
+−1.25
+−1.00
+−0.75
+R2 (higher is better)
+R∗optimum
+Pareto point
+(b) Surrogate reward space
+−1
+0
+1
+a
+−1
+0
+1
+b
+R1 max.
+R2 max.
+(c) Reward contours
+R1
+R2
+R∗
+x = (a, b) ∈[−1, 1]2
+R1(x) = −(a + 1)2 −b2
+R2(x) = −(a −1)2 −b2
+R∗(x) = −3(a2 + b2) + 2b −3
+Figure 2: The oracle optimum can be dominated by the surrogates. (a) Contours of R∗in candidate space. Its
+maximizer lies outside the Pareto set. (b) Visualization in surrogate reward space, Pareto front in blue. The Pareto
+point scores higher on both surrogates but lower on R∗. (c) Visualization of surrogate reward and R∗contours.
+Preference feedback. For rankings, we fit the composition by minimizing the PL NLL. Let x(j)
+(i)
+denote the candidate ranked ith in group j, with the most preferred candidate first. The objective is
+LPL(g) = −1
+M
+M
+X
+j=1
+m−1
+X
+i=1
+"
+g
+
+R(x(j)
+(i))
+
+−log
+m
+X
+l=i
+exp
+
+g
+
+R(x(j)
+(l) )
+#
+.
+(4)
+Equation (4) fits the observed rankings without requiring numerical gold rewards. Its population
+target need not equal µ, whose implications for recovery and steering are discussed in §3.3.
+Constructing the composition. We consider three ways to construct the composition: correlation
+weighting, fitted linear models, and MLPs. Linear and MLP compositions are trained using the
+appropriate empirical loss with family-specific regularization, while correlation weights are computed
+directly from Pearson correlations with observed oracle values or Spearman correlations with observed
+oracle rankings. Correlation and linear models describe a weighted sum of surrogate scores, while
+MLPs can capture nonlinear relationships. Derivations and implementation details are provided in §A.
+Inference-time steering. After fitting, we hold g fixed and use g ◦R to steer toward qg. Adding
+the Doob drift correction to (1) gives:
+dxt =
+
+uϕ(xt, t) + c2
+t
+2 ∇log pt(xt) + βc2
+t∇xtV g
+t (xt)
+
+dt + ct dWt,
+(5)
+where V g
+t (xt) = 1
+β log E[exp(βg(R(x1))) | xt]. In practice, an endpoint prediction ˆx1 := Dϕ(xt, t)
+gives the look-ahead approximation. In practice, we use the look-ahead reward g(R(ˆx1(xt))). When
+the composition, surrogates, and endpoint predictor are differentiable, its gradient follows by the
+chain rule (c.f, algorithm 1 for details).
+3.3
+THEORETICAL RESULTS
+Our setting raises two questions: Q1. when does learning to predict R∗from surrogates lead to useful
+steering, and Q2. how well can any composition of the surrogates do? The objectives in Equations (3)
+and (4) use oracle feedback, whereas our goal is to approximate q∗. Our results connect these
+questions and identify the limits imposed by information about R∗missing from the surrogates.
+We examine four quantities: Steering divergence, KL(q∗∥qg), measures fidelity to the oracle tilt,
+and reward gain and reward gap compare the induced distribution’s expected R∗reward with that of
+p1 and q∗respectively. Finally, recovery error measures how accurately g ◦R predicts R∗under p1.
+We analyze population quantities and ideal tilts under the assumptions stated in §G.1. The KL and
+reward expansions in the theorems hold for fixed compositions as β ↓0, while the recovery identities
+and bounds are exact. For both theorems, we use mean-aligned representatives (Assumption G.3),
+which preserve the induced tilt. For conditional generation, i.e. p1(·|c) we fix the context c in the
+analysis and drop the notation for brevity.
+Value feedback. We write MSE(g) := Ep1[(g ◦R −R∗)2] for population recovery error and
+ωR := exp(βR)/Ep1[exp(βR)] for a tilt’s relative weight.
+5
+
+
+Preprint. Under Review.
+Theorem 1 (Value Regime). Suppose R∗and g ◦R satisfy Assumptions G.1–G.3. Then:
+(i) (Steering.) As β ↓0, with Assumption G.3 used for the second equality,
+KL(q∗∥qg) = β2
+2 Varp1(R∗−g ◦R) + O(β3) = β2
+2 MSE(g) + O(β3).
+(ii) (Reward gain.) For any R ∈L∞(p1) and β > 0: EqR[R∗] −Ep1[R∗] = Covp1(R∗, ωR).
+Furthermore, as β ↓0:
+Eqg[R∗] −Ep1[R∗] ≥β
+
+Varp1(µ) −
+q
+Varp1(µ)(MSE(g) −¯v)
+
++ O(β2).
+(iii) (Reward gap.) As β ↓0, Eq∗[R∗]−Eqg[R∗]≤β[¯v +
+p
+Varp1(µ)(MSE(g) −¯v)]+O(β2).
+(iv) (Best recovery.) Under Assumption G.1 alone,
+MSE(g) = ¯v + ∥g ◦R −µ∥2
+L2(p1) ≥¯v,
+Varp1(R∗) = Varp1(µ) + ¯v.
+Part (i) answers Q1 by connecting the value-fitting objective directly to steering: reducing population
+MSE reduces the leading KL error. This also explains why the unrestricted regression target µ is useful
+even though the exact KL-optimal composition gopt can differ from it. Proposition 1 and Corollary 1
+show that KL(q∗∥qµ) −KL(q∗∥qgopt) = O(β4) as β ↓0. Thus, using µ instead of gopt incurs only
+fourth-order excess KL, providing a distributional justification for MSE fitting in this regime.
+Part (iv) answers Q2: fitting can reduce the discrepancy from µ, but recovery error remains at least
+¯v, the variation in R∗unexplained by the surrogates. Improving the fit of g therefore addresses only
+one source of error, and reducing this floor requires more informative surrogate inputs (Corollary 5).
+Parts (ii)–(iii) relate recovery error to expected reward after steering under R∗. At leading order,
+reducing recovery error raises the gain lower bound and lowers the gap upper bound. When
+Varp1(µ) > 0, sufficiently accurate approximation of µ guarantees positive gain for small enough
+β > 0, even if ¯v > 0 (Corollary 2). Useful steering therefore does not require perfect oracle recovery.
+The exact gain identity in part (ii) appears concurrently in Paes et al. (2026), while here we relate
+it to learned surrogate compositions through asymptotic gain and gap bounds.
+Preference feedback. When numerical oracle rewards are unavailable, we instead ask whether
+fitting oracle rankings controls the same recovery and steering quantities.
+Theorem 2 (Preference Regime). Under Assumptions G.1, G.3, and G.4, define the population
+loss PL(g) := ES,π[−log pPL(π | g ◦R, S)] and let gPL ∈arg ming∈G PL(g). With the
+score-range bound ∆from G.4 and c∆= (1 −1/m)e−∆, every g ∈G satisfies the bound
+MSE(g) ≤B(g) := ¯v +
+q
+Varp1(gPL ◦R −µ) +
+r
+2
+c∆
+ PL(g) −PL(gPL)
+2
+.
+Parts (i)–(iii) further assume the oracle bound in Assumption G.2 and hold for fixed g as β ↓0:
+(i) (Steering.)
+KL(q∗∥qg) ≤β2
+2 B(g) + O(β3).
+(ii) (Reward gain.)
+Eqg[R∗]−Ep1[R∗] ≥β
+h
+Varp1(µ) −
+p
+Varp1(µ)(B(g) −¯v)
+i
++O(β2).
+(iii) (Reward gap.)
+Eq∗[R∗] −Eqg[R∗] ≤β
+h
+¯v +
+p
+Varp1(µ)(B(g) −¯v)
+i
++ O(β2).
+(iv) (Minimum bound.)
+B(g) ≥B(gPL) = MSE(gPL).
+The empirical objective (4) estimates PL(g), whose excess controls recovery through B(g). This
+bound combines the information floor ¯v, the discrepancy between gPL ◦R and µ, and excess PL loss.
+For a fixed problem and class, reducing excess loss tightens the leading KL, gain, and gap, bounds in
+parts (i)–(iii), justifying preference fitting without numerical oracle rewards. At zero excess loss, the
+discrepancy remains unless gPL ◦R = µ, in which case B(gPL) = ¯v (iv). Thus gPL minimizes the
+bound, without necessarily minimizing recovery error or exact steering divergence. The guarantee re-
+6
+
+
+Preprint. Under Review.
+quires a convex class, a uniform score-range bound ∆, and an attained population minimum (Assump-
+tion G.4); nonconvex classes require separate analysis. Proofs and supporting results appear in §G–H.
+4
+EXPERIMENTS
+We evaluate MARTINI on language generation, text-to-image alignment, and protein–ligand cofolding,
+fitting g offline and steering without inference-time oracle queries, with synthetic experiments in §I.
+Evaluation. For language and images, we assess recovery using held-out PCC and MSE for values,
+or SCC and PL loss for preferences. Experimental tilts use the sampler law p1,ϕ in place of p1.
+We evaluate fixed finite target tilts β = 1 and sweep sampler guidance separately, probing behavior
+beyond our small-β guarantees. Composition fidelity is measured by KL(q∗∥qg), estimated from
+unsteered samples. We assess generated samples using embedding-space energy distance and
+distances on the R∗marginal, including Wasserstein distances and Gaussian and KDE estimates
+of KL. We also report the absolute reward gap and a diversity-adjusted cost Q (prior: 1 and lower
+is better), which evaluates reward gains accompanied by diversity loss. Definitions and estimators
+appear in §C. Specific protein cofolding metrics are described in §4.3.
+Language and Image Baselines. Best-of-N (BoN), reported in Appendix ablation tables, selects
+the highest-R∗candidate, requiring N oracle evaluations per sample. Deployable steering baselines
+are the best single surrogate (BSS), uniform weighting, and ParetoFlow (Yuan et al., 2025), plus
+ReNO’s fixed reward weights for images (Eyring et al., 2024). BSS is selected on training feedback
+using either PCC or SCC depending on regime. We also evaluate SLOP’s calibrated selection
+protocol (Wang et al., 2026). SLOP requires R∗values, so its preference results serve only as a
+value-calibrated reference.
+Prior
+a golden retriever
+running on a sandy beach
+MARTINI
+a brown bear wading
+in a mountain river
+a king penguin
+standing on the ice
+8RDK¢YQT
+0:68 Å
+5:98 Å
+8BVX¢RYF
+1:06 Å
+5:98 Å
+8CEX¢UG0
+1:32 Å
+7:09 Å
+7FTR¢YQH
+3:32 Å
+5:96 Å
+Text-to-Image
+Protein Cofolding
+Ground truth
+MARTINI
+Potentials only
+Figure 3: MARTINI steering. Left: ImageNet prior samples (top) and steered samples (bottom). Right:
+Predicted and reference ligand poses. Annotations give ligand RMSD in Å.
+4.1
+LANGUAGE GENERATION
+We use FMRG to steer the released flow map language model (FMLM) (Lee et al., 2026a), trained
+on One Billion Words (Chelba et al., 2013). For fitting and evaluation, we generate unconditional
+sequences of 128 tokens in 8 steps using the bert-base-uncased vocabulary.
+Setup. We use the negative generative perplexity under Qwen2.5-1.5B (Qwen et al., 2025) as the
+oracle, R∗= −gPPL. Our four differentiable surrogates are BERT (Devlin et al., 2019) and Distil-
+BERT (Sanh et al., 2019) scores, CoLA acceptability (Warstadt et al., 2019), and empirical unigram
+entropy Htok. Entropy supplies a diversity signal to address repetitive outputs under gPPL minimiza-
+tion. Feedback comprises n = 256 numerical rewards or M = 256 rankings of m = 8 candidates.
+We generate 256 samples per method, regime, and seed, and average metrics over five seeds.
+7
+
+
+Preprint. Under Review.
+10−2
+10−1
+Steering strength
+5 £ 10¡4
+10¡3
+2 £ 10¡3
+5 £ 10¡3
+ParetoFlow off axis (~7 £ 10¡2)
+SLOP off axis (~2 £ 10¡2)
+Energy to q ¤  #
+10−2
+10−1
+Steering strength
+1.00
+1.05
+1.10
+1.15
+1.20
+ParetoFlow off axis (~3.97)
+SLOP off axis (~3.39)
+Q  #
+10−2
+10−1
+Steering strength
+0.2
+0.4
+0.6
+ParetoFlow and SLOP omitted
+KLKDE  #
+MARTINI (value)
+MARTINI (preference)
+uniform
+best surrogate
+ParetoFlow
+SLOP
+prior p1; Á
+Figure 4: Language steering. Lower is better for all metrics. Triangles indicate values beyond the plotted range.
+Table 1: ImageNet steering. Bold/underline mark best/second-best deployable results within each regime.
+On shared rows, ∗/† denote values/preferences, with superscripts/subscripts indicating first/second.
+Method
+KLg
+Energy ↓
+Sl. W1 ↓
+KLN ↓
+KLKDE ↓
+|gap| ↓
+Q ↓
+Prior p1,ϕ
+–
+0.0683
+0.0080
+0.752
+0.658
+7.51
+1.000
+ParetoFlow
+–
+0.0885
+0.0088
+0.825
+0.937
+5.35
+0.844
+SLOP
+0.520
+0.1200
+0.0098
+0.168∗
+0.170
+1.98∗†
+0.364
+ReNO
+0.553
+0.0503
+0.0069
+0.197
+0.166∗
+2.10
+0.244∗†
+Uniform
+0.436∗
+†
+0.0603
+0.0074
+0.605
+0.635
+2.73
+0.238∗†
+BSS (Val.)
+0.514
+0.0498
+0.0068
+0.217
+0.183
+2.57
+0.354
+MARTINI (Val.)
+0.466
+0.0321
+0.0058
+0.034
+0.049
+1.27
+0.359
+BSS (Pref.)
+0.440
+0.0423
+0.0065
+0.135
+0.133
+2.04
+0.316
+MARTINI (Pref.) 0.423
+0.0372
+0.0061
+0.093
+0.121
+1.71
+0.297
+Results. Held-out loss selects an MLP for values and a linear composition for preferences (Figure 5),
+and both attain the lowest reported composition KL (Figure 6). At steering strength 0.03, both
+outperform the displayed deployable baselines in energy distance and Q (Figure 4). Increasing
+BSS guidance (the same BSS was chosen in both regimes) worsens reward-marginal KL and Q,
+with both exceeding the prior. Stronger MARTINI guidance improves reward-marginal KL but
+eventually raises energy distance above the prior: closer reward-marginal matching need not improve
+embedding-space fidelity. Additional results and generated examples appear in Tables 3 and 15.
+4.2
+TEXT-TO-IMAGE
+We use FMRG (Huang et al., 2026) to steer a distilled, class-conditioned ImageNet flow map toward
+text prompts, fitting a separate composition for each class–prompt pair, as shown in Figure 3 (left).
+Setup.
+Our surrogates are HPSv2 (Wu et al., 2023), ImageReward (Xu et al., 2023),
+PickScore (Kirstain et al., 2023), and CLIP (Radford et al., 2021), matching ReNO’s reward
+set (Eyring et al., 2024). The oracle R∗measures image–prompt alignment using Skywork-VL-
+Reward 7B (Wang et al., 2025a). Feedback comprises n = 32 scalar values or M = 128 rankings.
+Recovery uses all 19 class–prompt pairs while the main steering comparison uses seven with reference
+ESS > 1000 in both regimes. For each pair and method, sample metrics use the lowest-energy eval-
+uated strength. All-pair results and cutoff sensitivity appear in §E, and implementation details in §B.
+Results. Held-out loss selects a linear composition in both regimes. On these seven pairs, MARTINI
+achieves the lowest embedding-space and reward-marginal distances and absolute reward gap in both
+regimes (Table 1). With values, KLN and KLKDE are reduced by factors of 4.9 and 3.4, respectively,
+relative to the best baselines. Only uniform weighting achieves lower KLg (0.436 versus 0.466). With
+preferences, MARTINI also achieves the lowest KLg (0.423). Both selected compositions also outper-
+form BSS, uniform weighting, and ReNO in mean energy at shared strengths λ ∈{2, 3, 5} (Table 5).
+Full sweeps and additional feedback budget comparisons appear in §E. Qualitative results are in §J.2.
+8
+
+
+Preprint. Under Review.
+Table 2: Protein–ligand steering on post-2023 Runs N’ Poses. 15 particles, 5 seeds, rewards un-normalised.
+Method
+Success Rate ↑
+RMSD< 2 Å ↑
+PB Valid ↑
+lDDT-PLI ↑
+Diversity ↑
+Boltz1 potentials
+59.5
+59.5
+99.9
+65.2
+0.0108
+DeCAF potentials
+61.8
+61.8
+98.3
+65.7
+0.0132
+smina + potentials
+61.8
+61.8
+98.2
+65.4
+0.0129
+DeCAF-MARTINI (smina, potentials)
+62.7
+62.8
+93.3
+66.5
+0.0139
+DeCAF-MARTINI (5 surrogates)
+64.5
+64.5
+91.8
+67.6
+0.0133
+4.3
+PROTEIN-LIGAND CO-FOLDING
+Protein–ligand cofolding provides a setting with experimental scalar feedback. We ask whether a sur-
+rogate composition learned from binding-affinity measurements can improve the accuracy and physi-
+cal validity of the jointly generated poses. Qualitative results shown in Figure 3 (right) and Figure 21.
+Setup. Using the value regime, we fit a composition of five surrogates to experimental pKD mea-
+surements from HiQBind (Wang et al., 2025b), restricting the feedback set to PoseBusters-valid
+monomers and multimers (Buttenschoen et al., 2024). The fitted composition g ◦R then steers the
+DeCAF-Boltz flow map (Scarpellini et al., 2026), distilled from Boltz-1 (Wohlwend et al., 2025), with-
+out further experimental feedback. We evaluate on 186 complexes from the post-2023 subset of Runs
+N’ Poses (Škrinjar et al., 2026), beyond Boltz-1’s training cutoff. As these evaluation complexes lack
+measured affinities, we assess transfer through pose accuracy and physical validity, reporting best@1
+metrics averaged over five seeds. Dataset filtering, surrogate definitions, and steering details are in §F.
+Metrics.
+Our success rate is the percentage of predictions with RMSD below 2 Å that pass
+PoseBusters validity checks (Buttenschoen et al., 2024). We also report accuracy and validity
+rates alongside lDDT-PLI, which measures local protein–ligand distance agreement within a 6 Å
+pocket (Mariani et al., 2013), as well as structural diversity detailed in §F.3.
+Results. The BSS is smina (Figure 8). MARTINI (correlation g) achieves the highest reported best@1
+(§F.3) success rate (64.5%) over both potentials-only steering and smina + potentials by 2.7 percentage
+points (Table 2). Relative to potentials-only, lDDT-PLI improves by 1.9 points, indicating better
+local geometry, with similar diversity (0.0133 versus 0.0132). PB-validity falls by 6.5 points, even
+though MARTINI trades validity for accuracy, all the accurate predictions also satisfy validity criteria.
+Ablation study results and success rates for reward-selected poses are presented in Appendix F.4.
+5
+RELATED WORK
+Reward-based control. Generative models can be aligned through reinforcement learning (Black
+et al., 2024) or preference optimisation (Rafailov et al., 2023; Wallace et al., 2024; Bai et al., 2026),
+and steered at inference through guidance (Bansal et al., 2023; Singhal et al., 2025), posterior
+sampling (Chung et al., 2023), or flow-map optimal control (Huang et al., 2026).
+MARTINI
+complements these methods by learning the steering reward from offline oracle feedback.
+Reward compositions and limited feedback.
+Reward ensembles can mitigate over-
+optimisation (Coste et al., 2024).
+ReNO uses fixed reward weights (Eyring et al., 2024),
+while SLOP calibrates pooled scores to maximize estimated gold reward (Wang et al., 2026). We
+study approximation of a fixed oracle tilt from values or rankings, characterizing the information
+limit imposed by the surrogates. Multi-objective methods balance distinct rewards (Ramé et al., 2023;
+Yuan et al., 2025). Limited oracle access also motivates query-efficient fine-tuning (Uehara et al.,
+2024), protein steering (Yang et al., 2025), and optimisation over generated samples (Willis et al.,
+2025). We use feedback to learn how fixed surrogates predict a single oracle, keeping the generator
+unchanged. Complementing analyses of proxy error and ensembling (Paes et al., 2026), we relate
+fitting loss and surrogate information limits to steering fidelity and reward bounds.
+6
+CONCLUSION
+MARTINI learns surrogate compositions offline from oracle values or rankings for reuse across
+compatible steerers without inference-time oracle queries. Our theory links fitting to ideal-tilt
+9
+
+
+Preprint. Under Review.
+fidelity and reward improvement, identifying surrogate information limits and conditions for useful
+steering despite imperfect recovery. Experiments demonstrate benefits across language, images,
+and protein–ligand cofolding. KL and reward expansions are local in β, with larger tilts assessed
+empirically. Preference guarantees require convex, range-bounded classes, and their tightness
+remains unassessed. Robustness beyond synthetic PL rankings remains untested. ImageNet guidance
+uses per-pair reference energy, leaving selection without oracle-scored references an open task.
+10
+
+
+Preprint. Under Review.
+AI USE STATEMENT
+We used generative AI tools to develop and review mathematical statements and proofs and to
+support research execution, including implementation and feedback on experimental methodology,
+and interpretation of results. Additionally, we used these tools to review, draft, and improve the
+clarity of the manuscript. The authors take responsibility for the final content of this work, including
+all text, mathematical claims, results, and artifacts produced with AI assistance.
+ETHICS STATEMENT
+Steering pretrained generative models, including language models, can amplify biases or errors in
+the base model, oracle, or surrogate rewards, and can generate harmful content. Improvements in
+measured reward do not establish safety, fairness, or factual correctness. Likewise, computational
+protein–ligand metrics do not replace experimental validation. Applications require task-specific
+evaluation and appropriate safeguards.
+REPRODUCIBILITY STATEMENT
+The fitting objectives and steering procedure are described in §3.2, with composition-fitting details
+in §A. Experimental implementation and metric estimation are described in §B and §C. Formal
+assumptions and proofs are provided in §G.1 and §H. We commit to publicly releasing the code and
+supporting materials needed to reproduce our methods and experimental results upon acceptance.
+11
+
+
+Preprint. Under Review.
+REFERENCES
+M. S. Albergo and E. Vanden-Eijnden. Building normalizing flows with stochastic interpolants, 2023.
+URL https://arxiv.org/abs/2209.15571.
+J. Bai, X. Yu, M. Xu, W. Lu, X. Pan, K. Maeng, D. Kifer, J. Wang, and Y. Wang. Towards better
+optimization for listwise preference in diffusion models. In International Conference on Learning
+Representations, volume 2026, pages 133254–133282, 2026.
+A. Bansal, H.-M. Chu, A. Schwarzschild, S. Sengupta, M. Goldblum, J. Geiping, and T. Goldstein.
+Universal guidance for diffusion models, 2023. URL https://arxiv.org/abs/2302.
+07121.
+M. Biasini, T. Schmidt, S. Bienert, V. Mariani, G. Studer, J. Haas, N. Johner, A. D. Schenk,
+A. Philippsen, and T. Schwede. OpenStructure: an integrated software framework for computa-
+tional structural biology. Acta Crystallographica Section D, 69(5):701–709, May 2013. doi: 10.
+1107/S0907444913007051. URL https://doi.org/10.1107/S0907444913007051.
+K. Black, M. Janner, Y. Du, I. Kostrikov, and S. Levine. Training diffusion models with reinforcement
+learning. In International Conference on Learning Representations, 2024.
+R. A. Bradley and M. E. Terry. Rank analysis of incomplete block designs: I. the method of paired
+comparisons. Biometrika, 39(3/4):324–345, 1952.
+M. Buttenschoen, G. M. Morris, and C. M. Deane. PoseBusters: AI-based docking methods fail
+to generate physically valid poses or generalise to novel sequences. Chemical Science, 15(9):
+3130–3139, 2024. doi: 10.1039/D3SC04185A.
+C. Chelba, T. Mikolov, M. Schuster, Q. Ge, T. Brants, P. Koehn, and T. Robinson.
+One bil-
+lion word benchmark for measuring progress in statistical language modeling. arXiv preprint
+arXiv:1312.3005, 2013.
+V. B. Chen, W. B. Arendall, J. J. Headd, D. A. Keedy, R. M. Immormino, G. J. Kapral, L. W.
+Murray, J. S. Richardson, and D. C. Richardson. Molprobity: all-atom structure validation for
+macromolecular crystallography. Acta Crystallographica Section D: Biological Crystallography,
+66(1):12–21, 2010. doi: 10.1107/S0907444909042073.
+H. Chung, J. Kim, M. T. McCann, M. L. Klasky, and J. C. Ye. Diffusion posterior sampling for
+general noisy inverse problems. In International Conference on Learning Representations, 2023.
+URL https://arxiv.org/abs/2209.14687.
+T. Coste, U. Anwar, R. Kirk, and D. Krueger. Reward model ensembles help mitigate overoptimization.
+In International Conference on Learning Representations, 2024.
+J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova.
+Bert: Pre-training of deep bidirectional
+transformers for language understanding. In Proceedings of the 2019 conference of the North
+American chapter of the association for computational linguistics: human language technologies,
+volume 1 (long and short papers), pages 4171–4186, 2019.
+A. Doucet, N. de Freitas, and N. Gordon. An introduction to sequential monte carlo methods. In
+A. Doucet, N. de Freitas, and N. Gordon, editors, Sequential Monte Carlo Methods in Practice,
+pages 3–14. Springer New York, New York, NY, 2001. ISBN 978-1-4757-3437-9. doi: 10.1007/
+978-1-4757-3437-9_1. URL https://doi.org/10.1007/978-1-4757-3437-9_1.
+J. Eisenstein, C. Nagpal, A. Agarwal, A. Beirami, A. D’Amour, D. Dvijotham, A. Fisch, K. Heller,
+S. Pfohl, D. Ramachandran, et al. Helping or herding? reward model ensembles mitigate but do
+not eliminate reward hacking. arXiv preprint arXiv:2312.09244, 2023.
+K. Ethayarajh, W. Xu, N. Muennighoff, D. Jurafsky, and D. Kiela. KTO: Model alignment as prospect
+theoretic optimization. arXiv preprint arXiv:2402.01306, 2024.
+L. Eyring, S. Karthik, K. Roth, A. Dosovitskiy, and Z. Akata. Reno: Enhancing one-step text-to-
+image models through reward-based noise optimization, 2024. URL https://arxiv.org/
+abs/2406.04312.
+12
+
+
+Preprint. Under Review.
+L. Gao, J. Schulman, and J. Hilton. Scaling laws for reward model overoptimization. In International
+Conference on Machine Learning, 2023.
+J. Ho, A. Jain, and P. Abbeel. Denoising diffusion probabilistic models, 2020. URL https:
+//arxiv.org/abs/2006.11239.
+J. Y. Huang, J. Lin, S. Shah, K. Nair, and N. M. Boffi. How to guide your flow: Few-step alignment
+via flow map reward guidance, 2026. URL https://arxiv.org/abs/2604.27147.
+Y. Kirstain, A. Polyak, U. Singer, S. Matiana, J. Penna, and O. Levy. Pick-a-pic: An open dataset of
+user preferences for text-to-image generation. Advances in neural information processing systems,
+36:36652–36663, 2023.
+D. Koes, M. Baumgartner, and C. Camacho. Lessons learned in empirical scoring with smina from
+the csar 2011 benchmarking exercise. Journal of chemical information and modeling, 53(8):
+1893–1904, 2013. doi: 10.1021/ci300604z.
+C. Lee, J. Yoo, M. Agarwal, S. Shah, J. Huang, A. Raghunathan, S. Hong, N. M. Boffi, and J. Kim.
+Flow map language models: One-step language modeling via continuous denoising, 2026a. URL
+https://arxiv.org/abs/2602.16813.
+K. Lee, S. Yu, and J. Shin. Decoupled meanflow: Turning flow models into flow maps for accelerated
+sampling. In International Conference on Learning Representations, volume 2026, pages 64555–
+64583, 2026b.
+Y. Lipman, R. T. Q. Chen, H. Ben-Hamu, M. Nickel, and M. Le. Flow matching for generative
+modeling, 2022. URL https://arxiv.org/abs/2210.02747.
+Q. Liu. Rectified flow: A marginal preserving approach to optimal transport. arXiv preprint
+arXiv:2209.14577, 2022. doi: 10.48550/arXiv.2209.14577.
+R. D. Luce. Individual Choice Behavior: A Theoretical Analysis. Wiley, New York, 1959.
+V. Mariani, M. Biasini, A. Barbato, and T. Schwede. lDDT: a local superposition-free score for
+comparing protein structures and models using distance difference tests. Bioinformatics, 29(21):
+2722–2728, 2013. doi: 10.1093/bioinformatics/btt473.
+M. Oquab, T. Darcet, T. Moutakanni, H. Vo, M. Szafraniec, V. Khalidov, P. Fernandez, D. Haziza,
+F. Massa, A. El-Nouby, et al. Dinov2: Learning robust visual features without supervision. arXiv
+preprint arXiv:2304.07193, 2023.
+L. M. Paes, N. Mackraz, B.-J. Theobald, and F. Danieli. Theoretical limits of language model
+alignment. arXiv preprint arXiv:2605.07105, 2026.
+Z. Pan, P. Potaptchik, W. Yao, M. S. Albergo, and J. Pidstrigach. Itô maps for any-step sdes, 2026.
+URL https://arxiv.org/abs/2606.11156.
+S. Passaro, G. Corso, J. Wohlwend, M. Reveiz, S. Thaler, V. R. Somnath, N. Getz, T. Portnoi, J. Roy,
+H. Stark, D. Kwabi-Addo, D. Beaini, T. Jaakkola, and R. Barzilay. Boltz-2: Towards accurate
+and efficient binding affinity prediction. bioRxiv, 2025. doi: 10.1101/2025.06.14.659707. URL
+https://www.biorxiv.org/content/10.1101/2025.06.14.659707v1.
+A. Pathak, R. Theagarajan, M. M. Rizqi, A. S. Nugraha, T. Boruah, Pratiksha, H. Kumar, B. Naik,
+S. Yadav, A. K. Jha, et al. Ai-enabled drug and molecular discovery: computational methods,
+platforms, and translational horizons. Discover Molecules, 2(1):32, 2025.
+R. L. Plackett. The analysis of permutations. Journal of the Royal Statistical Society. Series C
+(Applied Statistics), 24(2):193–202, 1975.
+P. Potaptchik, A. Saravanan, A. Mammadov, A. Prat, M. S. Albergo, and Y. W. Teh. Meta flow maps
+enable scalable reward alignment, 2026. URL https://arxiv.org/abs/2601.14430.
+13
+
+
+Preprint. Under Review.
+Qwen, :, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei,
+H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang,
+L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren,
+Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu. Qwen2.5 technical report,
+2025. URL https://arxiv.org/abs/2412.15115.
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin,
+J. Clark, G. Krueger, and I. Sutskever. Learning transferable visual models from natural language
+supervision, 2021. URL https://arxiv.org/abs/2103.00020.
+R. Rafailov, A. Sharma, E. Mitchell, S. Ermon, C. D. Manning, and C. Finn. Direct preference
+optimization: Your language model is secretly a reward model, 2023. URL https://arxiv.
+org/abs/2305.18290.
+A. Ramé, G. Couairon, M. Shukor, C. Dancette, J.-B. Gaya, L. Soulier, and M. Cord. Rewarded
+soups: Towards pareto-optimal alignment by interpolating weights fine-tuned on diverse rewards.
+In Advances in Neural Information Processing Systems, 2023. arXiv:2306.04488.
+A. O. Rausch, M. I. Freiberger, C. O. Leonetti, D. M. Luna, L. G. Radusky, P. G. Wolynes, D. U.
+Ferreiro, and R. G. Parra. Frustratometer: an r-package to compute local frustration in protein
+structures, point mutants and md simulations.
+Bioinformatics, 37(18):3038–3040, 09 2021.
+ISSN 1367-4803. doi: 10.1093/bioinformatics/btab176. URL https://doi.org/10.1093/
+bioinformatics/btab176.
+N. Reimers and I. Gurevych. Sentence-bert: Sentence embeddings using siamese bert-networks. In
+Proceedings of the 2019 conference on empirical methods in natural language processing and
+the 9th international joint conference on natural language processing (EMNLP-IJCNLP), pages
+3982–3992, 2019.
+V. Sanh, L. Debut, J. Chaumond, and T. Wolf. Distilbert, a distilled version of bert: smaller, faster,
+cheaper and lighter. arXiv preprint arXiv:1910.01108, 2019.
+G. Scarpellini, R. Shprints, P. Holderrieth, J. Nam, P. Murugan, R. Gómez-Bombarelli, T. Jaakkola,
+M. Al-Shedivat, N. M. Boffi, and A. J. Bose. Few-step cofolding with all-atom flow maps, 2026.
+URL https://arxiv.org/abs/2606.08375.
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov. Proximal policy optimization
+algorithms, 2017. URL https://arxiv.org/abs/1707.06347.
+R. Singhal, Z. Horvitz, R. Teehan, M. Ren, Z. Yu, K. McKeown, and R. Ranganath. A General
+Framework for Inference-time Scaling and Steering of Diffusion Models, 2025. URL https:
+//arxiv.org/abs/2501.06848.
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole. Score-based generative
+modeling through stochastic differential equations. In International Conference on Learning
+Representations, 2021. URL https://arxiv.org/abs/2011.13456.
+M. Uehara, Y. Zhao, K. Black, E. Hajiramezanali, G. Scalia, N. L. Diamant, A. M. Tseng, S. Levine,
+and T. Biancalani. Feedback efficient online fine-tuning of diffusion models. In International
+Conference on Machine Learning, 2024.
+M. Uehara, Y. Zhao, C. Wang, X. Li, A. Regev, S. Levine, and T. Biancalani. Inference-time
+alignment in diffusion models with reward-guided generation: Tutorial and review. arXiv preprint
+arXiv:2501.09685, 2025.
+P. Škrinjar, J. Eberhardt, G. Studer, G. Tauriello, T. Schwede, and J. Durairaj. Evaluating gen-
+eralization in protein–ligand cofolding methods. Nature Structural & Molecular Biology, 33:
+782–794, 2026. doi: 10.1038/s41594-026-01797-5. URL https://doi.org/10.1038/
+s41594-026-01797-5.
+B. Wallace, M. Dang, R. Rafailov, L. Zhou, A. Lou, S. Purushwalkam, S. Ermon, C. Xiong, S. Joty,
+and N. Naik. Diffusion model alignment using direct preference optimization. In IEEE/CVF
+Conference on Computer Vision and Pattern Recognition, 2024.
+14
+
+
+Preprint. Under Review.
+X. Wang, P. Wang, J. Pei, W. Shen, Y. Peng, Y. Hao, W. Qiu, A. Jian, T. Xie, X. Song, et al. Skywork-
+vl reward: An effective reward model for multimodal understanding and reasoning. arXiv preprint
+arXiv:2505.07263, 2025a.
+Y. Wang, K. Sun, J. Li, X. Guan, O. Zhang, D. Bagni, Y. Zhang, H. A. Carlson, and T. Head-Gordon.
+A workflow to create a high-quality protein–ligand binding dataset for training, validation, and
+prediction tasks. Digital Discovery, 4(5):1209–1220, 2025b.
+Y. Wang, J. Liu, and T. Koike-Akino. Temper and tilt lead to slop: Reward hacking mitigation with
+inference-time alignment. arXiv preprint arXiv:2605.13537, 2026.
+A. Warstadt, A. Singh, and S. R. Bowman. Cola: The corpus of linguistic acceptability (with added
+annotations). 2019.
+S. Willis, P. Duckworth, J. Simons, A. Kalisz, K. Sinkovics, N. Ghenassia, S. Surana, H. T. Oldroyd,
+A. I. Stere, D. D. Margineantu, C. H. Ek, H. Moss, and E. Bodin. Sample-efficient optimisation over
+the outputs of generative models, 2025. URL https://arxiv.org/abs/2509.23800.
+J. Wohlwend, G. Corso, S. Passaro, N. Getz, M. Reveiz, K. Leidal, W. Swiderski, L. Atkinson,
+T. Portnoi, I. Chinn, J. Silterra, T. Jaakkola, and R. Barzilay. Boltz-1 democratizing biomolecular
+interaction modeling. bioRxiv, 2025. doi: 10.1101/2024.11.19.624167. URL https://www.
+biorxiv.org/content/early/2025/05/06/2024.11.19.624167.
+B. Wood, M. Dzamba, X. Fu, M. Gao, M. Shuaibi, L. Barroso-Luque, K. Abdelmaqsoud,
+V. Gharakhanyan, J. Kitchin, D. S. Levine, et al. Uma: A family of universal models for atoms.
+Advances in Neural Information Processing Systems, 38:129391–129427, 2025.
+X. Wu, Y. Hao, K. Sun, Y. Chen, F. Zhu, R. Zhao, and H. Li. Human preference score v2: A
+solid benchmark for evaluating human preferences of text-to-image synthesis. arXiv preprint
+arXiv:2306.09341, 2023.
+J. Xu, X. Liu, Y. Wu, Y. Tong, Q. Li, M. Ding, J. Tang, and Y. Dong. Imagereward: Learning and
+evaluating human preferences for text-to-image generation, 2023. URL https://arxiv.org/
+abs/2304.05977.
+J. Yang, W. Chu, D. Khalil, R. Astudillo, B. Wittmann, F. Arnold, and Y. Yue. Steering generative
+models with experimental data for protein fitness optimization. Advances in Neural Information
+Processing Systems, 38:145383–145421, 2025.
+J. I. Yellott. The relationship between luce’s choice axiom, thurstone’s theory of comparative
+judgment, and the double exponential distribution. Journal of Mathematical Psychology, 15(2):109–
+144, 1977. ISSN 0022-2496. doi: https://doi.org/10.1016/0022-2496(77)90026-8. URL https:
+//www.sciencedirect.com/science/article/pii/0022249677900268.
+Y. Yuan, C. Chen, C. Pal, and X. Liu. Paretoflow: Guided flows in multi-objective optimization. In
+International Conference on Learning Representations, 2025. arXiv:2412.03718.
+S. Zhang, L. Dong, X. Li, S. Zhang, X. Sun, S. Wang, J. Li, R. Hu, T. Zhang, G. Wang, et al.
+Instruction tuning for large language models: A survey. ACM Computing Surveys, 58(7):1–36,
+2026.
+Y. Zhang and J. Skolnick. Scoring function for automated assessment of protein structure template
+quality. Proteins: Structure, Function, and Bioinformatics, 57(4):702–710, 2004. doi: https:
+//doi.org/10.1002/prot.20264. URL https://onlinelibrary.wiley.com/doi/abs/
+10.1002/prot.20264.
+L. Zheng, W.-L. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. P. Xing,
+H. Zhang, J. E. Gonzalez, and I. Stoica. Judging LLM-as-a-judge with MT-Bench and Chatbot
+Arena. arXiv preprint arXiv:2306.05685, 2023. URL https://arxiv.org/abs/2306.
+05685.
+15
+
+
+Preprint. Under Review.
+APPENDIX CONTENTS
+A
+Learning the composition g: derivations · · · · · · · · · · · · · · · · · · · · · · · · · · · · · 16
+B
+Implementation details for image and language generation · · · · · · · · · · · · · · · · · · · · 18
+C
+Metric estimation for image and language generation · · · · · · · · · · · · · · · · · · · · · · · 21
+D
+Composition selection and recovery
+· · · · · · · · · · · · · · · · · · · · · · · · · · · · · · 23
+E
+Additional results and sensitivity analyses · · · · · · · · · · · · · · · · · · · · · · · · · · · · 25
+F
+Protein–ligand cofolding · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · 31
+G
+Additional theoretical results · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · 34
+H
+Proofs
+· · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · 38
+I
+Toy Examples · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · 43
+J
+Qualitative examples
+· · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · 47
+K
+Relation to multi-objective optimisation · · · · · · · · · · · · · · · · · · · · · · · · · · · · · 54
+A
+LEARNING THE COMPOSITION g: DERIVATIONS
+We consider correlation weighting, linear compositions, and MLPs. Linear and MLP compositions
+minimize the value or preference loss in Equations (3) and (4), with regularization. Correlation
+weights are computed directly from the feedback. The fitted composition is then held fixed during
+steering.
+A.1
+FITTING OBJECTIVES
+For value feedback, write yi = R∗(xi) and fi = g(R(xi)). The objective is
+LMSE(g) = 1
+n
+n
+X
+i=1
+(fi −yi)2.
+For preferences, let x(j)
+(i) be the candidate ranked ith in query j, with the most preferred first, and
+write f (j)
+(i) = g(R(x(j)
+(i))). The PL loss is
+LPL(g) = −1
+M
+M
+X
+j=1
+m−1
+X
+i=1
+"
+f (j)
+(i) −log
+m
+X
+l=i
+ef (j)
+(l)
+#
+.
+It is convex in the candidate scores and invariant to a common additive shift. Proposition 2 gives its
+derivatives.
+A.2
+CORRELATION WEIGHTING
+The composition is ˆg(R) = Pk
+j=1 wjRj. For value feedback, ρj is the empirical Pearson correlation
+between Rj and the oracle values. For preferences, it is the Spearman correlation with the observed
+rankings, assigning larger ordinal scores to more preferred candidates. We retain signed correlations
+and use
+wj =
+(
+ρj/ Pk
+l=1 ρl,
+Pk
+l=1 ρl > 0,
+1/k,
+otherwise.
+This is a weighting heuristic rather than, in general, a minimizer of either fitting loss.
+A.3
+LINEAR COMPOSITIONS
+Let gw(R) = w⊤R and let Φ have rows R(xi)⊤. For values, ridge regression minimizes
+1
+2∥Φw −y∥2
+2 + λ
+2 ∥w∥2
+2,
+λ > 0,
+16
+
+
+Preprint. Under Review.
+with solution
+ˆw = (Φ⊤Φ + λI)−1Φ⊤y.
+For preferences, we minimize
+LPL(gw) + λPL
+2 ∥w∥2
+2,
+λPL > 0.
+Both objectives are strictly convex and coercive, so each has a unique minimizer. The fitted score is
+ˆg(R) = ˆw⊤R.
+A.4
+MLP COMPOSITIONS
+We fit a neural composition gθ using the appropriate value or preference objective with weight decay,
+and set ˆg = gˆθ after training. Unlike the linear family, this parameterization can represent nonlinear
+relationships between the surrogates and the oracle.
+In practice, we use the same small network in all image and language experiments. The MLP family
+maps the four surrogate scores, standardised over the pool, through two hidden layers of 64 units
+with tanh activations to a scalar (4 →64 →64 →1, no dropout). It is trained full-batch from a
+single initialisation using Adam with learning rate 3 × 10−3 and weight decay 10−3.
+17
+
+
+Preprint. Under Review.
+B
+IMPLEMENTATION DETAILS FOR IMAGE AND LANGUAGE GENERATION
+Algorithm 1 MARTINI: fit a surrogate composition and steer
+Require: pretrained base model with terminal law p1,ϕ; surrogates R; feedback Dfeedback; composi-
+tion family G; tilt strength β; steerer STEER
+1: Offline fitting: Evaluate R on the feedback candidates in Dfeedback
+2: if correlation weighting is selected then
+3:
+Construct ˆg from empirical correlations (§A)
+4: else
+5:
+Set ℓ←LMSE for values (3) or ℓ←LPL for preferences (4)
+6:
+Fit ˆg ∈G using ℓand family-specific regularization
+7: Inference:
+8: return STEER(base model, ˆg ◦R, β)
+We give implementation details for the experiments in §4. Additional results appear in §E.
+Compute. Experiments were run on NVIDIA H100-80GB GPUs, with independent experiments
+distributed across devices.
+B.1
+IMAGENET
+We use the released model of Potaptchik et al. (2026) (mfm-xl2), a SiT-XL/2 transformer distilled
+from the Decoupled MeanFlow ImageNet model (Lee et al., 2026b). It generates class-conditional
+ImageNet images at 256 × 256 in the latent space of the Stable Diffusion VAE (sd-vae-ft-mse;
+latents of shape 4 × 32 × 32, scaled by 0.18215), with noise at t = 0, data at t = 1 and the linear
+interpolant xt = (1 −t)ε + t x1. The model is conditioned only on the ImageNet class label: the text
+prompt never enters the model, and acts only through the rewards — R∗and the surrogates score the
+decoded image against it.
+Reward models. The oracle uses Skywork/Skywork-VL-Reward-7B. The four surrogates
+are RE-N-Y/hpsv21, RE-N-Y/ImageReward, openai/clip-vit-base-patch16, and
+yuvalkirstain/PickScore_v1. For each image and steering prompt, the oracle score is the
+Yes/No logit margin,
+R∗(x) = logitYes(x) −logitNo(x).
+Target. q∗∝p1,ϕ exp(βz(R∗)), β = 1, is estimated by self-normalised reweighting of 8192
+independent draws from the model’s reverse SDE (32 steps); the effective sample size of these
+weights is reported per class in Table 4.
+Feedback and fitting. ImageNet uses n=32 scalar R∗evaluations (value) or M=128 ranking queries
+of m=8 candidates each (preference), drawn from the class’s pool. We fit separate composition
+coefficients for each class–prompt pair. A fifth of the value labels (6) and a quarter of the preference
+queries (32, built from images disjoint from the fitting queries) are held out; every family is fit on the
+remainder, and the family is selected by held-out MSE (value) or Plackett–Luce loss (preference),
+averaged over all 19 pairs. The linear family is selected in both regimes. The held-out part is used
+only for this selection and is not refit. loss.
+Preference utilities. The synthetic annotator sorts z(R∗) + σϵ with independent standard Gumbel
+noise ϵ and σ = 0.5, which samples Plackett–Luce rankings with utilities z(R∗)/σ. We standardise
+R∗once over the reference pool, fixing its scale across queries. In our eight-candidate calibration (a
+standard-normal oracle), σ = 0.5 gives 82.7% pairwise agreement with the unperturbed oracle order.
+This noise level is loosely informed by the approximately 81% non-tie human agreement reported on
+MT-Bench (Zheng et al., 2023); agreement with an oracle order and agreement between annotators
+are different quantities. A fitted utility f is expressed in PL units, so the tilt it implies on the reference
+scale is exp(βσf). In practice we standardise the fitted composition over the pool before use, so the
+steering reward and KLg both use exp(βz(f)), which coincides with exp(βσf) when f recovers the
+utility exactly.
+Pools and data splits. For each class–prompt pair and feedback regime, we draw an independent
+pool of 8192 samples and score the oracle and surrogates. Within each regime, the pool supplies
+18
+
+
+Preprint. Under Review.
+feedback candidates, normalization statistics, and the importance-weighted reference §C. Held-out
+recovery is measured on pool rows that no fit or selector touched, subsampled to at most 4000. Oracle
+and surrogate scores are computed once per pool sample and cached. The prior p1,ϕ is 64 fresh draws
+from the FMRG sampler at zero strength, and BoN, sBoN and SLOP select from an independent
+pool of 4096 such draws, never from the reference they are scored against; these rows come from a
+separate run with its own 8192-draw reference.
+Steering and strength selection. We use FMRG for ImageNet and sweep its guidance strength
+λ ∈{2, 3, 5, 8} separately from the target tilt strength β = 1. Each run takes 32 kernel transitions
+with a reward-gradient step after each, the reward evaluated on one look-ahead endpoint (one noise
+draw, one flow-map jump), and each setting is a single run of 64 samples, scored afresh. For each
+method and class–prompt pair, all generated-sample metrics are reported at the evaluated strength
+with the lowest embedding-space energy distance to q∗. BoN is reported at fixed rungs (n=8, 32),
+and SLOP at 16 candidates per sample, the rung matched to MARTINI’s inference cost, calibrated on
+the same n=32 labels. This selection uses the oracle-scored reference and describes performance
+within the evaluated sweep.
+Baselines. BSS is selected from training feedback via either PCC or SCC for value and pref-
+erence regimes respectively. Uniform weighting combines the normalized surrogate scores with
+equal weights. For images, ReNO uses its published fixed reward weights within the same FMRG
+pipeline (Eyring et al., 2024). This compares reward mixtures rather than reproducing ReNO’s
+original noise-optimization procedure. We also compare ParetoFlow (Yuan et al., 2025) and SLOP’s
+calibrated selection protocol (Wang et al., 2026). SLOP is calibrated using numerical oracle values;
+its preference-regime results are therefore a value-calibrated reference. BoN selects the highest-R∗
+candidate among N candidates, requiring N oracle evaluations per output.
+B.2
+LANGUAGE GENERATION
+We use the released FMLM checkpoint (Lee et al., 2026a) (david3684/FMLM-B-LM1B), trained
+on One Billion Words (Chelba et al., 2013). Generation is unconditional, with 128 tokens from
+the 30,522-token bert-base-uncased vocabulary generated in 8 flow-map steps, at softmax
+temperature 1 and without per-step noise injection (γ = 0). We use FMRG steering and feedback
+budgets of n = 256 numerical rewards or M = 256 rankings of m = 8 candidates, labelled by the
+same Plackett–Luce annotator as ImageNet (σ = 0.5). Each evaluated setting is run with 5 seeds
+of 256 generated samples; metrics are computed per seed and averaged, and |gap| is taken from the
+seed-averaged mean.
+The oracle is negative per-sequence generative perplexity under Qwen2.5-1.5B (Qwen et al.,
+2025), scored in fp32 after removing the [CLS] separators that LM1B’s sentence packing
+leaves inside each sample.
+The surrogates are unmasked pseudo-log-likelihoods from BERT
+and DistilBERT (bert-base-uncased, distilbert-base-uncased; the mean log-
+probability the MLM head assigns to each token actually present, in a single forward pass with-
+out masking), a CoLA acceptability score (the acceptable-minus-unacceptable logit margin of
+textattack/bert-base-uncased-CoLA), and the empirical unigram entropy of the sample.
+All four share the generator’s vocabulary, so their differentiable extensions read a distribution over
+tokens directly: it is multiplied into each scorer’s word-embedding matrix (between the [CLS] and
+[SEP] embeddings), and the entropy is taken of the position-averaged distribution. On one-hot
+inputs these reduce exactly to the discrete scores. Held-out loss selects an MLP for values and a
+linear composition for preferences.
+Pools and steering. For each run, 2048 unsteered samples are scored by the oracle and all surrogates:
+1536 rows supply the feedback and 512 are held out for recovery, and the whole pool, importance-
+weighted, forms the q∗reference (ESS 1155 of 2048). FMRG follows each flow-map step with two
+unit-normalised reward-gradient steps, x ←x + λ ∇xr/∥∇xr∥, where r is evaluated on the endpoint
+prediction Xt,1(x) — one call of the two-time denoiser, on the vocabulary simplex — at every step.
+The strength grid is λ ∈{0.00375, 0.0075, 0.015, 0.03, 0.06, 0.125, 0.25, 0.5, 1, 2, 4}; figures and
+tables show λ ≤0.125, where the methods separate. Candidates may recur across ranking queries,
+so the M = 256 groups contain 2048 candidate occurrences rather than 2048 distinct samples.
+19
+
+
+Preprint. Under Review.
+B.3
+LICENSES AND ATTRIBUTION
+The MFM and DMF checkpoints, SiT, SD-VAE-ft-MSE, SD-VAE-ft-EMA, Skywork-VL-Reward-
+7B, and CLIP are released under MIT licenses; the PickScore project repository also uses MIT.
+The Qwen2.5-VL-7B-Instruct backbone and the upstream HPSv2.1 and ImageReward models use
+Apache-2.0; the upstream reward-model licenses apply to the RE-N-Y repackagings identified above.
+For the underlying image dataset, ImageNet is governed by its research and educational-use agreement.
+Dataset terms are distinct from the licenses of the pretrained models used to generate the experimental
+pools.
+20
+
+
+Preprint. Under Review.
+C
+METRIC ESTIMATION FOR IMAGE AND LANGUAGE GENERATION
+We distinguish the tilt induced by a fitted composition from the samples produced by a steerer. Image
+and language references use the sampler law p1,ϕ and target strength β = 1 on standardized oracle
+rewards. The sampler’s guidance parameter is swept separately and does not redefine this target.
+Reference distribution and effective sample size. Let xi ∼p1,ϕ, i = 1, . . . , Nref, be reference
+samples. With oracle mean a∗and standard deviation s∗> 0 estimated on this pool, define
+z∗(x) = R∗(x) −a∗
+s∗
+,
+w∗
+i =
+eβz∗(xi)
+PNref
+j=1 eβz∗(xj) ,
+bq∗=
+X
+i
+w∗
+i δxi.
+The same standardization is used for all compared methods within a task. The effective sample size is
+ESS =
+1
+P
+i(w∗
+i )2 .
+Small ESS indicates that a few reference samples carry most of the weight. The main ImageNet
+comparison uses the seven class–prompt pairs with reference ESS above 1000 in both feedback
+regimes, limiting sensitivity to concentrated weights. Sensitivity to this restriction is reported in §E.
+Composition KL. Evaluate the fitted score on the same reference samples and standardize it there,
+zˆg(x) = (ˆg(R(x)) −aˆg)/sˆg, with aˆg and sˆg its mean and standard deviation over the pool; this is
+the same standardization applied to the steering reward. Define
+wˆg
+i =
+eβzˆg(xi)
+P
+j eβzˆg(xj) ,
+c
+KLg =
+X
+i
+w∗
+i log w∗
+i
+wˆg
+i
+.
+Because c
+KLg depends on ˆg only through zˆg, it is unchanged by positive affine rescaling of the fitted
+score. This is the exact KL between the two empirical tilts on the common pool and estimates
+the corresponding population KL. It requires no steered samples and remains fixed across the
+sampler-guidance sweep when the score and β are fixed. Standardization changes the induced tilt.
+With population normalization, conditional-mean regression nevertheless minimizes its leading KL
+coefficient among standardized surrogate scores (corollary 4); the fourth-order excess-KL result
+applies to the unscaled conditional mean. Our implementation estimates normalization moments
+from the reference pool.
+Embedding-space energy distance. Let P be the generated distribution and ψ the evaluation
+embedding. For independent X, X′ ∼P and Y, Y ′ ∼q∗, define
+Eψ(P, q∗) = 2E∥ψ(X) −ψ(Y )∥2 −E∥ψ(X) −ψ(X′)∥2 −E∥ψ(Y ) −ψ(Y ′)∥2.
+This compares the embedding distributions: it vanishes when those distributions agree, but need
+not identify the complete image or text distribution. It requires no bandwidth and includes a within-
+sample diversity term. We use DINOv2-base (Oquab et al., 2023) for images and token-mean-pooled
+all-mpnet-base-v2 (Reimers and Gurevych, 2019) for text, with L2-normalized embeddings.
+Reference expectations use self-normalized importance weights. The resulting finite-sample estimate
+is not generally unbiased and can be negative when self-pairs are excluded.
+Sliced Wasserstein distance. For B = 256 unit directions θb, sampled once using a fixed seed
+shared across methods, we report
+d
+SW1 = 1
+B
+B
+X
+b=1
+W1
+
+(θ⊤
+b ψ)# bP, (θ⊤
+b ψ)#bq∗
+,
+where T#P denotes the distribution of T(X) for X ∼P. Each projected distance is computed
+between the unweighted generated samples and weighted reference samples.
+Oracle-reward marginal KL. Let bfP and bf∗be Gaussian KDEs of the generated and reference
+oracle rewards, with the reference KDE using weights w∗
+i . We estimate
+KLKDE =
+Z
+bf∗(r) log
+bf∗(r)
+bfP (r)
+dr.
+21
+
+
+Preprint. Under Review.
+The numerical grid contains 200 points spanning the combined observed reward range with 5%
+padding. This is a truncated numerical approximation to KL on the oracle-reward marginal, rather
+than on the full generated distribution.
+Gaussian approximation to reward-marginal KL. Let aP , s2
+P and aq, s2
+q be the means and variances
+of R∗under P and q∗, respectively. For positive variances, the Gaussian approximation in the same
+direction is
+KLN = log sP
+sq
++ s2
+q + (aq −aP )2
+2s2
+P
+−1
+2.
+Reference moments are estimated using w∗
+i .
+Standardized reward Wasserstein distances. Let FP and Fq be the CDFs of z∗(X) under P and
+q∗. For p ∈{1, 2}, define
+W z
+p =
+Z 1
+0
+|F −1
+q
+(u) −F −1
+P (u)|p du
+1/p
+.
+The same oracle standardization is applied to both distributions. These compare reward marginals,
+not distributions in the generation space.
+Reward gain and gap. For a generated law P, define
+gain(P) = EP [R∗] −Ep1,ϕ[R∗],
+gap(P) = Eq∗[R∗] −EP [R∗].
+The absolute gap is |gap(P)|; a negative signed gap indicates a mean reward above that of the
+reference tilt. Matching the mean reward alone does not establish distributional fidelity.
+Language quality and diversity. Let NLLi be the total negative log-likelihood of sequence i under
+the evaluation language model and Ti its number of scored tokens. The per-sequence oracle uses
+R∗(xi) = −exp(NLLi/Ti), whereas the aggregate quality metric is corpus perplexity,
+gPPL(P) = exp
+P
+i NLLi
+P
+i Ti
+
+.
+Self-BLEU is the mean BLEU score of each generated sample against the others, computed on the
+generator’s token IDs. Higher Self-BLEU indicates greater overlap across samples. We use diversity
+collapse to describe outputs dominated by repeated tokens or near-duplicate sequences, assessed
+through within-sequence entropy and Self-BLEU. We report the diversity-adjusted cost
+Q(P) =
+gPPL(P)
+gPPL(p1,ϕ) max
+
+1, sBLEU(P)
+sBLEU(p1,ϕ)
+
+.
+It equals 1 for the prior, and lower is better. The one-sided factor penalizes increased repetition
+without rewarding reduced repetition; it does not ensure fluency or rule out all forms of reward
+hacking.
+Image quality and diversity. Let EP [R∗] be the mean oracle reward over the samples of method
+P, and Eq∗[R∗] the target’s, estimated by self-normalised importance weighting of the reference
+pool. We report the reward error |gap|(P) = |Eq∗[R∗] −EP [R∗]|, which penalises falling short of
+q∗and overshooting it alike. Diversity Div(P) is the mean pairwise cosine distance, 1 −cos(fi, fj)
+averaged over all pairs i < j, between the DINOv2 embeddings (dinov2-base, images resized
+to 224 × 224) of the decoded samples; higher indicates greater spread. For images, we combine
+standardized oracle-reward gain with an analogous one-sided diversity penalty:
+Q(P) = exp
+
+−EP [R∗] −Ep1,ϕ[R∗]
+s∗
+
+max
+
+1, Div(p1,ϕ)
+Div(P)
+
+.
+where s∗is the standard deviation of R∗over the reference pool, the scale on which the tilt z(R∗)
+is defined. Q equals 1 for the prior and lower is better. Because it is always positive, the one-sided
+factor always penalises lost diversity without rewarding added diversity. As for language, Q rewards
+reward gain without limit, including gain beyond Eq∗[R∗], so fidelity to the target is read from |gap|
+and the distributional metrics. Q is computed per class–prompt pair and then averaged.
+22
+
+
+Preprint. Under Review.
+D
+COMPOSITION SELECTION AND RECOVERY
+D.1
+LANGUAGE GENERATION
+We compare correlation, linear, and MLP compositions using held-out fitting loss. MSE selects an
+MLP for value feedback, and PL loss selects a linear composition for preferences. The recovery and
+composition-KL comparisons appear in Figures 5 and 6.
+g(corr)
+g(linear)
+g(mlp)
+0.0
+0.2
+0.4
+0.6
+0.617
+0.605
+0.592
+Held-out MSE  #
+g(corr)
+g(linear)
+g(mlp)
+0.0
+0.1
+0.2
+0.3
+0.4
+0.440
+0.403
+0.414
+Held-out PCC  "
+(a) Value feedback.
+g(corr)
+g(linear)
+g(mlp)
+0
+2
+4
+6
+8
+10
+10.274
+10.098
+10.168
+Held-out PL NLL  #
+g(corr)
+g(linear)
+g(mlp)
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.415
+0.465
+0.443
+Held-out SCC  "
+(b) Preference feedback.
+Figure 5: Language reward recovery. Held-out losses and correlations for the three composition families.
+Lower loss and higher correlation are better.
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+KL(q ¤ kqg)
+MARTINI g(mlp)
+uniform
+SLOP
+best surrogate
+0.438
+0.464
+0.514
+0.598
+(a) Value feedback.
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+KL(q ¤ kqg)
+MARTINI g(linear)
+uniform
+SLOP
+best surrogate
+0.453
+0.464
+0.514
+0.598
+(b) Preference feedback.
+Figure 6: Language composition fidelity. Estimated KL(q∗∥qg) for the selected compositions and displayed
+baselines. Lower is better.
+23
+
+
+Preprint. Under Review.
+D.2
+IMAGENET
+We average held-out fitting loss across all 19 class–prompt pairs in Table 4. The linear family has the
+lowest loss in both regimes and is used for steering. Coefficients are fitted separately for each pair.
+g(corr)
+g(linear)
+g(mlp)
+0.0
+0.5
+1.0
+1.127
+1.007
+1.303
+Held-out MSE  #
+g(corr)
+g(linear)
+g(mlp)
+0.0
+0.2
+0.4
+0.6
+0.540
+0.556
+0.499
+Held-out PCC  "
+(a) Value regime, n=32.
+g(corr)
+g(linear)
+g(mlp)
+0
+5
+10
+10.370
+9.908
+9.999
+Held-out PL NLL  #
+g(corr)
+g(linear)
+g(mlp)
+0.0
+0.2
+0.4
+0.6
+0.530
+0.625
+0.612
+Held-out PCC  "
+(b) Preference regime, M=128.
+Figure 7: ImageNet reward recovery. Left: held-out MSE for values and PL loss for preferences (lower is
+better). Right: held-out correlation between predicted and oracle rewards (higher is better).
+24
+
+
+Preprint. Under Review.
+E
+ADDITIONAL RESULTS AND SENSITIVITY ANALYSES
+E.1
+LANGUAGE GENERATION
+Table 3 reports the complete language results, including oracle baselines and displayed guidance
+strengths.
+Table 3: Language generation: complete results. SB denotes Self-BLEU; Un. counts distinct sequences among
+256 outputs. Orange rows use inference-time oracle evaluations. Blue rows show MARTINI compositions.
+Method
+Strength
+Energy ↓gPPL ↓SB ↓Un. ↑KLN ↓KLKDE ↓W z
+1 ↓W z
+2 ↓|gap|↓
+Prior p1,ϕ
+— 5.84×10−4
+94.5 0.232
+256
+0.380
+0.326 0.790 0.858
+20.33
+BoN (N = 8)
+— 1.63×10−2
+64.6 0.909
+82
+1.119
+1.517 0.481 0.582
+12.20
+BoN (N = 64)
+— 1.33×10−1
+49.4 0.987
+17 20.317
+14.635 1.095 1.219
+28.02
+sBoN (N = 8)
+— 5.40×10−3
+79.3 0.773
+141
+0.024
+0.037 0.162 0.184
+3.87
+sBoN (N = 64)
+— 7.32×10−3
+76.0 0.763
+137
+0.009
+0.034 0.091 0.125
+0.62
+Uniform
+0.00375 5.56×10−4
+93.4 0.233
+256
+0.350
+0.299 0.743 0.808
+19.12
+Uniform
+0.015 6.56×10−4
+93.6 0.234
+256
+0.351
+0.303 0.747 0.810
+19.24
+Uniform
+0.03 6.54×10−4
+94.5 0.233
+256
+0.376
+0.327 0.784 0.839
+20.18
+Uniform
+0.06 8.02×10−4
+95.8 0.228
+256
+0.415
+0.356 0.841 0.906
+21.66
+Uniform
+0.125 1.30×10−3
+95.3 0.225
+256
+0.403
+0.342 0.828 0.902
+21.31
+BSS
+0.00375 5.20×10−4
+94.3 0.233
+256
+0.374
+0.319 0.779 0.848
+20.06
+BSS
+0.015 8.72×10−4
+96.5 0.232
+256
+0.437
+0.380 0.873 0.952
+22.49
+BSS
+0.03 8.30×10−4
+99.6 0.230
+256
+0.523
+0.466 0.995 1.072
+25.61
+BSS
+0.06 1.28×10−3
+103.8 0.224
+256
+0.650
+0.602 1.164 1.247
+29.98
+BSS
+0.125 2.52×10−3
+108.4 0.216
+256
+0.782
+0.717 1.367 1.476
+35.20
+ParetoFlow
+0.00375 7.65×10−2
+92.0 0.975
+140
+0.340
+0.368 0.707 0.855
+18.01
+ParetoFlow
+0.015 6.92×10−2
+93.1 0.973
+148
+0.380
+0.337 0.771 0.955
+19.70
+ParetoFlow
+0.03 5.81×10−2
+87.9 0.972
+154
+0.258
+0.247 0.575 0.719
+14.02
+ParetoFlow
+0.06 6.15×10−2
+90.4 0.969
+155
+0.335
+0.388 0.652 0.779
+16.41
+ParetoFlow
+0.125 8.38×10−2
+84.6 0.970
+133
+0.272
+0.422 0.479 0.551
+9.76
+SLOP
+— 1.77×10−2
+81.4 0.915
+75
+0.068
+0.069 0.245 0.326
+6.09
+MARTINI: values
+g(corr)
+0.00375 5.56×10−4
+93.0 0.234
+256
+0.337
+0.286 0.726 0.793
+18.69
+g(corr)
+0.015 5.56×10−4
+91.0 0.239
+256
+0.281
+0.239 0.642 0.704
+16.52
+g(corr)
+0.03 4.78×10−4
+89.8 0.242
+256
+0.250
+0.212 0.593 0.649
+15.26
+g(corr)
+0.06 6.80×10−4
+88.8 0.243
+256
+0.226
+0.185 0.555 0.610
+14.28
+g(corr)
+0.125 9.72×10−4
+88.0 0.246
+256
+0.200
+0.167 0.517 0.557
+13.29
+g(linear)
+0.00375 5.02×10−4
+92.6 0.235
+256
+0.323
+0.275 0.707 0.771
+18.21
+g(linear)
+0.015 3.82×10−4
+89.9 0.239
+256
+0.249
+0.214 0.596 0.644
+15.33
+g(linear)
+0.03 4.66×10−4
+87.8 0.245
+256
+0.196
+0.162 0.508 0.558
+13.09
+g(linear)
+0.06 9.68×10−4
+86.3 0.250
+256
+0.160
+0.133 0.447 0.491
+11.50
+g(linear)
+0.125 1.69×10−3
+84.8 0.256
+256
+0.124
+0.109 0.385 0.417
+9.90
+g(mlp)
+0.00375 6.02×10−4
+92.9 0.234
+256
+0.333
+0.282 0.721 0.784
+18.56
+g(mlp)
+0.015 6.28×10−4
+91.4 0.239
+256
+0.292
+0.245 0.661 0.718
+17.01
+g(mlp)
+0.03 4.66×10−4
+90.2 0.241
+256
+0.265
+0.209 0.615 0.681
+15.84
+g(mlp)
+0.06 7.72×10−4
+88.7 0.245
+256
+0.225
+0.176 0.552 0.610
+14.21
+g(mlp)
+0.125 1.07×10−3
+88.1 0.249
+256
+0.213
+0.171 0.529 0.590
+13.60
+MARTINI: preferences
+g(corr)
+0.00375 5.14×10−4
+93.6 0.234
+256
+0.356
+0.302 0.753 0.820
+19.37
+g(corr)
+0.015 5.58×10−4
+93.9 0.235
+256
+0.362
+0.311 0.763 0.831
+19.63
+g(corr)
+0.03 5.88×10−4
+94.9 0.235
+256
+0.390
+0.335 0.806 0.877
+20.74
+g(corr)
+0.06 8.28×10−4
+95.9 0.233
+256
+0.420
+0.370 0.843 0.904
+21.71
+g(corr)
+0.125 1.00×10−3
+97.6 0.228
+256
+0.469
+0.406 0.920 0.994
+23.69
+Continued on next page
+25
+
+
+Preprint. Under Review.
+Table 3 (continued)
+Method
+Strength
+Energy ↓gPPL ↓SB ↓Un. ↑KLN ↓KLKDE ↓W z
+1 ↓W z
+2 ↓|gap|↓
+g(linear)
+0.00375 5.14×10−4
+93.2 0.234
+256
+0.343
+0.289 0.736 0.804
+18.94
+g(linear)
+0.015 6.24×10−4
+92.0 0.236
+256
+0.306
+0.266 0.682 0.737
+17.55
+g(linear)
+0.03 5.02×10−4
+91.5 0.238
+256
+0.296
+0.247 0.666 0.727
+17.15
+g(linear)
+0.06 7.68×10−4
+90.5 0.238
+256
+0.269
+0.224 0.625 0.681
+16.09
+g(linear)
+0.125 9.92×10−4
+90.1 0.238
+256
+0.258
+0.222 0.609 0.660
+15.66
+g(mlp)
+0.00375 4.56×10−4
+93.4 0.234
+256
+0.353
+0.295 0.749 0.826
+19.28
+g(mlp)
+0.015 5.88×10−4
+92.2 0.237
+256
+0.313
+0.267 0.692 0.752
+17.80
+g(mlp)
+0.03 3.66×10−4
+91.8 0.239
+256
+0.306
+0.250 0.681 0.749
+17.54
+g(mlp)
+0.06 7.14×10−4
+90.7 0.244
+256
+0.276
+0.229 0.636 0.696
+16.36
+g(mlp)
+0.125 1.11×10−3
+91.1 0.245
+256
+0.284
+0.240 0.649 0.703
+16.71
+E.2
+IMAGENET
+Table 4 lists the class–prompt pairs and reference ESS values. Full guidance sweeps and per-pair
+MARTINI results appear in Tables 5 and 6.
+Table 4: ImageNet class–prompt pairs. ESS is computed from each regime's independent 8192-sample
+reference pool; displayed values are rounded. † marks the seven pairs with reference ESS above 1000 in both
+regimes.
+ID Class
+Steering prompt
+ESS (Val.) ESS (Pref.)
+555 fire engine†
+a fire engine on a busy city street
+4043
+4081
+294 brown bear†
+a brown bear wading in a mountain river
+3903
+3826
+84 peacock†
+a peacock displaying in a lush garden
+3728
+3757
+145 king penguin†
+a king penguin standing on the ice
+2451
+2418
+347 bison†
+a bison grazing on the open prairie
+2199
+2291
+386 African elephant† an African elephant at a watering hole
+2031
+2001
+779 school bus†
+a school bus on a tree-lined suburban street
+1250
+1304
+483 castle
+a castle on a hilltop at dawn
+993
+828
+250 Siberian husky
+a Siberian husky in deep snow
+975
+975
+130 flamingo
+a flamingo wading in shallow water at sunset
+935
+908
+717 pickup truck
+a pickup truck on a dirt road in the countryside
+596
+640
+144 pelican
+a pelican perched on a wooden pier by the sea
+500
+349
+340 zebra
+a zebra grazing on the open savanna
+351
+374
+9 ostrich
+an ostrich running across a dusty plain
+111
+85
+291 lion
+a lion resting on the savanna at sunset
+90
+44
+817 sports car
+a sports car parked on a city street at night
+48
+34
+281 tabby cat
+a tabby cat sitting in the snow
+11
+13
+354 Arabian camel
+an Arabian camel crossing desert dunes at sunset
+3
+2
+207 golden retriever
+a golden retriever running on a sandy beach
+1
+1
+Table 5: ImageNet steering-strength sweep. Means over the seven marked pairs in Table 4. Setting gives
+guidance strength, except for SLOP, where it gives candidate count N. Composition KL is shown once per fitted
+composition. Lower is better for all metrics; SLOP is value-calibrated.
+Method
+Setting
+KLg Energy Sl. W1 KLN KLKDE
+W z
+1
+W z
+2 |gap|
+Q
+Prior p1,ϕ
+—
+— 0.0683 0.0080 0.752
+0.658 1.253 1.380 7.51 1.000
+BoN (N = 8)
+—
+— 0.0654 0.0078 0.501
+0.671 0.546 0.658 3.17 0.193
+BoN (N = 16)
+—
+— 0.0795 0.0084 2.918
+3.121 0.951 1.120 5.53 0.142
+BoN (N = 32)
+—
+— 0.0844 0.0085 9.964
+7.721 1.271 1.473 7.44 0.106
+Uniform
+2 0.436 0.0832 0.0086 0.044
+0.089 0.311 0.374 1.29 0.418
+Uniform
+3
+0.0688 0.0078 0.069
+0.091 0.291 0.332 1.47 0.291
+Continued on next page
+26
+
+
+Preprint. Under Review.
+Table 5 (continued)
+Method
+Setting
+KLg Energy Sl. W1 KLN KLKDE
+W z
+1
+W z
+2 |gap|
+Q
+Uniform
+5
+0.0648 0.0076 0.696
+0.646 0.544 0.627 3.19 0.222
+Uniform
+8
+0.0813 0.0081 1.415
+1.123 0.631 0.725 3.55 0.207
+ReNO
+2 0.553 0.0749 0.0082 0.051
+0.090 0.309 0.379 1.36 0.400
+ReNO
+3
+0.0578 0.0074 0.039
+0.080 0.248 0.289 0.90 0.314
+ReNO
+5
+0.0527 0.0070 0.238
+0.196 0.411 0.465 2.34 0.235
+ReNO
+8
+0.0812 0.0081 1.419
+0.893 0.552 0.634 3.17 0.218
+ParetoFlow
+2 (t = 0)
+— 0.1696 0.0116 0.490
+0.528 0.932 1.086 5.19 0.944
+ParetoFlow
+3 (t = 0)
+0.1422 0.0109 0.404
+0.438 0.917 1.079 5.08 0.801
+ParetoFlow
+5 (t = 0)
+0.1405 0.0108 0.550
+0.498 0.885 1.012 4.96 0.811
+ParetoFlow
+8 (t = 0)
+0.1282 0.0101 0.145
+0.225 0.465 0.541 1.92 0.447
+SLOP
+N = 8 0.520 0.1020 0.0091 0.077
+0.091 0.328 0.388 1.38 0.359
+SLOP
+N = 16
+0.1200 0.0098 0.168
+0.170 0.365 0.446 1.98 0.364
+SLOP
+N = 32
+0.1147 0.0095 0.420
+0.327 0.551 0.643 3.08 0.273
+Values (n = 32)
+BSS
+2 0.514 0.0674 0.0078 0.131
+0.177 0.539 0.635 2.79 0.532
+BSS
+3
+0.0535 0.0070 0.113
+0.142 0.455 0.548 2.23 0.468
+BSS
+5
+0.0529 0.0069 0.162
+0.144 0.385 0.432 1.94 0.340
+BSS
+8
+0.0960 0.0088 0.157
+0.161 0.399 0.456 2.03 0.330
+g(corr)
+2 0.425 0.0673 0.0078 0.059
+0.097 0.348 0.431 1.83 0.434
+g(corr)
+3
+0.0618 0.0075 0.062
+0.084 0.300 0.339 1.61 0.314
+g(corr)
+5
+0.0596 0.0074 0.774
+0.625 0.531 0.605 2.98 0.247
+g(corr)
+8
+0.0778 0.0080 1.317
+0.991 0.698 0.800 4.02 0.241
+g(linear)
+2 0.466 0.0559 0.0073 0.104
+0.124 0.471 0.556 2.69 0.495
+g(linear)
+3
+0.0409 0.0064 0.039
+0.069 0.288 0.352 1.40 0.388
+g(linear)
+5
+0.0339 0.0059 0.061
+0.069 0.319 0.377 1.64 0.360
+g(linear)
+8
+0.1010 0.0091 0.246
+0.312 0.400 0.475 1.88 0.431
+g(mlp)
+2 0.488 0.0525 0.0071 0.186
+0.204 0.653 0.744 3.80 0.594
+g(mlp)
+3
+0.0355 0.0060 0.068
+0.091 0.359 0.433 1.97 0.433
+g(mlp)
+5
+0.0319 0.0058 0.165
+0.168 0.410 0.492 2.18 0.436
+g(mlp)
+8
+0.0956 0.0090 0.277
+0.316 0.514 0.600 2.80 0.434
+Preferences (M = 128)
+BSS
+2 0.440 0.0628 0.0077 0.066
+0.102 0.368 0.463 1.79 0.429
+BSS
+3
+0.0552 0.0073 0.035
+0.080 0.258 0.306 0.90 0.359
+BSS
+5
+0.0425 0.0065 0.133
+0.134 0.388 0.433 2.00 0.312
+BSS
+8
+0.0861 0.0084 0.264
+0.254 0.427 0.494 2.08 0.323
+g(corr)
+2 0.417 0.0752 0.0082 0.045
+0.089 0.314 0.366 1.10 0.385
+g(corr)
+3
+0.0716 0.0080 0.048
+0.079 0.314 0.348 1.57 0.284
+g(corr)
+5
+0.0638 0.0075 1.013
+0.866 0.578 0.648 3.50 0.199
+g(corr)
+8
+0.0786 0.0080 3.831
+1.905 0.670 0.777 4.02 0.181
+g(linear)
+2 0.423 0.0580 0.0074 0.095
+0.132 0.403 0.490 2.11 0.441
+g(linear)
+3
+0.0484 0.0068 0.053
+0.106 0.345 0.398 1.54 0.384
+g(linear)
+5
+0.0380 0.0061 0.097
+0.123 0.365 0.423 1.93 0.287
+g(linear)
+8
+0.0780 0.0081 0.400
+0.327 0.389 0.454 2.13 0.303
+g(mlp)
+2 0.426 0.0620 0.0076 0.081
+0.107 0.408 0.486 2.11 0.432
+g(mlp)
+3
+0.0516 0.0070 0.070
+0.096 0.313 0.365 1.51 0.350
+g(mlp)
+5
+0.0330 0.0059 0.525
+0.458 0.384 0.458 1.86 0.310
+g(mlp)
+8
+0.0783 0.0081 0.263
+0.248 0.503 0.576 2.56 0.360
+27
+
+
+Preprint. Under Review.
+Table 6: MARTINI by ImageNet class–prompt pair. Linear compositions use each pair's lowest-energy
+evaluated strength. ESS is rounded and refers to the regime-specific 8192-sample pool. † marks pairs in the
+main comparison. Dashes indicate unreported estimates.
+Class
+ESS Str. KLg Energy Sl. W1
+KLN KLKDE
+W z
+1
+W z
+2 |gap|
+Q
+Values (n = 32)
+fire engine†
+4043
+5 0.360 0.0351 0.0063
+0.028
+0.029
+0.187
+0.211
+1.10 0.277
+brown bear†
+3903
+5 0.257 0.0289 0.0056
+0.035
+0.054
+0.140
+0.234
+0.94 0.241
+peacock†
+3728
+5 0.416 0.0229 0.0052
+0.033
+0.068
+0.194
+0.229
+0.51 0.449
+king penguin†
+2451
+3 0.652 0.0352 0.0055
+0.011
+0.034
+0.200
+0.228
+0.81 0.272
+bison†
+2199
+3 0.462 0.0238 0.0052
+0.031
+0.042
+0.296
+0.363
+1.71 0.546
+African elephant† 2031
+5 0.399 0.0635 0.0075
+0.012
+0.025
+0.172
+0.240
+0.95 0.179
+school bus†
+1250
+2 0.718 0.0152 0.0051
+0.086
+0.091
+0.593
+0.670
+2.88 0.547
+castle
+993
+5 0.720 0.0721 0.0095
+0.013
+0.031
+0.282
+0.312
+0.78 0.175
+Siberian husky
+975
+5 0.525 0.0571 0.0081
+2.349
+1.117
+2.203
+2.545 12.48 0.715
+flamingo
+935
+3 0.443 0.0429 0.0058
+0.021
+0.043
+0.332
+0.372
+1.00 0.294
+pickup truck
+596
+3 0.959 0.0162 0.0063
+0.024
+0.077
+0.470
+0.567
+1.60 0.072
+pelican
+500
+3 1.010 0.0127 0.0046
+0.466
+0.364
+1.682
+1.917
+7.27 0.415
+zebra
+351
+5 0.916 0.0308 0.0058
+0.234
+0.174
+1.030
+1.134
+3.95 0.366
+ostrich
+111
+2 1.278 0.0302 0.0060
+0.213
+0.159
+1.590
+1.803
+5.01 0.208
+lion
+90
+8 1.828 0.0583 0.0077
+0.333
+0.285
+1.969
+2.081
+4.46 0.003
+sports car
+48
+5 2.317 0.0417 0.0082
+0.528
+0.436
+2.982
+3.396
+7.54 0.075
+tabby cat
+11
+2 1.363 0.0773 0.0130
+8.625
+2.676
+8.810
+9.189 22.16 0.526
+Arabian camel
+3
+2 3.820 0.0532 0.0140
+8.717
+3.435
+8.824
+9.073 12.13 0.717
+golden retriever
+1
+5 4.779 0.0924 0.0271
+1.815
+1.470 12.072 13.751 13.90 0.000
+Mean† (7 pairs)
+0.466 0.0321 0.0058
+0.034
+0.049
+0.255
+0.310
+1.27 0.359
+Preferences (M = 128)
+fire engine†
+4081
+5 0.317 0.0508 0.0072
+0.390
+0.330
+0.615
+0.669
+3.90 0.195
+brown bear†
+3826
+5 0.266 0.0409 0.0064
+0.053
+0.130
+0.282
+0.305
+1.96 0.209
+peacock†
+3757
+5 0.286 0.0208 0.0050
+0.092
+0.168
+0.438
+0.500
+2.18 0.282
+king penguin†
+2418
+5 0.639 0.0352 0.0053
+0.068
+0.067
+0.260
+0.300
+0.68 0.217
+bison†
+2291
+5 0.423 0.0287 0.0056
+0.011
+0.030
+0.184
+0.220
+0.98 0.492
+African elephant† 2001
+3 0.433 0.0717 0.0083
+0.001
+0.034
+0.131
+0.171
+0.33 0.224
+school bus†
+1304
+5 0.596 0.0123 0.0048
+0.034
+0.086
+0.455
+0.602
+1.96 0.459
+Siberian husky
+975
+5 0.479 0.0515 0.0071
+1.233
+0.809
+1.835
+2.147 10.39 0.498
+flamingo
+908
+3 0.418 0.0200 0.0045
+0.021
+0.047
+0.370
+0.385
+1.05 0.286
+castle
+828
+3 0.630 0.0524 0.0085
+0.008
+0.031
+0.278
+0.335
+0.56 0.167
+pickup truck
+640
+5 0.797 0.0181 0.0064
+0.172
+0.173
+0.800
+0.885
+3.30 0.025
+zebra
+374
+3 0.885 0.0326 0.0055
+0.500
+0.318
+1.470
+1.622
+5.51 0.641
+pelican
+349
+3 0.720 0.0156 0.0048
+0.217
+0.162
+1.226
+1.352
+5.35 0.194
+ostrich
+85
+2 1.174 0.0167 0.0059
+0.102
+0.074
+1.159
+1.333
+3.60 0.113
+lion
+44
+5 2.179 0.0333 0.0068
+0.161
+0.224
+1.602
+1.818
+3.21 0.043
+sports car
+34
+5 2.648 0.0591 0.0095
+0.904
+0.629
+3.627
+3.970
+8.75 0.090
+tabby cat
+13
+3 2.062 0.0566 0.0124
+8.150
+3.535
+8.472
+8.796 20.94 0.339
+Arabian camel
+2
+2 4.655
+— 0.0155 12.306 10.363 12.002 12.207 16.79 0.502
+golden retriever
+1
+3 3.261
+— 0.0280
+6.451
+2.279 17.331 17.984 22.68 0.064
+Mean† (7 pairs)
+0.423 0.0372 0.0061
+0.093
+0.121
+0.338
+0.395
+1.71 0.297
+28
+
+
+Preprint. Under Review.
+Table 7 assesses sensitivity to the reference ESS cutoff. For each cutoff, we aggregate each method’s
+metrics across retained pairs using the mean or median, then rank the methods. The comparison
+includes MARTINI, BSS, uniform weighting, ReNO, ParetoFlow, and SLOP; composition KL
+excludes ParetoFlow. SLOP remains a value-calibrated reference in the preference regime. Steering
+methods use their per-pair lowest-energy evaluated strength. The Siberian husky pair is retained
+whenever it meets the cutoff.
+Table 7: Sensitivity to reference ESS. Each entry gives MARTINI 's rank using mean/median metrics across
+retained pairs; bold 1 marks first place. Cutoffs apply separately to each regime's 8192- sample reference pool.
+ESS cutoff Pairs KLg Energy Sl. W1 KLN KLKDE W z
+1
+W z
+2
+|gap|
+Q
+Values (n = 32)
+≥0
+19 1/2
+1/1
+1/1
+4/1
+2/1
+3/1 3/1
+4/2
+5/4
+≥100
+14 2/3
+1/1
+1/1
+3/1
+2/1
+4/1 4/1
+4/1
+4/4
+≥350
+13 2/3
+1/1
+1/1
+3/1
+2/1
+3/1 2/1
+3/1
+4/4
+≥500
+11 2/1
+1/1
+1/1
+4/1
+1/1
+2/1 2/1
+2/1
+5/3
+≥850
+10 2/1
+1/1
+1/1
+4/1
+2/1
+3/1 3/1
+3/1
+5/3
+≥950
+9 2/1
+1/1
+1/1
+4/1
+3/1
+3/1 3/1
+3/1
+5/3
+≥1000
+7 2/2
+1/1
+1/1
+1/1
+1/1
+1/1 1/1 1/1
+4/3
+Preferences (M = 128)
+≥0
+19 1/1
+1/1
+1/1
+3/3
+3/4
+4/4 4/4
+4/4
+3/3
+≥100
+13 1/1
+1/2
+1/1
+4/2
+3/4
+4/1 4/1
+5/1
+4/3
+≥350
+12 1/1
+1/1
+1/1
+4/2
+3/2
+3/2 3/1
+4/1
+4/3
+≥500
+11 1/1
+1/1
+1/1
+3/2
+3/2
+3/2 3/1
+3/2
+3/3
+≥850
+9 1/1
+1/1
+1/1
+4/2
+4/2
+4/2 4/1
+4/3
+4/3
+≥950
+8 1/1
+1/1
+1/1
+4/3
+4/4
+5/2 5/2
+5/3
+4/3
+≥1000
+7 1/2
+1/1
+1/1
+1/2
+1/3
+1/1 1/1
+1/3
+3/1
+Across all cutoffs, MARTINI ranks first on mean energy and sliced Wasserstein distance. Reward-
+marginal ranks depend on the cutoff and aggregation, with the Siberian husky pair substantially
+affecting the means.
+E.3
+BUDGET ANALYSIS
+We compare n ∈{32, 256} numerical rewards and M ∈{8, 128} rankings of m = 8 candidates.
+Increasing feedback improves held-out loss, PCC, and KLg for all three families (Table 8). Linear
+compositions remain selected at every budget, although the MLP’s loss approaches that of the linear
+family at the larger budgets. For the selected compositions, KLg decreases from 0.466 to 0.415 with
+values and from 0.475 to 0.423 with preferences.
+Table 8: ImageNet composition fitting across feedback budgets. Loss is MSE on z(R∗) for values and PL
+NLL per group for preferences. Bold marks the lowest mean selection loss. BSS uses the same validation split
+to select its surrogate and family; only its composition KL is reported.
+Held-out loss ↓
+PCC ↑
+KLg ↓
+Regime Budget
+Corr. Linear
+MLP Corr. Linear MLP Corr. Linear MLP
+BSS
+Value
+n = 32
+1.127
+1.007
+1.303 0.540
+0.556 0.499 0.425
+0.466 0.488 0.514
+n = 256
+0.898
+0.706
+0.726 0.549
+0.629 0.621 0.416
+0.415 0.372 0.460
+Pref.
+M = 8
+10.774 10.652 11.692 0.453
+0.532 0.426 0.420
+0.475 0.519 0.858
+M = 128 10.370
+9.908
+9.999 0.530
+0.625 0.612 0.417
+0.423 0.426 0.440
+For each steering method and pair, all generated-sample metrics use the strength with the lowest
+observed energy distance to q∗. Improved fitting does not uniformly improve realized steering (Ta-
+ble 9). MARTINI achieves lower energy than BSS at every budget, but energy does not improve with
+additional feedback. Reward-marginal fidelity improves with more preferences, whereas it worsens at
+n = 256: several pairs overshoot the target mean reward at the selected strengths, despite improved
+composition KL. This separates improvements in fitting from the effects of guidance and sampling.
+29
+
+
+Preprint. Under Review.
+Table 9: ImageNet steering across feedback budgets. Means over the seven evaluation pairs. MARTINI uses
+the linear composition at every budget. Lower is better; bold marks the better of each method’s two budgets.
+Fit-free baselines are shared.
+Embedding space
+R∗-marginal
+Reward
+Method
+Budget
+KLg Energy
+Sl. W1 KLN KLKDE
+W z
+1
+W z
+2 |gap|
+Q
+Fit-free baselines
+Prior p1,ϕ
+–
+– 0.0683
+0.0080 0.752
+0.658 1.253 1.380
+7.51 1.000
+ParetoFlow –
+– 0.0885
+0.0088 0.825
+0.937 0.948 1.068
+5.35 0.844
+ReNO
+–
+0.553 0.0503
+0.0069 0.197
+0.166 0.380 0.430
+2.10 0.244
+Uniform
+–
+0.436 0.0603
+0.0074 0.605
+0.635 0.475 0.552
+2.73 0.238
+Value feedback
+SLOP
+n = 32
+0.520 0.1200
+0.0098 0.168
+0.170 0.365 0.446
+1.98 0.364
+SLOP
+n = 256
+0.423 0.0867
+0.0086 0.376
+0.265 0.532 0.623
+2.99 0.250
+BSS
+n = 32
+0.514 0.0498
+0.0068 0.217
+0.183 0.478 0.547
+2.57 0.354
+BSS
+n = 256
+0.460 0.0389
+0.0063 0.093
+0.108 0.291 0.348
+1.35 0.285
+MARTINI
+n = 32
+0.466 0.0321
+0.0058 0.034
+0.049 0.255 0.310
+1.27 0.359
+MARTINI
+n = 256
+0.415 0.0377
+0.0060 0.549
+0.764 0.454 0.527
+2.72 0.279
+Preference feedback
+BSS
+M = 8
+0.858 0.0412
+0.0063 0.323
+0.262 0.570 0.637
+2.82 0.585
+BSS
+M = 128 0.440 0.0423
+0.0065 0.135
+0.133 0.392 0.442
+2.04 0.316
+MARTINI
+M = 8
+0.475 0.0337
+0.0059 0.544
+0.629 0.606 0.679
+3.49 0.386
+MARTINI
+M = 128 0.423 0.0372
+0.0061 0.093
+0.121 0.338 0.395
+1.71 0.297
+30
+
+
+Preprint. Under Review.
+F
+PROTEIN–LIGAND COFOLDING
+F.1
+SURROGATES
+We fit the surrogate composition to experimental binding-affinity feedback and evaluate its transfer to
+generated structures. The five surrogates provide information about structural quality, binding-site
+energetics, and predicted affinity.
+SMINA. SMINA is a widely used docking and scoring tool forked from AutoDock Vina and optimised
+for high-throughput scoring and for user-specified scoring functions (Koes et al., 2013).
+Frustration. The FrustratometeR R package Rausch et al. (2021) is used to calculate local energetic
+frustration in protein structures, where high frustration relates to unstable local regions and correlates
+with active sites.
+MolProbity. MolProbity (Chen et al., 2010) assesses the physical quality of molecular structures
+through all-atom steric contact analysis with explicit hydrogens, together with covalent-geometry and
+backbone and side-chain torsion-angle criteria.
+Boltz Affinity. The boltz affinity prediction head introduced in Passaro et al. (2025) is used here as an
+affinity surrogate. The Boltz-2 weights are used to featurise the complex, but the pose itself is taken
+as atomic coordinates from the steering run (e.g. with DeCAF) and then used to constrain the affinity
+prediction, so that the prediction head uses the steered poses. Default Boltz-2 settings were used for
+this surrogate.
+Boltz-1x physical potentials. We include the physical potential terms used by Boltz-1x (Wohlwend
+et al., 2025) to penalize stereochemical violations, clashes, and inconsistent chain geometry. The
+resampling coefficients are
+symmetric_chain_com
+0.5
+connections
+1.0
+posebusters
+0.1
+chiral
+1.0
+stereo
+1.0
+planar
+1.0
+vdw_overlap
+0.01,
+t < 0.6,
+0,
+t ≥0.6.
+Here t is the resampling-time variable used by the implementation. These seven terms include both
+within-chain and between-chain contributions.
+We normalize the surrogate reward values both for fitting g and during steering. Figure 8 displays the
+correlation of the surrogate rewards with the experimental HiQBind pKD as well as the theoretical
+recovery ceiling when using these surrogate rewards. SMINA is the best single surrogate based on
+the Pearson correlation. Boltz energy potentials are instrumental in ensuring physical validity of the
+generated poses; therefore, each baseline includes normalized energy potentials.
+The theory ceiling in Figure 8 is ρinfo =
+p
+1 −¯v/Var(R∗), the highest PCC any function of the
+scores can reach, where ¯v = E[Var(R∗| R)] is the variance of the measured affinity that the
+HiQBind scores leave unexplained, estimated by leave-one-out local-linear k-nearest-neighbour
+regression of R∗on R.
+F.2
+FEEDBACK AND EVALUATION DATASETS
+HiQBind. HiQBind is a curated protein–ligand binding dataset constructed by matching experi-
+mentally determined binding free energies from BioLiP, Binding MOAD, and BindingDB to co-
+crystallized PDB complexes and reprocessing each entry through the open-source HiQBind-WF
+workflow (Wang et al., 2025b). The release comprises 18,160 PDB entries with binding-affinity
+annotations and 32,275 refined non-covalent complexes, annotated with affinity values, release year,
+resolution, ligand and protein identifiers, and derived ligand properties. We subset this data set to
+monomers and multimers that have experimental pKD, leaving us with N=7095 for the feedback set.
+31
+
+
+Preprint. Under Review.
+Figure 8: Correlation of HiQBind scores with the experimentally measured binding affinity values
+Runs N’ Poses. We evaluate on 186 complexes from the post-2023 subset of Runs N’ Poses (Škrinjar
+et al., 2026), beyond Boltz-1’s training cutoff. These evaluation complexes lack experimental affinity
+labels, so we measure pose accuracy and physical validity. This tests whether a composition fitted
+to affinity feedback transfers to structure generation; it does not directly measure recovery of the
+experimental affinity tilt. Figure 9 compares the surrogate marginals in the fitting and evaluation
+datasets.
+Figure 9: Surrogate-score distributions. Normalized marginals on HiQBind and Runs N’ Poses.
+F.3
+PROTEIN SUCCESS METRICS
+We use the OpenStructure (ost) package for calculating both the RMSD and lDDT-PLI Biasini et al.
+(2013), with the same defaults as in Scarpellini et al. (2026).
+Diversity. We report structural diversity, defined as one minus the similarity, where similarity is
+the mean pairwise TM-score Zhang and Skolnick (2004) across the top nseed best poses (best within
+one seed across particles) where nseed is the number of seeds.
+We report best@1 metrics as defined in DeCAF Scarpellini et al. (2026) averaged over 5 seeds.
+F.4
+EXTENDED RESULTS AND ABLATIONS
+We compare FK steering with 10 and 15 particles in Table 11 and vary the relative weights of smina
+and the energy potentials in Table 10 to choose the strongest baseline combination. We report joint
+success, physical validity, and lDDT-PLI to assess sensitivity to these choices.
+Ablating between the mixtures of fixed-weights shows that [0.1, 0.9] gives the highest success rate
+(61.8%), while [0.9, 0.1] gives the highest lDDT-PLI and lower PB-validity. We pick the mixture
+with the highest success rate as the BSS baseline reported in other tables, and use this mixture for
+BSS baseline experiment with 15 particles. The learned linear mixture reaches 62.4% success, which
+beats all of the ablated mixtures, demonstrating utility of MARTINI even with fewer surrogates.
+32
+
+
+Preprint. Under Review.
+Furthermore, we compare success rates (RMSD ≤2 Å and PB validity) when selecting generated
+poses based on the surrogate reward in Table 12 (rewards unscaled). MARTINI-generated poses
+chosen based on the highest reward result in the highest success compared to baselines, with 66.8%
+for 5-surrogate linear and 66.3% for 3-surrogate linear, where the surrogates are [SMINA, GNINA,
+Frustration, MolProbity and Boltz Affinity] and [Frustration, MolProbity and Boltz Affinity], re-
+spectively. With un-normalized rewards, MARTINI with 3 surrogates achieves the highest success
+rate when choosing the best particle across seeds at 73% compared to the BSS (Boltz Affinity)
+baseline’s 72.4%. The RMSD, PB valid, and lDDT-PLI metrics are evaluated for the pose that was
+selected based on the highest PB validity, then lowest RMSD, then highest lDDT-PLI. Diversity here
+is reported in terms of the effective number of poses remaining after steering.
+Table 10: Steering with smina and energy potentials, weight ablation. 10 particles. Best@1 averaged over 5
+seeds. Bold and underline mark the best and runner-up value per column.
+[wsmina, wpotentials]
+Success Rate ↑
+RMSD < 2 Å ↑
+PB Valid ↑
+lDDT-PLI ↑
+[0.1, 0.9]
+61.8
+61.8
+97.6
+65.1
+[0.3, 0.7]
+61.2
+61.2
+97.8
+65.1
+[0.5, 0.5]
+61.1
+61.1
+97.4
+65.0
+[0.7, 0.3]
+61.3
+61.3
+96.5
+65.1
+[0.9, 0.1]
+61.5
+61.6
+94.4
+65.4
+g(linear)
+62.4
+62.7
+93.5
+66.3
+Table 11: Number of particles ablation, FK-Steering. All surrogate rewards are normalized. Best@1 averaged
+over 5 seeds. Bold and underlined mark the best and runner-up value per column.
+Num Particles = 10
+Num Particles = 15
+Method
+Success Rate ↑
+PB Valid ↑
+lDDT-PLI ↑
+Success Rate ↑
+PB Valid ↑
+lDDT-PLI ↑
+Baselines
+DeCAF potentials
+61.8
+97.9
+65.2
+61.8
+98.3
+65.7
+smina + potentials
+61.8
+97.6
+65.1
+61.8
+98.2
+65.4
+MARTINI
+g(lin: smina, poten.)
+62.4
+93.5
+66.3
+62.7
+93.3
+66.5
+g(corr: all 5)
+63.3
+91.9
+66.4
+64.5
+91.8
+67.6
+g(lin: all 5)
+62.8
+95.1
+65.6
+63.4
+94.7
+66.5
+g(mlp: all 5)
+62.2
+83.0
+65.5
+63.7
+82.7
+67.3
+Table 12: Reward-selected poses vs. actual best poses, un-normalized rewards. Steering on pose-2023
+Runs N’ Poses, 15 particles, 5 seeds, rewards un-normalised, best@5. Bold and underlined mark the best and
+runner-up value per column.
+Top reward
+Best particle†
+Diversity
+Method
+Success ↑
+Success ↑
+RMSD≤2 Å ↑
+PB Valid ↑
+lDDT-PLI ↑
+Eff. poses ↑
+Boltz-1x
+66.7
+67.3
+67.3
+100.0
+69.9
+2.9
+DeCAF
+65.3
+66.3
+66.3
+100.0
+69.2
+2.6
+DeCAF potentials (FK, K=15)
+65.8
+69.4
+69.9
+99.5
+70.7
+6.2
+DeCAF BSS (affinity)
+66.1
+72.4
+72.4
+100.0
+72.9
+7.9
+DeCAF-MARTINI (3 surrogates)
+66.3
+73.0
+73.0
+100.0
+72.9
+8.0
+DeCAF-MARTINI (5 surrogates)
+66.8
+69.9
+69.9
+100.0
+71.1
+6.0
+33
+
+
+Preprint. Under Review.
+G
+ADDITIONAL THEORETICAL RESULTS
+This section gives the assumptions and supporting results for the two main theorems in §3.3. Proofs
+appear in §H.
+G.1
+ASSUMPTIONS
+We analyze population quantities and ideal tilted distributions, with p1,ϕ = p1. The space X carries its
+Borel σ-algebra, p1 is a probability law, and the oracle, surrogates, and compositions are measurable.
+Conditional statements hold almost surely under the specified law. Compositions in the main theorems
+are fixed as β ↓0; the explicitly defined gopt in Proposition 1 may depend on β.
+Assumption G.1 (Finite second moments). The oracle and every compared score satisfy
+Ep1[(R∗)2] < ∞,
+Ep1[(g ◦R)2] < ∞.
+Assumption G.2 (Essential boundedness). There exist constants M∗, Mg < ∞, independent of
+β, such that
+p1(|R∗| ≤M∗) = 1,
+p1(|g ◦R| ≤Mg) = 1.
+The score bound is required for each composition used in an expansion; Mg need not be uniform
+over all compositions.
+Assumption G.2 implies Assumption G.1 and ensures finite, positive tilt normalizers. It concerns the
+oracle and composed scores p1-almost surely, rather than bounds on every raw surrogate globally on
+X.
+Assumption G.3 (Mean-aligned representatives). Every compared composition is represented
+so that
+Ep1[g ◦R] = Ep1[R∗].
+In the preference analysis, this holds for every g ∈G, including the population minimizer gPL.
+This is a normalization convention for analysis. For an unshifted composition g, define
+¯g(r) := g(r) + Ep1[R∗] −Ep1[g ◦R].
+Then q¯g = qg and PL(¯g) = PL(g), whereas
+MSE(¯g) = MSE(g) −
+ Ep1[g ◦R] −Ep1[R∗]
+2.
+Thus mean alignment preserves tilts and PL probabilities, but can reduce MSE. In the preference
+analysis, G denotes the mean-aligned image of the original class; this affine transformation preserves
+convexity, score-range widths, PL risks, and induced tilts. The theoretical bounds use these represen-
+tatives and require no additional fitting step or oracle access. The aligned MSE is no larger than the
+unshifted population MSE estimated by (3).
+Assumption G.4 (Preference observations and composition class).
+(i) Each query contains
+m ≥2 independent candidates S ∼p⊗m
+1
+, with ranking
+π | S ∼p∗
+PL(· | S) := pPL(· | R∗, S).
+Observed queries are independent.
+(ii) The class G is nonempty and convex, and there is a common ∆< ∞such that, for every
+g ∈G,
+ess sup
+p1
+(g ◦R) −ess inf
+p1
+(g ◦R) ≤∆.
+(iii) The population loss
+PL(g) := ES,π[−log pPL(π | g ◦R, S)]
+attains its minimum over G at some gPL ∈arg ming∈G PL(g).
+34
+
+
+Preprint. Under Review.
+Existence of gPL is assumed; convexity and a range bound alone do not establish it. Together with
+Assumption G.3, the common width implies
+|g ◦R −Ep1[R∗]| ≤∆
+p1-almost surely,
+g ∈G.
+Hence the preference scores are already bounded. Boundedness of R∗is additionally imposed for the
+KL and reward expansions, but is not needed for the exact recovery bound when R∗∈L2(p1).
+Relation to fitted models.
+The common range bound applies to the entire admissible score class,
+not merely to observed scores. For example, if ∥R(x)∥2 ≤B p1-almost surely, the convex linear
+class {gw : ∥w∥2 ≤W} has score-range width at most 2BW. Ridge regularization and finite
+empirical ranges alone do not establish this condition for an unrestricted class. Theorem 2 remains
+conditional on the stated class assumptions.
+Which assumptions each conclusion uses.
+The following conditions suffice for the individual
+conclusions; the main statements collect them for convenience.
+Conclusion
+Assumptions used
+Theorem 1(i)
+G.2; also G.3 for the equality with MSE.
+Theorem 1(ii), exact identity
+G.1 for R∗and R ∈L∞(p1); no small-β limit.
+Theorem 1(ii)–(iii), asymptotic bounds
+G.2, with g fixed.
+Theorem 1(iv)
+G.1 only.
+Theorem 2, MSE(g) ≤B(g) and (iv)
+G.1, G.3, and G.4.
+Theorem 2(i)–(iii)
+The preceding conditions and the oracle bound in G.2, with g
+fixed.
+Mean alignment is unnecessary for the value gain and gap bounds: Varp1(g ◦R −µ) ≤MSE(g) −¯v
+suffices. The exact recovery identities and the preference recovery bound hold without taking β ↓0.
+For fixed-score expansions, the O(βj) constants may depend on the problem and score and need not
+be uniform over the fitted class. The expansions involving gopt account explicitly for its dependence
+on β.
+Lemma 1 (Likelihood controls recovery). Under Assumptions G.1, G.3, and G.4, for every
+g ∈G, with c∆= (1 −1
+m)e−∆,
+Varp1(g ◦R −gPL ◦R) ≤2
+c∆
+ PL(g) −PL(gPL)
+
+.
+The variance inequality is invariant to additive shifts.
+G.2
+THEORETICAL FLOOR
+The exact recovery floor is ¯v. The exact KL floor is Kmin, whose leading term is β2¯v/2. For a law q
+on X, write q(R) for the distribution of R(X) when X ∼q.
+Lemma 2 (Level-set invariance). For every measurable composition g with 0 < Ep1[eβg◦R] <
+∞,
+qg(· | R = r) = p1(· | R = r)
+for p1(R)-almost every r.
+The tilt reweights surrogate level sets without changing their conditional laws. This statement
+also applies when individual level sets have zero mass.
+Proposition 1 (Exact KL floor and optimal composition). Fix β > 0. Under Assumption G.2,
+for every compared composition g,
+KL(q∗∥qg) = Kmin + KL(q∗(R)∥qg(R)) ≥Kmin,
+where
+Kmin := Er∼q∗(R)
+
+KL
+ q∗(· | r)∥p1(· | r)
+
+35
+
+
+Preprint. Under Review.
+does not depend on g. Over all admissible measurable compositions, the minimum is attained at
+gopt(r) = 1
+β log Ep1[eβR∗| R = r],
+uniquely up to an additive constant, p1(R)-almost surely; it need not belong to a restricted fitted
+family.
+Moreover, Kmin = 0 if and only if ¯v = 0. As β ↓0, with g fixed in the second expansion,
+Kmin = β2
+2 ¯v + O(β3),
+KL(q∗∥qg) = Kmin + β2
+2 Varp1(g ◦R −µ) + O(β3).
+Corollary 1 (The regression solution is leading-order optimal). Under Assumption G.2, for the
+displayed gopt in Proposition 1,
+gopt ◦R = µ + β
+2 v + O(β2)
+uniformly almost surely. As β ↓0,
+KL(q∗∥qµ) −Kmin = β4
+8 Varp1(v) + O(β5).
+Here Varp1(v) measures variation in conditional oracle variance across surrogate values. Thus the
+conditional mean induces a tilt whose excess KL above the exact optimum is fourth order in β.
+G.3
+REWARD ERROR CONTROLS STEERING
+Lemma 3 (Reward error controls steering). Under Assumption G.2, with g fixed,
+KL(q∗∥qg) = β2
+2 Varp1(R∗−g ◦R) + O(β3)
+(β ↓0).
+No mean or variance matching is required for this expansion.
+The orthogonal decomposition R∗−g ◦R = (R∗−µ) + (µ −g ◦R) gives the recovery floor plus
+approximation error in Theorem 1.
+Corollary 2 (Positive gain from imperfect recovery). Under the assumptions of Theorem 1,
+suppose
+MSE(g) < Varp1(R∗),
+or equivalently, ∥g ◦R −µ∥2
+L2(p1) < Varp1(µ). Then there exists β0 > 0 such that
+Eqg[R∗] > Ep1[R∗]
+for all 0 < β < β0.
+Thus, predicting the oracle more accurately than the best constant predictor suffices for positive
+reward gain at sufficiently small guidance strength.
+G.4
+CORRELATION CEILING
+Corollary 3 (Correlation ceiling). Under Assumption G.1, if Varp1(R∗) > 0, every nonconstant
+score g ◦R satisfies
+|PCCp1(g ◦R, R∗)| ≤
+q
+1 −¯v/Varp1(R∗).
+If Varp1(µ) > 0, equality is attained at g ◦R = µ. If Varp1(µ) = 0, the correlations are zero
+and PCC with the constant µ is undefined.
+The identity ¯v = Varp1(R∗)(1 −ρ2
+ceil) involves the population ceiling. An arbitrary predictor’s
+held-out correlation need not attain it or determine ¯v. A fitted linear predictor estimates performance
+36
+
+
+Preprint. Under Review.
+within the linear class and need not attain this unrestricted ceiling. The best nonlinear function of a
+single surrogate Rj instead has Pearson ceiling
+s
+Varp1(Ep1[R∗| Rj])
+Varp1(R∗)
+.
+Corollary 4 (Standardized surrogate tilts). Under Assumptions G.2 and G.3, let f = g ◦R, with
+s2
+∗= Varp1(R∗) > 0 and s2
+f = Varp1(f) > 0. For a nonconstant score F, define
+zF := F −Ep1[F]
+p
+Varp1(F)
+,
+qstd
+F
+∝p1eβzF .
+For fixed g, as β ↓0,
+KL(qstd
+R∗∥qstd
+f ) = β2
+1 −PCCp1(R∗, f)
+
++ O(β3).
+If s2
+µ := Varp1(µ) > 0, the leading coefficient is minimized over bounded, nonconstant surrogate
+scores by f = µ. Moreover, with ρceil = sµ/s∗,
+0 ≤ρceil −PCCp1(R∗, f) ≤2
+ MSE(g) −¯v
+
+s∗sµ
+.
+G.5
+SURROGATES AND FLOORS
+Corollary 5 (More surrogates can improve the optimal floors). Let RS be any sub-vector of R,
+and let ¯vS and Kmin(S) be its optimal recovery and KL floors. Then
+¯v ≤¯vS,
+Kmin ≤Kmin(S).
+The recovery comparison uses Assumption G.1; the KL comparison holds for every β > 0 under
+Assumption G.2. If Varp1(R∗) > 0, the Pearson ceiling weakly increases. Under Assumption G.2,
+the conditional-mean leading reward-gain coefficient Varp1(R∗) −¯v weakly increases, and its
+leading mean-gap coefficient ¯v weakly decreases.
+The unrestricted best composition of the full vector can match or improve on that of any sub-vector.
+Redundant surrogates need not give strict improvement. These comparisons do not guarantee that a
+finite-data fit improves, or impose an unrestricted reward ceiling.
+G.6
+PLACKETT–LUCE CURVATURE
+The following derivatives give the curvature used in the preference recovery bound.
+Proposition 2 (Plackett–Luce curvature). For a query with m ≥2 candidates, finite score vector
+f ∈Rm, and observed order π, let Ai = {π(i), . . . , π(m)} and let p(i) be the softmax on Ai,
+zero elsewhere. The query NLL satisfies
+∇fLS =
+m−1
+X
+i=1
+(p(i) −eπ(i)),
+∇2
+fLS =
+m−1
+X
+i=1
+h
+diag(p(i)) −p(i)p(i)⊤i
+⪰0.
+Its Hessian has null space span{1} and rank m −1, where ej is the jth standard basis vector.
+37
+
+
+Preprint. Under Review.
+H
+PROOFS
+Proofs are ordered by dependency. All expectations below are under the stated base or tilted laws,
+and all assertions about conditional moments hold almost surely.
+Lemma 2 (level-set invariance).
+For a measurable event A, conditional change of measure gives
+Eqg[1A | R] = Ep1[ωg◦R1A | R]
+Ep1[ωg◦R | R]
+= Ep1[1A | R].
+The density ratio is positive and R-measurable, so it cancels. The base and tilted surrogate marginals
+have the same null sets. No division by the probability of a level set is used.
+□
+Lemma 3 (reward error controls steering).
+Let Zg = Ep1[eβg◦R] and Z∗= Ep1[eβR∗]. The
+density ratio gives
+KL(q∗∥qg) = βEq∗[R∗−g ◦R] + log Zg −log Z∗.
+Assumption G.2 justifies the Taylor expansions:
+log Zg = βEp1[g ◦R] + β2
+2 Varp1(g ◦R) + O(β3),
+log Z∗= βEp1[R∗] + β2
+2 Varp1(R∗) + O(β3),
+Eq∗[R∗−g ◦R] = Ep1[R∗−g ◦R] + βCovp1(R∗, R∗−g ◦R) + O(β2).
+The linear terms cancel, leaving
+β2
+2 [Varp1(R∗) −2Covp1(R∗, g ◦R) + Varp1(g ◦R)] + O(β3),
+which is the claimed variance expansion.
+□
+Theorem 1 (Value Regime). Suppose R∗and g ◦R satisfy Assumptions G.1–G.3. Then:
+(i) (Steering.) As β ↓0, with Assumption G.3 used for the second equality,
+KL(q∗∥qg) = β2
+2 Varp1(R∗−g ◦R) + O(β3) = β2
+2 MSE(g) + O(β3).
+(ii) (Reward gain.) For any R ∈L∞(p1) and β > 0: EqR[R∗] −Ep1[R∗] = Covp1(R∗, ωR).
+Furthermore, as β ↓0:
+Eqg[R∗] −Ep1[R∗] ≥β
+
+Varp1(µ) −
+q
+Varp1(µ)(MSE(g) −¯v)
+
++ O(β2).
+(iii) (Reward gap.) As β ↓0, Eq∗[R∗]−Eqg[R∗]≤β[¯v +
+p
+Varp1(µ)(MSE(g) −¯v)]+O(β2).
+(iv) (Best recovery.) Under Assumption G.1 alone,
+MSE(g) = ¯v + ∥g ◦R −µ∥2
+L2(p1) ≥¯v,
+Varp1(R∗) = Varp1(µ) + ¯v.
+Proof of Theorem 1. (iv), using Assumption G.1. Write ε = R∗−µ. Then Ep1[ε | R] = 0 and
+Ep1[ε2] = ¯v. Thus ε is orthogonal in L2(p1) to every square-integrable function of R. Expanding
+the square gives
+MSE(g) = Ep1[(ε + µ −g ◦R)2] = ¯v + ∥g ◦R −µ∥2
+L2(p1).
+Equality with ¯v holds exactly when g ◦R = µ.
+Taking the constant score Ep1[R∗] proves
+Varp1(R∗) = Varp1(µ) + ¯v.
+(i), using Assumptions G.2 and G.3. The same orthogonality yields
+Varp1(R∗−g ◦R) = ¯v + Varp1(g ◦R −µ).
+By mean alignment the error has mean zero, so this equals MSE(g). Lemma 3 proves (i).
+38
+
+
+Preprint. Under Review.
+(ii). For R ∈L∞(p1) and R∗∈L2(p1), the density ratio satisfies Ep1[ωR] = 1, giving the exact
+identity
+EqR[R∗] −Ep1[R∗] = Ep1[R∗ωR] −Ep1[R∗]Ep1[ωR] = Covp1(R∗, ωR).
+This identity also appears in Paes et al. (2026). For a composition, ωg◦R is R-measurable, so the
+covariance equals
+Covp1(µ, ωg◦R).
+Under Assumption G.2, expanding the density ratio gives
+Eqg[R∗] −Ep1[R∗] = βCovp1(µ, g ◦R) + O(β2).
+Part (iv) implies
+Varp1(g ◦R −µ) ≤MSE(g) −¯v,
+with equality under Assumption G.3. Consequently,
+|Covp1(µ, µ −g ◦R)| ≤
+q
+Varp1(µ)(MSE(g) −¯v)
+by Cauchy–Schwarz. Substituting
+Covp1(µ, g ◦R) = Varp1(µ) −Covp1(µ, µ −g ◦R)
+proves (ii).
+(iii), using Assumption G.2. The oracle tilt’s gain is βVarp1(R∗) + O(β2), so
+Eq∗[R∗] −Eqg[R∗] = β [¯v + Covp1(µ, µ −g ◦R)] + O(β2).
+(6)
+The same Cauchy–Schwarz bound proves (iii).
+The conditional mean minimizes recovery error and the leading KL coefficient. It need not maximize
+expected reward over arbitrary score scalings: replacing µ by aµ changes the leading gain to
+aVarp1(µ).
+Proof of Corollary 2. By Theorem 1(iv),
+MSE(g) −¯v < Varp1(µ).
+Consequently, the coefficient of β in the gain lower bound of Theorem 1(ii) is strictly positive. For
+fixed g, this term dominates the O(β2) remainder for all sufficiently small positive β.
+Proposition 2 (PL curvature).
+For a fixed query and order,
+LS(f) =
+m−1
+X
+i=1
+"
+log
+X
+l∈Ai
+efl −fπ(i)
+#
+.
+Differentiating log-sum-exp gives the stated gradient and Hessian. For any w ∈Rm,
+w⊤h
+diag(p(i)) −p(i)p(i)⊤i
+w = Varp(i)(w) ≥0.
+The first stage assigns positive probability to every candidate, so this quadratic form vanishes only
+for constant w. Every stage vanishes on constant vectors; hence the summed Hessian has the stated
+null space and rank.
+□
+Lemma 1 (likelihood controls recovery).
+Under Assumptions G.1, G.3, and G.4, set w = (g −
+gPL) ◦R and gt = gPL + t(g −gPL), 0 ≤t ≤1. The segment is feasible by convexity of G.
+Minimality gives
+d
+dtPL(gt)
+
+t=0
+≥0,
+not necessarily equality at a constrained boundary. For S = (x1, . . . , xm) let wS,j = w(xj) and
+¯wS = m−1 P
+j wS,j.
+39
+
+
+Preprint. Under Review.
+Proposition 2 bounds the likelihood’s second directional derivative below by its first-stage variance.
+The range bound gives p(1)
+j
+≥e−∆/m, and hence
+Varp(1)(wS) = min
+c
+X
+j
+p(1)
+j (wS,j −c)2 ≥e−∆
+m
+X
+j
+(wS,j −¯wS)2.
+For independent items,
+ES
+
+m−1 X
+j
+(wS,j −¯wS)2
+
+= (1 −1/m)Varp1(w).
+Taking expectations over both S and π gives
+d2
+dt2 PL(gt) ≥c∆Varp1(w).
+The bounded scores and directions justify differentiating under these expectations. Taylor’s integral
+formula then yields
+PL(g) −PL(gPL) = d
+dtPL(gt)
+
+t=0
++
+Z 1
+0
+(1 −t) d2
+dt2 PL(gt) dt
+≥c∆
+2 Varp1(w),
+proving the claim.
+□
+Theorem 2 (Preference Regime). Under Assumptions G.1, G.3, and G.4, define the population
+loss PL(g) := ES,π[−log pPL(π | g ◦R, S)] and let gPL ∈arg ming∈G PL(g). With the
+score-range bound ∆from G.4 and c∆= (1 −1/m)e−∆, every g ∈G satisfies the bound
+MSE(g) ≤B(g) := ¯v +
+q
+Varp1(gPL ◦R −µ) +
+r
+2
+c∆
+ PL(g) −PL(gPL)
+2
+.
+Parts (i)–(iii) further assume the oracle bound in Assumption G.2 and hold for fixed g as β ↓0:
+(i) (Steering.)
+KL(q∗∥qg) ≤β2
+2 B(g) + O(β3).
+(ii) (Reward gain.)
+Eqg[R∗]−Ep1[R∗] ≥β
+h
+Varp1(µ) −
+p
+Varp1(µ)(B(g) −¯v)
+i
++O(β2).
+(iii) (Reward gap.)
+Eq∗[R∗] −Eqg[R∗] ≤β
+h
+¯v +
+p
+Varp1(µ)(B(g) −¯v)
+i
++ O(β2).
+(iv) (Minimum bound.)
+B(g) ≥B(gPL) = MSE(gPL).
+Proof of Theorem 2. First use Assumptions G.1, G.3, and G.4. Theorem 1(iv), the L2 triangle
+inequality, mean alignment, and Lemma 1 give
+p
+MSE(g) −¯v = ∥g ◦R −µ∥L2(p1)
+≤∥g ◦R −gPL ◦R∥L2(p1) + ∥gPL ◦R −µ∥L2(p1)
+≤
+r
+2
+c∆
+ PL(g) −PL(gPL)
+
++
+q
+Varp1(gPL ◦R −µ).
+Squaring and adding ¯v proves MSE(g) ≤B(g). The nonnegative excess PL risk is zero at gPL, so B
+is minimized there, with
+B(gPL) = ¯v + Varp1(gPL ◦R −µ) = MSE(gPL).
+This proves (iv), not minimization of the actual quantities bounded by B.
+For (i)–(iii), additionally assume the oracle bound in Assumption G.2. The common finite mean and
+range width already imply
+|g ◦R| ≤|Ep1[R∗]| + ∆
+almost surely for every g ∈G. Theorem 1 therefore applies to each fixed g. Substituting MSE(g) ≤
+B(g) into its bounds proves (i)–(iii): the gain lower bound decreases, and the KL and gap upper
+bounds increase, with recovery error.
+40
+
+
+Preprint. Under Review.
+The discrepancy need not vanish under conditional oracle variation: mixing PL laws over oracle
+values need not produce PL probabilities with utility µ. A sufficient realizable case is ¯v = 0 and
+a conditional-mean composition in G. Then R∗= µ almost surely, and the excess conditional
+cross-entropy over that score is a KL divergence between ranking laws. Thus µ minimizes PL risk;
+Lemma 1 and mean alignment give gPL ◦R = µ.
+Proposition 1 (exact KL floor).
+The KL chain rule and Lemma 2 give
+KL(q∗∥qg) = KL(q∗(R)∥qg(R)) + Er∼q∗(R)
+
+KL
+ q∗(· | r)∥p1(· | r)
+
+.
+The second term is Kmin. The surrogate marginals have density ratios relative to p1(R) proportional
+to Ep1[eβR∗| R] and eβg◦R, respectively. They agree exactly for the displayed gopt, up to an additive
+constant, proving optimality.
+The conditional density ratio of q∗relative to p1 is
+eβR∗
+Ep1[eβR∗| R].
+Therefore Kmin = 0 if and only if this ratio is one almost surely, equivalently R∗is R-measurable,
+or ¯v = 0.
+Assumption G.2 gives the uniform conditional cumulant expansion
+log Ep1[eβR∗| R] = βµ + β2
+2 v + O(β3).
+Thus gopt ◦R = µ + O(β). Since |gopt ◦R| ≤∥R∗∥∞, the constants in the Taylor remainder
+bounds of Lemma 3 are independent of β, so that expansion also applies to gopt. Orthogonality gives
+Varp1(R∗−gopt ◦R) = ¯v + O(β2),
+so Kmin = β2¯v/2 + O(β3). For a fixed g, the same orthogonal decomposition and Lemma 3 give
+the final expansion.
+□
+Corollary 1 (fourth-order excess).
+Dividing the conditional cumulant expansion by β proves
+gopt ◦R = µ + βv/2 + O(β2)
+uniformly. The exact decomposition, equality of the surrogate marginals of q∗and qgopt, and level-set
+invariance for qgopt and qµ give
+KL(q∗∥qµ) −Kmin = KL(qgopt∥qµ).
+Twice differentiating the log normalizer along the interpolating score, and integrating, yields the
+exact identity
+KL(qgopt∥qµ) = β2
+Z 1
+0
+t Varq(1−t)µ+t(gopt◦R)(gopt ◦R −µ) dt.
+For completeness, if the log normalizer along this path is F(t), the KL is
+F ′(1) −F(1) + F(0) =
+Z 1
+0
+tF ′′(t) dt,
+and F ′′ is β2 times the displayed variance. The tilted density is 1 + O(β) relative to p1 uniformly in
+t. Since gopt ◦R −µ = βv/2 + O(β2) uniformly, the integrand’s variance equals
+β2Varp1(v)/4 + O(β3).
+Integration gives β4Varp1(v)/8 + O(β5). This argument controls the remainder for the shrinking
+score difference; the generic O(β3) remainder of Lemma 3 alone would not suffice.
+□
+Corollary 3 (correlation ceiling).
+Conditional expectation gives
+Covp1(g ◦R, R∗) = Covp1(g ◦R, µ).
+Cauchy–Schwarz and total variance imply
+|PCCp1(g ◦R, R∗)| ≤
+s
+Varp1(µ)
+Varp1(R∗) =
+s
+1 −
+¯v
+Varp1(R∗).
+If µ is nonconstant, its own score attains equality. If it is constant, the covariance vanishes for
+every admissible nonconstant score. The single-surrogate ceiling follows by the same argument
+conditioning on Rj.
+□
+41
+
+
+Preprint. Under Review.
+Corollary 4.
+Lemma 3 applied to the standardized scores gives the expansion, since Varp1(zR∗−
+zf) = 2[1 −PCCp1(R∗, f)]. Optimality follows from Corollary 3. Conditional expectation gives
+ρceil −PCCp1(R∗, f) = ρceil
+2 ∥zf −zµ∥2
+L2(p1).
+By mean alignment and the reverse triangle inequality,
+∥zf −zµ∥L2(p1) ≤2
+sµ
+∥f −µ∥L2(p1).
+The recovery decomposition in Theorem 1 completes the bound.
+Corollary 5.
+Every composition of RS is also a composition of R. The full-vector population MSE
+infimum therefore cannot be larger; the two infima are ¯v and ¯vS by Theorem 1(iv). The same inclusion
+for the exact KL infima in Proposition 1 proves Kmin ≤Kmin(S) for every β > 0. The remaining
+weak comparisons follow by substitution in the correlation ceiling and the conditional-mean reward
+coefficients.
+□
+42
+
+
+Preprint. Under Review.
+I
+TOY EXAMPLES
+I.1
+VALUE FEEDBACK
+Setup.
+We use a two-dimensional example to isolate the benefit of a nonlinear composition.
+Let x = (u, v), p1 = N(0, 4I), p0 = N(0, I), and R1(x) = u, R2(x) = v. The oracle is
+R∗(x) = |u| −|v|, giving
+q∗(x) ∝p1(x)eβR∗(x),
+β = 1.
+(7)
+The target is bimodal along the u-axis, and no affine composition of the surrogates represents R∗
+exactly. Although the oracle is unbounded, the Gaussian prior gives a finite tilt normalizer. This
+example therefore extends beyond the bounded-reward assumptions of the main results.
+Fitting. We use n = 400 prior samples to fit linear and MLP compositions with the value loss
+in Equation (3). The linear composition uses ridge regression on standardized surrogates. The MLP
+has two hidden layers of 64 GELU units and is trained with Adam, using a held-out quarter of the
+feedback set for early stopping. The predicted reward fields are compared with the oracle in Figure 10.
+Figure 10: Value-toy reward recovery. Surrogate fields, oracle reward, and fitted linear and MLP compositions.
+Steering. We steer the distilled meta flow map with MFM using each fitted composition or an
+individual surrogate. The MLP composition gives lower estimated W1 and KL to q∗(0.51 and 0.05)
+than the linear composition (1.49 and 0.60), R1 (1.85 and 1.06), or R2 (2.32 and 0.91), consistent
+with the distributions in Figure 11.
+Figure 11: Value-toy steering with MFM. Prior and target distributions, followed by samples generated using
+the linear composition, MLP composition, and individual surrogates.
+I.2
+PREFERENCE FEEDBACK
+We next learn from PL rankings for a multimodal oracle and compare FKS, FMRG, MFM, and Itô
+steering.
+Setup. On X = R2, with coordinates x = (u, v) and prior p1 = N(0, 4I), the oracle combines three
+Gaussian bumps:
+R∗(x) =
+3
+X
+c=1
+hc ϕ(x; µc, w),
+where µc are the centers, hc control their amplitudes, and w is the width parameter. The resulting
+target q∗(x) ∝p1(x) exp(βR∗(x)) at β = 1 is multimodal (Figure 12). Reference samples are
+obtained by rejection sampling. The three surrogates R1, R2, R3 are corrupted views of the oracle,
+with shifted centers, rescaled heights, and noise localized around the modes.
+43
+
+
+Preprint. Under Review.
+Figure 12: Preference-toy setup. Prior, oracle reward, and target tilt. Reward-mode centers are marked “+”.
+Density panels here and in Figures 14 and 15 use a common scale relative to the peak of q∗.
+Fitting. Preference feedback consists of a PL ranking of m = 50 independent prior samples,
+generated with utilities λR∗(x) and λ = 10. Linear and MLP compositions are fitted using the PL
+loss in Equation (4); correlation weights are computed from the observed ranking. Fitting uses these
+rankings rather than numerical oracle rewards. The fitted fields are shown in Figure 13.
+The fitted PL utility is on the λR∗scale. To express the corresponding composition in oracle-reward
+units, it is divided by λ; we denote this calibrated composition by ˆg. We repeat the experiment over
+five ranking draws.
+Figure 13: Preference-toy reward recovery. Oracle and surrogate fields, together with correlation, linear,
+and MLP compositions. Oracle contours are overlaid on the fitted fields.
+Steering. We supply the same fitted composition to FKS, FMRG, MFM, and Itô steering (Figure 14).
+Its ideal tilt qˆg can differ from q∗, while look-ahead, discretization, and particle approximations
+introduce additional sampling error. FMRG, MFM, and Itô are reported at the evaluated setting with
+the lowest reference-based KL; this is retrospective sweep selection. FKS uses a fixed configuration.
+The target remains fixed at β = 1 throughout the guidance sweeps.
+The metrics rank the steerers differently in Table 13. FMRG and achieves the lowest KL (0.21), while
+FKS achieves the lowest W1 (0.55). FMRG also gives the largest mean oracle reward (0.55), which
+alone does not establish closer agreement with the full target distribution.
+Comparison with individual surrogates. Using FMRG, the fitted composition achieves lower W1
+and KL than any individual surrogate in Figure 15 and Table 14. Each reward uses its evaluated
+44
+
+
+Preprint. Under Review.
+Figure 14: Preference-toy steering. FKS, FMRG, MFM, and Itô outputs under the fitted composition, using
+the density scale of Figure 12.
+Table 13: Preference-toy steering. Estimated distances to q∗and mean oracle reward, averaged over five
+ranking draws. Bold marks the best value in each column.
+Steerer
+W1 ↓
+KL(q∗∥·) ↓
+Mean R∗↑
+FKS
+0.55
+0.32
+0.44
+FMRG
+0.69
+0.21
+0.55
+MFM
+0.57
+0.26
+0.49
+Itô
+0.68
+0.43
+0.48
+KL-minimizing guidance strength, with the oracle target held fixed. This comparison demonstrates
+the benefit of composition within the evaluated sweeps.
+Figure 15: Composition and individual surrogates. Top: oracle and single-surrogate tilts. Bottom: FMRG
+outputs using the fitted composition and each surrogate separately. Densities use the scale of Figure 12.
+45
+
+
+Preprint. Under Review.
+Table 14: Preference-toy reward comparison. FMRG using the fitted composition or an individual surrogate,
+averaged over five ranking draws. Lower is better; bold marks the best result.
+Steering reward
+W1 ↓
+KL(q∗∥·) ↓
+ˆg(R)
+0.69
+0.21
+R1
+0.79
+0.52
+R2
+0.73
+0.47
+R3
+0.99
+0.46
+46
+
+
+Preprint. Under Review.
+J
+QUALITATIVE EXAMPLES
+J.1
+LANGUAGE GENERATION
+Method
+Generated text
+prior p1,ϕ
+[CLS] june. [CLS] for the moment, some muslims in america will be told to thinker the united
+states, the united states also of course for the same for being 4, 000. [CLS] set a hands - on date
+for one local resident after this three of each college that, in spades, she is the only way when i
+move it to show...
+BoN
+[CLS] [CLS] nine officers involved in the trade said they expected 7 online, up from their peak
+at £25, 500 for up to 1, 000 people to be arrested in 2006. [CLS] in the same, it was spent about
+10 minutes in the previous week. . .
+sBoN
+[CLS] are going though not to get " women to help out " is always just thousands of childcare -
+- and questions about whether orwell should not have set up but if there are simply no social
+issues, we co - authors of thousands. . .
+uniform
+[CLS] to [CLS] [CLS] this [CLS] ’ s better earnings [CLS], or $ 1, 000 [CLS]. to match [CLS].
+[CLS] and will he be [CLS] to [CLS] once this weekend, which will [CLS] that it along further.
+[CLS] japan ’ s idea [CLS] than [CLS] in the [CLS] [CLS] city withinus. . .
+BSS
+[CLS] leaders. [CLS] in the senate, the 2010 parliament road will be political by long, the united
+states, the gas and also of announced for the public - private distribution of food. [CLS] i last
+emailed on thursday on new zealand for being " six of report " that, in bads, she is the only
+survivor when i move it to li. . .
+SLOP (draw 1)
+[CLS] himself up at the masters again to show a time and can work on training this week. [CLS]
+the end of the recession, he signed up to cutting 2, 000 jobs from 2030 by $ 2. 1. 5. [CLS] so
+might actually see your loan based on interest rates. . .
+SLOP (draw 2)
+[CLS] himself up at the masters again to show a time and can work on training this week. [CLS]
+the end of the recession, he signed up to cutting 2, 000 jobs from 2030 by $ 2. 1. 5. [CLS] so
+might actually see your loan based on interest rates. . .
+ParetoFlow
+[CLS] a year. [CLS] " there is none of the very how they, " she will. [CLS] there is none of this
+one, but the fact that that 100 lobby phone ’ s office is not going back to war, what did, have that
+of the president? [CLS] about 19s out of the then back of two - time champion. . .
+MARTINI
+[CLS] parents. [CLS] for the times, some parents in staff will be told to do, the has investment,
+the act and also of out for the world for last 4 of england. [CLS] ( did this blacks ) this one is
+a almost and industry of the college that, in spades, she is the only business when i move it to
+off...
+Table 15: Language-generation examples. Red highlights repetitions and malformed spans in the displayed
+excerpts. The two SLOP outputs are identical; ParetoFlow repeats a phrase within a sample.
+J.2
+IMAGENET
+Figures 16 to 20 show five of the seven class–prompt pairs in the main table. Rows compare the
+unsteered prior with FMRG steering using MARTINI’s linear composition, ReNO weights, and BSS
+in the value regime at n = 32. Each row contains that method’s highest-oracle-reward samples. This
+oracle-based selection is used only for illustration; the grids do not describe typical output quality or
+an oracle-free deployment selection rule.
+47
+
+
+Preprint. Under Review.
+Prior
+MARTINI
+ReNO
+Single
+a king penguin standing on the ice
+Figure 16: ImageNet: king penguin. Prompt: “a king penguin standing on the ice.”
+48
+
+
+Preprint. Under Review.
+Prior
+MARTINI
+ReNO
+Single
+a brown bear wading in a mountain river
+Figure 17: ImageNet: brown bear. Prompt: “a brown bear wading in a mountain river.”
+49
+
+
+Preprint. Under Review.
+Prior
+MARTINI
+ReNO
+Single
+a bison grazing on the open prairie
+Figure 18: ImageNet: bison. Prompt: “a bison grazing on the open prairie.”
+50
+
+
+Preprint. Under Review.
+Prior
+MARTINI
+ReNO
+Single
+a fire engine on a busy city street
+Figure 19: ImageNet: fire engine. Prompt: “a fire engine on a busy city street.”
+51
+
+
+Preprint. Under Review.
+Prior
+MARTINI
+ReNO
+Single
+a school bus on a tree-lined suburban street
+Figure 20: ImageNet: school bus. Prompt: “a school bus on a tree-lined suburban street.”
+52
+
+
+Preprint. Under Review.
+J.3
+PROTEIN COFOLDING
+Figure 21 shows 20 complexes, comparing ground truth, ligand crystal, the baseline DeCAF, and the
+MARTINI-best [gCorrelation].
+Figure 21: Top 20 complexes that outperform the baseline based on RMSD from the ground truth ligand crystal
+(green), the baseline DeCAF (orange), and the MARTINI-best [gCorrelation] (blue). The mean and standard
+deviation of the RMSD for that complex is show across the 5 seeds used to generate the particles. All steering
+runs here used k = 15 particles.
+53
+
+
+Preprint. Under Review.
+K
+RELATION TO MULTI-OBJECTIVE OPTIMISATION
+Multi-objective optimization treats R1, . . . , Rk as objectives to be balanced. Here they provide
+imperfect information about a single oracle reward R∗. We formalize why surrogate Pareto efficiency
+need not identify candidates preferred by the oracle.
+For rewards to be maximized, y dominates x if Rj(y) ≥Rj(x) for every j, with at least one strict
+inequality. The nondominated feasible candidates form the Pareto set P; their reward vectors form
+the Pareto front R(P).
+Lemma 4 (Increasing compositions are Pareto efficient). If g is coordinatewise strictly increasing,
+every maximizer of g ◦R over the feasible domain belongs to the surrogate Pareto set P.
+This ordering need not agree with the oracle:
+Lemma 5 (The oracle optimum can be dominated). There exist a base law and rewards with
+¯v > 0 whose unique oracle maximizer is strictly dominated in every surrogate.
+Example. Let x = (a, b) ∈[−1, 1]2 and p1 = Unif([−1, 1]2), with
+R1(x) = −(a + 1)2 −b2,
+R2(x) = −(a −1)2 −b2,
+R∗(x) = −3(a2 + b2) + 2b −3.
+The surrogate Pareto set is the segment P = [−1, 1] × {0}, whereas the oracle has the unique
+maximizer x⋆= (0, 1/3). The point (0, 0) strictly dominates x⋆on both surrogates, but has lower
+oracle reward:
+R1(0, 0) = R2(0, 0) = −1 > −10/9 = R1(x⋆) = R2(x⋆),
+R∗(0, 0) = −3 < −8/3 = R∗(x⋆).
+Figure 2 illustrates the distinction.
+Removing the monotonicity restriction allows compositions to favor points outside the surrogate
+Pareto set, but does not recover missing information. Here R(a, b) = R(a, −b), so every composition
+assigns the same score to x⋆and (0, −1/3) even though their oracle rewards differ.
+K.1
+PROOFS
+Lemma 4.
+If a maximizer x were dominated by y, coordinatewise strict increase would give
+g(R(y)) > g(R(x)), a contradiction.
+□
+Lemma 5.
+In the example, the surrogate values determine
+a = (R2 −R1)/4,
+b2 = −(R1 + R2)/2 −1 −a2.
+Under the uniform base law, the sign of b is conditionally symmetric. Hence
+µ(x) = −3(a2 + b2) −3,
+R∗(x) −µ(x) = 2b,
+¯v = 4Ep1[b2] = 4/3 > 0.
+Any point with b̸ = 0 is strictly dominated by (a, 0). For a point on the segment, its distances to
+(−1, 0) and (1, 0) sum to 2. A dominating point would have a strictly smaller sum, contradicting the
+triangle inequality. Thus P is exactly this segment. Finally,
+R∗(a, b) = −3a2 −3(b −1/3)2 −8/3
+has the unique maximizer stated above, which (0, 0) strictly dominates in both surrogates.
+□
+54

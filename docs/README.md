@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-21</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-22</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>9</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-21 22:30:26 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-22 22:42:33 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-21 日报收录 10 篇，精读 1 篇、速读 9 篇，聚焦人体驱动、物理仿真与动作生成。最值得看的是 8.0 分的 BUMP：它用身体驱动统一多物体物理，实现 HOI（人机交互）合成，速读方向可补看 DexGraspFlow 的跨本体灵巧抓取。普通读者可先读 BUMP，再按兴趣浏览抓取与视频动作协同生成。</p>
+<p>今日筛选8篇论文，精读1篇、速读7篇，聚焦手势生成与生成模型前沿。最值得关注的是精读8.0分的SynerGest，它为双人对话中的时空协同手势生成提供了新思路。普通读者可优先看SynerGest，再顺带扫一眼流匹配模型通过SNR调优提升空间定位的研究。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,7 +81,7 @@
     <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="BUMP: Body-driven Unified Multi-object Physics for HOI Synthesis">BUMP: Body-driven Unified Multi-object Physics for HOI Synthesis</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SynerGest: Temporal-Spatial Synergistic Gesture Generation for Dyadic Conversations">SynerGest: Temporal-Spatial Synergistic Gesture Generation for Dyadic Conversations</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">9 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DexGraspFlow: Topology-Aware SE(3) Flow Matching for Cross-Embodiment Dexterous Grasp Generation">DexGraspFlow: Topology-Aware SE(3) Flow Matching for Cross-Embodiment Dexterous Grasp Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Joints, Camera, Action! Co-Generating 3D Motion and Video for Arbitrary Rigs">Joints, Camera, Action! Co-Generating 3D Motion and Video for Arbitrary Rigs</span></li><li><span class="dpr-home-dashboard-paper-title" title="Self-Conditioning Enables Deep Sequential Reasoning in Flow Matching">Self-Conditioning Enables Deep Sequential Reasoning in Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Unlocking Spatial Grounding in Flow-Matching Models via SNR Tuning">Unlocking Spatial Grounding in Flow-Matching Models via SNR Tuning</span></li><li><span class="dpr-home-dashboard-paper-title" title="From Global to Tail Convergence: Dynamics of $α$-Stable Score-Based Generative Models">From Global to Tail Convergence: Dynamics of $α$-Stable Score-Based Generative Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Steered Not Stirred: Effective Reward Tilting using Surrogate Reward Mixing">Steered Not Stirred: Effective Reward Tilting using Surrogate Reward Mixing</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>9</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>7</strong></span></div>
 </section>
 </div>
 
