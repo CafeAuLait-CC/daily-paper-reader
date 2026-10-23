@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-22</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-23</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-22 22:42:33 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-23 22:00:23 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日筛选8篇论文，精读1篇、速读7篇，聚焦手势生成与生成模型前沿。最值得关注的是精读8.0分的SynerGest，它为双人对话中的时空协同手势生成提供了新思路。普通读者可优先看SynerGest，再顺带扫一眼流匹配模型通过SNR调优提升空间定位的研究。</p>
+<p>今日筛选4篇论文并精读1篇：PhysibleMDM 在推理阶段通过噪声优化为运动扩散模型加上物理可行性约束（9.0分）。最值得看的方向是：生成模型的推理阶段约束，以及流匹配在分布漂移下的预测式训练。普通读者可以先看 PhysibleMDM 如何把物理约束变成优化问题；速读篇目则用来补充流匹配和图像编辑的背景。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,7 +81,7 @@
     <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SynerGest: Temporal-Spatial Synergistic Gesture Generation for Dyadic Conversations">SynerGest: Temporal-Spatial Synergistic Gesture Generation for Dyadic Conversations</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PhysibleMDM: Enforcing Inference-Time Physical Feasibility Constraints on Motion Diffusion Models via Noise Optimization">PhysibleMDM: Enforcing Inference-Time Physical Feasibility Constraints on Motion Diffusion Models via Noise Optimization</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Unlocking Spatial Grounding in Flow-Matching Models via SNR Tuning">Unlocking Spatial Grounding in Flow-Matching Models via SNR Tuning</span></li><li><span class="dpr-home-dashboard-paper-title" title="From Global to Tail Convergence: Dynamics of $α$-Stable Score-Based Generative Models">From Global to Tail Convergence: Dynamics of $α$-Stable Score-Based Generative Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Steered Not Stirred: Effective Reward Tilting using Surrogate Reward Mixing">Steered Not Stirred: Effective Reward Tilting using Surrogate Reward Mixing</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Minimax-Optimal Predictive Flow Matching under Distribution Drift">Minimax-Optimal Predictive Flow Matching under Distribution Drift</span></li><li><span class="dpr-home-dashboard-paper-title" title="Dancing Diffusion: Learning Continuous Programs for Image Generation and Editing">Dancing Diffusion: Learning Continuous Programs for Image Generation and Editing</span></li><li><span class="dpr-home-dashboard-paper-title" title="When One Step Is Enough: An Empirical Study of Euler Integration in Flow-Matching Policies">When One Step Is Enough: An Empirical Study of Euler Integration in Flow-Matching Policies</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>7</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
 </section>
 </div>
 
