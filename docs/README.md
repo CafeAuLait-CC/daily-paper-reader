@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-23</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-24</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-23 22:00:23 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-24 21:44:07 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日筛选4篇论文并精读1篇：PhysibleMDM 在推理阶段通过噪声优化为运动扩散模型加上物理可行性约束（9.0分）。最值得看的方向是：生成模型的推理阶段约束，以及流匹配在分布漂移下的预测式训练。普通读者可以先看 PhysibleMDM 如何把物理约束变成优化问题；速读篇目则用来补充流匹配和图像编辑的背景。</p>
+<p>今天完成 5 篇速读、没有精读，重点集中在扩散模型方向。</p>
+<p>速读列表中值得关注的是 TamedFlow 的轨迹感知蒸馏采样，以及 3D 扩散模型在医学影像、DiffLTM 在表格数据条件生成上的应用，这些论文的评分均为 6.0/10。</p>
+<p>建议普通读者先看 TamedFlow 了解扩散采样加速思路，再按需选择医学影像或表格生成方向跟进。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PhysibleMDM: Enforcing Inference-Time Physical Feasibility Constraints on Motion Diffusion Models via Noise Optimization">PhysibleMDM: Enforcing Inference-Time Physical Feasibility Constraints on Motion Diffusion Models via Noise Optimization</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Minimax-Optimal Predictive Flow Matching under Distribution Drift">Minimax-Optimal Predictive Flow Matching under Distribution Drift</span></li><li><span class="dpr-home-dashboard-paper-title" title="Dancing Diffusion: Learning Continuous Programs for Image Generation and Editing">Dancing Diffusion: Learning Continuous Programs for Image Generation and Editing</span></li><li><span class="dpr-home-dashboard-paper-title" title="When One Step Is Enough: An Empirical Study of Euler Integration in Flow-Matching Policies">When One Step Is Enough: An Empirical Study of Euler Integration in Flow-Matching Policies</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TamedFlow: Trajectory-Aware Distillation for Teacher-Assisted Diffusion Sampling">TamedFlow: Trajectory-Aware Distillation for Teacher-Assisted Diffusion Sampling</span></li><li><span class="dpr-home-dashboard-paper-title" title="3D Diffusion Models for Medical Imaging">3D Diffusion Models for Medical Imaging</span></li><li><span class="dpr-home-dashboard-paper-title" title="DiffLTM: Continuous Diffusions Large Tabular Models for Conditional Generation">DiffLTM: Continuous Diffusions Large Tabular Models for Conditional Generation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
 </section>
 </div>
 

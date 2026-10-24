@@ -1,0 +1,980 @@
+Robot Motion Transition with Human Motion Prior
+Taehyun Byun1, Taemoon Jeong1, Yoonbyung Chai1, Woojin Wie2, Insu Park2, Kyungjae Lee3, and Sungjoon Choi1*
+Abstract— Humanoid motion-tracking policies can reproduce
+diverse behaviors, yet connecting independently acquired mo-
+tions into a continuous sequence remains challenging. Interpo-
+lation connects boundary poses without considering whether
+their relative position, heading, and timing provide suitable
+conditions for a transition. A generative motion prior can
+produce richer motion, but poorly arranged boundaries may
+cause it to generate excessive locomotion, turning, or another
+unintended action. We present Spatio-Temporal Alignment
+with a Motion Prior (STAMP), a framework for connecting
+independently acquired humanoid motions through a Robot-
+to-Human-to-Robot process. STAMP uses human motion space
+to draw on rich motion priors and reuse transition knowledge
+across robot embodiments. Its key component is a learned
+alignment model that determines the boundary conditions for
+motion inbetweening. Given the two motions retargeted to a
+human rig, the alignment model ranks candidate positions,
+headings, and transition durations for the following motion. A
+human motion prior generates the transition under the selected
+alignment. The completed sequence is retargeted to the robot
+and used as a reference to train a motion-tracking policy. We
+evaluate the tracking success of the generated transitions on
+Unitree G1 and ROBOTIS K1. Physical robot demonstrations
+further show that STAMP connects independently acquired
+motions into long-horizon sequences. Project page: https:
+//childtoy.github.io/STAMP-project
+I. INTRODUCTION
+Recent advances in physics-based motion tracking en-
+able humanoid robots to reproduce diverse and dynamic
+motions [1]–[3]. However, tracking individual motions and
+connecting independently acquired motions into a continuous
+sequence are different problems.
+Robot motions are commonly generated and validated as
+separate clips. When two clips are connected, the position
+and heading of the following motion and the time available
+for the transition are not given. Two motions can each
+be plausible on their own but difficult to connect under
+an arbitrary relative placement. These spatial and temporal
+choices determine the body movement required between their
+boundaries.
+A simple approach is to return the robot to a predefined
+pose between motions, but this stop-and-restart behavior
+interrupts the motion flow. Another approach is to interpolate
+directly between the two boundary poses. However, directly
+1Taehyun Byun, Taemoon Jeong, Yoonbyung Chai and Sungjoon Choi
+are with the Department of Artificial Intelligence, Korea University, Seoul,
+Republic of Korea. (e-mails: {taehyun-byun, taemoon-jeong, yoonbyung-
+chai, sungjoon-choi}@korea.ac.kr)
+2
+Woojin
+Wie
+and
+Insu
+Park
+is
+with
+ROBOTIS,
+(e-mail:
+{wwj,pis}@robotis.com)
+3 Kyungjae Lee is with the Department of Statistics, Korea University,
+Seoul, Republic of Korea. (e-mail: kyungjae lee@korea.ac.kr)
+interpolating boundary poses alone does not account for the
+incoming and outgoing motion or foot-contact changes. For
+a humanoid, a change in the support foot may require a step
+or a transfer of body weight that pose interpolation does not
+explicitly model.
+Recent approaches handle humanoid motion transitions
+through graph-based motion switching, motion matching, or
+policy blending [4]–[6]. These methods transition at inter-
+mediate states selected for compatibility, or blend policies
+around the switching point. As a result, the constituent
+motions may be truncated or altered, and the content of each
+motion is not necessarily preserved. STAMP instead connects
+the end of the preceding motion to the start of the following
+motion while preserving both input clips.
+Motion inbetweening generates missing motion between
+given boundary conditions [7]–[9]. Human motion data pro-
+vide rich examples of body movements and contact changes
+for learning such transitions [10], [11]. MotionBricks further
+demonstrates the use of motion inbetweening for real-world
+humanoid control [12].
+However, inbetweening boundaries extracted from a con-
+tinuous motion already have a defined spatial and temporal
+relationship. Independently acquired motions do not provide
+this relationship. Applying a motion prior to an arbitrary
+arrangement may require excessive locomotion, turning, or
+another unintended action to connect the motions. Con-
+necting such motions therefore requires selecting suitable
+boundary conditions before generating the transition.
+To address this problem, we propose Spatio-Temporal
+Alignment with a Motion Prior (STAMP), a Robot-to-
+Human-to-Robot framework that connects robot motions
+through a shared human motion space. STAMP learns from
+continuous human motion to rank candidate positions, head-
+ings, and transition durations, then uses a human motion prior
+to generate a transition under the selected conditions. The
+completed sequence is retargeted to the target robot and used
+to train a robot-specific motion-tracking policy. Experiments
+on Unitree G1 and ROBOTIS K1 evaluate the trackability of
+the resulting transitions, and physical robot demonstrations
+show their use in longer motion compositions.
+Our contributions are summarized as follows.
+• We introduce STAMP, a Robot-to-Human-to-Robot
+framework that uses human motion knowledge to con-
+nect independently acquired humanoid motions across
+different robot embodiments.
+• We learn a spatial and temporal alignment model from
+continuous human motions and counterfactual boundary
+arrangements. The model ranks candidate positions,
+arXiv:2610.30817v1  [cs.RO]  22 Oct 2026
+
+
+headings, and transition durations to select boundary
+conditions for motion inbetweening.
+• We evaluate robot tracking success on Unitree G1
+and ROBOTIS K1 against interpolation and generative
+motion baselines, analyze alignment selection through a
+ranking ablation, and demonstrate long-horizon motion
+compositions on the ROBOTIS K1.
+II. RELATED WORK
+A. Humanoid Motion Tracking and Transition
+Physics
+based
+imitation
+learning
+enables
+humanoid
+robots to reproduce complex reference motions. Deep-
+Mimic demonstrated the tracking of highly dynamic motion
+clips [1]. AMP and PHC extended this capability toward
+more diverse and robust humanoid behaviors [2], [13]. Be-
+yondMimic further demonstrated reliable motion tracking on
+physical humanoid robots [3].
+Recent methods also study transitions between robot mo-
+tions. Switch connects similar states across motion clips
+through a skill graph and learns a policy that moves through
+the resulting paths [4]. Perceptive Humanoid Parkour uses
+motion matching to select suitable entry states between
+locomotion and dynamic motions [5]. RPG blends multi-
+ple expert policies to support transitions between fighting
+motions [6]. These methods handle transitions through state
+selection or policy learning. STAMP selects spatial and
+temporal boundary conditions for independently acquired
+motions and generates the connecting reference using a
+human motion prior.
+B. Human Motion Inbetweening
+Motion inbetweening generates missing motion from ob-
+served boundary contexts. Earlier learning based approaches
+use recurrent networks or Transformers to recover the miss-
+ing interval [7], [8], [14]. Later methods use phase repre-
+sentations or diffusion models to improve motion quality
+and control [9], [15]. TEACH and PriorMDM generate
+temporally composed human motions from sequences of text
+descriptions [16], [17].
+Recent motion models support text, keyframe, trajectory,
+and online constraints [11], [18]. MotionBricks applies mo-
+tion inbetweening to animation and real-world control of
+the Unitree G1 [12]. These models generate motion under
+specified boundary conditions. When the boundaries are
+extracted from a continuous motion, their relative placement
+and timing are already defined. STAMP addresses indepen-
+dently acquired motions by selecting their relative position,
+heading, and transition duration before applying a motion
+inbetweening model.
+C. Human and Robot Motion Retargeting
+Motion retargeting transfers motion between bodies with
+different joint structures and proportions. Geometric retar-
+geting uses joint correspondences and inverse kinematics to
+adapt human motion to a humanoid robot [19]. Learning
+based methods instead learn shared or cross embodiment
+motion representations [20]–[22]. GMR provides a general
+motion retargeting pipeline for constructing robot motion
+from human motion data [23]. Other methods use normal-
+ized limb directions and target body proportions to transfer
+motion across different kinematic structures [24], [25].
+STAMP adapts CoRe [25] for bidirectional retargeting,
+enabling robot motions to be connected using a human
+motion prior and transferred back to the target robot.
+III. PROBLEM FORMULATION
+Let MR
+P and MR
+F denote two independently acquired
+motions for robot R, containing TP and TF frames, respec-
+tively. Each frame specifies the robot’s root state and joint
+configuration. Our goal is to connect the preceding motion
+MR
+P to the following motion MR
+F .
+The motions are specified independently, so their relative
+position, heading, and transition duration are not given. Each
+motion may be plausible on its own, yet their boundary states
+may be difficult to connect under an arbitrary placement. The
+problem therefore requires determining both their spatial and
+temporal relationship and the motion connecting them.
+We seek a completed robot motion of the form
+MR
+P →F = M
+R
+P ⊕T R
+P →F ⊕M
+R
+F ,
+(1)
+where ⊕denotes temporal concatenation, T R
+P →F is the
+transition, and M
+R
+P and M
+R
+F are the corresponding input-
+motion segments in the completed sequence. These segments
+may be rigidly transformed, but should retain the content and
+order of the input motions.
+The transition should provide continuous body movement
+between the two boundaries without requiring a return to a
+predefined neutral pose or introducing an unintended action.
+The completed sequence serves as a reference for robot
+motion tracking.
+IV. PROPOSED METHOD
+STAMP performs alignment and transition generation in
+human motion space to reuse human motion knowledge
+across robot embodiments. We use SOMA [26] as the human
+rig and retarget the input robot motions to it, yielding MH
+P
+and MH
+F with TP and TF frames, respectively. As shown
+in Fig. 1, the alignment model predicts a transition cost for
+each candidate arrangement, which specifies the following
+motion’s position and heading and the transition duration.
+The candidate with the lowest predicted cost is selected,
+and a human motion prior generates the connecting motion
+under the selected conditions. The complete sequence is then
+retargeted to the robot and used to train a motion-tracking
+policy.
+A. Spatial and Temporal Motion Alignment
+An alignment candidate specifies the placement of the
+following motion and the time available for the transition:
+c = (∆pc, ∆ψc, τc) ,
+(2)
+where ∆pc ∈R2 and ∆ψc specify the initial planar root
+position and heading of the following motion relative to
+
+
+Fig. 1: Overview of STAMP. Robot motions are transferred to a human rig. The alignment model predicts a transition cost
+for each candidate position, heading, and duration. The lowest-cost candidate is selected to condition motion inbetweening
+in human space. The completed sequence is retargeted to the robot and used as a motion-tracking reference.
+the final root frame of the preceding motion. The transition
+duration τc is in seconds.
+The candidate transforms the following motion as
+f
+MH
+F (c) = A
+ MH
+F ; ∆pc, ∆ψc
+
+,
+(3)
+where A places its initial root at the candidate planar position
+and heading and applies the same rigid transformation to the
+complete following motion.
+a) Alignment model: Let K denote the number of
+frames in each boundary context. The alignment inputs ZP
+and ZF (c) contain features from the final K preceding
+frames and the first K transformed following frames, respec-
+tively. These features describe root and body states, veloci-
+ties, and foot contacts. We additionally provide ρ(c), which
+describes relative foot placement and contact configuration
+across the boundaries.
+The model predicts a scalar transition cost:
+eϕ(c) = Eϕ (ZP , ZF (c), τc, ρ(c)) ,
+(4)
+where Eϕ is the alignment network with parameters ϕ. A
+lower predicted cost indicates a more suitable alignment
+candidate.
+Separate temporal Transformer encoders process the two
+contexts. Their features, difference, and element-wise prod-
+uct are combined with the duration and relative foot config-
+uration. An MLP maps this representation to the transition
+cost. Temporal contexts allow the model to consider in-
+coming and outgoing motion dynamics beyond the endpoint
+poses.
+b) Alignment supervision: We divide each continuous
+training motion into a preceding context, an observed tran-
+sition MH
+B , and a following context. For candidate c, the
+observed transition is resampled to duration τc, and the
+following context is rigidly transformed. We construct
+X(c) =
+
+xH
+P,end
+
+⊕Rτc(MH
+B )
+⊕
+exH
+F,start(c)
+
+,
+(5)
+where xH
+P,end and exH
+F,start(c) are the last preceding frame and
+first transformed following frame. Brackets indicate single-
+frame sequences, ⊕denotes temporal concatenation, and Rτc
+denotes temporal resampling.
+Candidate durations correspond to 15, 30, 45, or 60 frames
+at 30 fps. The transition channels are linearly interpolated,
+with heading angles unwrapped before interpolation. Contact
+channels are also interpolated and treated as soft weights.
+The transition is retimed but is not spatially warped toward
+the following context. We compute finite differences over the
+complete sequence X(c) at 30 fps, so boundary mismatches
+contribute to the kinematic costs. The observed transition
+is used only for supervision and is never provided to the
+alignment model.
+For a quantity x and normalization scale σ, we define
+Q(x; σ) = meant,d
+xt,d
+σ
+2
+,
+(6)
+where the mean includes all valid timesteps and scalar
+feature dimensions. Table I defines the cost components and
+their combination weights. Candidate dependence is omitted
+within the table for brevity.
+Here, pr and pb denote the root position and all SOMA
+joint positions, including the root. We reconstruct global joint
+positions by adding the root translation to the stored root-
+translation-relative positions. Before temporal differencing,
+all positions are expressed in a common canonical frame
+
+
+TABLE I: Kinematic supervision costs and combination
+weights. Normalization scales use the corresponding SI units.
+Term
+Definition
+Weight
+Eroot
+Q(¨pr; 3) + 0.25Q( ...p r; 25)
+1.0
+Ebody
+Q(¨pb; 6) + 0.25Q( ...p b; 50)
+0.6
+Efoot
+Q(¨pf; 5) + 0.25Q( ...p f; 45)
+0.8
+Estance Q(˙s; 1) + 0.25Q(¨s; 6)
+0.6
+Eyaw
+Q( ˙ψ; π) + 0.5Q( ¨ψ; 2π)
+0.5
++ 0.1Q(
+...
+ψ; 8π)
+Eskate
+Q(ec ⊙vxy; 0.35)
+0.8
+Eidle
+gidle(τc/0.5)2
+1.0
+defined by the preceding motion’s final root position and
+heading. Candidate displacements and heading differences
+are preserved in this frame. The foot-dynamics term uses
+two foot centers pf, each defined as the mean of its foot
+and toe-base joint positions. The stance vector s points from
+the left foot center to the right, and ψ is the unwrapped root
+heading. The skating term uses the horizontal velocities vxy
+of the four foot and toe-base sites. Their soft contact weights
+ec are applied to each velocity coordinate using element-wise
+multiplication ⊙.
+To penalize long transitions with little motion, we define:
+a = vbody + 0.5vroot + 0.15vyaw,
+gidle = clip (1 −a/0.12, 0, 1) ,
+(7)
+where the activity terms are the RMS body linear, root
+linear, and heading velocities, respectively. Each RMS value
+is computed over all scalar velocity components obtained
+by finite differences over the complete boundary-inclusive
+sequence X(c), including both boundary-crossing intervals.
+Let Ek(c) denote component k and λk its weight. The
+target transition cost is
+e∗(c) = log
+ 
+1 +
+X
+k
+λkEk(c)
+!
+.
+(8)
+This target provides a kinematic proxy for alignment selec-
+tion rather than a direct estimate of the cost of a generated
+transition.
+The logarithm compresses large cost values. The normal-
+ization scales and weights were chosen heuristically based
+on the units and expected magnitudes of the kinematic
+quantities. They were not tuned using motion-inbetweening
+outputs, policy rewards, or robot-tracking results.
+For each training example, e∗and eϕ collect the target and
+predicted costs in the same candidate order. Their preference
+distributions are
+q∗= softmax(−e∗/Tt),
+qϕ = softmax(−eϕ/Tp),
+(9)
+where Tt and Tp are the target and prediction temperatures.
+We train the model using
+Lalign = DKL (q∗∥qϕ)
++ λreg SmoothL1 (eϕ, e∗) ,
+(10)
+where λreg weights the regression term. The KL-divergence
+term learns candidate preferences, while regression anchors
+the predicted costs to their targets. We use Tt = 0.5, Tp =
+0.15, and λreg = 0.35.
+B. Particle-Based Inference
+STAMP constructs a fixed set C of alignment particles
+by combining predefined planar positions, headings, and
+transition durations relative to the final root frame of the
+preceding motion. The candidate values are provided in
+Sec. V-A.
+The alignment model evaluates all particles without gen-
+erating their corresponding transitions. STAMP selects
+c∗= arg min
+c∈C
+eϕ(c).
+(11)
+The selected placement, heading, and duration are then
+supplied to the human motion inbetweening model.
+C. Human Motion Inbetweening
+We develop a human motion inbetweening model to
+generate the transition under the selected alignment. In this
+subsection, f
+MH
+F denotes the following motion placed ac-
+cording to c∗, and τ denotes its selected transition duration.
+The model observes the final K frames of the preceding
+motion and the first K frames of the aligned following
+motion:
+XP =
+
+xH
+P,TP −K+1, . . . , xH
+P,TP
+
+,
+XF =
+exH
+F,1, . . . , exH
+F,K
+
+.
+(12)
+Here, xH
+P,t and exH
+F,t are frames of MH
+P and f
+MH
+F , respec-
+tively. The transition contains Nτ = round(fsτ) frames,
+where fs = 30 fps.
+Each frame is represented as
+xH
+t = [rt, pt, Rt, vt, ft] ,
+(13)
+where rt represents root motion, pt and Rt represent joint
+positions and rotations, and vt and ft represent joint veloc-
+ities and foot contacts.
+Our diffusion model adopts the motion representation and
+two-stage Transformer design of Kimodo [11]. It is trained
+for motion inbetweening using boundary contexts without
+text conditioning. During denoising, the boundary frames
+remain observed, and the intermediate frames are generated.
+At each denoising step, the first Transformer predicts
+the three-dimensional root position and the sine and cosine
+of its heading. These predictions are converted to a local
+representation containing heading velocity, planar velocity,
+and root height. The second Transformer predicts articulated
+body motion conditioned on this root representation and the
+boundary contexts. The generated intermediate frames form
+the human transition T H
+P →F .
+We train on continuous human motion windows of length
+2K + Nτ. The first and last K frames are observed condi-
+tions, and the intermediate frames are the generation target.
+Training samples use different durations and are padded
+to a common batch length. Padded frames are excluded
+from attention and loss computation. We apply reconstruction
+
+
+losses only to the unobserved transition frames, with channel
+weights specified in Sec. V-A.
+The models are trained separately, allowing the selected
+alignment to condition another compatible inbetweening
+model without retraining the alignment network.
+D. Robot-to-Human-to-Robot Motion Retargeting
+Retargeting connects the robot-specific motion represen-
+tation with the human motion space used for alignment and
+generation. We denote the two directions by PR→H and
+PH→R and implement both by adapting CoRe [25].
+The input robot motions are transferred to the human rig
+as
+MH
+P = PR→H(MR
+P ),
+MH
+F = PR→H(MR
+F ).
+(14)
+To obtain motion compatible with the human prior, we
+adapt root displacement and foot placement to human body
+proportions while retaining the motion content, heading, and
+support-foot sequence. Human joints without robot corre-
+spondences are maintained in temporally consistent config-
+urations.
+After transition generation, the complete sequence is trans-
+ferred back to the target robot:
+MR
+P →F = PH→R
+
+MH
+P ⊕T H
+P →F ⊕f
+MH
+F
+
+.
+(15)
+Human-to-robot retargeting accounts for the target body
+proportions, joint structure, joint limits, and foot contacts.
+We retarget the connected motion as a single sequence to
+maintain consistency across the transition boundaries. The
+resulting robot motion provides the reference for subsequent
+motion-tracking policy training and execution.
+V. EXPERIMENTS
+We compare STAMP with interpolation and inbetweening
+baselines on Unitree G1 and ROBOTIS K1 under the same
+tracking-policy training protocol. We also evaluate alignment
+selection and demonstrate long-horizon motion composition
+on the physical robot, ROBOTIS K1.
+A. Experimental Setup
+a) Motion pairs: Our benchmark contains 18 motion
+pairs across three scenarios: eight from boxing, five from
+industrial maintenance, and five from security and traffic
+control. The pairs include changes in locomotion, heading,
+stance height, foot placement, and upper-body movement.
+Each constituent motion is independently generated using
+Kimodo [11] at 30 fps. Each prompt describes a single
+motion without specifying its preceding or following mo-
+tion. The generated motions are approximately 6–9 seconds
+long. We remove initialization and terminal settling when
+necessary. The generated human motions are retargeted to
+Humanoids using the human-to-robot retargeting procedure
+described in Sec. IV-D. All methods use the same input
+motion pairs for each robot.
+b) Compared methods: Root/heading interpolation
+matches the following motion’s initial root position and
+heading to the preceding motion’s final root frame and
+connects the boundary states using quintic interpolation.
+Kimodo† uses Kimodo’s motion representation and de-
+noising architecture [11] and is trained for inbetweening with
+boundary motion contexts instead of text. It uses the same
+generator and Robot-to-Human-to-Robot pipeline as STAMP,
+but retains the original boundary arrangement.
+MotionBricks uses its released Unitree G1 model and
+duration predictor [12] to generate transitions under the
+original boundary arrangement. We evaluate MotionBricks
+only on Unitree G1, for which an official pretrained model
+is available.
+STAMP selects the following motion’s position, heading,
+and transition duration before generation with Kimodo†.
+Interpolation and Kimodo† use a fixed duration of 1.0 s.
+The comparison evaluates spatial alignment and duration
+selection together.
+c) Alignment
+particles:
+Relative
+to
+the
+preced-
+ing motion’s final root frame, STAMP combines pla-
+nar offsets {−2, −2/3, 2/3, 2} m along each ground-plane
+axis, headings {−60, −30, 0, 30, 60, 90}◦, and durations
+{0.5, 1.0, 1.5, 2.0} s. The Cartesian product yields 384 can-
+didates. Adding the identity placement (0, 0, 0◦) for each
+duration gives 388 particles per pair. STAMP selects the
+particle with the lowest predicted cost, while the ablation
+uses the rank-100 particle from the same set.
+d) Model training:
+Both the alignment model and
+Kimodo† are trained on BONES-SEED [10] using the
+SOMA representation at 30 fps with K = 10 boundary
+frames. Each alignment sample contains 16 candidates span-
+ning observed and identity placements, alternative durations,
+and local and global spatial perturbations. The alignment
+model uses two three-layer Transformer encoders of width
+160 with five attention heads. It is trained for 25,000 steps
+using AdamW with learning rate 2×10−4 and per-GPU batch
+size 32. We select the checkpoint with the lowest validation
+loss.
+Kimodo† uses Transformer width 512 with eight attention
+heads, 1,000 diffusion timesteps, and 50 denoising steps
+at inference. Smooth L1 loss weights for root position,
+heading, joint position, rotation, velocity, and contact are
+(10, 2, 10, 10, 3, 4), respectively. Training uses AdamAtan2
+with peak learning rate 2×10−5, 2,000 warm-up steps, cosine
+decay, and global batch size 2,048.
+e) Motion tracking: Each reference is tracked by an
+independently trained BeyondMimic policy [3]. Pairwise
+references contain the transition and K context frames on
+each side, resampled from 30 to 50 Hz. Training starts from
+randomly sampled reference phases.
+Each policy is trained for 5,000 iterations with 2,048 par-
+allel environments: 1,500 iterations without external pushes,
+2,000 with moderate perturbations and domain randomiza-
+tion, and 1,500 with full deployment randomization. Archi-
+tecture, observations, rewards, termination conditions, and
+randomization schedules are identical across methods for
+
+
+each robot. We use one training seed per reference and
+evaluate the final checkpoint.
+B. Evaluation Metrics
+Each policy is evaluated over 1,024 rollouts using 256
+parallel environments. We discard the initial rollout of each
+environment and collect subsequent rollouts after regular
+resets. Each evaluation rollout starts at the first reference
+frame, with randomized perturbations to the corresponding
+root pose, root velocity, and joint configuration. The refer-
+ence phase is not randomized.
+Body velocity error and joint acceleration are averaged
+over valid timesteps up to completion or early termination,
+including both successful and failed episodes. We then
+average equally over 1,024 episodes per motion pair and over
+the 18 pairs, totaling 18,432 evaluation rollouts per method.
+a) Success rate: A rollout is successful if it reaches the
+final reference frame without triggering a tracking termina-
+tion and maintains root-position, root-orientation, and end-
+effector-position errors below 0.20 m, 0.40 rad, and 0.20 m,
+respectively, throughout execution. The end-effector condi-
+tion applies to every tracked end effector. Success rate is the
+percentage of successful rollouts.
+b) Body velocity error: Mean body velocity error (Evel)
+is the mean Euclidean difference between simulated and
+reference world-frame linear velocities over all 30 tracked
+body points and evaluated timesteps. The root body is
+included, and root velocity is not subtracted. We report Evel
+in m/s.
+c) Joint acceleration: We report the mean absolute
+acceleration of the executed actuated joints:
+Eacc =
+1
+(T −1)D
+T
+X
+t=2
+D
+X
+d=1
+
+˙qt,d −˙qt−1,d
+∆t
+ ,
+(16)
+where ˙qt,d is the velocity of actuated joint d at timestep t,
+T is the number of evaluated timesteps, D is the number
+of actuated joints, and ∆t = 0.02 s. The floating root is
+excluded. Lower values indicate smaller changes in executed
+joint velocity. We interpret this metric together with success
+rate and velocity error, since low acceleration alone does not
+establish accurate tracking.
+Velocity error and joint acceleration are evaluated over the
+transition clip, including its short preceding and following
+boundary contexts.
+C. Pairwise Motion Transition
+Tables II and III report tracking performance over 18
+motion pairs. STAMP uses the same human motion inbe-
+tweening model and alignment model for both robots, with
+robot-specific retargeting and tracking policies.
+STAMP achieves the highest success rate on both robots,
+reaching 80.69% on Unitree G1 and 87.52% on ROBO-
+TIS K1. It also yields the lowest body velocity error and
+mean executed joint acceleration among the evaluated meth-
+ods.
+The comparison with Kimodo† supports the benefit of
+selecting spatial and temporal boundary conditions before
+TABLE II: Unitree G1 transition tracking over 18 motion
+pairs. Kimodo† denotes the Kimodo-based inbetweening
+model.
+Method
+Success Rate
+(%) ↑
+Evel
+(m/s) ↓
+Eacc
+(rad/s2) ↓
+Root/heading interpolation
+69.59
+0.2581
+13.57
+MotionBricks
+56.91
+0.3433
+17.67
+Kimodo†
+50.69
+0.5293
+18.98
+STAMP
+80.69
+0.2289
+12.43
+TABLE III: ROBOTIS K1 transition tracking over 18 motion
+pairs. Kimodo† denotes the Kimodo-based inbetweening
+model.
+Method
+Success Rate
+(%) ↑
+Evel
+(m/s) ↓
+Eacc
+(rad/s2) ↓
+Root/heading interpolation
+84.70
+0.1964
+11.74
+Kimodo†
+64.55
+0.5303
+16.50
+STAMP
+87.52
+0.1860
+11.12
+generation using the same motion prior. MotionBricks uses
+a different generator, representation, and duration model, so
+its comparison with STAMP evaluates complete transition
+systems.
+Each policy is evaluated against its own reference. These
+results therefore measure the trackability of the generated
+transitions under a common training protocol, rather than
+similarity to a shared ground-truth transition.
+D. Alignment Ranking Ablation
+We compare candidates ranked 1 and 100 in ascending
+predicted transition cost. Both conditions use the same
+candidate set, motion generator, retargeting procedure, and
+tracking-policy training and evaluation protocol. Only the
+selected position, heading, and transition duration differ.
+As shown in Table IV, rank 1 achieves higher success rates
+than rank 100 by 15.62 percentage points on ROBOTIS K1
+and 9.36 percentage points on Unitree G1. It produces lower
+body velocity error and executed joint acceleration on both
+robots. These results support the usefulness of the learned
+transition cost for selecting trackable boundary arrangements
+in this comparison.
+E. Physical Robot Evaluation
+We execute complete motion sequences on the physical
+version of ROBOTIS K1 using the same motion-tracking
+framework. These sequences include the constituent motions
+and their connecting transitions.
+a) Running-to-punching transition: Fig. 2 compares
+root/heading interpolation and STAMP using the same run-
+ning and punching motions. Interpolation places the punch-
+ing start at the running endpoint, leaving no net forward dis-
+placement between the transition boundaries. During phys-
+ical execution, we observe foot sliding as the robot slows
+
+
+TABLE IV: Tracking performance at alignment ranks 1 and
+100. Rank 1 has the lowest predicted transition cost.
+Robot
+Candidate
+Success Rate
+(%) ↑
+Evel
+(m/s) ↓
+Eacc
+(rad/s2) ↓
+Unitree G1
+Rank 1
+80.69
+0.2289
+12.43
+Rank 100
+71.33
+0.3001
+15.97
+ROBOTIS K1 Rank 1
+87.52
+0.1860
+11.12
+Rank 100
+71.90
+0.2875
+14.34
+Fig. 2: Running-to-punching transitions on ROBOTIS K1
+using interpolation (top) and STAMP (bottom), progressing
+from right to left. STAMP places the punching motion farther
+forward, providing space for a connecting step during the
+transition.
+down under interpolation. STAMP places the punching mo-
+tion farther along the running direction, and the inbetweening
+model generates a connecting step that allows continued
+forward movement during the transition.
+b) Motor-current response: We examine the motor-
+current response when connecting a look-around motion and
+a stop gesture in a traffic-control scenario. Both methods
+use a 1.5 s transition and are executed five times on ROBO-
+TIS K1. We extract the motor-current signals reported by
+the robot driver at 200 Hz, apply a fourth-order zero-phase
+low-pass filter with a 20 Hz cutoff, and compute the RMS
+across 23 motors at each timestep. Values are retained in
+driver-reported units without conversion to amperes.
+Fig. 3 shows the mean and standard deviation across
+executions aligned at transition onset. For this motion pair,
+STAMP exhibits a lower mean RMS signal and generally
+smaller between execution variation in the latter part of
+the transition. The current levels already differ at transition
+onset, so this comparison describes the observed execution
+responses rather than isolating the effect of alignment alone.
+Fig. 3: Motor-current response during a transition from look-
+ing around to making a stop gesture on ROBOTIS K1. Both
+methods use a 1.5 s transition. Lines and shading indicate
+the mean and ±1 standard deviation across five executions of
+the RMS signal over 23 motors. Time zero denotes transition
+onset. Values are in driver-reported units.
+c) Long-horizon composition:
+We repeatedly apply
+STAMP to connect independently acquired motions into a
+longer sequence. At each connection, STAMP selects the
+alignment candidate with the lowest predicted transition cost
+and generates the connecting motion.
+Fig. 4 shows three compositions of the same four traffic-
+control motions. These real robot executions demonstrate
+how pairwise alignment and transition generation can com-
+pose independently acquired motions into longer sequences.
+F. Limitations
+The learned cost provides a kinematic guide for alignment
+selection, while downstream trackability also depends on
+retargeting quality and robot dynamics.
+We currently train a tracking policy for each composed
+sequence. Future work could integrate alignment and inbe-
+tweening as motion priors within a shared reinforcement
+learning framework, allowing new compositions to be ex-
+ecuted with less sequence-specific training.
+VI. CONCLUSION
+We propose STAMP, a Robot-to-Human-to-Robot frame-
+work for connecting independently acquired humanoid mo-
+tions. A learned alignment model selects the relative position,
+heading, and transition duration before a human motion
+prior generates the transition. Both models operate in human
+motion space and are reused across robot embodiments. The
+completed sequence is retargeted and tracked by a robot-
+specific policy.
+Experiments on Unitree G1 and ROBOTIS K1 show
+higher tracking success and lower body velocity errors than
+the evaluated baselines. The ablation supports learned align-
+ment selection, and physical demonstrations show connecting
+steps and longer motion compositions. A traffic-control case
+study also shows lower reported motor-current RMS than
+interpolation in the latter part of the transition.
+
+
+Fig. 4: Long-horizon compositions of the same four traffic-control motions executed on the ROBOTIS K1. Each row shows
+a different composition. STAMP selects the spatial and temporal alignment and generates the transitions between consecutive
+motions.
+REFERENCES
+[1] X. B. Peng, P. Abbeel, S. Levine, and M. van de Panne, “DeepMimic:
+Example-guided deep reinforcement learning of physics-based char-
+acter skills,” in ACM Transactions on Graphics, vol. 37, no. 4, 2018.
+[2] X. B. Peng, Z. Ma, P. Abbeel, S. Levine, and A. Kanazawa, “AMP:
+Adversarial motion priors for stylized physics-based character con-
+trol,” ACM Transactions on Graphics, vol. 40, no. 4, 2021.
+[3] T. E. Truong, Q. Liao, X. Huang, G. Tevet, C. K. Liu, and K. Sreenath,
+“BeyondMimic: From motion tracking to versatile humanoid control
+via guided diffusion,” arXiv preprint arXiv:2508.08241, 2025.
+[4] Y.-F. Lau, Q. Zhao, Y. Wang, R. Yu, H. W. Tsui, Q. Chen, and P. Tan,
+“Switch: Learning agile skills switching for humanoid robots,” arXiv
+preprint arXiv:2604.14834, 2026.
+[5] Z. Wu, X. Huang, L. Yang, Y. Zhang, K. Sreenath, X. Chen, P. Abbeel,
+R. Duan, A. Kanazawa, C. Sferrazza et al., “Perceptive humanoid
+parkour: Chaining dynamic human skills via motion matching,” arXiv
+preprint arXiv:2602.15827, vol. 1, 2026.
+[6] Y. Xin, J. Bao, Y. Dong, X. Wang, B. Zhao, X. Li, J. Tan, and D. Wang,
+“RPG: Robust policy gating for smooth multi-skill transitions in
+humanoid fighting,” arXiv preprint arXiv:2604.21355, 2026.
+[7] F. G. Harvey, M. Yurick, D. Nowrouzezahrai, and C. Pal, “Robust
+motion in-betweening,” ACM Transactions on Graphics, vol. 39, no. 4,
+2020.
+[8] J. Kim, T. Byun, S. Shin, J. Won, and S. Choi, “Conditional motion
+in-betweening,” Pattern Recognition, vol. 132, p. 108894, 2022.
+[9] S. Cohan, G. Tevet, D. Reda, X. B. Peng, and M. van de Panne,
+“Flexible motion in-betweening with diffusion models,” arXiv preprint
+arXiv:2405.11126, 2024.
+[10] Bones
+Studio,
+“BONES-SEED:
+Skeletal
+everyday
+embodiment
+dataset,” https://huggingface.co/datasets/bones-studio/seed, 2026.
+[11] D. Rempe, M. Petrovich, Y. Yuan, H. Zhang, X. B. Peng et al., “Ki-
+modo: Scaling controllable human motion generation,” arXiv preprint
+arXiv:2603.15546, 2026.
+[12] T. Wang, O. Dionne, M. De Ruyter, D. Minor, D. Rempe, K. Zhao,
+M. Petrovich, Y. Yuan, C. Li, Z. Luo, B. Robison, X. Blackwell,
+B. Antoniazzi, X. B. Peng, Y. Zhu, and S. Yuen, “MotionBricks:
+Scalable real-time motions with modular latent generative model and
+smart primitives,” ACM Transactions on Graphics, vol. 45, no. 4, 2026.
+[13] Z. Luo, J. Cao, A. Winkler, K. Kitani, and W. Xu, “Perpetual humanoid
+control for real-time simulated avatars,” in International Conference
+on Computer Vision, 2023.
+[14] X. Tang, H. Wang, B. Hu, X. Gong, R. Yi, Q. Kou, and X. Jin, “Real-
+time controllable motion transition for characters,” ACM Transactions
+on Graphics, vol. 41, no. 4, pp. 1–10, 2022.
+[15] P. Starke, S. Starke, T. Komura, and F. Steinicke, “Motion in-
+betweening with phase manifolds,” Proceedings of the ACM on
+Computer Graphics and Interactive Techniques, vol. 6, no. 3, pp. 1–17,
+2023.
+[16] N. Athanasiou, M. Petrovich, M. J. Black, and G. Varol, “TEACH:
+Temporal action compositions for 3d humans,” in International Con-
+ference on 3D Vision (3DV), September 2022.
+[17] Y. Shafir, G. Tevet, R. Kapon, and A. H. Bermano, “Human motion
+diffusion as a generative prior,” in The Twelfth International Confer-
+ence on Learning Representations, 2024.
+[18] K. Zhao, M. Petrovich, H. Zhang, T. Wang, S. Tang, and D. Rempe,
+“ARDY: Autoregressive diffusion with hybrid representation for inter-
+active human motion generation,” arXiv preprint arXiv:2607.08741,
+2026.
+[19] K. Darvish, Y. Tirupachuri, G. Romualdi, L. Rapetti, D. Ferigo, F. J.
+Andrade Chavez, and D. Pucci, “Whole-body geometric retargeting
+for humanoid robots,” in IEEE-RAS International Conference on
+Humanoid Robots, 2019, pp. 679–686.
+[20] S. Choi, M. Pan, and J. Kim, “Nonparametric motion retargeting for
+humanoid robots on shared latent space,” in Proceedings of Robotics:
+Science and Systems, 2020.
+[21] Y. Yan, E. V. Mascaro, and D. Lee, “ImitationNet: Unsupervised
+human-to-robot motion retargeting via shared latent space,” in IEEE-
+RAS International Conference on Humanoid Robots, 2023, pp. 1–8.
+[22] Q. Zhao, Y. Li, K. Yang, X. Wang, S. Zhao, Y. Lu, X. Zhang,
+Q.
+Shen,
+X.-X.
+Long,
+and
+X.
+Cao,
+“Make
+tracking
+easy:
+Neural
+motion
+retargeting
+for
+humanoid
+whole-body
+control,”
+arXiv preprint arXiv:2603.22201, 2026. [Online]. Available: https:
+//arxiv.org/abs/2603.22201
+[23] J. P. Araujo, Y. Ze, P. Xu, J. Wu, and C. K. Liu, “Retargeting
+matters: General motion retargeting for humanoid motion tracking,”
+arXiv preprint arXiv:2510.02252, 2025.
+[24] T. Jeong, T. Byun, J. Kim, K. Choi, J. Oh, S. Lee, O. Darwish, J. Kim,
+and S. Choi, “Robust and expressive humanoid motion retargeting via
+optimization-based rig unification,” in Proceedings of the IEEE/RSJ
+International Conference on Intelligent Robots and Systems, 2025, pp.
+21 619–21 626.
+[25] T. Jeong, Y. Chai, S. Choi, J. Bak, C. Kim et al., “CoRe: A hybrid
+approach of contact-aware optimization and learning for humanoid
+
+
+robot motions,” in IEEE-RAS International Conference on Humanoid
+Robots, 2025, pp. 293–300.
+[26] J. Saito, J. Li, M. de Ruyter, M. Guerrero, E. Lim, E. Hassani,
+R. B. Ribera, H. Moon, M. Dadela, M. D. Lucca, Q. Wang, X. Li,
+S. Wu, C. Chung, Y. Seol, J. Kautz, S. Yuen, and U. Iqbal, “SOMA:
+Unifying parametric human body models,” 2026. [Online]. Available:
+https://arxiv.org/abs/2603.16858
