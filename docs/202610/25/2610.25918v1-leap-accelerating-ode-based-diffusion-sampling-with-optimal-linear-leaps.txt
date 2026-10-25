@@ -1,0 +1,2507 @@
+LEAP: Accelerating ODE-based Diffusion Sampling with Optimal
+Linear Leaps
+Haowei Zheng∗†
+zhwei7107@zju.edu.cn
+Zhejiang University
+Hangzhou, China
+Zhenyu Zhou∗†
+zhyzhou@zju.edu.cn
+Zhejiang University
+Hangzhou, China
+Jiawei Chen∗†
+sleepyhunt@zju.edu.cn
+Zhejiang University
+Hangzhou, China
+Can Wang∗†
+wcan@zju.edu.cn
+Zhejiang University
+Hangzhou, China
+Defang Chen‡
+defchern@berkeley.edu
+University of California, Berkeley
+California, United States
+Abstract
+Diffusion models primarily rely on general-purpose ODE-based
+numerical methods for training-free accelerated sampling, but per-
+formance degrades with coarse time discretization. In this paper, we
+propose optimal linear leaps (LEAP), a specialized method grounded
+in theoretical and empirical investigations of sampling trajectory
+geometry. Built upon low-dimensionality and cross-trajectory con-
+sistency, LEAP formulates a supervised least-squares optimization
+problem within the local trajectory subspace, achieving a precise ap-
+proximation of future states without model evaluations. Extensive
+experiments demonstrate that LEAP outperforms previous methods
+across diverse modalities, including text-to-image (Stable Diffusion
+3.5, FLUX.1-dev) and image-to-3D (TRELLIS.2) generation. Further-
+more, LEAP can be seamlessly integrated into existing solver-based
+methods, offering a plug-and-play enhancement for modern diffu-
+sion models. Code is available at https://github.com/zju-pi/LEAP.
+CCS Concepts
+• Computing methodologies →Computer vision.
+Keywords
+Diffusion Models, Training-free Acceleration, Solver-based
+ACM Reference Format:
+Haowei Zheng, Zhenyu Zhou, Jiawei Chen, Can Wang, and Defang Chen.
+2026. LEAP: Accelerating ODE-based Diffusion Sampling with Optimal
+Linear Leaps. In Proceedings of the 34th ACM International Conference on
+Multimedia (MM ’26), November 10–14, 2026, Rio de Janeiro, Brazil. ACM,
+New York, NY, USA, 18 pages. https://doi.org/10.1145/3767308.3836106
+1
+Introduction
+Diffusion-based generative models [9, 29, 32, 33] have achieved
+unprecedented success in multimedia content synthesis, ranging
+∗State Key Laboratory of Blockchain and Data Security, Zhejiang University.
+†Hangzhou High-Tech Zone (Binjiang) Institute of Blockchain and Data Security.
+‡Corresponding author.
+This work is licensed under a Creative Commons Attribution 4.0 International License.
+MM ’26, Rio de Janeiro, Brazil
+© 2026 Copyright held by the owner/author(s).
+ACM ISBN 979-8-4007-2213-4/2026/11
+https://doi.org/10.1145/3767308.3836106
+from image [24, 25, 27], video [3, 10], audio [6, 13], and 3D [11, 41].
+Despite their remarkable generation quality, the slow sampling pro-
+cess imposes a critical bottleneck for latency-sensitive applications.
+To address this issue, numerous acceleration techniques have
+been proposed. Training-based approaches distill a pre-trained
+multi-step model into an extremely few-step student model [12, 20,
+28, 31]. However, distilling modern diffusion models with billions
+of parameters (e.g., 8B Stable Diffusion 3.5 [8] and 12B FLUX [2]) is
+challenging and inflexible to accommodate community-tuned vari-
+ants and LoRA modules. In contrast, training-free methods require
+minimal parameter updates, offering superior plug-and-play flexibil-
+ity. Recent progress includes (i) solver-based method for calculating
+ordinary differential equations (ODEs) [16, 18, 30, 46, 49], (ii) opti-
+mized timestep scheduling [4, 26, 43], and (iii) feature caching [14,
+21, 39, 44]. Existing high-order multi-step solvers [16, 18, 46] es-
+timate future states via a linear combination of historical states
+where the coefficients are derived from numerical analysis, assum-
+ing sufficiently small and near-uniform step sizes. However, practi-
+cal acceleration typically employs large and non-uniform step sizes,
+making their assumptions and associated convergence guarantees
+less reliable. Concurrently, emerging research on the geometric
+regularity of diffusion trajectories [4, 5, 36, 38] has uncovered in-
+triguing empirical patterns, such as cross-trajectory consistency
+and low-dimensional concentration. While previous studies have
+qualitatively observed these regularities, a rigorous mathematical
+foundation remains largely absent. To move beyond heuristic de-
+signs toward a principled approach, a deeper and more rigorous
+investigation into the underlying mechanics is essential.
+To bridge this gap, we conduct a comprehensive theoretical anal-
+ysis of the geometric properties inherent in diffusion trajectories,
+yielding the following two theoretical insights. Firstly, we establish
+a theoretical bound on the alignment error between trajectories af-
+ter orthogonal rotational alignment, revealing the cross-trajectory
+consistency of diffusion models. Secondly, we rigorously character-
+ize the intrinsic low-dimensionality of diffusion sampling trajecto-
+ries, proving that individual paths are confined to a low-dimensional
+subspace. Our analysis reveals that despite different noise initial-
+izations, these generative paths share consistent low-dimensional
+dynamics.
+Leveraging these two mathematically grounded priors, we pro-
+pose optimal linear leaps (LEAP), a training-free, solver-based ac-
+celeration framework. In contrast to traditional numerical solvers
+arXiv:2610.25918v1  [cs.CV]  19 Oct 2026
+
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Haowei Zheng, Zhenyu Zhou, Jiawei Chen, Can Wang, and Defang Chen
+Figure 1: Overview of the proposed LEAP. A linear predictor (blue boxes) extrapolates the subsequent score from a sliding
+history buffer of size 𝑟(dashed boxes), yielding an approximated state ˆx (grey circles) without model evaluations. To prevent
+error drift, a model evaluation subsequently refines this approximation into a corrected state ˜x (yellow circles).
+that rely on rigid Taylor coefficients, our method introduces a data-
+driven multi-step strategy powered by least-squares optimization.
+The intrinsic low-dimensionality of diffusion trajectories suggests
+that local path segments can be accurately characterized by a linear
+subspace. Leveraging this geometric regularity, we formulate the
+prediction as a least-squares optimization problem, which iden-
+tifies the optimal linear coefficients by minimizing the discrep-
+ancy between linearly extrapolated historical states and multi-step
+ground-truth trajectory samples. Motivated by the cross-trajectory
+consistency, we demonstrate that the optimal linear extrapolation
+coefficients are sample-agnostic. This property guarantees the trans-
+ferability of coefficients derived from a limited set of reference tra-
+jectories before inference, bypassing the overhead for per-sample
+optimization. LEAP significantly enhances the sampling efficiency
+while preserving high generation quality. Crucially, as it operates
+entirely at the macroscopic trajectory level, our approach func-
+tions as a model-agnostic and plug-and-play module. This allows
+for seamless integration into diverse diffusion models without any
+architectural modifications. Extensive experiments across diverse
+modalities, including text-to-image generation and text-to-3D gen-
+eration demonstrate the superior performance and versatility of
+our method.
+In summary, our main contributions are as follows:
+• We prove the intrinsic low-dimensionality and geometric iso-
+morphism of generative trajectories across diverse noise initial-
+izations.
+• Motivated by these theoretical insights, we propose LEAP, a
+novel multi-step ODE solver that leverages least-squares align-
+ment to learn sample-agnostic extrapolation coefficients, en-
+abling highly accurate linear leaps with minimal computational
+overhead.
+• Extensive experiments across diverse generative tasks that span-
+ning both text-to-tmage synthesis and complex image-to-3D
+generation demonstrate the effectiveness of our method com-
+pared to state-of-the-art training-free baselines.
+2
+Preliminary
+Diffusion Models. Continuous-time diffusion models progressively
+corrupt data x0 ∼𝑝𝑑𝑎𝑡𝑎(x) into a tractable noise distribution x𝑇∼
+𝑝𝑝𝑟𝑖𝑜𝑟(x) via a forward Stochastic Differential Equation (SDE) [33]:
+dx𝑡= 𝑓(𝑡)x𝑡d𝑡+ 𝑔(𝑡)dw𝑡,
+𝑡∈[0,𝑇],
+(1)
+where w𝑡is the standard Wiener process [22], while 𝑓(𝑡) and 𝑔(𝑡)
+denote the drift and diffusion coefficients. Crucially, the genera-
+tive process that reverses the forward SDE to recover the data dis-
+tribution is governed by the reverse-time SDE dx𝑡= [𝑓(𝑡)x𝑡−
+𝑔(𝑡)2∇x𝑡log𝑝𝑡(x𝑡)]d𝑡+ 𝑔(𝑡)d ¯w𝑡, where ¯w𝑡denotes a standard
+Wiener process in the reverse-time direction. To implement the
+generative process, diffusion models estimate the intractable score
+function ∇x𝑡log𝑝𝑡(x𝑡) using a neural network 𝑠𝜃(x𝑡,𝑡) trained by
+score matching objectives. For any diffusion SDE, there exists an
+Ordinary Differential Equation (ODE) [33] that shares the identical
+marginal distributions 𝑝𝑡(x) for all 𝑡∈[0,𝑇], which is known as
+the Probability Flow ODE (PF-ODE):
+dx𝑡=
+
+𝑓(𝑡)x𝑡−1
+2𝑔(𝑡)2∇x𝑡log𝑝𝑡(x𝑡)
+
+d𝑡.
+(2)
+By casting the generative process as a numerical initial value prob-
+lem, PF-ODE enables deterministic sampling and underpins various
+training-free solver-based acceleration methods [18, 46].
+Flow-based Models. Instead of explicitly defining a diffusion
+process through an SDE, flow-based generative models formulate a
+continuous-time Normalizing Flow [1, 15, 17]. These models learn
+a time-dependent vector field 𝑣(x𝑡,𝑡) that transports noise to the
+data distribution via a deterministic ODE:
+dx𝑡= 𝑣(x𝑡,𝑡)d𝑡.
+(3)
+To circumvent the direct estimation of intractable marginal vector
+fields, Flow Matching introduces a simulation-free objective which
+regresses a neural vector field 𝑣𝜃(x𝑡,𝑡) towards a conditional vector
+field u𝑡(x𝑡|x0) that defines the target probability path 𝑝𝑡(x):
+E𝑡,𝑝0 (x0),𝑝𝑡(x𝑡|x0)
+
+∥𝑣𝜃(x𝑡,𝑡) −u𝑡(x𝑡| x0)∥2
+2
+
+.
+(4)
+Specifically, by setting 𝑇= 1, analytically solving Eq. 1 yields a
+reparameterization of x𝑡as
+x𝑡= 𝛼𝑡x0 + 𝜎𝑡x1,
+x1 ∼N (0, I).
+(5)
+where
+𝛼𝑡= exp
+∫𝑡
+0
+𝑓(𝑢)d𝑢
+
+,
+𝜎𝑡=
+∫𝑡
+0
+𝑔(𝑢)2 exp
+
+−2
+∫𝑢
+0
+𝑓(𝑠)d𝑠
+
+d𝑢
+1/2
+.
+(6)
+
+
+LEAP: Accelerating ODE-based Diffusion Sampling with Optimal Linear Leaps
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Figure 2: Visualizing the trajectory regularity of diffusion
+models. Following the visualization protocol in [5], we
+project 100 sampling trajectories generated with distinct
+noise and prompt initializations using SD3.5-Medium [8].
+The conditional velocity field is thus given by
+u𝑡(x𝑡| x0) = ¤𝜎𝑡
+𝜎𝑡
+x𝑡+
+
+¤𝛼𝑡−𝛼𝑡
+¤𝜎𝑡
+𝜎𝑡
+
+x0.
+(7)
+Contemporary cutting-edge text-to-image models increasingly
+favor the Flow Matching framework due to its conceptual simplicity
+and flexible path design [2, 8]. Since they inherit the architecture
+and training conventions of diffusion models, we still refer to the
+flow-based formulation as “diffusion” when no ambiguity arises.
+Trajectory Regularity. While diffusion models operate in an
+immensely high-dimensional ambient space, recent empirical ob-
+servations reveal that their sampling trajectories exhibit remark-
+able geometric regularity [4, 5, 37]. Principal Component Analysis
+(PCA) on individual sampling trajectory exhibits that the genera-
+tive dynamics are inherently low-dimensional where the explained
+variance is dominated by the first few principal components. Fur-
+thermore, as illustrated in Fig. 2, when projecting multiple trajecto-
+ries with distinct noise and prompt initializations into a shared 3D
+space, they bundle into a smooth ‘tube’. This visual alignment high-
+lights a striking cross-trajectory consistency, indicating that different
+diffusion paths share nearly isomorphic macroscopic dynamics. To-
+gether, this inter-trajectory low-dimensionality and inter-trajectory
+consistency constitute the trajectory regularity, serving as the foun-
+dational intuition for our subsequent theoretical analysis and the
+design of our acceleration algorithm.
+3
+Methodology
+3.1
+The Intrinsic Geometry of Generative
+Trajectories
+While previous works [4, 5] have observed strong geometric regu-
+larity of ODE sampling trajectories to justify existing accelerated
+sampling methods, a theoretical understanding remains unclear.
+In this section, we prove that diffusion sampling trajectories can
+be effectively aligned through orthogonal transformation and are
+embedded in low-dimensional subspaces. To this end, we perform
+an analysis within the Gaussian mixture model (GMM) framework
+with shared spherical covariance to analytically characterize diffu-
+sion dynamics. Since GMMs are universal approximators capable of
+modeling highly complex data manifolds, this assumption not only
+facilitates closed-form mathematical derivations but also ensures
+the broad applicability of our theoretical findings. Under this mild
+assumption, the data distribution is given by
+𝑝data(x) =
+𝑆
+∑︁
+𝑠=1
+𝜋𝑠N (𝝁𝑠, 𝜎2
+0I𝑑),
+𝜋𝑠> 0,
+𝑆
+∑︁
+𝑟=1
+𝜋𝑠= 1,
+(8)
+where 𝑆is the number of components, 𝜋𝑠are the mixing weights
+and 𝝁𝑠are the cluster means. Let
+𝑈:= span{𝝁1, . . . , 𝝁𝑆},
+𝑟:= dim(𝑈),
+𝑅:= max
+1≤𝑠≤𝑆∥𝝁𝑠∥.
+We consider the exact PF-ODE associated with the variance-
+preserving forward diffusion. Let 𝑡∈[0,𝑇] denote the standard
+forward diffusion time. Denote x(𝑚)
+𝑡
+the 𝑚-th sampling trajectory
+evolving backward in time which is initialized from a pure noise
+state x(𝑚)
+𝑇
+∼𝑝𝑇. To analyze the trajectory at discrete intervals, we
+consider a backward time grid 𝑇= 𝑡𝑁> 𝑡𝑁−1 > · · · > 𝑡0 = 0 and
+define the trajectory states as
+D(𝑚)
+𝑛
+:= x(𝑚)
+𝑡𝑛
+−x(𝑚)
+𝑇
+,
+(9)
+which represents the displacement from the initial noise. Let
+𝛼𝑇:= exp
+
+−1
+2
+∫𝑇
+0
+𝛽(𝑠) 𝑑𝑠
+
+,
+𝜈2
+𝑇:= 𝛼2
+𝑇𝜎2
+0 + (1 −𝛼2
+𝑇).
+(10)
+For brevity, we present a simplified statement with a proof sketch
+below. The complete theorem including all constants and rigorous
+proof is detailed in the Appendix A.
+Theorem 3.1 (Cross-trajectory consistency). Suppose that
+x(1)
+𝑇, . . . , x(𝑀)
+𝑇
+are i.i.d. samples from the exact noised marginal 𝑝𝑇.
+Then for every 𝛿∈(0, 1), with probability at least 1 −𝛿,
+max
+1≤𝑚1,𝑚2≤𝑀
+inf
+H∈𝑂(𝑑) max
+0≤𝑛≤𝑁
+D(𝑚1)
+𝑛
+−HD(𝑚2)
+𝑛
+
+≤𝐶𝑇,1 𝜈𝑇
+ 
+√𝑟+
+√︂
+log 𝑀
+𝛿
+!
++ 𝐶𝑇,2 𝑅,
+(11)
+where 𝐶𝑇,1,𝐶𝑇,2 > 0 depend only on the diffusion schedule and not
+on 𝑑, 𝑛, or the mixture parameters.
+Corollary 3.2 (Asymptotic consistency). If 𝑟+ log 𝑀= 𝑜(𝑑)
+and 𝑅= 𝑜(𝜈𝑇
+√
+𝑑), then for every fixed 𝛿∈(0, 1),
+1
+𝜈𝑇
+√
+𝑑
+max
+1≤𝑚1,𝑚2≤𝑀
+inf
+H∈𝑂(𝑑) max
+0≤𝑛≤𝑁
+D(𝑚1)
+𝑛
+−HD(𝑚2)
+𝑛
+
+P
+−−−−→
+𝑑→∞
+0. (12)
+Proof sketch. Let 𝑃and 𝑄= I −𝑃denote the orthogonal pro-
+jections onto 𝑈and 𝑈⊥, respectively. In the Appendix A, we show
+that the reverse-time PF-ODE can be written as
+dx𝑡=
+
+𝑎𝑡x𝑡+ 𝑏𝑡m𝑡(𝑃x𝑡)
+
+d𝑡,
+(13)
+where m𝑡(·) ∈𝑈is the posterior mean of the component centers
+at time 𝑡. Consequently, separating the dynamics yields
+𝑄dx𝑡= 𝑎𝑡𝑄x𝑡d𝑡,
+𝑃dx𝑡=
+
+𝑎𝑡𝑃x𝑡+ 𝑏𝑡m𝑡(𝑃x𝑡)
+
+d𝑡.
+(14)
+Therefore, the𝑈⊥-component evolves by a common scalar rescaling,
+while all mixture-specific non-linear effects are confined to the 𝑟-
+dimensional subspace 𝑈.
+Geometrically, this implies that after applying the orthogonal
+alignment, the maximum discrepancy between any pair of trajec-
+tories is determined by two factors: the norm difference of the
+initial noise within the orthogonal complement (i.e.,
+∥𝑄x(𝑚1)
+𝑇
+∥−
+
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Haowei Zheng, Zhenyu Zhou, Jiawei Chen, Can Wang, and Defang Chen
+∥𝑄x(𝑚2)
+𝑇
+∥
+), and the absolute magnitude of the signal component
+within the data subspace (i.e., ∥𝑃x(𝑚)
+𝑇
+∥). Since 𝑄x(𝑚)
+𝑇
+is a Gaussian
+vector in dimension 𝑑−𝑟, its norm concentrates uniformly over 𝑚,
+such that the norm difference is bounded by 𝑂 𝜈𝑇
+√︁
+log(𝑀/𝛿). On
+the other hand, 𝑃x(𝑚)
+𝑇
+lives in an 𝑟-dimensional subspace and its
+norm satisfies
+∥𝑃x(𝑚)
+𝑇
+∥= 𝑂
+
+𝛼𝑇𝑅+ 𝜈𝑇
+√𝑟+
+√︁
+log(𝑀/𝛿)
+
+(15)
+uniformly over 𝑚with high probability. Combining these bounds
+yields Thm. 3.1, and Cor. 3.2 follows by normalization with 𝜈𝑇
+√
+𝑑.
+□
+Remark. Cor. 3.2 indicates that in high-dimensional settings
+(𝑑→∞) which matches setting of diffusion models, the error
+bound in Thm. 3.1 becomes practically effectively vanishes. This
+provides a strong theoretical guarantee that our cross-trajectory
+alignment is highly accurate in realistic generation scenarios.
+Corollary 3.3 (Intrinsic low-dimensionality of individual
+trajectories). Under the assumptions of Thm. 3.1, for each sampling
+trajectory x(𝑚)
+𝑡
+, there exists a linear subspace
+S𝑚:= 𝑈⊕span{𝑄x(𝑚)
+𝑇
+}
+(16)
+with dim(S𝑚) ≤𝑟+ 1, such that
+x(𝑚)
+𝑡𝑛
+∈S𝑚,
+0 ≤𝑛≤𝑁.
+(17)
+Equivalently, if X(𝑚) ∈R(𝑁+1)×𝑑denotes the trajectory matrix whose
+𝑛-th row is (x(𝑚)
+𝑡𝑛)⊤, then
+rank(X(𝑚)) ≤𝑟+ 1.
+(18)
+Remark. Cor. 3.3 reveals that all trajectory variance is cap-
+tured by at most 𝑟+ 1 principal components. However, this (𝑟+ 1)-
+dimensional subspace S𝑚is sample-dependent, as it is spanned by
+the initial noise vector 𝑄x(𝑚)
+𝑇
+. The following corollary establishes a
+remarkable geometric invariance: by applying a suitable orthogonal
+transformation to each trajectory, all trajectories can be perfectly
+aligned into a single, shared low-dimensional subspace.
+Corollary 3.4 (Universal low-dimensional alignment of
+diffusion trajectories). For any fixed unit vector e ∈𝑈⊥, there
+exist orthogonal matrices H1, . . . , H𝑀∈𝑂(𝑑) satisfying H𝑚|𝑈= I
+and
+H𝑚𝑄x(𝑚)
+𝑇
+= ∥𝑄x(𝑚)
+𝑇
+∥e,
+∀𝑚∈{1, . . . , 𝑀}.
+(19)
+Under such transformations, the aligned trajectories defined by
+¯x(𝑚)
+𝑡𝑛
+:= H𝑚x(𝑚)
+𝑡𝑛
+(20)
+all reside in the same (𝑟+ 1)-dimensional subspace
+¯S := 𝑈⊕span{e}.
+(21)
+PF-ODE exhibits two complementary structural properties: cross-
+trajectory consistency and intrinsic individual low-dimensionality.
+Thm. 3.1 establishes that, different sampling trajectories can be
+highly aligned through simple orthogonal transformation. Cor. 3.3
+further demonstrates that each trajectory is strictly confined to an
+(𝑟+1)-dimensional subspace. Notably, after a simple per-trajectory
+alignment introduced by Cor. 3.4, the entire collection of trajectories
+resides within a universal (𝑟+ 1)-dimensional subspace. Therefore,
+the high-dimensional sampling dynamics are effectively governed
+Figure 3: Relative prediction error vs. noise level 𝜎𝑡. We quan-
+tify the projection error of each score onto the subspace
+spanned by its corresponding historical buffer. The relative
+error is strictly bounded, using a small window size of 𝑟= 3.
+by only a few latent coordinates: one radial coordinate in 𝑈⊥and
+at most 𝑟coordinates within the mean subspace 𝑈.
+More importantly, the intrinsic low-dimensionality established
+in Cor. 3.3 implies that, within any local window of a given tra-
+jectory, both the historical scores and the target output reside in
+a subspace. While this geometric regularity is rigorously estab-
+lished under mild assumption, its validity in real-world generative
+scenarios warrants empirical verification. To bridge this gap, we in-
+vestigate the local score dynamics using sampling trajectories from
+Stable Diffusion 3.5. Specifically, we quantify the orthogonal projec-
+tion error of the current score s𝑡onto the local subspace spanned by
+a short historical buffer, denoted as span(s𝑡+𝑟, s𝑡+𝑟−1, . . . , s𝑡+1). As
+illustrated in Fig. 3, the relative projection error is strictly bounded,
+dropping to a mere 4%–5% even with a small window size 𝑟= 3.
+This empirical finding confirms that even for highly complex data
+distributions, the immediate future score remains strictly confined
+within the linear span of its recent history. This empirical evident
+for low-dimensionality seamlessly transforms our theoretical in-
+sights into a practical algorithm, leading to our linear extrapolation
+framework in the subsequent section.
+3.2
+Optimal Linear Leaps with Aligned
+Trajectories
+In this section, we present our method grounded in the the local
+linear dependence established above. This geometric regularity
+underpins the use of a linear extrapolator to predict next score
+function. The overall pipeline of our approach is illustrated in Fig. 1.
+To formalize this process, suppose we collect an ensemble of 𝑀
+fine-grained reference sampling trajectories. For the𝑚-th trajectory
+(𝑚= 1, . . . , 𝑀), denote ˜s(𝑚)
+𝑛
+the model output (e.g., estimated score
+function) at timestep 𝑡𝑛, and let ˜x(𝑚)
+𝑛−1 be the next state updated using
+˜s(𝑚)
+𝑛
+.
+Given a window size 𝑟, our objective at timestep 𝑡𝑛is to predict
+the next model output ˜s𝑛−1 by utilizing 𝑟stored previous model
+outputs along the sampling trajectory. Denote the local history
+
+
+LEAP: Accelerating ODE-based Diffusion Sampling with Optimal Linear Leaps
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Algorithm 1 Coefficient Bank Construction
+Require: Reference score trajectories {T (𝑚)}𝑀
+𝑚=1, where T (𝑚) =
+{˜s(𝑚)
+𝑁, ˜s(𝑚)
+𝑁−1, . . . , ˜s(𝑚)
+1
+}; window size 𝑟; ridge coefficient 𝜆
+Ensure: Coefficient bank C = {c𝑁−𝑟+1, c𝑁−𝑟, . . . , c1}
+1: for 𝑛= 𝑁−𝑟+ 1, 𝑁−𝑟, . . . , 1 do
+2:
+for 𝑚= 1, 2, . . . , 𝑀do
+3:
+for 𝑗= 1, . . . ,𝑟−1 do
+4:
+Δ(𝑚)
+𝑛,𝑗←˜s(𝑚)
+𝑛+𝑗−˜s(𝑚)
+𝑛+𝑗−1
+5:
+end for
+6:
+B(𝑚)
+𝑛
+←
+h
+Δ(𝑚)
+𝑛,𝑟−1, . . . , Δ(𝑚)
+𝑛,1 , ˜s(𝑚)
+𝑛
+i
+7:
+end for
+8:
+c★
+𝑛←arg minc∈R𝑟Í𝑀
+𝑚=1
+˜s(𝑚)
+𝑛−1 −B(𝑚)
+𝑛
+c
+
+2
+2 + 𝜆∥c∥2
+2
+9: end for
+10: return C = {c★
+𝑁−𝑟+1, c★
+𝑁−𝑟, . . . , c★
+1 }
+Algorithm 2 LEAP Sampling (Predict-Correct)
+Require: Initial state ˜x𝑁; coefficient bank C; window size 𝑟; score
+network 𝑠𝜃
+Ensure: Final sample ˜x0
+1: Warm-up: run base sampler for 𝑟steps
+2: B ←{˜s𝑁, ˜s𝑁−1, . . . , ˜s𝑁−𝑟+1}
+3: Update current state to ˜x𝑁−𝑟
+4: for 𝑛= 𝑁−𝑟+ 1 down to 3 step 2 do
+5:
+Predict:
+6:
+Compute differences Δ𝑛,𝑗from B for 𝑗= 1, . . . ,𝑟−1
+7:
+ˆs𝑛−1 ←c𝑛,𝑟−1˜s𝑛+ Í𝑟−2
+𝑗=0 c𝑛,𝑗Δ𝑛,𝑟−𝑗−1
+8:
+Evolve to ˆx𝑛−2 via numerical solver using ˆs𝑛−1
+9:
+Append ˆs𝑛−1 to B and remove the oldest score
+10:
+Correct:
+11:
+Evaluate exact score ˜s𝑛−2 ←𝑠𝜃(ˆx𝑛−2)
+12:
+Evolve to ˜x𝑛−3 via numerical solver using ˜s𝑛−2
+13:
+Append ˜s𝑛−2 to B and remove the oldest score
+14: end for
+15: return ˜x0
+matrix of scores and the corresponding target by
+H(𝑚)
+𝑛
+=
+h
+˜s(𝑚)
+𝑛+𝑟−1, ˜s(𝑚)
+𝑛+𝑟−2, . . . , ˜s(𝑚)
+𝑛
+i
+∈R𝑑×𝑟.
+(22)
+We seek an optimal coefficient vector w𝑛∈R𝑟that satisfies:
+˜s(𝑚)
+𝑛−1 ≈H(𝑚)
+𝑛
+w𝑛.
+(23)
+The cross-trajectory consistency presented in Thm. 3.1 demon-
+strates that, after proper alignment, different trajectories follow
+nearly isomorphic low-dimensional dynamics. Consequently, a sin-
+gle coefficient vector w𝑛can effectively characterize the score evolu-
+tion of different reference trajectories at a given sampling timestep,
+enabling the extraction of a universal local extrapolation law. For-
+mally, we derive the step-wise optimal predictor within the family
+of linear extrapolators by solving the following multi-trajectory
+least-squares problem:
+w★
+𝑛= arg min
+w∈R𝑟
+𝑀
+∑︁
+𝑚=1
+˜s(𝑚)
+𝑛−1 −H(𝑚)
+𝑛
+w
+
+2
+2 .
+(24)
+While the formulation above is conceptually straightforward,
+directly regressing on [˜s𝑛+𝑟−1, ˜s𝑛+𝑟−2, . . . , ˜s𝑛] is often numerically
+ill-posed. Since consecutive model outputs along smooth segments
+of the diffusion path are highly correlated, the columns of the
+history matrix tend to be nearly collinear. As a result, the associ-
+ated least-squares system becomes poorly conditioned, making the
+fitted coefficients sensitive to finite-sample error, imperfect cross-
+trajectory alignment, and numerical instabilities. To mitigate this
+issue, we reparameterize the local subspace using a difference basis
+rather than the raw basis. Specifically, for each trajectory window,
+we define the first-order differences of the scores as:
+Δ(𝑚)
+𝑛,𝑗:= ˜s(𝑚)
+𝑛+𝑗−˜s(𝑚)
+𝑛+𝑗−1,
+𝑗= 1, . . . ,𝑟−1,
+(25)
+and define the modified history matrix as:
+B(𝑚)
+𝑛
+=
+h
+Δ(𝑚)
+𝑛,𝑟−1, . . . , Δ(𝑚)
+𝑛,1 , ˜s(𝑚)
+𝑛
+i
+∈R𝑑×𝑟.
+(26)
+Rather than directly estimating w𝑛, we fit an auxiliary coefficient
+vector c𝑛∈R𝑟such that
+˜s(𝑚)
+𝑛−1 ≈B(𝑚)
+𝑛
+c𝑛.
+(27)
+In practice, we aggregate samples from all reference trajectories
+and solve a ridge regression problem within the difference basis for
+each timestep 𝑛= 𝑁−1, 𝑁−2, . . . ,𝑟:
+c★
+𝑛= arg min
+c∈R𝑟
+𝑀
+∑︁
+𝑚=1
+˜s(𝑚)
+𝑛−1 −B(𝑚)
+𝑛
+c
+
+2
+2 + 𝜆∥c∥2
+2.
+(28)
+Once the step-wise coefficient bank C = {c𝑁−𝑟+1, c𝑁−𝑟, . . . , c1}
+has been solved, inference proceeds in two phases. First, we execute
+a warm-up phase by running the initial 𝑟denoising steps in a
+standard way. This initializes the history buffer with the initial 𝑟
+model outputs and their corresponding states:
+{˜s𝑁, ˜s𝑁−2, . . . , ˜s𝑁−𝑟+1},
+{˜x𝑁, ˜x𝑁−2, . . . , ˜x𝑁−𝑟}.
+(29)
+This warm-up phase provides the minimum context required by the
+extrapolator. Moving forward, we employ an interleaved sampling
+strategy that alternates between a network-free prediction step and
+a network-based correction step. Specifically, suppose the current
+history buffer contains 𝑟most recent scores:
+{˜s𝑛+𝑟−1, ˜s𝑛+𝑟−2, . . . , ˜s𝑛}.
+(30)
+We first predict the next model output using the learned step-wise
+coefficients:
+ˆs𝑛−1 := c𝑛,𝑟−1˜s𝑛+
+𝑟−2
+∑︁
+𝑗=0
+c𝑛,𝑗Δ𝑛,𝑟−𝑗−1.
+(31)
+The extrapolated score ˆs𝑛−1 is then utilized to evolve the trajectory
+to ˆx𝑛−2 via numerical solvers, eliminating the need for an explicit
+network evaluation. The extrapolated score ˆs𝑛−1 then serves as a
+proxy for ˜s𝑛−1 and is pushed into the history buffer, displacing the
+oldest entry to maintain a fixed window size of 𝑟.
+Extrapolation alone inevitably accumulates numerical drift over
+time. To ensure trajectory stability, we implement an interleaved
+Predict-Correct scheme. Following the short warm-up stage, the
+solver alternates between network-free extrapolation and exact
+network evaluation, balancing computational efficiency with nu-
+merical robustness, providing a practical acceleration framework
+for diffusion sampling. Given the step-wise optimality of our linear
+
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Haowei Zheng, Zhenyu Zhou, Jiawei Chen, Can Wang, and Defang Chen
+extrapolators and their capability to bypass redundant network
+evaluations, we name our method as Optimal Linear Leaps (LEAP).
+The full algorithms of coefficient bank construction and LEAP sam-
+pling are provided in Algorithm 1 and 2.
+4
+Experiments
+We evaluate the proposed LEAP on three cutting-edge diffusion
+models: SD3.5-Medium [8] and FLUX.1-Dev [2] for text-image task
+and TRELLIS.2 [41] for image-3D task. The quality of generated
+images is quantitatively evaluated using three metrics, including
+ImageReward [42], CLIP Score [23], and HPSv2 [40]. The prompts
+are drawn from the DrawBench [27] dataset. For image-3D task,
+we evaluate 3D object on a test set of 100 randomly sampled images
+from the Google Scanned Objects (GSO) dataset [7] by PSNR and
+CLIP Score. By default, we fix a window size of 𝑟= 5 and set the
+ridge regularization coefficient to 𝜆= 0.0001 across all experiments.
+Unless otherwise specified, LEAP is compared with existing state-
+of-the-art solvers under identical inference settings.
+4.1
+Main Results
+Text-to-image Generation. We evaluate LEAP on text-to-image
+generation, benchmarking it against representative solvers includ-
+ing Euler method [30], DPM++ [19], UniPC [46], iPNDM [35], LTC-
+Accel [50] and STORK-4 [34]. As shown in Tab. 1, LEAP consistently
+achieves top-tier performance across diverse sampling budgets,
+effectively preserving both text-image alignment and perceptual
+quality for accelerated sampling. Moreover, LEAP consistently en-
+hances the performance of both first-order and higher-order solvers,
+demonstrating its versatile plug-and-play capability. By leverag-
+ing a pre-computed, step-wise coefficient bank, LEAP seamlessly
+adapts any solver without any solver-specific hyperparameter tun-
+ing or model fine-tuning, making it a solver-agnostic enhancement
+module. Fig. 4 provides a qualitative comparison of LEAP against
+state-of-the-art solvers on SD3.5-Medium. Our LEAP exhibits su-
+perior performance across four challenging scenarios including (1)
+text rendering: LEAP accurately synthesizes legible text, whereas
+baselines suffer from typographic errors; (2) physical lighting: LEAP
+captures realistic transparency and intricate light refraction; (3) at-
+tribute binding: LEAP precisely binds the localized attributes to
+their respective partitions without semantic leakage.
+Image-to-3D Generation. We further validate LEAP on image-
+to-3D generation using the TRELLIS.2 [41] architecture. As pre-
+sented in Tab. 2, our method achieves systematic improvements
+in both PSNR and CLIP Score over the baseline on GSO dataset.
+The qualitative results shown in Fig. 5 demonstrate LEAP’s supe-
+rior capability in (1) topological correctness, maintaining precise
+connectivity in complex jointed structures; (2) surface fidelity; (3)
+geometric completeness, effectively generating intricate and high-
+frequency geometries, yielding sharper textural details and superior
+color accuracy.
+4.2
+Ablation Study
+To systematically validate the contribution of each key design
+choice in the proposed method, we conduct comprehensive ab-
+lation studies on SD3.5-Medium. To ensure a rigorous comparison,
+we isolate the impact of each component by maintaining a fixed
+DPM++
+LTC-Accel
+STORK4
+LEAP
+Figure 4: Text-to-image generation on SD3.5-Medium using
+10 inference steps across diverse prompts.
+Euler
+LEAP
+Figure 5: Image-to-3D generation on TRELLIS.2 using 10 in-
+ference steps across different image prompts.
+𝑁-step sampling schedule, identical random seeds and a consistent
+ensemble of reference trajectory (default 𝑀= 32). (a) Window
+Size 𝑟. As shown in Fig 6a, we adopt 𝑟= 5 as the default window
+size, as it delivers peak or near-peak performance in most scenarios.
+(b) Penalty Strength 𝜆. Fig. 6b demonstrates that LEAP is robust
+to the penalty coefficient 𝜆across a wide range of values. We re-
+tain this penalty term across all experiments to ensure theoretical
+
+
+LEAP: Accelerating ODE-based Diffusion Sampling with Optimal Linear Leaps
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Table 1: Quantitative results on SD3.5-Medium and FLUX.1-dev. The best and second-best results are marked in bold and
+underlined, respectively. Our proposed method (LEAP) is highlighted with a gray background.
+Steps
+Method
+SD3.5-Medium
+FLUX.1-dev
+HPSv2 ↑
+ImageReward ↑
+CLIPScore ↑
+HPSv2 ↑
+ImageReward ↑
+CLIPScore ↑
+10
+Euler
+25.8866
+0.6653
+32.7920
+28.3538
+0.8110
+30.6939
+DPM++
+26.4565
+0.7178
+32.9027
+28.6365
+0.8331
+30.7257
+iPNDM
+26.4041
+0.7063
+32.7579
+28.8272
+0.8956
+30.9178
+UniPC
+26.4450
+0.7122
+32.6428
+28.8193
+0.8839
+31.0634
+LTC-Accel
+26.2546
+0.7324
+33.1578
+28.9543
+0.9193
+31.1217
+STORK-4
+26.0567
+0.6619
+32.8704
+29.2846
+0.9729
+31.2895
+LEAP (Euler)
+26.8419
+0.7692
+33.2982
+29.0536
+0.9204
+30.9412
+LEAP (DPM++)
+27.0237
+0.8177
+33.2850
+29.4004
+0.9816
+31.4320
+15
+Euler
+27.4725
+0.8416
+33.4644
+29.2580
+0.9470
+31.0488
+DPM++
+27.8642
+0.8438
+33.4704
+29.5030
+0.9588
+31.2782
+iPNDM
+27.9220
+0.8770
+33.4416
+29.5056
+0.9491
+31.3836
+UniPC
+27.8680
+0.8788
+33.4703
+29.4668
+0.9414
+31.2339
+LTC-Accel
+27.8174
+0.9196
+33.7184
+29.5874
+0.9576
+31.1906
+STORK-4
+27.4224
+0.8253
+33.5179
+29.9693
+1.0308
+31.3041
+LEAP (Euler)
+28.1826
+0.9522
+33.6817
+29.6785
+0.9719
+31.1046
+LEAP (DPM++)
+28.2152
+0.9806
+33.5617
+29.9024
+1.0101
+31.4981
+20
+Euler
+28.2691
+0.9201
+33.6945
+29.4556
+0.9398
+30.9759
+DPM++
+28.4878
+0.9560
+33.7391
+29.6523
+0.9460
+31.0277
+iPNDM
+28.4252
+0.9317
+33.9325
+29.6963
+0.9886
+31.2203
+UniPC
+28.4756
+0.9364
+33.7757
+29.6773
+0.9840
+31.1858
+LTC-Accel
+28.3403
+0.9547
+33.7901
+29.7326
+0.9884
+31.1142
+STORK-4
+28.1835
+0.9035
+33.8360
+29.7927
+1.0066
+31.2650
+LEAP (Euler)
+28.5727
+0.9701
+33.7192
+29.9370
+1.0320
+31.3433
+LEAP (DPM++)
+28.6259
+0.9915
+33.5356
+30.1514
+1.0514
+31.6484
+Table 2: Quantitative comparison of image-to-3D generation on the GSO dataset via TRELLIS.2.
+Method
+PSNR ↑
+CLIP Score ↑
+10
+15
+20
+25
+30
+10
+15
+20
+25
+30
+Euler
+7.250
+7.396
+7.235
+7.361
+7.405
+0.8638
+0.8654
+0.8682
+0.8650
+0.8658
+LEAP (Euler)
+7.414
+7.537
+7.337
+7.410
+7.408
+0.8677
+0.8674
+0.8693
+0.8678
+0.8709
+consistency and numerical stability. (c) Number of Reference
+Trajectories 𝑀. As shown in Fig 6c, LEAP exhibits remarkable
+data efficiency, maintaining high performance even with minimal
+reference data (𝑀≤2). This observation perfectly corroborates our
+theoretical analysis regarding cross-trajectory consistency. We de-
+fault to 𝑀= 32 to ensure statistically robust coverage across diverse
+prompts. (d) Basis Construction. Fig. 7 underscores the critical
+role of our difference-basis reparameterization. The difference basis
+effectively rectifies the ill-conditioning, ensuring numerical stabil-
+ity and enabling consistent quality improvements across all NFE
+settings.
+5
+Related Works
+Fast numerical solvers. A predominant branch of training-free
+acceleration methods focuses on improving the numerical solver
+employed in reverse-time sampling. Early work such as DDIM [30]
+established the ODE-based paradigm for fast deterministic gener-
+ation. Subsequent research has developed increasingly effective
+high-order and multi-step solvers. PNDM [16] introduced multi-
+step pseudo numerical methods, showing that leveraging historical
+samples can significantly improve the quality-speed trade-off over
+first-order samplers. Its improved implementation, iPNDM [35], is
+frequently utilized in modern diffusion sampling. DEIS [45] further
+exploited the semi-linear structure of diffusion dynamics through
+
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Haowei Zheng, Zhenyu Zhou, Jiawei Chen, Can Wang, and Defang Chen
+1
+2
+3
+4
+5
+6
+26.75
+27.00
+27.25
+27.50
+27.75
+28.00
+28.25
+28.50
+HPSv2
+NFE=10
+NFE=15
+NFE=20
+(a) Window Size (𝑟)
+0
+10
+6
+10
+5
+10
+4
+10
+3
+10
+2
+26.5
+27.0
+27.5
+28.0
+28.5
+HPSv2
+NFE=10
+NFE=15
+NFE=20
+(b) Penalty Strength (𝜆)
+1
+2
+4
+8
+16
+32
+27.00
+27.25
+27.50
+27.75
+28.00
+28.25
+28.50
+HPSv2
+NFE=10
+NFE=15
+NFE=20
+(c) Number of Reference Trajectories (𝑀)
+Figure 6: Ablation studies on key hyperparameters in Stable Diffusion 3.5-Medium. We evaluate the impact of (a) Window Size,
+(b) Penalty Strength, and (c) Number of Tokens on the HPSv2 score across different NFEs. The default configuration is indicated
+by the dashed vertical line.
+Figure 7: Ablation study on basis construction in Stable Dif-
+fusion 3.5-Medium. Our proposed different basis effectively
+addresses the issue of ill-conditioning.
+an exponential-integrator formulation. Similarly, DPM-Solver [18]
+and DPM++ [19] derived dedicated high-order solvers by analyt-
+ically isolating the linear components, significantly reducing dis-
+cretization errors, and have emerged as a robust practical stan-
+dard, particularly for guided sampling scenarios. UniPC [46] unified
+the predictor-corrector paradigm. Subsequent refinements such as
+DPM-Solver-v3 [48] and DC-Solver [47], further improved solver
+parameterization and correction stability. LTC-Accel [50] leverages
+the local transition coherence of generative trajectories to dynam-
+ically approximate adjacent network outputs, achieving training-
+free acceleration. STORK [34] addressed numerical stiffness and
+removed the reliance on semi-linear assumptions and proposed a
+stabilized solver. Despite their differences, these methods still con-
+struct update rules primarily from numerical analysis or step-wise
+trend heuristics. In contrast, our method revisits multi-step solving
+from a trajectory-geometric perspective and seeks to exploit the
+intrinsic low-dimensional and cross-trajectory consistent structure
+of generative trajectories more directly.
+Diffusion sampling dynamics. Prior research on diffusion
+sampling dynamics has mainly established trajectory regularity
+through empirical observations, supported by preliminary theo-
+retical insights under idealized settings. Notably, Wang et al. [37]
+observed that individual reverse-time sampling trajectories are
+effectively low-dimensional, often resembling two-dimensional ro-
+tations. Chen et al. [5] studied deterministic PF-ODE trajectories,
+finding that each trajectory closely follows the displacement be-
+tween its endpoints, with residuals neatly captured by two or three
+orthogonal directions, yielding a characteristic boomerang-like
+shape. Their subsequent work [4] strengthened the cross-trajectory
+consistency claim by aligning projected trajectories with orthog-
+onal Procrustes, revealing a nearly canonical trajectory shape af-
+ter sample-specific rotations and reflections. While these works
+have empirically uncovered the trajectory regularity of diffusion
+sampling dynamics, their theoretical grounding relies largely on
+KDE-based surrogates of the empirical data distribution, analyti-
+cally tractable Gaussian models, and supportive Gaussian-mixture
+calculations. To the best of our knowledge, prior literature lacks
+a unified theorem within a Mixture-of-Gaussian framework that
+jointly formalizes both trajectory low-dimensionality and cross-
+trajectory isomorphism. In contrast, our work provides a principled
+derivation that simultaneously establishes these two properties.
+6
+Conclusion
+In this paper, we introduced LEAP, a novel, training-free multi-step
+ODE solver that effectively addresses the performance degradation
+of diffusion models in low-NFE regimes. Our approach is built upon
+a rigorous investigation of the geometric properties of diffusion
+sampling trajectories. By proving the intrinsic low-dimensionality
+and cross-trajectory consistency of generative paths, we formulated
+a supervised least-squares optimization within the local trajectory
+subspace. This allows LEAP to derive optimal, sample-agnostic ex-
+trapolation coefficients, achieving accurate future state approxima-
+tions with minimal computational overhead. Extensive evaluations
+demonstrate that LEAP serves as a versatile, plug-and-play enhance-
+ment for modern large-scale diffusion models. LEAP consistently
+outperforms state-of-the-art baselines across diverse modalities,
+including text-to-image generation using Stable Diffusion 3.5 and
+FLUX.1-Dev and image-to-3D generation using TRELLIS.2. Future
+work will delve deeper into the geometric properties of diffusion
+sampling trajectories under practical settings to further align our
+theoretical framework with realistic, finite-step sampling scenarios.
+
+
+LEAP: Accelerating ODE-based Diffusion Sampling with Optimal Linear Leaps
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Acknowledgments
+This work is supported by the National Natural Science Foundation
+of China (No. 62476244), the Starry Night Science Fund of Zhejiang
+University Shanghai Institute for Advanced Study, China (Grant No:
+SN-ZJU-SIAS-001) and the advanced computing resources provided
+by the Supercomputing Center of Hangzhou City University.
+References
+[1] Michael S Albergo and Eric Vanden-Eijnden. 2022. Building normalizing flows
+with stochastic interpolants. arXiv preprint arXiv:2209.15571 (2022).
+[2] Black Forest Labs. 2024. FLUX.1 [dev]. https://github.com/black-forest-labs/flux.
+[3] Andreas Blattmann, Tim Dockhorn, Sumith Kulal, Daniel Mendelevitch, Maciej
+Kilian, Dominik Lorenz, Yam Levi, Zion English, Vikram Voleti, Adam Letts,
+et al. 2023. Stable video diffusion: Scaling latent video diffusion models to large
+datasets. arXiv preprint arXiv:2311.15127 (2023).
+[4] Defang Chen, Zhenyu Zhou, Can Wang, and Siwei Lyu. 2025. Geometric regu-
+larity in deterministic sampling dynamics of diffusion-based generative models.
+Journal of Statistical Mechanics: Theory and Experiment 2025, 12 (2025), 124002.
+[5] Defang Chen, Zhenyu Zhou, Can Wang, Chunhua Shen, and Siwei Lyu. 2024.
+On the Trajectory Regularity of ODE-based Diffusion Sampling. In International
+Conference on Machine Learning. 7905–7934.
+[6] Nanxin Chen, Yu Zhang, Heiga Zen, Ron J Weiss, Mohammad Norouzi, and
+William Chan. 2020. Wavegrad: Estimating gradients for waveform generation.
+arXiv preprint arXiv:2009.00713 (2020).
+[7] Laura Downs, Anthony Francis, Nate Koenig, Brandon Kinman, Ryan Hickman,
+Krista Reymann, Thomas B McHugh, and Vincent Vanhoucke. 2022. Google
+scanned objects: A high-quality dataset of 3d scanned household items. In 2022
+International Conference on Robotics and Automation (ICRA). Ieee, 2553–2560.
+[8] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller,
+Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, et al. 2024.
+Scaling rectified flow transformers for high-resolution image synthesis. In Forty-
+first international conference on machine learning.
+[9] Jonathan Ho, Ajay Jain, and Pieter Abbeel. 2020. Denoising diffusion probabilistic
+models. Advances in neural information processing systems 33 (2020), 6840–6851.
+[10] Jonathan Ho, Tim Salimans, Alexey Gritsenko, William Chan, Mohammad
+Norouzi, and David J Fleet. 2022. Video diffusion models. Advances in neu-
+ral information processing systems 35 (2022), 8633–8646.
+[11] Team Hunyuan3D, Shuhui Yang, Mingxin Yang, Yifei Feng, Xin Huang, Sheng
+Zhang, Zebin He, Di Luo, Haolin Liu, Yunfei Zhao, et al. 2025. Hunyuan3d 2.1:
+From images to high-fidelity 3d assets with production-ready pbr material. arXiv
+preprint arXiv:2506.15442 (2025).
+[12] Dongjun Kim, Chieh-Hsin Lai, Wei-Hsiang Liao, Naoki Murata, Yuhta Takida,
+Toshimitsu Uesaka, Yutong He, Yuki Mitsufuji, and Stefano Ermon. 2023. Consis-
+tency trajectory models: Learning probability flow ode trajectory of diffusion.
+arXiv preprint arXiv:2310.02279 (2023).
+[13] Zhifeng Kong, Wei Ping, Jiaji Huang, Kexin Zhao, and Bryan Catanzaro. 2020.
+Diffwave: A versatile diffusion model for audio synthesis.
+arXiv preprint
+arXiv:2009.09761 (2020).
+[14] Senmao Li, Taihang Hu, Joost van de Weijer, Fahad S Khan, Tao Liu, Linxuan Li,
+Shiqi Yang, Yaxing Wang, Ming-Ming Cheng, and Jian Yang. 2024. Faster diffusion:
+Rethinking the role of the encoder for diffusion model inference. Advances in
+Neural Information Processing Systems 37 (2024), 85203–85240.
+[15] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le.
+2022. Flow matching for generative modeling. arXiv preprint arXiv:2210.02747
+(2022).
+[16] Luping Liu, Yi Ren, Zhijie Lin, and Zhou Zhao. 2022. Pseudo numerical methods
+for diffusion models on manifolds. arXiv preprint arXiv:2202.09778 (2022).
+[17] Xingchao Liu, Chengyue Gong, and Qiang Liu. 2022. Flow straight and fast:
+Learning to generate and transfer data with rectified flow.
+arXiv preprint
+arXiv:2209.03003 (2022).
+[18] Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu.
+2022. Dpm-solver: A fast ode solver for diffusion probabilistic model sampling
+in around 10 steps. Advances in neural information processing systems 35 (2022),
+5775–5787.
+[19] Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu. 2025.
+Dpm-solver++: Fast solver for guided sampling of diffusion probabilistic models.
+Machine Intelligence Research 22, 4 (2025), 730–751.
+[20] Simian Luo, Yiqin Tan, Longbo Huang, Jian Li, and Hang Zhao. 2023. Latent
+consistency models: Synthesizing high-resolution images with few-step inference.
+arXiv preprint arXiv:2310.04378 (2023).
+[21] Xinyin Ma, Gongfan Fang, and Xinchao Wang. 2024. Deepcache: Accelerating
+diffusion models for free. In Proceedings of the IEEE/CVF conference on computer
+vision and pattern recognition. 15762–15772.
+[22] Bernt Oksendal. 2013. Stochastic differential equations: an introduction with
+applications. Springer Science & Business Media.
+[23] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh,
+Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark,
+et al. 2021. Learning transferable visual models from natural language supervision.
+In International conference on machine learning. PmLR, 8748–8763.
+[24] Aditya Ramesh, Prafulla Dhariwal, Alex Nichol, Casey Chu, and Mark Chen.
+2022. Hierarchical text-conditional image generation with clip latents. arXiv
+preprint arXiv:2204.06125 1, 2 (2022), 3.
+[25] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn
+Ommer. 2022. High-resolution image synthesis with latent diffusion models. In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition.
+10684–10695.
+[26] Amirmojtaba Sabour, Sanja Fidler, and Karsten Kreis. 2024. Align your steps: Op-
+timizing sampling schedules in diffusion models. arXiv preprint arXiv:2404.14507
+(2024).
+[27] Chitwan Saharia, William Chan, Saurabh Saxena, Lala Li, Jay Whang, Emily L
+Denton, Kamyar Ghasemipour, Raphael Gontijo Lopes, Burcu Karagol Ayan, Tim
+Salimans, et al. 2022. Photorealistic text-to-image diffusion models with deep
+language understanding. Advances in neural information processing systems 35
+(2022), 36479–36494.
+[28] Tim Salimans and Jonathan Ho. 2022. Progressive distillation for fast sampling
+of diffusion models. arXiv preprint arXiv:2202.00512 (2022).
+[29] Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli.
+2015. Deep unsupervised learning using nonequilibrium thermodynamics. In
+International conference on machine learning. pmlr, 2256–2265.
+[30] Jiaming Song, Chenlin Meng, and Stefano Ermon. 2020. Denoising diffusion
+implicit models. arXiv preprint arXiv:2010.02502 (2020).
+[31] Yang Song, Prafulla Dhariwal, Mark Chen, and Ilya Sutskever. 2023. Consistency
+models. (2023).
+[32] Yang Song and Stefano Ermon. 2020. Improved techniques for training score-
+based generative models. Advances in neural information processing systems 33
+(2020), 12438–12448.
+[33] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano
+Ermon, and Ben Poole. 2020. Score-based generative modeling through stochastic
+differential equations. arXiv preprint arXiv:2011.13456 (2020).
+[34] Zheng Tan, Weizhen Wang, Andrea L Bertozzi, and Ernest K Ryu. 2025. STORK:
+Faster Diffusion And Flow Matching Sampling By Resolving Both Stiffness And
+Structure-Dependence. arXiv preprint arXiv:2505.24210 (2025).
+[35] Patrick von Platen, Suraj Patil, Anton Lozhkov, Pedro Cuenca, Nathan Lambert,
+Kashif Rasul, Mishig Davaadorj, and Thomas Wolf. 2022. Diffusers: State-of-the-
+art diffusion models. https://github.com/huggingface/diffusers.
+[36] Zhengchao Wan, Qingsong Wang, Gal Mishne, and Yusu Wang. 2025. Elucidating
+flow matching ODE dynamics via data geometry and denoisers. In Forty-second
+International Conference on Machine Learning.
+[37] Binxu Wang and John J Vastola. 2023.
+Diffusion models generate images
+like painters: an analytical theory of outline first, details later. arXiv preprint
+arXiv:2303.02490 (2023).
+[38] Guangyi Wang, Wei Peng, Lijiang Li, Wenyu Chen, Yuren Cai, and Songzhi Su.
+2024. Diffusion Sampling Correction via Approximately 10 Parameters. arXiv
+preprint arXiv:2411.06503 (2024).
+[39] Felix Wimbauer, Bichen Wu, Edgar Schoenfeld, Xiaoliang Dai, Ji Hou, Zijian He,
+Artsiom Sanakoyeu, Peizhao Zhang, Sam Tsai, Jonas Kohler, et al. 2024. Cache me
+if you can: Accelerating diffusion models through block caching. In Proceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern Recognition. 6211–6220.
+[40] Xiaoshi Wu, Yiming Hao, Keqiang Sun, Yixiong Chen, Feng Zhu, Rui Zhao, and
+Hongsheng Li. 2023. Human preference score v2: A solid benchmark for evaluat-
+ing human preferences of text-to-image synthesis. arXiv preprint arXiv:2306.09341
+(2023).
+[41] Jianfeng Xiang, Xiaoxue Chen, Sicheng Xu, Ruicheng Wang, Zelong Lv, Yu Deng,
+Hongyuan Zhu, Yue Dong, Hao Zhao, Nicholas Jing Yuan, et al. 2025. Native and
+compact structured latents for 3d generation. arXiv preprint arXiv:2512.14692
+(2025).
+[42] Jiazheng Xu, Xiao Liu, Yuchen Wu, Yuxuan Tong, Qinkai Li, Ming Ding, Jie Tang,
+and Yuxiao Dong. 2023. Imagereward: Learning and evaluating human prefer-
+ences for text-to-image generation. Advances in Neural Information Processing
+Systems 36 (2023), 15903–15935.
+[43] Shuchen Xue, Zhaoqiang Liu, Fei Chen, Shifeng Zhang, Tianyang Hu, Enze Xie,
+and Zhenguo Li. 2024. Accelerating diffusion sampling with optimized time
+steps. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition. 8292–8301.
+[44] Zichao Yu, Zhen Zou, Guojiang Shao, Chenwei Zhang, Shengze Xu, Jie Huang,
+Feng Zhao, Xiaodong Cun, and Wenyi Zhang. 2025. Ab-cache: Training-free
+acceleration of diffusion models via adams-bashforth cached feature reuse. In
+Proceedings of the 33rd ACM International Conference on Multimedia. 10408–10417.
+[45] Qinsheng Zhang and Yongxin Chen. 2022. Fast sampling of diffusion models
+with exponential integrator. arXiv preprint arXiv:2204.13902 (2022).
+
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Haowei Zheng, Zhenyu Zhou, Jiawei Chen, Can Wang, and Defang Chen
+[46] Wenliang Zhao, Lujia Bai, Yongming Rao, Jie Zhou, and Jiwen Lu. 2023. Unipc:
+A unified predictor-corrector framework for fast sampling of diffusion models.
+Advances in Neural Information Processing Systems 36 (2023), 49842–49869.
+[47] Wenliang Zhao, Haolin Wang, Jie Zhou, and Jiwen Lu. 2024. Dc-solver: Improving
+predictor-corrector diffusion sampler via dynamic compensation. In European
+Conference on Computer Vision. Springer, 450–466.
+[48] Kaiwen Zheng, Cheng Lu, Jianfei Chen, and Jun Zhu. 2023. Dpm-solver-v3:
+Improved diffusion ode solver with empirical model statistics. Advances in Neural
+Information Processing Systems 36 (2023), 55502–55542.
+[49] Zhenyu Zhou, Defang Chen, Can Wang, and Chun Chen. 2024. Fast ode-based
+sampling for diffusion models in around 5 steps. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition. 7777–7786.
+[50] Shangwen Zhu, Han Zhang, Zhantao Yang, Qianyu Peng, Zhao Pu, Huangji
+Wang, and Fan Cheng. 2025. Accelerating Diffusion Sampling via Exploiting Local
+Transition Coherence. In Proceedings of the IEEE/CVF International Conference on
+Computer Vision. 18284–18293.
+
+
+LEAP: Accelerating ODE-based Diffusion Sampling with Optimal Linear Leaps
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+A
+Proofs for Section 3.1
+This appendix section proves Theorems and Corollaries from Sec-
+tion 3.1. First, we provide an exact decomposition of the PF-ODE
+under a mild assumption. Next, we prove the deterministic pair-
+wise alignment bound. Finally, we apply the Gaussian concentration
+theorem to get a high-probability bound.
+A.1
+Notations
+Consider the variance-preserving forward diffusion situation:
+𝑑X𝑡= −1
+2𝛽(𝑡)X𝑡𝑑𝑡+
+√︁
+𝛽(𝑡) 𝑑W𝑡,
+𝑡∈[0,𝑇],
+(32)
+where 𝛽: [0,𝑇] →(0, ∞) is integrable. We define
+𝛼𝑡:= exp
+
+−1
+2
+∫𝑡
+0
+𝛽(𝑠) 𝑑𝑠
+
+,
+𝜈2
+𝑡:= 𝛼2
+𝑡𝜎2
+0 + (1 −𝛼2
+𝑡).
+(33)
+Suppose data distribution satisfies GMM assumption:
+𝑝0(x) =
+𝑀
+∑︁
+𝑚=1
+𝜋𝑚N (𝝁𝑚, 𝜎2
+0I𝑑),
+𝜋𝑚> 0,
+𝑀
+∑︁
+𝑚=1
+𝜋𝑚= 1.
+(34)
+To describe the layout of the mixed distribution center, we define
+the space formed by their means as
+𝑈:= span{𝝁1, . . . , 𝝁𝑀},
+𝑟:= dim(𝑈),
+𝑅:= max
+1≤𝑚≤𝑀∥𝝁𝑚∥.
+(35)
+We also let 𝑃to be the orthogonal projection onto𝑈, with 𝑄:= I−𝑃.
+A.2
+Structural lemmas
+We now begin to derive the closed-form expressions of PF-ODE dy-
+namics. We start our proofs by formulating the marginal probability
+density of the forward diffusion.
+Lemma A.1 (Closed Form of Marginal Probability Func-
+tion). For every 𝑡∈[0,𝑇], we have
+𝑝𝑡(x) =
+𝑆
+∑︁
+𝑠=1
+𝜋𝑠N (𝛼𝑡𝝁𝑠,𝜈2
+𝑡I𝑑).
+(36)
+Proof. Suppose 𝐶∈{1, . . . ,𝑆} satisfy condition P(𝐶= 𝑠) = 𝜋𝑠,
+and suppose the conditional probability density of the initial state
+is
+𝑝(x0 | 𝐶= 𝑠) = N (x0; 𝝁𝑠, 𝜎2
+0I𝑑).
+(37)
+Because forward diffusion process defines the transition probability
+density:
+𝑝(x𝑡| x0) = N (x𝑡;𝛼𝑡x0, (1 −𝛼2
+𝑡)I𝑑).
+(38)
+Hence, conditional on𝐶= 𝑠, the probability density of x𝑡is obtained
+by the following equation:
+𝑝(x𝑡| 𝐶= 𝑠) =
+∫
+𝑝(x𝑡| x0)𝑝(x0 | 𝐶= 𝑠) dx0
+= N x𝑡;𝛼𝑡𝝁𝑠, (𝛼2
+𝑡𝜎2
+0 + 1 −𝛼2
+𝑡)I𝑑
+
+= N (x𝑡;𝛼𝑡𝝁𝑠,𝜈2
+𝑡I𝑑).
+(39)
+Averaging over 𝑠gives the claim.
+□
+Lemma A.2 (Closed-form of score function). Define
+𝑤𝑠(x,𝑡) :=
+𝜋𝑠exp
+
+𝛼𝑡
+𝜈2
+𝑡⟨x, 𝝁𝑠⟩−
+𝛼2
+𝑡
+2𝜈2
+𝑡∥𝝁𝑠∥2
+Í𝑆
+𝑗=1 𝜋𝑗exp
+
+𝛼𝑡
+𝜈2
+𝑡⟨x, 𝝁𝑗⟩−
+𝛼2
+𝑡
+2𝜈2
+𝑡∥𝝁𝑗∥2
+ ,
+(40)
+and
+m𝑡(x) :=
+𝑆
+∑︁
+𝑠=1
+𝑤𝑠(x,𝑡)𝝁𝑠.
+(41)
+Then
+∇log𝑝𝑡(x) = −1
+𝜈2
+𝑡
+ x −𝛼𝑡m𝑡(x).
+(42)
+Proof. By Lemma A.1,
+𝑝𝑡(x) =
+𝑆
+∑︁
+𝑠=1
+𝜋𝑠𝜙𝜈2
+𝑡I𝑑(x −𝛼𝑡𝝁𝑠),
+(43)
+where 𝜙Σ denotes the Gaussian density with covariance Σ. There-
+fore,
+∇𝑝𝑡(x) = −1
+𝜈2
+𝑡
+𝑆
+∑︁
+𝑠=1
+𝜋𝑠(x −𝛼𝑡𝝁𝑠)𝜙𝜈2
+𝑡I𝑑(x −𝛼𝑡𝝁𝑠).
+(44)
+Therefore, the closed-form of score function can be derived by
+dividing Eq. 44 by 𝑝𝑡(x):
+∇log𝑝𝑡(x) = −1
+𝜈2
+𝑡
+
+x −𝛼𝑡
+𝑆
+∑︁
+𝑠=1
+𝑤𝑠(x,𝑡)𝝁𝑠
+
+= −1
+𝜈2
+𝑡
+ x −𝛼𝑡m𝑡(x).
+(45)
+□
+Lemma A.3 (Sufficiency of Mean Subspace). For every x ∈R𝑑
+and 𝑡∈[0,𝑇],
+𝑤𝑠(x,𝑡) = 𝑤𝑠(𝑃x,𝑡),
+m𝑡(x) = m𝑡(𝑃x) ∈𝑈.
+(46)
+Furthermore, let x𝑡∈[0,𝑇] be a PF-ODE trajectory. Its derivative with
+respect to 𝑡is given by
+𝑑x𝑡
+𝑑𝑡= 𝑎𝑡x𝑡+ 𝑏𝑡m𝑡(𝑃x𝑡),
+(47)
+where
+𝑎𝑡:= 1
+2𝛽(𝑡)
+
+1 −𝜈−2
+𝑡
+
+,
+𝑏𝑡:= 1
+2𝛽(𝑡)𝛼𝑡𝜈−2
+𝑡.
+(48)
+Proof. Note that the expression for 𝑤𝑠(x,𝑡) only depends on x
+through the inner products ⟨x, 𝝁𝑠⟩. Since for 𝝁𝑠∈𝑈, we have
+⟨x, 𝝁𝑠⟩= ⟨𝑃x, 𝝁𝑠⟩,
+(49)
+which leads to 𝑤𝑠(x,𝑡) = 𝑤𝑠(𝑃x,𝑡). Furthermore, it is obvious that
+m𝑡(𝑥) ∈𝑈because it is simply a sum of vectors 𝜇𝑠∈𝑈:
+m𝑡(x) =
+𝑆
+∑︁
+𝑠=1
+𝑤𝑠(x,𝑡)𝝁𝑠.
+(50)
+In forward process, the PF-ODE is
+𝑑x𝑡
+𝑑𝑡= −1
+2𝛽(𝑡)x𝑡−1
+2𝛽(𝑡)∇log𝑝𝑡(x𝑡)
+= 1
+2𝛽(𝑡)
+h
+x𝑡−𝜈−2
+𝑡x𝑡+ 𝛼𝑡𝜈−2
+𝑡m𝑡(x𝑡)
+i
+.
+(51)
+Using Eq. 46 immediately yields Eq.47.
+□
+Lemma A.4 (Exact 𝑈⊕𝑈⊥decomposition). Let
+Φ(𝑡2,𝑡1) := exp
+ ∫𝑡2
+𝑡1
+𝑎𝑣𝑑𝑣
+
+,
+𝜌𝑡:= Φ(𝑡,𝑇).
+(52)
+Then we obtain the following equation by integrating from 𝑇to 𝑡:
+𝑄x𝑡= 𝜌𝑡𝑄x𝑇,
+(53)
+
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Haowei Zheng, Zhenyu Zhou, Jiawei Chen, Can Wang, and Defang Chen
+and
+𝑃x𝑡= 𝜌𝑡𝑃x𝑇−
+∫𝑇
+𝑡
+Φ(𝑡,𝜏)𝑏𝜏m𝜏(𝑃x𝜏) 𝑑𝜏.
+(54)
+As a result,
+𝑄D𝑡= (𝜌𝑡−1)𝑄x𝑇.
+(55)
+Proof. Apply 𝑄to Eq. 47. Since m𝑡(𝑃x𝑡) ∈𝑈, we obtain
+𝑄𝑑x𝑡
+𝑑𝑡= 𝑎𝑡𝑄x𝑡,
+(56)
+whose exact solution is
+𝑄x𝑡= exp
+ ∫𝑡
+𝑇
+𝑎𝑣𝑑𝑣
+
+𝑄x𝑇= 𝜌𝑡𝑄x𝑇.
+(57)
+Similarly, for the projection 𝑃, we can obtain that
+𝑃𝑑x𝑡
+𝑑𝑡= 𝑎𝑡𝑃x𝑡+ 𝑏𝑡m𝑡(𝑃x𝑡),
+(58)
+and the variation-of-constants formula (integrating from 𝑇to 𝑡)
+leads to
+𝑃x𝑡= 𝜌𝑡𝑃x𝑇+
+∫𝑡
+𝑇
+Φ(𝑡,𝜏)𝑏𝜏m𝜏(𝑃x𝜏) 𝑑𝜏.
+(59)
+Subtracting 𝑄x𝑇immediately gives the Eq. 55.
+□
+Lemma A.5 (Mean-Subspace Displacement Bound). Define
+𝐴𝑇:= sup
+0≤𝑡≤𝑇
+|𝜌𝑡−1|,
+𝐵𝑇:= sup
+0≤𝑡≤𝑇
+∫𝑇
+𝑡
+Φ(𝑡,𝜏)|𝑏𝜏| 𝑑𝜏.
+(60)
+Then every trajectory satisfies
+sup
+0≤𝑡≤𝑇
+∥𝑃D𝑡∥≤𝐴𝑇∥𝑃x𝑇∥+ 𝐵𝑇𝑅.
+(61)
+Proof. By Lemma A.4,
+𝑃D𝑡= (𝜌𝑡−1)𝑃x𝑇−
+∫𝑇
+𝑡
+Φ(𝑡,𝜏)𝑏𝜏m𝜏(𝑃x𝜏) 𝑑𝜏.
+(62)
+Since m𝜏(𝑃x𝜏) is a convex combination of 𝝁1, . . . , 𝝁𝑀, it’s obvious
+that
+∥m𝜏(𝑃x𝜏)∥≤𝑅.
+(63)
+Hence by using the triangle inequality, we have
+∥𝑃D𝑡∥≤|𝜌𝑡−1|∥𝑃x𝑇∥+
+∫𝑇
+𝑡
+Φ(𝑡,𝜏)|𝑏𝜏| 𝑅𝑑𝜏.
+(64)
+Taking the supremum over 𝑡∈[0,𝑇] proves the lemma.
+□
+Lemma A.6 (Minimum orthogonal alignment error). For
+any u, v ∈R𝑚,
+min
+H∈𝑂(𝑚) ∥u −Hv∥=
+∥u∥−∥v∥
+.
+(65)
+Proof. For any H ∈𝑂(𝑚), the inequality
+∥u −Hv∥≥
+∥u∥−∥Hv∥
+ =
+∥u∥−∥v∥
+
+(66)
+always holds. Conversely, if u, v ≠0, choose H ∈𝑂(𝑚) such that
+H v
+∥v∥=
+u
+∥u∥.
+(67)
+Then Hv = (∥v∥/∥u∥)u, so
+∥u −Hv∥=
+u −∥v∥
+∥u∥u
+ =
+∥u∥−∥v∥
+.
+(68)
+Finally, if u = 0 or v = 0, the result holds trivially.
+□
+A.3
+A uniform high-probability bound
+Building upon the deterministic trajectory decomposition provided
+in the previous subsection, this part gives a uniform high-probability
+bound for pairwise trajectory alignment proof.
+Proposition A.7 (Deterministic pairwise alignment). Sup-
+pose x(1)
+𝑡∈[0,𝑇] and x(2)
+𝑡∈[0,𝑇] are two exact PF-ODE trajectories with
+starting noise x(1)
+𝑇
+and x(2)
+𝑇. Then there exists H ∈𝑂(𝑑) such that
+sup
+0≤𝑡≤𝑇
+∥D(1)
+𝑡
+−HD(2)
+𝑡
+∥≤𝐴𝑇
+∥𝑄x(1)
+𝑇∥−∥𝑄x(2)
+𝑇∥
+
++ 𝐴𝑇
+ ∥𝑃x(1)
+𝑇∥+ ∥𝑃x(2)
+𝑇∥ + 2𝐵𝑇𝑅.
+(69)
+Consequently,
+max
+0≤𝑛≤𝑁∥D(1)
+𝑛
+−HD(2)
+𝑛∥≤𝐴𝑇
+∥𝑄x(1)
+𝑇∥−∥𝑄x(2)
+𝑇∥
+
++ 𝐴𝑇
+ ∥𝑃x(1)
+𝑇∥+ ∥𝑃x(2)
+𝑇∥ + 2𝐵𝑇𝑅.
+(70)
+Proof. Decompose R𝑑= 𝑈⊕𝑈⊥. By Lemma A.6, there exists
+H𝑄∈𝑂(𝑈⊥) such that
+∥𝑄x(1)
+𝑇
+−H𝑄𝑄x(2)
+𝑇∥=
+∥𝑄x(1)
+𝑇∥−∥𝑄x(2)
+𝑇∥
+.
+(71)
+Choose any H𝑃∈𝑂(𝑈) and define
+H := H𝑃⊕H𝑄∈𝑂(𝑑).
+(72)
+By Lemma A.4,
+𝑄D(𝑘)
+𝑡
+= (𝜌𝑡−1)𝑄x(𝑘)
+𝑇.
+(73)
+Hence
+𝑄 D(1)
+𝑡
+−HD(2)
+𝑡
+ = (𝜌𝑡−1) 𝑄x(1)
+𝑇
+−H𝑄𝑄x(2)
+𝑇
+,
+(74)
+so
+sup
+0≤𝑡≤𝑇
+∥𝑄(D(1)
+𝑡
+−HD(2)
+𝑡
+)∥≤𝐴𝑇
+∥𝑄x(1)
+𝑇∥−∥𝑄x(2)
+𝑇∥
+.
+(75)
+For the 𝑈-component, Lemma A.5 gives
+∥𝑃(D(1)
+𝑡
+−HD(2)
+𝑡
+)∥≤∥𝑃D(1)
+𝑡
+∥+ ∥𝑃D(2)
+𝑡
+∥
+≤𝐴𝑇∥𝑃x(1)
+𝑇∥+ 𝐵𝑇𝑅+ 𝐴𝑇∥𝑃x(2)
+𝑇∥+ 𝐵𝑇𝑅.
+(76)
+Combining the 𝑈and 𝑈⊥parts via the triangle inequality proves
+the continuous-time bound. The discrete-time bound follows from
+max
+0≤𝑛≤𝑁∥D(1)
+𝑛
+−HD(2)
+𝑛∥≤sup
+0≤𝑡≤𝑇
+∥D(1)
+𝑡
+−HD(2)
+𝑡
+∥.
+(77)
+□
+Lemma A.8 (Gaussian norm concentration). If g ∼N (0, I𝑚),
+then for every 𝑡> 0,
+P |∥g∥−E∥g∥| ≥𝑡 ≤2𝑒−𝑡2/2,
+E∥g∥≤√𝑚.
+(78)
+Proof. The map g ↦→∥g∥is 1-Lipschitz, so the first inequality is
+the standard Gaussian concentration inequality. The second follows
+from Jensen’s inequality:
+E∥g∥≤
+√︁
+E∥g∥2 = √𝑚.
+(79)
+□
+
+
+LEAP: Accelerating ODE-based Diffusion Sampling with Optimal Linear Leaps
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Theorem A.9 (Explicit version of Theorem 3.1). Suppose that
+x(1)
+𝑇, . . . , x(𝑀)
+𝑇
+are i.i.d. samples from the exact noised marginal 𝑝𝑇.
+Then for every 𝛿∈(0, 1), with probability at least 1 −𝛿,
+max
+1≤𝑎,𝑏≤𝑀
+inf
+H∈𝑂(𝑑) max
+0≤𝑛≤𝑁∥D(𝑎)
+𝑛
+−HD(𝑏)
+𝑛∥
+≤2
+√
+2𝐴𝑇𝜈𝑇
+√︂
+log 4𝑀
+𝛿
++ 2𝐴𝑇
+
+𝛼𝑇𝑅+ 𝜈𝑇
+h√𝑟+
+√︂
+2 log 2𝑀
+𝛿
+i
++ 2𝐵𝑇𝑅.
+(80)
+Proof. By Lemma A.1, the noised marginal at time 𝑇is
+𝑝𝑇(x) =
+𝑀
+∑︁
+𝑚=1
+𝜋𝑚N (𝛼𝑇𝝁𝑚,𝜈2
+𝑇I𝑑).
+(81)
+Hence each sample can be represented as
+x(𝑘)
+𝑇
+= 𝛼𝑇𝝁𝐶𝑘+ 𝜈𝑇g(𝑘),
+(82)
+where 𝐶𝑘∈{1, . . . , 𝑀}, P(𝐶𝑘= 𝑚) = 𝜋𝑚, and g(𝑘) ∼N (0, I𝑑).
+Since 𝝁𝐶𝑘∈𝑈,
+𝑄x(𝑘)
+𝑇
+= 𝜈𝑇𝑄g(𝑘) ∼N (0,𝜈2
+𝑇I𝑑−𝑟),
+(83)
+and
+𝑃x(𝑘)
+𝑇
+= 𝛼𝑇𝝁𝐶𝑘+ 𝜈𝑇𝑃g(𝑘).
+(84)
+We first control the 𝑄-component. By Lemma A.8 and a union
+bound, with probability at least 1 −𝛿/2,
+max
+1≤𝑘≤𝑀
+∥𝑄x(𝑘)
+𝑇
+∥−E∥𝑄x(𝑘)
+𝑇
+∥
+ ≤𝜈𝑇
+√︂
+2 log 4𝑀
+𝛿.
+(85)
+Therefore, on this event,
+max
+1≤𝑎,𝑏≤𝑀
+∥𝑄x(𝑎)
+𝑇
+∥−∥𝑄x(𝑏)
+𝑇
+∥
+ ≤2𝜈𝑇
+√︂
+2 log 4𝑀
+𝛿.
+(86)
+Next we control the 𝑃-component. Since 𝑃g(𝑘) ∼N (0, I𝑟) on 𝑈,
+Lemma A.8 and ∥𝝁𝐶𝑘∥≤𝑅imply that, with probability at least
+1 −𝛿/2,
+max
+1≤𝑘≤𝑀∥𝑃x(𝑘)
+𝑇
+∥≤𝛼𝑇𝑅+ 𝜈𝑇
+√𝑟+
+√︂
+2 log 2𝑀
+𝛿
+
+.
+(87)
+On the intersection of these two events, whose probability is
+at least 1 −𝛿, Proposition A.7 gives, for every pair (𝑎,𝑏), some
+orthogonal matrix H𝑎,𝑏∈𝑂(𝑑) such that
+max
+0≤𝑛≤𝑁∥D(𝑎)
+𝑛
+−H𝑎,𝑏D(𝑏)
+𝑛∥
+≤𝐴𝑇· 2𝜈𝑇
+√︂
+2 log 4𝑀
+𝛿
++ 𝐴𝑇· 2
+
+𝛼𝑇𝑅+ 𝜈𝑇
+h√𝑟+
+√︂
+2 log 2𝑀
+𝛿
+i
++ 2𝐵𝑇𝑅.
+(88)
+Taking the maximum over (𝑎,𝑏) and then the infimum over H ∈
+𝑂(𝑑) yields the stated inequality.
+□
+Proof of Corollary 3.2. Divide the bound in Theorem A.9 by
+𝜈𝑇
+√
+𝑑. This gives
+1
+𝜈𝑇
+√
+𝑑
+max
+1≤𝑎,𝑏≤𝑛
+inf
+H∈𝑂(𝑑) max
+0≤ℓ≤𝐿∥D(𝑎)
+ℓ
+−HD(𝑏)
+ℓ
+∥
+≤2
+√
+2𝐴𝑇
+√︂
+log(4𝑀/𝛿)
+𝑑
++ 2𝐴𝑇
+√︂𝑟
+𝑑
++ 2𝐴𝑇
+√︂
+2 log(2𝑀/𝛿)
+𝑑
++ 2𝐴𝑇
+𝛼𝑇𝑅
+𝜈𝑇
+√
+𝑑
++ 2𝐵𝑇
+𝑅
+𝜈𝑇
+√
+𝑑
+.
+(89)
+Since 𝑟+ log𝑛= 𝑜(𝑑) and 𝑅= 𝑜(𝜈𝑇
+√
+𝑑), the right-hand side con-
+verges to 0 for every fixed 𝛿∈(0, 1). This proves the claim.
+□
+A.4
+Proofs of the low-dimensionality Corollary
+We now show that under mild assumptions, each PF-ODE trajectory
+is confined to a low-dimensional subspace. Moreover, a simple
+alignment brings all trajectories into a single shared subspace.
+Corollary A.10 (Explicit version of Corollary 3.3). Suppose
+x(𝑘)
+𝑡∈[0,𝑇] is an exact PF-ODE trajectory. Then
+x(𝑘)
+𝑡
+∈S𝑘:= 𝑈⊕span{𝑄x(𝑘)
+𝑇
+},
+∀𝑡∈[0,𝑇].
+(90)
+In particular,
+dim(S𝑘) ≤𝑟+ 1.
+(91)
+Hence, on any discrete reverse-time grid 𝑇= 𝑡0 > 𝑡1 > · · · > 𝑡𝐿= 0,
+the trajectory matrix
+X(𝑘) ∈R(𝐿+1)×𝑑,
+rowℓ(X(𝑘)) = (x(𝑘)
+ℓ
+)⊤,
+(92)
+satisfies
+rank(X(𝑘)) ≤𝑟+ 1.
+(93)
+Equivalently, the empirical trajectory covariance
+Σ(𝑘)
+traj :=
+1
+𝑀+ 1
+𝑀
+∑︁
+𝑚=0
+ x(𝑘)
+ℓ
+−¯x(𝑘)  x(𝑘)
+ℓ
+−¯x(𝑘)⊤
+(94)
+has rank at most 𝑟+ 1, and therefore
+𝜆𝑗
+
+Σ(𝑘)
+traj
+
+= 0,
+𝑗≥𝑟+ 2.
+(95)
+Proof. By Lemma A.4,
+𝑄x(𝑘)
+𝑡
+= 𝜌𝑡𝑄x(𝑘)
+𝑇,
+(96)
+which lies in the one-dimensional subspace span{𝑄x(𝑘)
+𝑇
+}. On the
+other hand,
+𝑃x(𝑘)
+𝑡
+∈𝑈
+(97)
+for all 𝑡∈[0,𝑇]. Therefore,
+x(𝑘)
+𝑡
+= 𝑃x(𝑘)
+𝑡
++ 𝑄x(𝑘)
+𝑡
+∈𝑈⊕span{𝑄x(𝑘)
+𝑇
+}.
+(98)
+This proves that the whole trajectory lies in the linear subspace S𝑘
+with dim(S𝑘) ≤𝑟+ 1. Since every row of X(𝑘) belongs to S𝑘, we
+have
+rank(X(𝑘)) ≤dim(S𝑘) ≤𝑟+ 1.
+(99)
+Since S𝑘is a linear subspace, it contains the centered trajectory
+vectors. Thus, the image of the covariance matrix Σ(𝑘)
+traj lies within
+S𝑘, implying
+rank
+
+Σ(𝑘)
+traj
+
+≤𝑟+ 1.
+(100)
+This directly leads to the conclusion about the eigenvalues.
+□
+
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Haowei Zheng, Zhenyu Zhou, Jiawei Chen, Can Wang, and Defang Chen
+Corollary A.11 (Explicit version of Corollary 3.4). Fix any
+unit vector e ∈𝑈⊥. For each trajectory 𝑘, choose an orthogonal matrix
+H𝑘∈𝑂(𝑑) such that
+H𝑘|𝑈= I,
+H𝑘𝑄x(𝑘)
+𝑇
+= ∥𝑄x(𝑘)
+𝑇
+∥e.
+(101)
+Define the aligned trajectory
+˜x(𝑘)
+𝑡
+:= H𝑘x(𝑘)
+𝑡
+.
+(102)
+Then
+˜x(𝑘)
+𝑡
+∈e
+S := 𝑈⊕span{e},
+∀𝑘, ∀𝑡∈[0,𝑇].
+(103)
+In particular,
+dim( e
+S) ≤𝑟+ 1.
+(104)
+Hence, if eX ∈R𝑛(𝐿+1)×𝑑denotes the pooled aligned trajectory matrix
+obtained by stacking all aligned trajectory states, then
+rank(eX) ≤𝑟+ 1.
+(105)
+Equivalently, the pooled covariance of the aligned trajectories has
+rank at most 𝑟+ 1.
+Proof. By construction, H𝑘acts as the identity on 𝑈. Therefore,
+since 𝑃x(𝑘)
+𝑡
+∈𝑈,
+H𝑘𝑃x(𝑘)
+𝑡
+= 𝑃x(𝑘)
+𝑡
+∈𝑈.
+(106)
+Moreover, using Lemma A.4,
+𝑄x(𝑘)
+𝑡
+= 𝜌𝑡𝑄x(𝑘)
+𝑇,
+(107)
+and thus
+H𝑘𝑄x(𝑘)
+𝑡
+= 𝜌𝑡H𝑘𝑄x(𝑘)
+𝑇
+= 𝜌𝑡∥𝑄x(𝑘)
+𝑇
+∥e ∈span{e}.
+(108)
+Combining the 𝑈-part and the 𝑈⊥-part gives
+˜x(𝑘)
+𝑡
+= H𝑘x(𝑘)
+𝑡
+∈𝑈⊕span{e} = e
+S.
+(109)
+Therefore all aligned trajectories share a single subspace e
+S of dimen-
+sion at most 𝑟+ 1, which immediately yields the rank results.
+□
+Remark 1 (Connection to least-squares reconstruction). The above
+corollaries provide a direct explanation for the least-squares resid-
+ual observed in practice. Specifically, every state x(𝑘)
+𝑛
+on a given
+trajectory 𝑘belongs to the same linear subspace S𝑘with
+dim(S𝑘) ≤𝑟+ 1.
+(110)
+Therefore, if a history buffer
+{x(𝑘)
+𝑛−𝐵, x(𝑘)
+𝑛−𝐵+1, . . . , x(𝑘)
+𝑛−1}
+(111)
+spans S𝑘, then the least-squares reconstruction error of x(𝑘)
+𝑛
+from
+this buffer is exactly zero:
+min
+c∈R𝐵
+x(𝑘)
+𝑛
+−
+𝐵
+∑︁
+𝑗=1
+𝑐𝑗x(𝑘)
+𝑛−𝑗
+ = 0.
+(112)
+Thus, in the exact spherical GMM setting, a sufficiently rich short
+buffer already determines the future point by linear regression. In
+realistic diffusion models we do not expect this identity to hold
+exactly, but small least-squares residuals strongly suggest that the
+denoising dynamics remain approximately low-dimensional.
+Table 3: LEAP combined with different base solvers in SD3.5-
+Medium. All results use the same 15-step schedule and 𝑟= 5
+in LEAP’s setting.
+Solver + Method
+HPSv2↑
+ImageReward↑
+CLIPScore↑
+Euler
+27.4725
+0.8416
+33.4644
+LEAP (Euler)
+28.1826
+0.9522
+33.6817
+DPM++
+27.8642
+0.8438
+33.4704
+LEAP (DPM++)
+28.2152
+0.9806
+33.5617
+iPNDM
+27.9220
+0.8770
+33.4416
+LEAP (iPNDM)
+28.2204
+0.9642
+33.6601
+UniPC
+27.8680
+0.8788
+33.4703
+LEAP (UniPC)
+28.2309
+0.9800
+33.6077
+Table 4: Ablation on the prediction-to-correction (P:C) sched-
+ule on SD3.5-Medium.
+NFE
+P:C
+HPSv2↑
+ImageReward↑
+CLIPScore↑
+10
+1:1
+26.8419
+0.7692
+33.2982
+1:2
+26.3182
+0.7224
+33.1515
+15
+1:1
+28.1826
+0.9522
+33.6817
+1:2
+27.9594
+0.9004
+33.7109
+20
+1:1
+28.5727
+0.9701
+33.7192
+1:2
+28.3575
+0.9499
+33.8125
+B
+Experimental Results
+B.1
+Ablation Study
+B.1.1
+Compatibility with Different Base Solvers. To further evalu-
+ate the robustness and generalization ability of LEAP, we conduct
+an additional ablation experiment by integrating LEAP with var-
+ious widely used ODE solvers, including Euler, DPM++, iPNDM,
+and UniPC. This experiment is conducted on SD3.5 with NFE=15
+and 𝑟= 5. As shown in Table 3, LEAP improves human prefer-
+ence and text-image alignment metrics (HPSv2, ImageReward, and
+CLIPScore) across all tested baseline solvers.
+B.1.2
+Predict-correct schedule. We further test the ratio between
+prediction and correction steps. Consecutive linear predictions
+are theoretically degradate to our current implementation as the
+same linear subspace is used. We thus add results regarding 2-step
+consecutive corrections below, which are inferior to our default 1:1
+setting, as shown in Table 4.
+B.2
+Robustness, Transferability, and
+Generalization
+B.2.1
+Prompt-distribution robustness. The coefficient bank is con-
+structed using reference prompts sampled from DrawBench, while
+evaluation is conducted on four prompt categories from the HPSv2
+benchmark. As shown in Table 5, LEAP improves Euler across every
+category for HPSv2, ImageReward, and CLIPScore. These results
+indicate that LEAP remains effective under a prompt distribution
+shift.
+
+
+LEAP: Accelerating ODE-based Diffusion Sampling with Optimal Linear Leaps
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Table 5: Ablation study on prompt distributions (NFE= 15).
+Reference prompts are sampled from DrawBench, while eval-
+uation prompts are sampled from the HPSv2 benchmark.
+Metric
+Method
+Anime
+ConceptArt
+Paintings
+Photo
+HPSv2
+Euler
+30.14
+28.63
+28.99
+26.56
+LEAP (Euler)
+31.22
+30.15
+30.14
+27.37
+ImageReward
+Euler
+1.10
+1.02
+1.06
+0.80
+LEAP (Euler)
+1.18
+1.15
+1.16
+0.96
+CLIPScore
+Euler
+35.18
+33.61
+33.41
+32.28
+LEAP (Euler)
+35.19
+33.96
+33.69
+32.79
+B.2.2
+Coefficient transferability. We evaluate whether learned co-
+efficients can be reused beyond the solver, model, or sampling
+schedule from which it was constructed. Specifically, we study
+cross-model, cross-solver, and cross-step transfer. As reported in
+Table 6, every transferred configuration improves its corresponding
+baseline on all three metrics.
+Table 6: Transferability of the coefficient bank. Cross-model
+and cross-solver results use 10 NFE; cross-step results use 15
+NFE.
+Transfer setting
+Method
+HPSv2↑
+ImageReward↑
+CLIPScore↑
+Cross-model
+Euler
+25.89
+0.67
+32.79
+LEAP (FLUX coeffs.)
+26.97
+0.75
+33.26
+Cross-solver
+DPM++
+26.46
+0.72
+32.90
+LEAP (Euler coeffs.)
+27.01
+0.80
+33.48
+Cross-step
+Euler
+27.47
+0.84
+33.46
+LEAP (10-NFE coeffs.)
+28.17
+0.91
+33.69
+B.3
+Additional Qalitative Results
+We first provide additional qualitative results for both text-image
+task and image-3D task under the same setting in Sec.4.1. For text-
+image task, the qualitative results are shown in Fig. 9. For image-3D
+task, the qualitative results are shown in Fig. 10.
+B.4
+Experimental Details
+B.4.1
+Hyperparameters. In this subsection, we discuss our exper-
+iment setup in greater detail. In Sec. 4, we evaluate the proposed
+LEAP on three diffusion models: SD3.5-Medium [8] and FLUX.1-
+Dev [2] for text-image task and TRELLIS.2 [41] for image-3D task.
+We test LEAP against previous solvers in text-to-image tasks,
+including DPM++ [19], STORK [34], and LTC-Accel [50]. In our eval-
+uation, DPM++ is configured to its second-order version, STORK
+utilizes 𝑘= 4, 𝑛= 1, and 𝑠= 9, while LTC-Accel adopts 𝑟= 2
+and 𝜏= 0.1 for both quantitative and qualitative assessments. We
+use a fixed window size of 𝑟= 5 and set the ridge regularization
+coefficient to 𝜆= 0.0001 as the default experiments settings of
+LEAP.
+In the context of image-to-3D tasks, we benchmark our approach
+against the Euler baseline. For these experiments, we maintain the
+exact same configuration as mentioned in the text-to-image tasks
+described above.
+B.4.2
+Prompts. In the text-to-image qualitative experiments, we
+adopt the following text prompts to generate images:
+• "A close-up of a futuristic barista robot pouring latte art in the
+shape of a perfect hexagon. The robot’s metallic arm has the
+word ’SPEED’ etched into it. High contrast, cinematic lighting,
+photorealistic."
+• "A transparent glass teapot filled with blooming jasmine flow-
+ers. Steam is rising, and sunlight is refracting through the water
+and glass, casting complex caustics onto a white tablecloth.",
+• "A swarm of tiny, glowing robotic drones weaving an intricate,
+glowinglaser web between two giant, ancient redwood trees in
+a foggy forest. The web perfectly forms the exact shape of a
+rigid, symmetrical pentagram. Volumetric fog. "
+In the image-to-3D qualitative experiments, we use Nano Ba-
+nana2 to generate reference images, as shown in Fig. 8.
+
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Haowei Zheng, Zhenyu Zhou, Jiawei Chen, Can Wang, and Defang Chen
+Figure 8: Reference images adopted in image-3D qualitative experiments.
+DPM-Solver++
+LTC-Accel
+STORK
+LEAP (Ours)
+"A cat on the right of a tennis racket."
+"An IT-guy trying to fix hardware of a PC tower is being tangled by the PC cables like
+Laokoon.
+Marble, copy after Hellenistic original from ca.
+200 BC. Found in the Baths
+of Trajan, 1506."
+"A sign that says ‘Hello World’."
+Figure 9: Additional qualitative comparison on the FLUX model (Part 1).
+
+
+LEAP: Accelerating ODE-based Diffusion Sampling with Optimal Linear Leaps
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+DPM-Solver++
+LTC-Accel
+STORK4
+LEAP (Ours)
+"A red colored car."
+"A sphere made of kitchen tile.
+A sphere with the texture of kitchen tile."
+"A small vessel propelled on water by oars, sails, or an engine."
+"A mechanical or electrical device for measuring time."
+Figure 9: Additional qualitative comparison on the FLUX model (Continued).
+
+
+MM ’26, November 10–14, 2026, Rio de Janeiro, Brazil
+Haowei Zheng, Zhenyu Zhou, Jiawei Chen, Can Wang, and Defang Chen
+Input
+Baseline
+LEAP(Ours)
+Figure 10: Additional image-3D qualitative results. Columns from left to right show the input conditions, generation results
+from the baseline solver (NFE=10), and results from our proposed LEAP method (NFE=10).

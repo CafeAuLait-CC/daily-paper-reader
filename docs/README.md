@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-24</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-25</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-24 21:44:07 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-25 21:50:51 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天完成 5 篇速读、没有精读，重点集中在扩散模型方向。</p>
-<p>速读列表中值得关注的是 TamedFlow 的轨迹感知蒸馏采样，以及 3D 扩散模型在医学影像、DiffLTM 在表格数据条件生成上的应用，这些论文的评分均为 6.0/10。</p>
-<p>建议普通读者先看 TamedFlow 了解扩散采样加速思路，再按需选择医学影像或表格生成方向跟进。</p>
+<p>2026-10-25 速读 7 篇生成模型论文，重点关注扩散模型和流匹配的推理优化。最值得关注的是，通过噪声焕新与序贯蒙特卡洛提升文本到图像流匹配模型的测试时扩展（7.0 分），以及用 Doob 方法构造的生成策略优化（7.0 分）。普通读者可以先看这两篇的摘要，了解如何在不重新训练模型的情况下，提升生成质量和策略稳定性。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -93,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TamedFlow: Trajectory-Aware Distillation for Teacher-Assisted Diffusion Sampling">TamedFlow: Trajectory-Aware Distillation for Teacher-Assisted Diffusion Sampling</span></li><li><span class="dpr-home-dashboard-paper-title" title="3D Diffusion Models for Medical Imaging">3D Diffusion Models for Medical Imaging</span></li><li><span class="dpr-home-dashboard-paper-title" title="DiffLTM: Continuous Diffusions Large Tabular Models for Conditional Generation">DiffLTM: Continuous Diffusions Large Tabular Models for Conditional Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Test-Time Scaling of Text-to-Image Flow Matching Models with Noise-Rejuvenated Sequential Monte Carlo">Test-Time Scaling of Text-to-Image Flow Matching Models with Noise-Rejuvenated Sequential Monte Carlo</span></li><li><span class="dpr-home-dashboard-paper-title" title="Doob-Based Generative Policy Optimization">Doob-Based Generative Policy Optimization</span></li><li><span class="dpr-home-dashboard-paper-title" title="PoSTCache: From Forecasting to Postdictive Smoothing for Revisable Diffusion Caching">PoSTCache: From Forecasting to Postdictive Smoothing for Revisable Diffusion Caching</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>7</strong></span></div>
 </section>
 </div>
 
