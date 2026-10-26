@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-25</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-26</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 7 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-25 21:50:51 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-26 23:11:54 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-25 速读 7 篇生成模型论文，重点关注扩散模型和流匹配的推理优化。最值得关注的是，通过噪声焕新与序贯蒙特卡洛提升文本到图像流匹配模型的测试时扩展（7.0 分），以及用 Doob 方法构造的生成策略优化（7.0 分）。普通读者可以先看这两篇的摘要，了解如何在不重新训练模型的情况下，提升生成质量和策略稳定性。</p>
+<p>今日精读2篇、速读5篇，重点关注长时程语音动作生成与人形视频控制。最值得看的是两篇8.0分工作：一是用持久状态分块流匹配，实现长时程共语动作生成；二是带运动跟踪反馈的生成式视频到人形控制。普通读者可先看这两篇的精读摘要，再按兴趣挑3D堆叠或VLA方向速读。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Past as State, Present as Attention: Persistent-State Blockwise Flow Matching for Long-Horizon Co-Speech Motion Generation">Past as State, Present as Attention: Persistent-State Blockwise Flow Matching for Long-Horizon Co-Speech Motion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="ViT-H: Generative Video-To-Humanoid Control with Motion Tracking Feedback">ViT-H: Generative Video-To-Humanoid Control with Motion Tracking Feedback</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Test-Time Scaling of Text-to-Image Flow Matching Models with Noise-Rejuvenated Sequential Monte Carlo">Test-Time Scaling of Text-to-Image Flow Matching Models with Noise-Rejuvenated Sequential Monte Carlo</span></li><li><span class="dpr-home-dashboard-paper-title" title="Doob-Based Generative Policy Optimization">Doob-Based Generative Policy Optimization</span></li><li><span class="dpr-home-dashboard-paper-title" title="PoSTCache: From Forecasting to Postdictive Smoothing for Revisable Diffusion Caching">PoSTCache: From Forecasting to Postdictive Smoothing for Revisable Diffusion Caching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="StackGen3D: Stable 3D Block Stack Generation from Multiview Silhouettes">StackGen3D: Stable 3D Block Stack Generation from Multiview Silhouettes</span></li><li><span class="dpr-home-dashboard-paper-title" title="HAF-VLA: Hierarchical Action Flow Framework for Humanoid Vision-Language-Action Control">HAF-VLA: Hierarchical Action Flow Framework for Humanoid Vision-Language-Action Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Latent Space Jam: Layout Guided Video Synthesis">Latent Space Jam: Layout Guided Video Synthesis</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>7</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
 </section>
 </div>
 

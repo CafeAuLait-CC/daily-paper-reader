@@ -1,0 +1,1759 @@
+Latent Space Jam: Layout Guided Video Synthesis
+ASAF JOSEPH∗, Lightricks, Israel
+MOSHE MANDEL∗, Independent, Israel
+OHAD FRIED, CANVAS Lab, Reichman University, Israel
+→
+Fig. 1. We steer the output (right) of a pre-trained video diffusion model towards a given layout (left) without training.
+Adding control to video generation often requires training, which demands
+additional computational resources, data, or architectural changes. We pro-
+pose a training-free approach that utilizes pretrained video diffusion mod-
+els to control object layout and motion using coarse layouts. Our method
+operates in two passes: first, it steers spatiotemporal placement through
+prompt-guided cross-attention to produce a coarse visual guide; second,
+this guide conditions the same model to generate a high-quality, layout-
+consistent video. The approach enables coordinated motion with strong
+temporal consistency, supporting diverse trajectories and object interactions
+without additional training. Extensive experiments show that our method
+consistently outperforms prior work in overlap and trajectory accuracy, as
+well as visual quality across static, dynamic, and multi-object scene settings.
+Additional Key Words and Phrases: Video Generation, Layout Control,
+Training-Free Methods
+Project page: https://latent-space-jam.github.io/
+1
+Introduction
+Frame composition lies at the core of visual storytelling, defining
+the spatial structure through which meaning, motion, and narrative
+coherence emerge in video. Recent advances in text-based video
+generation [HaCohen et al. 2026; Wan et al. 2025] have demonstrated
+a remarkable ability to generate diverse and creative results from
+free-form text prompts. Yet the absence of explicit mechanisms for
+controlling spatial composition within and across frames continues
+to limit their applicability in structured visual storytelling.
+We consider the problem of layout-guided text-to-video genera-
+tion. Given a pre-trained off-the-shelf video generator, our goal is
+to steer its output to match a desired layout. Our method, Latent
+Space Justified Attention Mapping (JAM), allows the user to align
+the output video to a desired layout, guided by bounding boxes
+across frames, without additional training or fine-tuning.
+Training-free layout-guided video generation has been explored
+in prior works [Huang et al. 2025; Jain et al. 2024; Lian et al. 2023;
+∗Both authors contributed equally to this research.
+Authors’ Contact Information: Asaf Joseph, asaf.joseph@mail.huji.ac.il, Lightricks,
+Jerusalem, Israel; Moshe Mandel, mandelmoshe@gmail.com, Independent, Jerusalem,
+Israel; Ohad Fried, CANVAS Lab, Reichman University, Herzliya, Israel.
+Ma et al. 2024; Qiu et al. 2024]. However, existing methods fail in
+scenarios involving complex motion, exhibiting limited dynamics
+and poor temporal coherence. In contrast, our approach is able to
+synthesize complex and dynamic motion while preserving the high
+visual fidelity of the pre-trained video diffusion backbones, with-
+out introducing additional training or degrading their generative
+capacity. Furthermore, both subjective human evaluations and objec-
+tive quantitative metrics demonstrate that our method consistently
+outperforms these prior approaches (see Results).
+There is an inherent trade-off between layout adherence and
+visual quality: stronger layout regularization results in poorer visual
+quality. Instead of trying to achieve both goals simultaneously, and
+thus compromising on both, we take a different route. We split
+the pipeline into a guide generation stage followed by a refinement
+stage. Our key insight is that this allows us to push layout adherence
+to the maximum in the first stage, and rely on the robustness of
+modern video diffusion models in the refinement stage to fix the
+coarse intermediate results, thus circumventing the tradeoff between
+layout adherence and visual quality.
+Inspired by attention-based control methods in text-to-image
+generation [Chefer et al. 2023; Xie et al. 2023], we manipulate the
+cross-attention maps of pre-trained video diffusion models to gener-
+ate coarse guidance. However, extending these approaches to video
+is not straightforward: the added temporal dimension makes it more
+difficult to control object placement consistently across frames, and
+the scale of video DiT models makes optimization across all lay-
+ers impractical. In contrast, we show that effective control can be
+achieved through selective intervention, modifying only a small
+subset of cross-attention layers and a limited number of diffusion
+steps. As a result, our method can be executed on a single GPU,
+with minimal time overhead relative to the inference time of the
+underlying backbone models.
+In practice, we treat a pre-trained diffusion transformer (DiT)
+[Peebles and Xie 2023] video generator as a fixed computational
+graph and optimize its latent input rather than its weights. Given
+a textual prompt and a spatiotemporal layout, we first steer an
+intermediate video toward the desired structure by optimizing this
+latent variable, using a loss applied to selected cross-attention layers
+arXiv:2610.30390v1  [cs.CV]  21 Oct 2026
+
+
+of the DiT to align them with the provided bounding boxes. Then,
+we rerun the generator and inject the resulting video at an early
+diffusion timestep, using it as a coarse prior that the model refines
+into the final result.
+Our contributions are summarized as follows:
+• We introduce a training-free framework for layout-guided
+text-to-video generation that enables explicit control over
+spatial composition and motion using simple bounding-box
+supervision.
+• We present the importance of using a two-stage pipeline:
+utilizing layout guidance videos as priors to the final result.
+• We show that minimal intervention in a pre-trained video
+diffusion model via a subset of its cross-attention layers is
+sufficient to steer generation.
+• We validate our approach through extensive experiments,
+demonstrating superior performance over prior methods
+across complex, dynamic, and multi-object scenarios.
+2
+Related Work
+Our work falls within the line of research on training-free con-
+trollability for diffusion models, which exploits internal attention
+representations as test-time control signals. We address the problem
+of spatiotemporal layout and motion control in video generation,
+achieving structured control without training, fine-tuning, or archi-
+tectural modification.
+A growing body of work in text-to-image synthesis demonstrates
+that cross-attention can be used as an interface for test-time control.
+Several methods [Chefer et al. 2023; Epstein et al. 2023] interpret
+attention as a form of semantic grounding and introduce latent
+optimization or self-guidance strategies to enforce token presence
+and object saliency during sampling. Others [Chen et al. 2024; Phung
+et al. 2024; Xie et al. 2023] reshape attention maps to align text
+tokens with user specified spatial layouts or regions, enabling box
+and region constrained generation. Additional approaches [Agarwal
+et al. 2023; Cao et al. 2023] focus on attention segregation, refocusing,
+and mutual self-attention control to improve compositionality and
+consistency. Collectively, these works establish that attention is not
+merely an internal mechanism, but a controllable structure that can
+be manipulated at inference time to impose semantic and spatial
+constraints without retraining the model.
+In video generation, most controllable methods rely on addi-
+tional training or fine-tuning. A common strategy is to augment
+pre-trained video diffusion models with external adapters or control
+branches conditioned on structural signals such as edges or depth
+[Hu and Xu 2023], pose or trajectories [Hu 2024; Karras et al. 2023;
+Wang et al. 2024; Yang et al. 2024], a combination of these signals
+[Jiang et al. 2025; Wang et al. 2023], or camera parameters [Bai et al.
+2025; Yang et al. 2024]. These approaches enable explicit control
+over motion, layout, and viewpoint. However, they require paired
+supervision, dedicated retraining, and model modification, which
+restricts their applicability and adds significant computational cost.
+Recently, several works have explored training-free control for
+text-to-video diffusion models. Peekaboo [Jain et al. 2024] and Trail-
+Blazer [Ma et al. 2024] intervene in the cross-attention layers of a
+pretrained model to align foreground motion with user-specified
+guidance. FreeTraj [Qiu et al. 2024] adopts a similar strategy but
+further improves controllability by imposing guidance on both at-
+tention maps and the latent noise. LVD [Lian et al. 2023] focuses on
+generating a layout guide with an LLM, producing bounding box
+trajectories across scenes to steer object placement. SwitchCraft
+[Xu et al. 2026] and TempoControl [Schiber et al. 2026] apply a
+training-free approach to modify contemporary DiT video models,
+but focus only on temporal control.
+In contrast to prior training-free video control methods that rely
+on direct attention and latent noise manipulation [Jain et al. 2024;
+Ma et al. 2024; Qiu et al. 2024], our approach adopts an optimization-
+based attention alignment strategy that scales effectively to complex
+spatiotemporal layouts. This enables stronger layout adherence
+while preserving motion diversity and visual fidelity, as confirmed
+by both quantitative metrics and human evaluations (see Results).
+3
+Preliminaries
+Video Diffusion Models
+Diffusion models generate data by learning to reverse a gradual
+noising process. Given a clean sample 𝑥0, a forward process pro-
+gressively adds Gaussian noise over 𝑇steps to obtain 𝑥𝑇. A neural
+network 𝜖𝜃is trained to predict the noise at each timestep, enabling
+sampling by iterative denoising from pure noise.
+Modern video diffusion models extend image diffusion to the
+spatio-temporal domain by operating on sequences of frames. Most
+state-of-the-art approaches adopt a latent diffusion formulation,
+where a variational autoencoder encodes frames into a compact
+latent representation 𝑧, and diffusion is performed in latent space
+rather than pixel space.
+Recent approaches replace convolutional U-Nets with Diffusion
+Transformers, which operate on spatio-temporal latent tokens us-
+ing self-attention. This design better captures long-range spatial
+and temporal dependencies, improving temporal coherence and
+scalability. In this work, we assume a latent video diffusion model
+parameterized as
+𝜖𝜃(𝑧𝑡,𝑐,𝑡),
+(1)
+where 𝑧𝑡is the noisy latent at timestep 𝑡and 𝑐is a conditioning
+signal.
+Test-Time Latent Optimization via Cross-Attention
+Text-conditioned diffusion models incorporate conditioning infor-
+mation through cross-attention layers that relate conditioning to-
+kens (e.g., text) to visual latent tokens. The resulting attention maps
+capture how semantic concepts influence spatial regions during the
+denoising process.
+Test-time latent optimization utilizes this structure to steer gener-
+ation without modifying model parameters. Instead of updating the
+network weights, the latent variable is optimized during sampling
+with respect to a task-specific objective. Concretely, given a target
+constraint 𝐵(e.g., a target layout map), a differentiable loss is defined
+over model activations (e.g., cross-attention maps), and gradients
+are backpropagated to the latent variable:
+𝑧𝑡←𝑧𝑡−𝜂∇𝑧𝑡L(𝐴(𝑧𝑡,𝑐), 𝐵),
+(2)
+2
+
+
+where 𝐴(·) denotes cross-attention activations, 𝑐is the conditioning
+input, and 𝜂is the step size.
+This formulation treats cross-attention as an interface through
+which constraints can influence generation, enabling controllable
+inference via latent updates while keeping model parameters fixed.
+4
+Latent Space Jam
+Enforcing layout adherence conflicts with the visual quality of a
+generated video. In the early stage of generating the layout-guided
+video, more complex motion requires stronger layout regularization,
+thereby reducing visual fidelity. Our main insight is that we can
+circumvent this tradeoff via a two-stage process. We first allow better
+layout adherence at the cost of visual quality, and then enhance this
+low-quality (but layout-accurate) guiding video.
+The enhancement is achieved using existing state-of-the-art video
+diffusion models [HaCohen et al. 2026; Wan et al. 2025], which can
+be adapted to accept a video input, turning them into robust quality
+amplifiers that can correct visually poor videos while maintaining
+object locations and motion.
+Figure 2 provides an overview of our pipeline. We present a two-
+stage training-free layout-guided video synthesis framework that
+enables explicit control in both time and space over videos generated
+by a pre-trained video diffusion model, without any finetuning of
+model parameters. Given a text prompt and user-specified layout
+constraints in the form of bounding boxes across frames, we enforce
+the model to generate a guiding video that adheres to these layout
+constraints. Then, we use this guiding video as input to a video-to-
+video pipeline to generate the final video.
+In the following, we motivate the need for a structural prior. Then,
+we analyze the limitations of explicit guide generation using en-
+sembles of text-to-image models. Finally, we propose an alternative
+formulation in which the guide is generated implicitly by optimizing
+the latent input of a frozen text-to-video diffusion model.
+4.1
+On The Importance of a Guiding Prior
+At the first stage of our pipeline, we generate a coarse guiding video
+prior, allowing us to focus fully on layout adherence.
+Figure 3 shows such a guiding video and its corresponding out-
+put, demonstrating the ability of existing video diffusion models to
+produce high quality video that preserves the intended layout from
+a low fidelity guide. This shows that the guide itself does not need
+to be visually detailed, but should adhere as closely as possible to
+the intended layout.
+Following the first stage, we adapt the second stage into a video-
+to-video pipeline by injecting the prior at an early diffusion time-
+step. At early time-steps, the diffusion process primarily governs
+the global layout, while later steps refine visual details [Wang and
+Vastola 2023]. Specifically, similar to [Meng et al. 2022], we inject a
+noisy version of the video prior at a selected time-step, matching its
+noise level to the step, and continue denoising to generate the final
+video with restored visual fidelity. Technical details are provided in
+the supplemental.
+This raises the question of how such a guiding video prior should
+be constructed. In particular, is it enough to provide unrelated frames
+with weak spatiotemporal coherence? We explore this question next.
+4.2
+Are Text-to-Image Models Suitable for Guidance?
+A straightforward strategy to generate the low-fidelity layout prior
+is to leverage the strong semantic and compositional capabilities of
+recent text-to-image (T2I) models. Since the guide is only required to
+encode coarse spatial layout and approximate object motion, rather
+than high visual quality, it is natural to generate a sequence of im-
+ages that satisfy the bounding-box constraints on a frame-by-frame
+basis and treat this sequence as a guiding video. This can be imple-
+mented by applying layout-guided and inpainting techniques [Labs
+2024; Li et al. 2023] to independently generate a static background
+image and the objects specified in the text prompt, and then plac-
+ing and propagating these objects across frames according to the
+provided layout constraints.
+As explained in section 5.1 and table 1, this simple baseline (T2I)
+surprisingly matches or outperforms previous layout-guided video
+generation methods [Jain et al. 2024; Ma et al. 2024; Qiu et al. 2024]
+on refined videos, achieving comparable or better performance
+across all datasets in overlap accuracy (IoU, AP50) and trajectory
+accuracy (CD, I., I-AP50).
+However, this baseline has fundamental limitations. Each frame
+is generated independently, with objects created separately before
+being inserted into the scene. While this guarantees correct spatial
+placement, it does not preserve stable object structure or realistic
+interactions among objects and their environment. Figure 6 shows a
+recurring failure mode of this method; further results are provided
+in the supplemental.
+4.3
+Utilizing Video Models for Better Guidance
+Instead of relying on external text-to-image models to generate
+a prior, we leverage the video diffusion model itself to produce a
+layout-aware guidance signal. Specifically, we exploit the powerful
+generative capacity of video diffusion models to synthesize a guid-
+ing video that exhibits coherent motion while respecting specified
+layout constraints.
+To enforce spatial correspondence between the generated video
+and the target layout, we take inspiration from attention-based
+image editing methods [Chefer et al. 2023; Xie et al. 2023]. At a high
+level, we control the output of a video diffusion model by steering
+its cross-attention maps towards the provided layout.
+Given that the model’s intermediate cross-attention maps exhibit
+strong spatial correspondence with the final video, optimizing the
+latent inputs to minimize a loss between these maps and the target
+layout compels the generated output to follow the intended arrange-
+ment. By contrast, attempting to control the layout only via text
+fails. We demonstrate this in Figure 4.
+This optimization prioritizes structural alignment over visual
+quality. Stronger attention constraints enforce the target layout
+more accurately, but degrade appearance. As stated earlier, a coarse
+video is sufficient to guide generation when injected at early diffu-
+sion steps. This allows us to optimize aggressively for layout in this
+stage and rely on a second diffusion pass to restore visual fidelity.
+We therefore obtain a controllable tradeoff between structure and
+appearance, which we demonstrate in Figure 5 and discuss further
+in the Results section.
+3
+
+
+Video Reﬁnement
+Video-to-Video
+Upscaling
+Latent Optimization via Cross-Attention
+Spider-man
+wall
+At
+At (refined)
+Layout 
+Loss
+Spider-man
+wall
+Spider-man 
+swooping in 
+and sticking to 
+a skyscraper 
+wall.
+Input
+Layout Generation
+Zt
+ Video Diffusion
+Transformer
+ VAE
+Decoder
+Fig. 2. Overview of our training-free layout-guided video synthesis pipeline. Given a text prompt and spatiotemporal layout constraints, we first perform
+Layout Generation, where the latents of a frozen text-to-video diffusion model are optimized using a cross-attention-based layout loss. This latent refinement
+process aligns token-specific attention with the target layout and produces a coarse spatiotemporal guiding video in latent space. Next, after the guide is
+optionally spatially and/or temporally upsampled, we render the final video: the guiding video is injected at an early timestep into the video diffusion pipeline.
+This second stage refines appearance and details while preserving the imposed layout and motion, yielding the final high-quality video.
+In detail, we optimize the diffusion latents using a cross-attention-
+based loss during the generation process, by minimizing the 𝐾𝐿
+divergence loss defined over the model’s cross-attention maps:
+Llayout =
+𝑁
+∑︁
+𝑖=1
+𝐾𝐿
+
+q(𝑖) ∥p(𝑖)
+(3)
+q(𝑖) =  𝑞(𝑖)
+𝑗
+ |𝑉|
+𝑗=1,
+𝑞(𝑖)
+𝑗
+=
+𝐵(𝑖)
+𝑗
+Í
+𝑘𝐵(𝑖)
+𝑘
+,
+(4)
+p(𝑖) =  𝑝(𝑖)
+𝑗
+ |𝑉|
+𝑗=1,
+𝑝(𝑖)
+𝑗
+=
+Í
+𝑡∈T𝑖𝐴𝑗,𝑡
+Í
+𝑘
+Í
+𝑡∈T𝑖𝐴𝑘,𝑡
+.
+(5)
+where 𝑞(𝑖) and 𝑝(𝑖) are the normalized target layout distribution
+and the model’s cross-attention distribution, respectively. {𝐵(𝑖)}𝑁
+𝑖=1
+is a set of 𝑁bounding-box binary masks defined over the |𝑉| spa-
+tiotemporal locations of the input video across all frames. Each mask
+𝐵(𝑖) is associated with a set of textual tokens T𝑖. Here, 𝐵(𝑖)
+𝑗
+∈{0, 1}
+denotes the value of mask 𝐵(𝑖) at spatiotemporal location 𝑗, and 𝐴𝑗,𝑡
+denotes the cross-attention value between the 𝑗-th spatiotemporal
+location and the 𝑡-th text token, averaged across all heads and se-
+lected layers. Further techniques for aggregating 𝑝(𝑖)
+𝑗
+across tokens
+per layout mask were tested and are discussed in the supplemental.
+A complete breakdown of an individual refinement step is pro-
+vided in Algorithm 1. We apply multiple refinement steps at selected
+diffusion time steps. Unlike image-domain UNet models, video DiT
+models are substantially larger, making full-layer optimization in-
+feasible and motivating our approach of selectively optimizing a
+subset of layers. To improve quality while reducing computational
+cost, we carefully select the subset of layers for the optimization
+process. See Table 3 for further analysis.
+Algorithm 1 Latent Optimization via Attention-Based Layout Loss
+1: Input: prompt P, latents z𝑡, model 𝑓𝜃, 𝑅steps, step size𝜂, masks
+{B𝑖}𝑁
+𝑖=1, token sets {T𝑖}𝑁
+𝑖=1
+2: Output: optimized latents z★
+𝑡
+3: 𝑧1 = 𝑧𝑡
+4: for 𝑟= 1 to 𝑅do
+5:
+A𝑡←𝑓𝜃(z𝑟, P)
+6:
+A𝑡←get_avg_attention(A𝑡)
+7:
+A𝑡←Softmax(A𝑡)
+8:
+L ←0
+9:
+for 𝑖= 1 to 𝑁do
+10:
+define 𝑞(𝑖) = (𝑞(𝑖)
+𝑗)|𝑉|
+𝑗=1
+11:
+define 𝑝(𝑖) = (𝑝(𝑖)
+𝑗)|𝑉|
+𝑗=1
+12:
+L ←L + KL
+
+q(𝑖) ∥p(𝑖)
+13:
+end for
+14:
+compute gradient ∇z𝑟L
+15:
+z★
+𝑡←z𝑟−𝜂∇z𝑟L
+16:
+z𝑟←z★
+𝑡
+17: end for
+18: return z★
+𝑡
+Reducing Inference Time. Optimizing on latents can be a lengthy
+process, and the running time grows larger as the latent size in-
+creases. We can substantially reduce inference time with a minimal
+impact on guide quality by running the optimization stage at lower
+spatial and temporal resolutions (see Table 4).
+4
+
+
+Guide
+Refined
+“A goat climbing down some rocks.”
+Fig. 3. The guide (left) is of low visual quality but adheres to layout, the refined video (right) improves the visual quality and maintains layout adherence.
+LTX 2
+WAN 2.2
+T2V Attn.
+T2V
+Ours Attn.
+Ours
+“A cow walking on a grassy field, following a diagonal path across
+the frame from the top left corner to the bottom right corner.”
+“A golden retriever walks in a slalom pattern through a park,
+starting at the top right and ending at the bottom left.”
+Fig. 4. Outputs of Text-to-Video (T2V) and our method (Ours) across different backbone models (LTX-2, WAN 2.2), together with the corresponding attention
+maps extracted from an intermediate timestep. Attempting to control layout via textual prompt (underlined) fails, whereas controlling the attention map
+results in a video that corresponds to the desired layouts (orange/blue bounding boxes).
+Low LR
+High LR
+Guide
+Refined
+“A bicyclist, riding in front of a painted wall.”
+Fig. 5. Comparison of different learning rates during optimization. In each section, guide (top) and refined (bottom) videos are shown. The left column (low
+learning rate) produces guide videos with weaker adherence to the intended layout (indicated by orange squares). In contrast, the right column (high learning
+rate) achieves stronger layout adherence, but at the cost of reduced visual quality.
+5
+
+
+Table 1. Quantitative comparison with prior training-free layout-guided methods across datasets. IoU and AP50 measure overlap accuracy. CD, I., and I-AP50
+measure trajectory accuracy. FVD and ClipSim measure visual quality. Our framework achieves superior spatial alignment and trajectory consistency on all
+metrics. Notably, Wan 2.2 excels in guide-stage performance, while LTX-2 provides comparable or stronger refined results.
+Guide
+Refined
+IoU (↑) AP50 (↑) CD (↓)
+I. (↑)
+I-AP50 (↑) FVD (↓) ClipSim (↑) IoU (↑) AP50 (↑) CD (↓)
+I. (↑)
+I-AP50 (↑) FVD (↓) ClipSim (↑)
+STATIC
+PEEKABOO
+17.02
+8.80
+24.74
+45.17
+45.10
+139.00
+30.98
+19.45
+4.37
+18.96
+58.76
+66.71
+132.92
+29.14
+FreeTraj
+18.80
+12.87
+22.05
+45.46
+44.64
+178.25
+26.62
+19.47
+5.71
+17.08
+53.93
+57.56
+126.75
+30.20
+TrailBlazer
+20.32
+12.40
+20.65
+46.98
+45.97
+151.23
+30.30
+16.95
+5.37
+19.42
+44.65
+45.13
+126.76
+30.26
+TrailBlazer (Wan 2.2)
+21.76
+13.51
+18.18
+55.10
+56.76
+148.06
+28.73
+21.25
+13.75
+18.89
+55.98
+56.03
+140.14
+28.75
+T2I
+–
+–
+–
+–
+–
+–
+–
+21.44
+16.15
+20.49
+65.25
+60.87
+174.56
+26.11
+Ours (Wan 2.2)
+29.51
+15.90
+12.47
+75.05
+84.01
+118.25
+30.86
+28.24
+14.10
+12.87
+72.23
+80.30
+117.41
+28.93
+Ours (LTX-2)
+30.49
+24.55
+19.03
+59.80
+63.36
+153.79
+28.92
+36.55
+27.43
+9.84
+71.37
+81.38
+130.10
+31.08
+DYNAMIC
+PEEKABOO
+10.83
+1.15
+27.00
+37.23
+36.30
+136.97
+30.70
+11.89
+1.15
+25.06
+42.72
+43.45
+126.75
+29.37
+FreeTraj
+17.39
+5.26
+20.49
+46.80
+41.60
+140.85
+30.62
+13.91
+1.44
+21.68
+44.09
+42.41
+110.90
+29.94
+TrailBlazer
+29.17
+29.22
+20.55
+59.47
+56.09
+143.72
+29.84
+14.40
+3.20
+22.71
+42.15
+42.43
+114.37
+29.86
+TrailBlazer (Wan 2.2)
+17.55
+5.29
+19.71
+47.94
+49.45
+137.91
+29.71
+17.46
+5.42
+19.95
+50.42
+49.86
+135.63
+29.61
+T2I
+–
+–
+–
+–
+–
+–
+–
+27.23
+22.86
+17.42
+63.64
+62.67
+174.95
+26.63
+Ours (Wan 2.2)
+30.86
+9.37
+11.23
+83.30
+86.92
+151.72
+28.87
+27.64
+6.85
+11.24
+82.04
+84.57
+132.38
+27.63
+Ours (LTX-2)
+33.70
+20.90
+16.28
+70.28
+74.70
+128.85
+30.14
+35.24
+18.79
+10.74
+79.76
+88.42
+119.30
+31.13
+MULTI
+TrailBlazer
+8.41
+7.65
+42.72
+31.97
+26.51
+251.42
+27.89
+11.60
+5.60
+33.53
+39.25
+36.92
+235.19
+30.00
+TrailBlazer (Wan 2.2)
+16.46
+14.65
+31.83
+44.61
+35.87
+202.14
+30.89
+13.86
+11.01
+32.47
+38.41
+33.51
+204.73
+31.27
+T2I
+–
+–
+–
+–
+–
+–
+–
+11.95
+8.88
+36.11
+35.89
+34.27
+221.30
+24.20
+Ours (Wan 2.2)
+25.86
+20.54
+24.62
+62.86
+60.28
+196.41
+30.60
+25.83
+20.73
+21.87
+64.57
+69.03
+198.57
+30.76
+Ours (LTX-2)
+21.88
+20.07
+29.30
+52.96
+50.35
+210.60
+29.05
+27.23
+17.91
+22.41
+59.11
+60.74
+228.52
+32.05
+5
+Results
+In this section, we demonstrate the effectiveness of our method. The
+main focus of our technique it to generate videos according to the
+prompt and spatiotemporal layouts provided by the user.
+We compare our method to the T2I-based method proposed above
+and to Peekaboo [Jain et al. 2024], TrailBlazer [Ma et al. 2024], and
+FreeTraj [Qiu et al. 2024], prior training-free methods that generate
+videos using layout guidance.
+For fair comparison of the guide generation stage, in addition to
+the provided benchmarks we use their outputs as guiding videos
+to the second stage of our method, and inject these outputs to a
+video diffusion model (see the refined section of Table 1, right).
+Furthermore, we implement TrailBlazer [Ma et al. 2024] on Wan 2.2,
+the backbone that we use in our method, as it achieved the strongest
+benchmark performance overall and is the only benchmark that
+supports multi-object settings.
+5.0.1
+Datasets. To ensure a comprehensive evaluation across vary-
+ing levels of difficulty, we consider three data categories: Static,
+Dynamic, and Multi. These contain approximately 40, 40, and 20
+layouts, respectively, for a total of about 100 layouts. The Static set
+contains single-object layouts with limited motion, initially based on
+videos from the Davis dataset [Pont-Tuset et al. 2017]. The Dynamic
+set follows the same single-object structure with similar textual
+prompts as the Static set, but introduces strong dynamic motion.
+The Multi set represents the most challenging scenario, featuring
+multiple objects with strong dynamic motion in a single video and
+custom textual prompts. For all datasets, layout guidance is provided
+in the form of binary video masks, which are created by the authors
+and to be publicly released alongside the textual prompts.
+5.1
+Quantitative Results
+We present results in Table 1, additional results are in the supplemen-
+tal. To evaluate the control of the layout on the generated output,
+we use a set of complementary metrics that measure both semantic
+and spatial accuracy between the ground truth layout and bound-
+ing boxes predicted by an open-vocabulary segmentation model
+[Minderer et al. 2022] . Intersection over Union (IoU) measures the
+average overlap between predicted and ground-truth object masks
+across all objects and frames, providing an overall layout accuracy
+score. Average precision@50% (AP50) evaluates frame-level correct-
+ness by considering a prediction correct when it overlaps the ground
+truth by at least 50%, indicating whether objects appear in the in-
+tended regions per frame. To evaluate motion fidelity with respect
+to the target trajectory beyond standard overlap accuracy, we also
+report Centroid Distance (CD), Intersection, and Intersection-AP50
+(I-AP50). CD measures how far the predicted object centers are from
+the ground-truth centers across all objects and frames. Intersection
+measures the raw overlapping area between predicted and ground-
+truth masks, and I-AP50 applies the detection-style metric based on
+the raw intersection area rather than IoU. Together, these metrics
+quantify how faithfully the generated videos follow the provided
+layouts. We employ Fréchet Video Distance (FVD) [Unterthiner et al.
+2018] to assess video quality against a set of 150 videos from Davis
+6
+
+
+[Pont-Tuset et al. 2017], and CLIP Similarity (ClipSim) [Radford et al.
+2021] to measure alignment with the textual prompts.
+As shown in Table 1, our method strongly outperforms other
+approaches in terms of alignment with the input and video qual-
+ity across all datasets and metrics. Wan 2.2 performs better in the
+guide stage, whereas LTX-2 excels after refinement, likely due to
+its dedicated refinement model. Notably, even when implemented
+on the same backbone (Wan 2.2) for a fair comparison, TrailBlazer
+continues to underperform our method across all stages, datasets
+and metrics.
+5.2
+Qualitative Results
+Figure 7 demonstrate that our method outperforms prior approaches
+in terms of both layout alignment and overall video quality. As
+stated earlier, during the guide generation stage we enforce strict
+layout adherence, which comes at the expense of visual fidelity, this
+quality is later recovered during the refinement stage. The strength
+of the optimization at the guide generation stage can be controlled
+by adjusting the learning rate. Figures 3 and 5 illustrate the visual
+difference between the intermediate video guide and the final refined
+output. This observation is further supported by the quantitative
+performance gap between stages reported in Tables 1, 3 and 4.
+In our implementation of TrailBlazer on Wan 2.2, as well as prior
+benchmarks on earlier models, directly manipulating cross-attention
+maps leads to either artifacts or weak layout control, and these
+artifacts are often not recoverable during refinement (see Figure 7,
+supplemental). This further supports our claim that optimization-
+based guidance, together with a refinement stage, is necessary.
+Finally, we conduct a user study comparing our method with
+previous approaches on a subset of fifteen videos (five from each
+dataset). The study involves approximately sixty reviewers, includ-
+ing individuals with visual arts backgrounds as well as participants
+from non-visual backgrounds. In total, we collected 250 responses.
+Participants evaluated the generated videos along three dimensions:
+fidelity to the prompt, fidelity to the layout, and aesthetic quality.
+The aggregated results are shown in Table 2. We observe that the
+straightforward Text-to-Video (T2V) method achieves strong visual
+quality (VQ) and prompt adherence, but performs poorly in adher-
+ing to layout guidance. Our approach significantly outperforms all
+baselines in layout adherence. In terms of VQ and prompt adherence,
+it performs competitively, surpassing all other methods except T2V.
+Notably, on certain datasets, our method also exceeds T2V in visual
+quality or prompt alignment.
+5.3
+Ablation Analysis
+We conduct a series of ablation studies to better understand the
+design choices in our method. In particular, we analyze (i) which
+layers are most influential for layout control generation, (ii) how
+the number of optimized layers impacts output quality, and (iii) how
+the resolution used at different stages affects the trade-off between
+inference time and performance.
+In Table 3 we study which layers to select and how many are
+needed. Instead of fixing a single subset, we randomly sample a
+subset from the chosen layer range at each diffusion timestep. This
+strategy benefits from representations across the full layer set while
+reducing computational cost for high-resolution inputs. Our results
+indicate that early layers are especially beneficial. Specifically, dur-
+ing the guide generation stage (left columns block), we observe
+higher IoU and AP50 and lower CD for early layer ranges (0–10,
+10–20, 0–20) compared to later ranges (20–30, 30–40, 20–40). This
+advantage consistently propagates to the refinement stage (right
+columns block).
+Table 4 shows the benefit of generating the refined video at a
+higher resolution, but inference time is greatly reduced when the
+guide is generated at lower resolutions with only a slight drop in
+performance. Due to its high compression rate, LTX achieves signifi-
+cantly faster inference times. Wan attains the strongest performance
+during the guide stage, while LTX achieves higher IoU and AP50
+scores after refinement, along with comparable performance on
+trajectory-related metrics (CD, Intersection, and I-AP50).
+For all results in the paper, we adopt the setting with three random
+layers selected from layers 0 −10 (see Table 3, first row). We use the
+lowest guide resolution (160×49) and the highest refined resolutions
+(480 × 81, 768 × 121) from Table 4 (rows 6 and 13), as they yield the
+best overlap and trajectory accuracy in the refined videos. Due to
+paper format limitations, we refer the reader to the supplemental
+for video demonstrations and further experiments.
+5.4
+Additional Applications
+We show more uses of our method in Figure 8. By generating the
+prior from an existing video, we can edit its attributes. Applying
+optimization to style-related parts in the prompt, produces different
+styles in the same video. More examples and details are in the
+supplemental.
+6
+Limitations
+Despite its strong performance, the approach has several limitations.
+It does not explicitly separate camera motion from object motion:
+bounding boxes define where content should appear over time, but
+they do not specify whether changes should arise from object move-
+ment or from camera transformations, which can lead to ambiguous
+or unintended behavior.
+Performance may decrease in complex situations, such as scenes
+with detailed motion, multiple interacting objects, or crowded scene
+layouts. Although we demonstrate results in such settings, they
+remain challenging and leave room for further improvement. An im-
+portant direction for future work will be to address these challenges,
+which may lead to more robust layout-guided video generation.
+7
+Conclusion
+We present a training-free approach for layout-guided text-to-video
+generation that enables explicit control over spatial composition and
+object motion while preserving the generative strength of modern
+video diffusion models.
+Our results show that minimal intervention at inference time
+is sufficient to steer pre-trained models toward user-specified spa-
+tiotemporal layouts without compromising visual fidelity or requir-
+ing additional training. Through extensive quantitative and qual-
+itative evaluation, we demonstrate consistent improvements over
+prior methods across static, dynamic, and multi-object scenarios.
+7
+
+
+Table 2. User study results (mean score ± confidence interval with 95% confidence level) across prompt adherence (Prompt), layout adherence (Layout), and
+visual quality (VQ). T2V excels in visual quality and prompt adherence but shows poor layout adherence. Our method achieves the strongest layout adherence
+while remaining competitive in prompt alignment and visual quality.
+Method
+STATIC
+DYNAMIC
+MULTI
+Prompt (↑)
+Layout (↑)
+VQ (↑)
+Prompt (↑)
+Layout (↑)
+VQ (↑)
+Prompt (↑)
+Layout (↑)
+VQ (↑)
+T2V
+8.00 ± 1.76
+6.50 ± 1.96
+7.00 ± 1.24
+9.25 ± 1.52
+0.60 ± 1.11
+7.75 ± 3.53
+8.21 ± 0.90
+3.62 ± 1.41
+7.92 ± 1.06
+PEEKABOO
+5.00 ± 1.26
+4.15 ± 1.13
+3.58 ± 1.15
+4.84 ± 1.34
+1.19 ± 0.49
+2.64 ± 0.92
+𝑁/𝐴
+𝑁/𝐴
+𝑁/𝐴
+TrailBlazer
+5.38 ± 1.36
+4.15 ± 1.27
+4.25 ± 1.37
+1.60 ± 0.76
+4.15 ± 1.59
+1.48 ± 0.57
+0.83 ± 0.75
+1.39 ± 0.89
+1.54 ± 0.92
+FreeTraj
+2.58 ± 0.95
+3.77 ± 1.31
+1.62 ± 0.55
+2.92 ± 0.95
+4.46 ± 1.37
+1.96 ± 0.69
+𝑁/𝐴
+𝑁/𝐴
+𝑁/𝐴
+PEEKABOO [refined]
+7.33 ± 0.86
+6.08 ± 1.14
+7.25 ± 0.96
+5.68 ± 1.49
+1.39 ± 0.91
+5.72 ± 1.06
+𝑁/𝐴
+𝑁/𝐴
+𝑁/𝐴
+TrailBlazer [refined]
+7.50 ± 1.01
+5.00 ± 1.47
+7.00 ± 0.98
+7.24 ± 1.38
+3.00 ± 1.02
+7.08 ± 1.07
+6.62 ± 1.07
+3.31 ± 1.43
+7.42 ± 1.06
+FreeTraj [refined]
+6.96 ± 1.12
+4.85 ± 1.36
+7.50 ± 0.86
+6.24 ± 1.57
+4.73 ± 1.29
+6.84 ± 1.06
+𝑁/𝐴
+𝑁/𝐴
+𝑁/𝐴
+T2I
+4.12 ± 1.05
+5.31 ± 1.08
+3.83 ± 1.21
+5.64 ± 1.40
+4.73 ± 1.34
+4.48 ± 1.00
+2.63 ± 1.38
+3.55 ± 1.48
+3.00 ± 1.37
+Ours
+4.54 ± 1.11
+5.88 ± 1.01
+5.62 ± 1.13
+3.92 ± 1.23
+7.35 ± 1.33
+4.68 ± 1.10
+5.46 ± 1.47
+7.12 ± 1.24
+4.54 ± 1.43
+Ours [refined]
+7.92 ± 0.98
+7.54 ± 0.86
+8.08 ± 0.92
+8.68 ± 0.77
+8.04 ± 1.05
+7.72 ± 0.92
+8.67 ± 0.69
+8.88 ± 0.75
+7.62 ± 1.02
+Table 3. Ablation study on the contribution of different layers to layout adherence. Tested on Wan 2.2. The results indicate that earlier layers perform better.
+Range
+#
+layers
+Guide
+Refined
+IoU (↑)
+AP50 (↑)
+CD (↓)
+I. (↑)
+I-AP50 (↑)
+FVD (↓)
+ClipSim (↑)
+IoU (↑)
+AP50 (↑)
+CD (↓)
+I. (↑)
+I-AP50 (↑)
+FVD (↓)
+ClipSim (↑)
+0-10
+3
+33.82
+17.35
+8.31
+86.15
+90.65
+173.48
+29.69
+27.84
+12.61
+11.18
+74.00
+78.66
+157.01
+30.22
+10
+35.54
+20.34
+8.87
+87.18
+91.77
+171.70
+29.38
+26.79
+11.38
+12.54
+71.70
+76.01
+151.17
+29.60
+10-20
+3
+31.94
+19.73
+10.52
+82.04
+89.18
+161.22
+29.15
+24.83
+11.61
+13.61
+69.72
+75.84
+150.15
+30.33
+10
+25.49
+10.88
+14.12
+72.42
+75.65
+156.44
+29.74
+19.64
+6.24
+16.66
+58.56
+62.59
+145.02
+29.97
+20-30
+3
+16.56
+1.91
+21.42
+51.48
+53.81
+162.91
+29.45
+15.70
+2.18
+21.06
+48.33
+50.43
+150.00
+30.02
+10
+29.95
+18.67
+13.51
+69.12
+76.36
+167.67
+29.91
+24.75
+14.03
+14.86
+61.91
+65.35
+153.51
+30.34
+30-40
+3
+15.21
+2.55
+22.23
+50.03
+49.83
+156.91
+29.50
+15.20
+3.58
+21.79
+47.68
+46.15
+147.73
+29.89
+10
+16.22
+1.22
+21.89
+50.04
+52.01
+165.54
+29.63
+17.01
+2.98
+19.50
+51.14
+54.32
+150.82
+30.21
+0-20
+3
+27.84
+8.88
+11.46
+79.36
+86.67
+169.42
+29.39
+22.14
+6.63
+13.88
+65.48
+71.46
+146.24
+29.92
+10
+32.78
+18.95
+9.58
+86.80
+90.68
+167.28
+29.40
+25.70
+12.45
+12.67
+74.31
+78.21
+152.81
+29.97
+20
+33.00
+17.59
+9.40
+85.45
+90.65
+169.42
+28.97
+26.35
+12.41
+11.86
+73.01
+76.52
+150.46
+29.91
+20-40
+3
+16.61
+2.79
+21.60
+53.20
+55.54
+158.88
+29.51
+16.22
+2.74
+20.66
+50.26
+52.84
+150.36
+30.02
+10
+17.06
+1.40
+22.08
+51.46
+51.67
+162.36
+28.74
+17.96
+3.09
+19.80
+53.89
+55.23
+144.99
+29.41
+20
+15.86
+1.33
+20.40
+53.55
+54.76
+164.18
+29.08
+17.58
+2.57
+18.93
+52.14
+55.29
+154.60
+29.90
+0-40
+3
+23.36
+10.10
+16.56
+67.58
+69.05
+163.18
+29.41
+20.50
+8.83
+17.23
+58.83
+60.27
+151.81
+30.11
+10
+27.32
+12.52
+14.08
+75.61
+81.26
+170.10
+29.46
+22.55
+7.76
+15.55
+68.63
+74.32
+151.69
+30.12
+20
+28.91
+13.98
+11.95
+80.22
+82.04
+168.69
+29.66
+23.27
+9.84
+15.57
+64.33
+66.42
+152.56
+29.89
+Table 4. Ablation study of resolution contributions to layout adherence. Resolution is denoted as 𝑠𝑝𝑎𝑡𝑖𝑎𝑙ℎ𝑒𝑖𝑔ℎ𝑡× 𝑡𝑒𝑚𝑝𝑜𝑟𝑎𝑙resolution. Inference time of
+guide and refinement stages are compared to that of the backbone model. Focusing on the refined block (right) of the Wan model (top), the results indicate
+that it is generally better to generate the refined video at a higher resolution. At the highest resolution (480 × 81) it is preferable in terms of trajectory accuracy
+(CD, I, I-AP50) to generate the respective guide at the lowest resolution (row 6), with negligible decrease in overlap accuracy (IoU, AP50).
+Resolution
+(Guide/Refined)
+Inference Time
+Guide
+Refined
+Guide/Refined
+Backb.
+IoU (↑)
+AP50 (↑)
+CD (↓)
+I. (↑)
+I-AP50 (↑)
+FVD (↓)
+ClipSim (↑)
+IoU (↑)
+AP50 (↑)
+CD (↓)
+I. (↑)
+I-AP50 (↑)
+FVD (↓)
+ClipSim (↑)
+Wan
+160×49/320×49
+00:36/01:10
+01:13
+37.01
+24.15
+7.82
+86.00
+92.48
+174.01
+28.94
+22.67
+10.31
+15.23
+57.75
+62.72
+156.44
+30.60
+160×49/320×81
+00:36/01:59
+02:07
+37.31
+24.32
+8.02
+87.38
+94.18
+171.82
+28.79
+25.63
+11.44
+12.48
+69.80
+74.63
+148.28
+30.43
+160×81/320×81
+00:50/01:59
+02:07
+37.54
+24.69
+8.63
+87.22
+91.13
+181.94
+29.09
+24.90
+9.42
+13.49
+69.85
+72.49
+152.32
+30.38
+320×49/320×81
+01:55/01:59
+02:07
+46.74
+40.75
+5.73
+89.49
+94.59
+185.68
+27.48
+28.20
+12.72
+11.30
+71.27
+75.64
+158.87
+30.61
+320×81/320×81
+03:21/01:59
+02:07
+48.88
+46.40
+5.34
+90.34
+96.32
+181.73
+26.66
+27.62
+14.55
+10.77
+71.41
+74.12
+163.21
+30.35
+160×49/480×81
+00:36/05:58
+06:20
+35.84
+21.57
+8.32
+86.31
+92.96
+172.46
+29.15
+29.50
+14.90
+9.67
+78.04
+83.33
+148.46
+29.90
+160×81/480×81
+00:50/05:58
+06:20
+35.22
+21.40
+10.05
+83.53
+87.55
+185.56
+28.52
+29.62
+18.23
+11.09
+75.88
+78.60
+156.97
+28.96
+320×49/480×81
+01:55/05:58
+06:20
+45.69
+39.01
+6.26
+89.38
+94.15
+183.60
+27.91
+31.67
+17.98
+9.85
+74.66
+77.68
+164.40
+29.77
+320×81/480×81
+03:21/05:58
+06:20
+48.08
+45.93
+6.23
+88.51
+93.46
+183.80
+27.27
+27.45
+14.82
+12.39
+67.62
+69.86
+161.05
+30.14
+480×81/480×81
+10:24/05:58
+06:20
+51.36
+58.25
+6.03
+88.57
+95.06
+192.49
+26.33
+31.96
+17.41
+10.39
+72.06
+77.63
+176.14
+29.96
+LTX
+128×121/256×121
+00:26/00:01
+00:08
+20.57
+7.25
+21.66
+46.55
+48.95
+176.92
+31.52
+19.87
+7.22
+19.87
+44.47
+47.23
+162.07
+32.17
+256×121/512×121
+00:34/00:02
+00:10
+31.63
+21.10
+13.14
+62.27
+69.34
+178.15
+31.35
+28.57
+14.46
+13.72
+61.54
+67.12
+162.73
+31.24
+384×121/768×121
+01:06/00:04
+00:22
+34.30
+21.50
+13.08
+71.60
+76.17
+173.00
+30.08
+35.60
+24.19
+9.70
+74.92
+80.58
+164.22
+30.84
+8
+
+
+Guide
+Refined
+“A boy lifts a scarf over his head and wraps it around his neck.”
+Fig. 6. Comparison between the video guide generated using an ensemble of Text-to-Image methods (left) and the refined video produced by a pre-trained
+video model (right). The guide fails to capture the interaction between the boy and the scarf: the hands remain static instead of grasping and moving the scarf,
+resulting in motion that lacks coordination between the objects.
+Dynamic
+Multi
+T2V
+TB
+FT
+Peek.
+Ours
+Input
+“A bicyclist riding in front of a painted wall.”
+“A man walking calmly as a dramatic explosion erupts behind
+him.”
+Fig. 7. Comparison of our refined video (Ours) against competing methods. Left: dynamic object layout. While T2V produces high-quality visuals, it does not
+follow the layout. Trailblazer (TB) and FreeTraj (FT) introduce bicycle artifacts, and Peekaboo (Peek.) shows weaker alignment. Right: multiple-object layout;
+empty frames indicate unsupported methods. Remaining methods fail to maintain spatial and temporal consistency: the explosion occurs prematurely, and
+the person does not follow the left-to-right trajectory specified by the blue box.
+9
+
+
+Editing
+Input
+Edited
+“The Joker speaks in front of the camera while his hair is on fire.”
+Stylization
+“Film noir scene of a woman walking... The entire scene is
+monochrome — except her dress, which is vivid crimson
+red...”
+Fig. 8. Additional applications of our method. Left: video editing, where the input video is transformed according to the text prompt. Right: stylization, where
+only selected semantic elements retain color while the rest of the scene remains monochrome.
+10
+
+
+References
+Aishwarya Agarwal, Srikrishna Karanam, KJ Joseph, Apoorv Saxena, Koustava
+Goswami, and Balaji Vasan Srinivasan. 2023. A-star: Test-time attention segre-
+gation and retention for text-to-image synthesis. In Proceedings of the IEEE/CVF
+International Conference on Computer Vision. IEEE, 2283–2293.
+Jianhong Bai, Menghan Xia, Xiao Fu, Xintao Wang, Lianrui Mu, Jinwen Cao, Zuozhu
+Liu, Haoji Hu, Xiang Bai, Pengfei Wan, et al. 2025. Recammaster: Camera-controlled
+generative rendering from a single video. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision. IEEE, 14834–14844.
+Mingdeng Cao, Xintao Wang, Zhongang Qi, Ying Shan, Xiaohu Qie, and Yinqiang
+Zheng. 2023. MasaCtrl: Tuning-Free Mutual Self-Attention Control for Consistent
+Image Synthesis and Editing. In Proceedings of the IEEE/CVF International Conference
+on Computer Vision (ICCV). IEEE, 22560–22570.
+Hila Chefer, Yuval Alaluf, Yael Vinker, Lior Wolf, and Daniel Cohen-Or. 2023. Attend-
+and-Excite: Attention-Based Semantic Guidance for Text-to-Image Diffusion Models.
+ACM Trans. Graph. 42, 4, Article 148 (July 2023), 10 pages. doi:10.1145/3592116
+Minghao Chen, Iro Laina, and Andrea Vedaldi. 2024. Training-Free Layout Control
+With Cross-Attention Guidance. In Proceedings of the IEEE/CVF Winter Conference
+on Applications of Computer Vision (WACV). IEEE, 5343–5353.
+Dave Epstein, Allan Jabri, Ben Poole, Alexei Efros, and Aleksander Holynski. 2023.
+Diffusion self-guidance for controllable image generation. Advances in Neural
+Information Processing Systems 36 (2023), 16222–16239.
+Yoav HaCohen, Benny Brazowski, Nisan Chiprut, Yaki Bitterman, Andrew Kvochko,
+Avishai Berkowitz, Daniel Shalem, Daphna Lifschitz, Dudu Moshe, Eitan Porat, et al.
+2026. LTX-2: Efficient Joint Audio-Visual Foundation Model.
+Li Hu. 2024. Animate Anyone: Consistent and Controllable Image-to-Video Synthesis
+for Character Animation. In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition (CVPR). 8153–8163.
+Zhihao Hu and Dong Xu. 2023. VideoControlNet: A Motion-Guided Video-to-Video
+Translation Framework by Using Diffusion Model with ControlNet.
+Yuyang Huang, Yabo Chen, Li Ding, Xiaopeng Zhang, Wenrui Dai, Junni Zou, Hongkai
+Xiong, and Qi Tian. 2025.
+IM-Zero: Instance-level Motion Controllable Video
+Generation in a Zero-shot Manner. In Proceedings of the Computer Vision and Pattern
+Recognition Conference. IEEE, 7265–7275.
+Yash Jain, Anshul Nasery, Vibhav Vineet, and Harkirat Behl. 2024. Peekaboo: Interactive
+video generation via masked-diffusion. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition. IEEE, 8079–8088.
+Zeyinzi Jiang, Zhen Han, Chaojie Mao, Jingfeng Zhang, Yulin Pan, and Yu Liu. 2025.
+Vace: All-in-one video creation and editing. In Proceedings of the IEEE/CVF Interna-
+tional Conference on Computer Vision. IEEE, 17191–17202.
+Johanna Karras, Aleksander Holynski, Ting-Chun Wang, and Ira Kemelmacher-
+Shlizerman. 2023. Dreampose: Fashion image-to-video synthesis via stable diffusion.
+In 2023 IEEE/CVF International Conference on Computer Vision (ICCV). IEEE, IEEE,
+22623–22633.
+Black Forest Labs. 2024. FLUX. https://github.com/black-forest-labs/flux.
+Yuheng Li, Haotian Liu, Qingyang Wu, Fangzhou Mu, Jianwei Yang, Jianfeng Gao,
+Chunyuan Li, and Yong Jae Lee. 2023. Gligen: Open-set grounded text-to-image
+generation. In Proceedings of the IEEE/CVF conference on computer vision and pattern
+recognition. IEEE, 22511–22521.
+Long Lian, Baifeng Shi, Adam Yala, Trevor Darrell, and Boyi Li. 2023. Llm-grounded
+video diffusion models.
+Wan-Duo Kurt Ma, J. P. Lewis, and W. Bastiaan Kleijn. 2024. TrailBlazer: Trajectory
+Control for Diffusion-Based Video Generation. In SIGGRAPH Asia 2024 Conference
+Papers (Tokyo, Japan) (SA ’24). Association for Computing Machinery, New York,
+NY, USA, Article 97, 11 pages. doi:10.1145/3680528.3687652
+Chenlin Meng, Yutong He, Yang Song, Jiaming Song, Jiajun Wu, Jun-Yan Zhu, and
+Stefano Ermon. 2022. SDEdit: Guided Image Synthesis and Editing with Stochastic
+Differential Equations. In International Conference on Learning Representations.
+Matthias Minderer, Alexey Gritsenko, Austin Stone, Maxim Neumann, Dirk Weis-
+senborn, and Alexey Dosovitskiy. 2022. Simple Open-Vocabulary Object Detection
+with Vision Transformers. In European Conference on Computer Vision. Springer,
+728–755.
+William Peebles and Saining Xie. 2023. Scalable diffusion models with transformers.
+In Proceedings of the IEEE/CVF international conference on computer vision. IEEE,
+4195–4205.
+Quynh Phung, Songwei Ge, and Jia-Bin Huang. 2024. Grounded Text-to-Image Synthesis
+with Attention Refocusing. In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition (CVPR). IEEE, 7932–7942.
+Jordi Pont-Tuset, Federico Perazzi, Sergi Caelles, Pablo Arbeláez, Alexander Sorkine-
+Hornung, and Luc Van Gool. 2017. The 2017 DAVIS Challenge on Video Object
+Segmentation. arXiv:1704.00675 [cs.CV]
+Haonan Qiu, Zhaoxi Chen, Zhouxia Wang, Yingqing He, Menghan Xia, and Ziwei Liu.
+2024. Freetraj: Tuning-free trajectory control in video diffusion models.
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini
+Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen
+Krueger, and Ilya Sutskever. 2021. Learning Transferable Visual Models From
+Natural Language Supervision. In Proceedings of the 38th International Conference
+on Machine Learning (Proceedings of Machine Learning Research, Vol. 139), Marina
+Meila and Tong Zhang (Eds.). PMLR, 8748–8763. https://proceedings.mlr.press/
+v139/radford21a.html
+Shira Schiber, Ofir Lindenbaum, and Idan Schwartz. 2026. TempoControl: Tempo-
+ral Attention Guidance for Text-to-Video Models. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition (CVPR). IEEE, Denver, CO,
+USA.
+Thomas Unterthiner, Sjoerd Van Steenkiste, Karol Kurach, Raphael Marinier, Marcin
+Michalski, and Sylvain Gelly. 2018. Towards accurate generative models of video: A
+new metric & challenges.
+Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu
+Yu, Haiming Zhao, Jianxiao Yang, Jianyuan Zeng, Jiayu Wang, Jingfeng Zhang,
+Jingren Zhou, Jinkai Wang, Jixuan Chen, Kai Zhu, Kang Zhao, Keyu Yan, Lianghua
+Huang, Mengyang Feng, Ningyi Zhang, Pandeng Li, Pingyu Wu, Ruihang Chu, Ruili
+Feng, Shiwei Zhang, Siyang Sun, Tao Fang, Tianxing Wang, Tianyi Gui, Tingyu
+Weng, Tong Shen, Wei Lin, Wei Wang, Wei Wang, Wenmeng Zhou, Wente Wang,
+Wenting Shen, Wenyuan Yu, Xianzhong Shi, Xiaoming Huang, Xin Xu, Yan Kou,
+Yangyu Lv, Yifei Li, Yijing Liu, Yiming Wang, Yingya Zhang, Yitong Huang, Yong
+Li, You Wu, Yu Liu, Yulin Pan, Yun Zheng, Yuntao Hong, Yupeng Shi, Yutong Feng,
+Zeyinzi Jiang, Zhen Han, Zhi-Fan Wu, and Ziyu Liu. 2025. Wan: Open and Advanced
+Large-Scale Video Generative Models. arXiv preprint arXiv:2503.20314 (2025).
+Binxu Wang and John J Vastola. 2023. Diffusion models generate images like painters:
+an analytical theory of outline first, details later.
+Xiang Wang, Hangjie Yuan, Shiwei Zhang, Dayou Chen, Jiuniu Wang, Yingya Zhang,
+Yujun Shen, Deli Zhao, and Jingren Zhou. 2023. Videocomposer: Compositional
+video synthesis with motion controllability. Advances in Neural Information Process-
+ing Systems 36 (2023), 7594–7611.
+Zhouxia Wang, Ziyang Yuan, Xintao Wang, Yaowei Li, Tianshui Chen, Menghan Xia,
+Ping Luo, and Ying Shan. 2024. Motionctrl: A unified and flexible motion controller
+for video generation. In ACM SIGGRAPH 2024 Conference Papers. Association for
+Computing Machinery, 1–11.
+Jinheng Xie, Yuexiang Li, Yawen Huang, Haozhe Liu, Wentian Zhang, Yefeng Zheng,
+and Mike Zheng Shou. 2023. Boxdiff: Text-to-image synthesis with training-free
+box-constrained diffusion. In Proceedings of the IEEE/CVF International Conference
+on Computer Vision. IEEE, 7452–7461.
+Qianxun Xu, Chenxi Song, Yujun Cai, and Chi Zhang. 2026. SwitchCraft: Training-
+Free Multi-Event Video Generation with Attention Controls. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR). IEEE,
+Denver, CO, USA.
+Shiyuan Yang, Liang Hou, Haibin Huang, Chongyang Ma, Pengfei Wan, Di Zhang,
+Xiaodong Chen, and Jing Liao. 2024. Direct-a-Video: Customized Video Generation
+with User-Directed Camera Movement and Object Motion. In ACM SIGGRAPH 2024
+Conference Papers (Denver, CO, USA) (SIGGRAPH ’24). Association for Computing
+Machinery, New York, NY, USA, Article 113, 12 pages. doi:10.1145/3641519.3657481
+11
