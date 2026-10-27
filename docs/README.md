@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-26</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-27</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 6 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-26 23:11:54 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-27 23:03:50 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读2篇、速读5篇，重点关注长时程语音动作生成与人形视频控制。最值得看的是两篇8.0分工作：一是用持久状态分块流匹配，实现长时程共语动作生成；二是带运动跟踪反馈的生成式视频到人形控制。普通读者可先看这两篇的精读摘要，再按兴趣挑3D堆叠或VLA方向速读。</p>
+<p>今日筛选 6 篇论文，精读 1 篇、速读 5 篇，重点聚焦动作生成与流匹配两条主线。最值得看的是满分精读《TopX: Text-to-Motion for Unseen Skeletons from the Skeleton File Alone》，仅凭骨架文件即可驱动未见骨架的文本生成动作；速读中流匹配方向也较集中，涉及单步扩散的累积边缘匹配与目标条件流匹配。普通读者可先读 TopX 的摘要与演示，判断其跨骨架泛化是否适用于自己的角色资产，再按需跟进流匹配加速思路。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Past as State, Present as Attention: Persistent-State Blockwise Flow Matching for Long-Horizon Co-Speech Motion Generation">Past as State, Present as Attention: Persistent-State Blockwise Flow Matching for Long-Horizon Co-Speech Motion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="ViT-H: Generative Video-To-Humanoid Control with Motion Tracking Feedback">ViT-H: Generative Video-To-Humanoid Control with Motion Tracking Feedback</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TopX: Text-to-Motion for Unseen Skeletons from the Skeleton File Alone">TopX: Text-to-Motion for Unseen Skeletons from the Skeleton File Alone</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -94,7 +94,7 @@
     <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="StackGen3D: Stable 3D Block Stack Generation from Multiview Silhouettes">StackGen3D: Stable 3D Block Stack Generation from Multiview Silhouettes</span></li><li><span class="dpr-home-dashboard-paper-title" title="HAF-VLA: Hierarchical Action Flow Framework for Humanoid Vision-Language-Action Control">HAF-VLA: Hierarchical Action Flow Framework for Humanoid Vision-Language-Action Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Latent Space Jam: Layout Guided Video Synthesis">Latent Space Jam: Layout Guided Video Synthesis</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Cumulative Marginal Matching for One-Step Diffusion">Cumulative Marginal Matching for One-Step Diffusion</span></li><li><span class="dpr-home-dashboard-paper-title" title="CounterFlow: Target-Conditioned Flow Matching for Visual Counterfactuals">CounterFlow: Target-Conditioned Flow Matching for Visual Counterfactuals</span></li><li><span class="dpr-home-dashboard-paper-title" title="Compatible Likelihoods for Flow Matching on Manifolds">Compatible Likelihoods for Flow Matching on Manifolds</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
 </section>

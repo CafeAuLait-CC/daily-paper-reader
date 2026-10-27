@@ -1,0 +1,2576 @@
+TopX: Text-to-Motion for Unseen Skeletons from the Skeleton File Alone
+Tengjiao Sun1,3 Pengcheng Fang1,3 Xiaoyu Zhan2,3 Dongjie Fu2 Xiaohao Cai1 Hansung Kim1†
+1University of Southampton
+2Nanjing University
+3MOGO AI
+†Corresponding author
+Abstract
+Text-to-motion models generate for the skeletons they were
+trained on, while a new character arrives as a skeleton file and
+nothing else. We study text-to-motion for skeletons that no
+training clip has used, with no clips of the character, no tem-
+plate, no retargeting and no fine-tuning. We present TopX,
+a 73M-parameter flow-matching transformer that generates
+joint rotations and a root trajectory for any kinematic tree
+from its tree, rest pose and joint names. Motion is normalised
+by the rest pose and the size of the skeleton, and the rest pose
+enters as a world-frame descriptor that does not depend on
+how the rig’s author oriented each joint, with rest conventions
+randomised in training. Attention is factorised over the joints
+and the frames of a motion and carries a spatial–temporal en-
+coding designed for skeleton graphs of any topology: queries
+and keys are rotated across joints by a heat-kernel coordinate
+of the skeleton graph, which is defined for every tree and does
+not change with the order of its joints or the eigenbasis of its
+Laplacian, and across frames by a rotary encoding of frame
+order. To measure what this buys, we build SkelShift: four
+motion corpora under one codec, 143,334 captioned clips on
+skeletons of 4 to 142 joints, from which 4,232 clips on 2,043
+skeletons are held out by clip, rig, tree class or species and
+organised along topology, joint count, body plan, species and
+rig source, and scored by motion quality: Fréchet distances
+on public kinetic features and on kinematic descriptors, foot
+skating and ground contact. Against UniMate trained on the
+same clips, on test rigs without a training clip, TopX lowers
+the descriptor FID from 5.73 to 4.58 when UniMate’s guid-
+ance is tuned for the kinetic FID, and the kinetic FID from
+1.48 to 0.55 when it is tuned for the descriptor FID, also on
+motions no training skeleton performs; fewer of its frames
+sink below the ground.
+1
+Introduction
+Text-to-motion generation has become fluent on the human
+body [11, 14, 15, 42], and nearly all of it assumes one skeleton:
+the joint count, joint order and rest pose of the training body
+are built into the model. Games, film and virtual production
+animate casts of characters that are not human, each rigged
+with its own tree, joint names, joint order and rest pose. When
+such a character is created, its skeleton file is all there is—no
+clips of it to normalise with, adapt to or retarget from. A text-
+to-motion model for these pipelines has to animate a skeleton
+from that file.
+Three properties of a skeleton file make this hard. Scale:
+without clips, the size of a character’s motion and the spread
+of each joint’s channels are unknown, so a normalisation by
+per-rig motion statistics cannot be applied. Conventions: the
+order in which a file lists its joints, the names it gives them
+and the orientation of each joint’s rest frame are choices of
+the rig’s author, and the motion should not depend on them.
+Shape: the tree itself may lie outside the training data, with a
+new topology, more joints or an unfamiliar body plan. Retar-
+geting [1, 44] and template bodies [45–47] exclude whatever
+the template cannot express. AnyTop [12] generates on ar-
+bitrary trees without captions and normalises each skeleton
+with statistics of that skeleton’s motions. UniMate [31], the
+closest system to ours, is text-conditioned and serves a new
+skeleton from its rest pose, topology and joint names; its
+released model serves up to 71 joints and 60 frames.
+How far such models generalise is hard to tell, because
+unseen skeletons have been evaluated on a handful of held-
+out skeleton types [31], on held-out species of one shared
+topology [46], or without text [33]. Measuring generalisation
+needs held-out skeletons whose distance from the training
+data is controlled and stated, and metrics that stay valid on
+them.
+A learned text–motion evaluator can lose much of
+its ceiling off its training distribution—on held-out species
+the real clips’ R@1 drops from 0.899 to 0.594 in [46]—so we
+score motion quality with evaluator-free statistics, as UniMate
+does.
+We present TopX (Fig. 1), a text-conditioned flow-
+matching transformer that reads a rig’s tree, rest pose and
+joint names. It normalises motion by the rest pose and the
+skeleton’s size, and reads the rest pose in the world frame
+while being trained under randomised rest conventions. Its
+attention is factorised over the joints and the frames of a mo-
+tion, and the two axes carry one spatial–temporal encoding
+designed for skeleton graphs: a heat-kernel coordinate of the
+graph, with a tree-hop bias, on the joint axis and the frame
+order on the time axis, both applied as rotations of queries
+and keys.
+No learned table is indexed by joint slot or by
+frame, so one set of weights reads any kinematic tree. The
+1
+arXiv:2610.34321v1  [cs.CV]  25 Oct 2026
+
+
+model learns from four corpora under kinematics-preserving
+skeleton augmentation. Our contributions:
+• Text-to-motion from the skeleton file.
+One 73M-
+parameter model generates for any kinematic tree from
+its tree, rest pose and joint names, with no clip of the
+target: motion is normalised by the rest pose and the
+skeleton’s size, and the rest pose enters as a world-frame
+descriptor that does not depend on how each joint’s rest
+frame was authored, with rest conventions randomised
+in training. It returns joint rotations and a root trajectory
+that the rig plays directly (Secs. 3.1 and 3.3).
+• A spatial–temporal encoding designed for skeleton
+graphs of any topology.
+The two axes of the fac-
+torised joint×frame attention are encoded as a pair:
+across joints, a heat-kernel coordinate computed from
+the skeleton graph rotates queries and keys, next to a
+tree-hop and direction bias; across frames, a rotary en-
+coding of frame order. The joint coordinate is defined
+for every tree, unchanged when the joints are relabelled
+and independent of the eigenbasis of the graph Lapla-
+cian, which eigenvector encodings [31, 35] leave open
+for repeated eigenvalues (Sec. 3.2).
+• SkelShift, a corpus and a benchmark for unseen
+skeletons. Four motion corpora are brought under one
+codec, one ground and one contact rule: 143,334 cap-
+tioned clips on skeletons of 4 to 142 joints, every joint
+described in text. From them, 4,232 clips on 2,043 rigs
+and 736 distinct trees are held out by unit, in buck-
+ets along five axes of skeleton shift, with a dev/test
+split, annotations of tree distance and reused motion,
+and evaluator-free motion-quality metrics (Sec. 4).
+Against UniMate trained on the same clips, TopX lowers
+each Fréchet distance when UniMate’s guidance is tuned for
+the other, on test rigs with no training clip and on novel
+motions; on these rigs fewer of its frames sink below the
+ground (Tab. 2). On held-out game species, a caption retrieves
+the motion our four-corpus model generated for it at R@1
+0.915, and that of UniMate’s released model at 0.279. In
+ablations, the full recipe has the lowest KIDdesc on unseen
+topologies, rare body plans, new species and Truebones rigs
+(Tab. 4).
+2
+Related Work
+Text-to-motion.
+Human text-to-motion moved from varia-
+tional models [14] to diffusion in pose space [42, 51] or in
+a latent [7], to token models over quantised motion [15, 49],
+scaled by larger corpora [11, 26] and skeleton-aware la-
+tents [17]. Animal text-to-motion fixes a template: the SMAL
+body [47], a topology shared by humans and animals [46],
+a unified 30-joint skeleton [45]; OmniSkel adapts a human
+model to new bone lengths [28]. Each fixes the kinematic tree,
+or its topology, when it is trained. TopX fixes neither: one
+set of weights reads any tree, so a new character is animated
+from its skeleton file.
+Motion on arbitrary skeletons.
+Retargeting maps mo-
+tion between structurally compatible skeletons [1, 44] or
+through skeleton-agnostic embeddings [22, 52], and Mo-
+tion2Motion [6] transfers across topologies from a few ex-
+amples of the target.
+AnyTop [12] generates on arbitrary
+trees without captions, places the rest pose as the first frame
+and biases attention by distances on the tree, and normalises
+each skeleton by statistics of that skeleton’s motions; UniMo-
+Gen [21] adds style and trajectory control on human skeletons.
+Text-conditioned generation across topologies was shown by
+OmniZoo [5], by G-MDM [23], which predicts joint rotations
+without root translation, by ACT [30], which rigs a mesh and
+animates it from text, and, concurrently with this work, by
+UniMate [31], which serves a new skeleton zero-shot with a
+spectral rotary encoding of Laplacian eigenvectors, a graph
+attention bias, rest-pose rebasing and skeleton augmentation.
+TopX addresses the same setting and differs in four choices
+for an unseen skeleton: motion is normalised by the rest pose
+and the skeleton’s size, not by statistics of a rig or a corpus, so
+a new rig needs no statistics; the world-frame rest descriptor
+does not depend on how each joint was oriented, and rest
+conventions are randomised in training; the joint coordinate
+is free of the eigenbasis, so the output does not change with
+joint order even under repeated eigenvalues (63% of our train-
+ing skeletons); and it generates up to 240 frames for any joint
+count, where UniMate’s released model generates 60 frames
+for up to 71 joints.
+Evaluating unseen skeletons.
+UniMate holds out seven
+Truebones skeleton types (58 sequences) and reports a
+kinematic-feature FID and diversity, and foot sliding on 20
+legged skeletons; X-MoGen [46] holds out species on its
+shared topology. For video-driven animation, TopoCap [33]
+separates seen and unseen topologies and MoCapAny-
+thing [13] stratifies seen, rare and unseen species; in retarget-
+ing, [18] reports proportion changes and arbitrary structures
+separately.
+SkelShift brings such controlled axes to text-
+conditioned generation: held-out units are cut from training,
+the distance of every test tree to the training trees is stated,
+and results are reported per axis.
+Positional encodings on graphs.
+Laplacian eigenvectors
+are ambiguous in sign and, inside repeated eigenvalues, in ba-
+sis [19, 25]. Diffusion-based coordinates avoid both: random-
+walk [10] and heat-kernel [41] signatures are established node
+encodings [4, 34], and WIRE [35] uses spectral and random-
+walk coordinates as rotary angles [40]. We use the heat-kernel
+signature as the rotary coordinate of a skeleton’s joints, paired
+with a rotary encoding of frame order.
+2
+
+
+3
+Method
+A rig R = (T, Prest, N) is a kinematic tree T over 𝐽joints, a
+rest pose (global joint positions Prest ∈R𝐽×3 and rest orien-
+tations Rrest
+𝑗) and joint names N. Given R and a caption 𝑐,
+TopX samples a motion x ∈R𝐿×𝐽×17 from 𝑝𝜃(x | R, 𝑐) with
+one transformer shared by every rig. At generation no input
+of the network depends on a rig’s clips, so a rig no clip has
+used is served exactly like a training rig. We use this mode
+for every benchmark skeleton, seen or unseen.
+3.1
+Representation and skeleton inputs
+Per-joint channels.
+Every joint carries the same 17 chan-
+nels (Tab. 5 in the appendix): its position, horizontal coordi-
+nates relative to the root’s smoothed ground track and height
+absolute; its global rotation relative to its rest orientation,
+R 𝑗( 𝑓) Rrest⊤
+𝑗
+at frame 𝑓, in the continuous 6D form [53], so
+that “no motion” is the identity on every rig; its world veloc-
+ity (supervision only); and a contact flag. The root row also
+carries the ground track and the heading. A frame decodes
+either from the positions or by forward kinematics (FK) of
+the rotations, and the two routes do not read each other; the
+rotations and the root trajectory are what the rig plays, and
+every statistic in this paper is computed on them.
+Rest normalisation.
+Rigs differ in size by orders of mag-
+nitude, and a model that cannot see a rig’s clips cannot stan-
+dardise by their statistics. We centre every cell on the rig’s
+rest frame and scale it by the rig’s size,
+˜x 𝑓𝑗𝑐=
+x 𝑓𝑗𝑐−xrest
+𝑗𝑐
+𝜎𝑐
+,
+(1)
+where xrest is the rest pose written in the 17 channels (rest
+positions, identity rotations, zero velocity and contact, for-
+ward heading), and 𝜎𝑐= 𝑠/𝑔𝑐on the position, velocity and
+ground-track channels, with 𝑠the diagonal of the rest pose’s
+bounding box and 𝑔𝑐three global gains, and 𝜎𝑐= 1 on the
+others. The alternative, standardising every (rig, joint, chan-
+nel) cell by the statistics of the rig’s clips, needs clips of the
+rig. An unseen rig’s validity mask is structural: every joint
+carries the per-joint channels and the root the global ones.
+Per-joint features.
+Three features describe each joint and
+are added to all of its tokens (Sec. 3.2). (i) A description,
+a short phrase such as “left thigh joint” written from the
+joint’s name or, when the name is unrecognised or carries no
+anatomy, from the tree’s geometry and, where annotated, the
+body plan, embedded once by a frozen LLM2Vec encoder [2]:
+“front left upper leg” is the same concept on a horse and on
+a lizard, while L_Femur_02 and b_hindleg_l_1 are not.
+(ii) A structural vector: the rest offset to the parent in the
+parent’s frame, the bone length, depth, path length to the
+root, number of children and a leaf flag, through a zero-
+initialised MLP. (iii) A world-frame rest descriptor: the world
+direction of the joint’s bone at rest and its rest position relative
+to the root’s ground point, in mean bone lengths and log-
+compressed. The parent-frame offset in (ii) depends on how
+the rig’s author oriented each joint’s rest frame; the world-
+frame descriptor does not, and it is the feature that tells the
+network what the rest pose is.
+3.2
+A spatial–temporal encoding for skeleton
+graphs
+A motion is a grid of tokens over two axes of different kinds:
+the joints of a frame form a tree that changes from rig to
+rig, the frames of a joint form a sequence. TopX factorises
+attention along the two axes: each of its 𝑁𝑏blocks attends
+over time (one joint across its frames), then over joints (one
+frame across its joints), then applies an MLP. Position is
+encoded on both axes in the same way: queries and keys
+are RMS-normalised per head [8] and rotated by angles of
+their token’s position [40], so that position enters a logit only
+through the difference of two positions’ angles. The angles
+suit each axis: on the joint axis they are computed from the
+skeleton graph through its heat kernel, next to a bias on hop
+counts in the tree; on the frame axis they follow the frame
+index. The two encodings are designed as a pair for skeleton
+graphs of any topology: neither axis has a learned table of
+absolute positions, so no parameter depends on the number
+or the order of a rig’s joints, and the same weights read any
+kinematic tree.
+Tokens and the rest frame.
+One token per frame and joint:
+the 17 normalised channels of a cell are projected to width
+𝐷. As in AnyTop [12], the rest pose leads the sequence as
+a frame of its own: the input is [ xrest | xtgt
+𝑡], one clean rest
+frame that is never noised, followed by 𝐿target frames that
+carry the flow interpolant and a learned marker and are the
+only frames denoised. Under Eq. (1) the rest frame is the
+origin of every cell, so the target frames are displacements
+from the rest pose of the skeleton being served; what that
+skeleton looks like reaches the network through the per-joint
+features of Sec. 3.1.
+Joint axis: heat-kernel coordinate and tree bias.
+Let L =
+I−D−1/2AD−1/2 be the normalised Laplacian of the tree, with
+eigenpairs (𝜆𝑘, v𝑘), 0 = 𝜆0 < 𝜆1 ≤· · · ≤𝜆𝐽−1. For eight
+diffusion times 𝜏𝑖= 2𝑖−2, 𝑖= 0, . . . , 7,
+ℎ𝑗(𝜏) =
+𝐽−1
+∑︁
+𝑘=1
+𝑒−𝜏𝜆𝑘𝑣2
+𝑘𝑗,
+˜ℎ𝑗(𝜏) =
+ℎ𝑗(𝜏)
+1
+𝐽
+Í
+𝑖ℎ𝑖(𝜏)
+,
+(2)
+and an MLP maps ˜h𝑗∈R8 to the 𝑑ℎ/2 rotation angles of
+joint 𝑗. To the logits the spatial attention adds a per-head
+bias, in the spirit of the graph-distance bias of AnyTop [12],
+𝑏(ℎ)
+𝑖𝑗
+= −min(𝑔𝑖𝑗, 8) +𝑢(ℎ)
+𝑎𝑖𝑗+ 𝑑(ℎ)
+𝑠𝑖𝑗, which depends on the hop
+distance 𝑔𝑖𝑗and on the hops 𝑎𝑖𝑗up and 𝑠𝑖𝑗down to the lowest
+common ancestor through zero-initialised tables 𝑢, 𝑑, so that
+3
+
+
+1 Unseen skeleton
+No motion clips
+tree
+rest pose
+joint names
+Noisy motion tokens
+x = (x −xrest) / σc
+rest
+= 0
+frames →
+joints
++ej
+Topology-aware transformer
+×10
+Temporal
+attention
+θf = f ω
+Spatial
+attention
+θj
+FFN
+“The stegosaurus attacks …”
+t
+AdaLN
+Sampling from noise
+Generated motion
+on the unseen skeleton
+0.0 s
+1.8 s
+3.6 s
+2 Heat-kernel joint RoPE
+shared colours show structural position on any tree
+Stego (40)
+Human (22)
+Spider (61)
+a
+b
+core
+ends
+8-scale signature
+a spine
+b tail tip
+MLP
+θj
+qj
+kk
+θj −θk
+Figure 1: TopX. ❶An unseen skeleton needs no clip: its tree, rest pose and joint names give each joint a feature 𝑒𝑗(an MLP of tree and
+rest-pose features plus the LLM2Vec embedding of the joint’s description), and the motion tokens, one per joint and frame (position, rotation
+relative to the rest pose, velocity and contact; ground track and heading on the root), are normalised by the rest pose and the skeleton’s size
+(Eq. (1)), so the rest frame is zero. ❷Each of ten blocks attends over time with queries and keys rotated by 𝜃𝑓= 𝑓𝜔, and over the joints with
+them rotated by 𝜃𝑗, an MLP of joint 𝑗’s heat-kernel signature at eight scales on the tree, and biased by tree hops; mesh colours show the first
+principal component of the log signature, on one scale for all skeletons. Caption and flow time 𝑡act through AdaLN; sampling from noise
+generates the motion on Stego, a Truebones test skeleton. Meshes are for display only; the human is SMPL+H [37].
+a head can tell parent from child and the same limb from the
+other side of the body. ℎ𝑗(𝜏) is the diagonal of the heat kernel
+𝑒−𝑡L without its constant mode: the heat-kernel signature [41]
+in the form GPSE uses as a node encoding [4]; dividing by
+its mean over the joints (the heat trace over 𝐽) follows [41].
+Three properties make it a joint coordinate for any skeleton
+graph. It is defined on every tree, with eight values per joint
+whatever the size of the tree: all 𝐽−1 non-trivial modes
+enter, so nothing is truncated or padded. It does not depend
+on the eigenbasis: summed over an eigenspace, 𝑣2
+𝑘𝑗is the
+diagonal of the eigenspace’s projector, the same for every
+basis and every sign. And relabelling the joints permutes
+its rows; since every other input is attached to a joint rather
+than to a slot, the motion predicted for each joint does not
+depend on the order in which the file lists the joints (proof
+in the appendix). Spectral rotary encodings of graphs take
+their angles from Laplacian eigenvectors [35], and UniMate’s
+spectral joint encoding [31] removes their sign ambiguity
+with a SignNet [25], but not the basis ambiguity of a repeated
+eigenvalue, nor that of a truncation that splits an eigenspace.
+On our training skeletons this is the common case: 3,210 of
+the 5,127 (63%) have a repeated eigenvalue among the first
+eight non-trivial modes or between the eighth and the ninth.
+Frame axis.
+The temporal attention rotates queries and keys
+by angles of the frame index [40], with the rest frame at index
+0 and base 700, the rule of [31] for a 241-frame window. It
+replaces a learned table of frame positions, so position enters
+the temporal logits only through frame offsets.
+Text and time.
+The conditioning vector c = MLP(𝑡) +
+MLP(e𝑐), with 𝑡the flow time and e𝑐the pooled LLM2Vec
+embedding of the caption, drives the AdaLN shift, scale and
+gate of every sub-layer [32], so text enters through modula-
+tion only. The caption is dropped with probability 0.1 for
+classifier-free guidance [16]; the rest frame is never dropped.
+3.3
+Training and sampling
+Objective.
+We train on the straight path x𝑡= (1 −𝑡)𝝐+ 𝑡x,
+𝝐∼N (0, I), 𝑡∼U(0, 1) [27, 29]; the network predicts
+the clean sample ˆx under a per-cell Huber penalty with the
+velocity-space weight max(1 −𝑡, 𝜎min)−2 of [24], scaled to
+mean one over 𝑡. A rig of 142 joints has 28 times the body
+rows of one with six and the same single root row, so a plain
+mean over cells would drown the root trajectory and contact of
+small rigs in the body rotations of large ones. We partition the
+channels into nine groups 𝑔(position, rotation and velocity
+of the root and of the body; contact; ground track; heading)
+and use
+L =
+∑︁
+𝑔
+𝛾𝑔
+√︃
+𝑁𝑔/𝑁¯ℓ𝑔,
+(3)
+with ¯ℓ𝑔the masked mean over the 𝑁𝑔valid cells of group 𝑔in
+the batch and 𝑁= Í
+𝑔𝑁𝑔, so that a group’s share of the output
+4
+
+
+gradient does not grow with the number of cells it spans.
+The 𝛾𝑔are solved from measured group energies so that the
+groups take the shares of the objective implied by Kimodo’s
+fixed loss weights [36] (appendix). FK-consistency, world-
+velocity, foot-lock and acceleration terms are added.
+Skeleton and convention augmentation.
+With probability
+0.8 a training sample is changed by one kinematics-preserving
+operation, following UniMate’s rule [31]: a joint is inserted on
+a bone, a few leaves are removed, single-child joints of a chain
+are merged, or every bone is rescaled by up to ±10%; positions
+and velocities are re-encoded by FK, so the sample stays self-
+consistent. Independently, with probability 0.5, every joint’s
+rest orientation is turned by a random rotation of up to 30◦, as
+if the rig had been authored with another rest pose: the world
+motion is unchanged, and only the rest-relative rotations the
+network has to produce change with it. The world-frame rest
+descriptor is what allows the network to tell such rigs apart.
+Rigs are drawn with probability proportional to the square
+root of their clip count, as in [31], so that corpora of single-
+clip rigs and of rigs with hundreds of clips both contribute.
+Sampling.
+Samples follow the straight path with 𝑆Euler
+steps, x ←x+(ˆx−x)/(𝑆−𝑖); invalid cells are held at zero, and
+guidance acts on the caption only, ˆx = ˆx∅+ 𝑤(ˆx𝑐−ˆx∅). The
+output is used as generated: no grounding, no foot locking,
+no inverse kinematics.
+4
+The SkelShift corpus and bench-
+mark
+4.1
+Four corpora under one codec
+SkelShift brings four corpora under one codec (counts are
+training clips and rigs after the benchmark is cut out): the
+Objaverse-XL [9] subset of UniML3D [31] at a fixed com-
+mit (5,023 clips, 4,277 rigs, 6–60 joints), whose captions are
+one sentence per clip written by a vision–language model; the
+AniMo4D animal library [45] (76,882 clips, 307 rigs) with its
+captions, together with HumanML3D [14] (26,844 clips on
+one 22-joint skeleton); further animations and species from
+the same game library as AniMo4D (29,645 clips, 485 rigs),
+captioned by rule from the animation names; and the True-
+bones zoo [43] (708 clips, 57 rigs, up to 142 joints). Training
+thus covers 139,102 clips (144 hours at 30 fps) on 5,127 rigs
+and 1,364 distinct trees, with 6 to 142 joints. Every clip is
+encoded by one codec, at 30 fps, grounded at its lowest point,
+with one contact rule, and checked by a data gate (appendix),
+so a statistic means the same thing on every corpus. Every
+joint has a text description, from its source name or, when the
+name conveys no anatomy, from the rest pose and the tree (ap-
+pendix). As the source assets keep their licences, the corpus
+is released as a per-clip list of source identifiers, splits and
+annotations with the scripts that rebuild it from the originals,
+and the metric code.
+4.2
+Held-out buckets
+SkelShift holds out units rather than clips (Tab. 1). Two in-
+distribution buckets anchor the scale: ID-clip holds out clips
+of rigs that are trained on, and ID-tree holds out whole rigs
+whose tree is isomorphic to a training rig’s, so that only pro-
+portions, rest pose and names change. The out-of-distribution
+buckets each move one axis further. OOD-tree holds out a
+quarter of the rarely populated tree classes of bipeds and
+quadrupeds, and OOD-plan 40% of the tree classes of rare
+body plans (insects, birds, sea animals, snakes); every rig of
+a held-out class leaves training. The OOD-J buckets hold the
+UniML3D rigs whose joint count lies outside the range trained
+on in that corpus (61–117, of which 250 rigs share Mixamo’s
+65-joint humanoid tree, and 4). OOD-species holds out four
+species of the game library—markhor and greater rhea (dev),
+capybara and emu (test)—with their male, female and juve-
+nile rigs. OOD-new-species holds ten rigs of species never
+trained (frogs, a newt, an axolotl, beetles, a cockroach, a leaf
+insect, a fruit bat, a terrapin), kept after a motion-quality gate.
+OOD-rig holds eight Truebones quadrupeds (two bears, cat,
+goat, hound, lynx, stegosaurus, turtle) with unseen trees.
+Outside OOD-species, held-out units are hashed one third
+to dev and two thirds to test; TopX’s model selection and
+hyper-parameter choices use dev only. In the comparison with
+UniMate, guidanceisswept ondev, andUniMateisreportedat
+its best by each Fréchet distance (Sec. 5.1). Every benchmark
+clip carries the distance of its tree to the nearest training tree,
+the joint count and body plan, and whether its source motion
+was reused on a training skeleton, so results can be stratified
+by each annotation. SkelShift measures generalisation over
+skeletons.
+4.3
+Protocol and metrics
+Generation.
+TopX serves every benchmark rig, including
+those of ID-clip, from its skeleton file: the tree, the rest pose,
+the joint names and the up and forward axes. Each clip is
+generated with five sampling seeds at the length of the real
+clip, capped at 240 frames, and scored as generated, at the
+guidance with the lowest KIDdesc on dev (appendix).
+Motion quality.
+We follow UniMate [31] in scoring motion
+quality by a Fréchet distance on kinematic features and by
+foot sliding, computed on the played animation, the FK of the
+generated rotations plus the root trajectory:
+• FIDkin: Fréchet distance between the generated and the
+real clips of a group on the public kinetic features of [6,
+39], on which UniMate’s FID is computed: per joint,
+the mean horizontal and vertical kinetic energy and the
+mean acceleration over the clip, with positions in units
+of the rig scale. Pooled over joints by their mean and
+5
+
+
+Table 1: SkelShift buckets. A bucket holds out units—clips, rigs, classes of isomorphic trees or species—and every clip of a held-out unit is
+removed from training and validation. TED: median tree edit distance from a clip’s tree to the nearest training tree. Reused motion: share
+of clips whose source animation appears in training (UniML3D: motion fingerprints; game species: the same animation, matched by joint
+rotations).
+Bucket
+Source
+Unseen at test time
+Clips dev / test
+Rigs
+Trees
+Joints
+TED
+Reused motion
+ID-clip
+UniML3D
+clips of training rigs
+70 / 172
+135
+79
+10–60
+0
+26%
+ID-tree
+UniML3D
+rigs whose tree is seen
+255 / 508
+759
+140
+6–60
+0
+63%
+OOD-tree
+UniML3D
+tree classes (bipeds, quadrupeds)
+213 / 320
+333
+266
+11–60
+2
+15%
+OOD-plan
+UniML3D
+tree classes of rare body plans
+40 / 62
+70
+63
+5–60
+5
+2%
+OOD-J>60 (Mixamo)
+UniML3D
+rigs of one 65-joint humanoid tree
+155 / 350
+250
+1
+65
+5
+51%
+OOD-J>60 (other)
+UniML3D
+rigs above the corpus’s joint range
+166 / 512
+464
+184
+61–117
+7
+33%
+OOD-J<5
+UniML3D
+rigs below that range
+1 / 1
+2
+2
+4
+2
+0%
+OOD-species
+game
+four species, three rigs each
+630 / 635
+12
+8
+41–66
+5
+18%
+OOD-new-species
+game
+rigs of ten untrained species
+1 / 47
+10
+10
+28–78
+11
+–
+OOD-rig
+Truebones
+eight quadruped rigs
+32 / 62
+8
+8
+31–49
+4
+–
+Total
+1,563 / 2,669
+2,043
+736
+4–117
+standard deviation, they give every skeleton the same six
+features; both sets are standardised by the real clips. A
+group needs 50 real clips.
+• FIDdesc: the same distance on the 24 kinematic descrip-
+tors of our scorer (below), which also cover pose, con-
+tact, rhythm and path.
+• Skate and Slide [20, 31, 48]: UniMate’s foot-skating
+measures on a rig’s named contact joints; Cov.: the
+share of their frames near the ground, since a hovering
+foot escapes both (appendix).
+In the comparison with UniMate they are computed on the
+first 60 frames, UniMate’s output length. Per bucket, TopX
+is scored at full length by our scorer (appendix): KIDdesc, a
+kernel distance [3] on 24 kinematic features per clip (speeds,
+accelerations, contact, turning, pose spread, path), standard-
+ised by the training clips, that stays defined on small groups,
+next to its real–real value, the KID between two halves of
+the real clips; Slip, the share of grounded joint-frames that
+slide, over all joints and by the codec’s contact rule; Pen.,
+the share of frames whose lowest joint is more than 0.005 𝑠
+below the ground; Float, the share of clips, airborne captions
+left out, that hover above 95% of the training clips of their
+body plan; and Speed, the joint speed relative to the real clips.
+The scorer’s statistics are averaged over the seeds, with rigs
+weighted equally except in KIDdesc, which compares the clip
+distributions.
+Text alignment.
+A skeleton-agnostic evaluator trained on
+our training split (appendix) scores caption retrieval within
+rigs of the held-out game species (439 test clips with cu-
+rated captions, pools of 8, chance 0.125). On the first 60
+frames, UniMate’s output length, a caption retrieves the mo-
+tion TopX generated for it at R@1 0.915, against 0.896 for
+the real motions, 0.122 with the captions shuffled and 0.279
+for UniMate’s released model; trained on the same clips, the
+pair of Tab. 2 (UniMate tuned on FIDkin) reaches 0.317 and
+0.192 on the emu rigs that both serve (appendix). Figure 2
+shows text alignment qualitatively.
+5
+Experiments
+5.1
+Setup
+Model.
+TopX has 10 blocks of width 512 with 8 heads
+(73.3M parameters) and samples at the guidance with the
+lowest KIDdesc on dev (appendix). Each ablation trains for
+half the steps of the main model, next to a full-recipe control
+of the same length, and all arms share one sampler setting.
+Training settings are in the appendix.
+Baseline.
+UniMate [31], the closest system, serves a skele-
+ton zero-shot from its rest pose, topology and joint names
+and generates 60 frames. We train both methods on the same
+5,023 clips of the UniML3D training split, UniMate with its
+official code and configuration and TopX with the recipe of
+Sec. 3. Each keeps its own sampler, TopX generating at the
+clip’s length; on dev, TopX takes the guidance with the low-
+est FIDkin, and UniMate is reported at its lowest FIDkin and
+its lowest FIDdesc (appendix). The comparison with released
+weights, including AnyTop [12], is in the appendix.
+5.2
+Skeletons without training clips
+Table 2 compares the two methods trained on the same clips,
+with UniMate tuned on either Fréchet distance. On the 890
+test clips whose rigs have no training clip, TopX lowers
+FIDdesc from 5.73 to 4.58 when UniMate is tuned on FIDkin,
+and FIDkin from 1.48 to 0.55 when it is tuned on FIDdesc.
+Both reductions hold on the 453 of these clips whose motion
+occurs on no training skeleton (FIDdesc 9.63 against 10.70;
+6
+
+
+Table 2: TopX against UniMate, both trained on the same 5,023 UniML3D clips (test clips of the four UniML3D buckets, first 60 frames, five
+seeds; additional metrics: appendix), with UniMate’s guidance tuned on dev by FIDkin (left) or by FIDdesc (right). Bold: lower within a half,
+the paired 95% interval over rigs excluding zero. R–R: FIDdesc between two halves of the real clips. Pen.: frames below the ground (real 0).
+UniMate tuned on FIDkin
+UniMate tuned on FIDdesc
+FIDdesc ↓
+FIDkin ↓
+Pen.↓
+FIDdesc ↓
+FIDkin ↓
+Pen.↓
+Test clips
+Clips
+R–R
+Ours
+Uni.
+Ours
+Uni.
+Ours
+Uni.
+Ours
+Uni.
+Ours
+Uni.
+Ours
+Uni.
+All
+1,062
+0.48
+4.83
+6.06
+2.00
+2.05
+0.24
+0.33
+4.83
+4.32
+2.00
+2.52
+0.24
+0.28
+ID-clip
+172
+2.83
+7.18
+9.09
+2.40
+2.49
+0.25
+0.34
+7.18
+5.96
+2.40
+2.57
+0.25
+0.27
+No training clip
+890
+0.55
+4.58
+5.73
+0.55
+0.48
+0.24
+0.33
+4.58
+4.22
+0.55
+1.48
+0.24
+0.28
+novel motion
+453
+1.13
+9.63
+10.70
+1.15
+0.89
+0.27
+0.35
+9.63
+7.95
+1.15
+2.17
+0.27
+0.29
+reused motion
+437
+0.60
+0.65
+1.64
+0.06
+0.24
+0.23
+0.32
+0.65
+1.21
+0.06
+0.72
+0.23
+0.27
+ID-tree
+508
+0.69
+1.06
+2.72
+0.04
+0.38
+0.24
+0.34
+1.06
+1.56
+0.04
+0.53
+0.24
+0.29
+OOD-tree
+320
+1.39
+8.38
+9.02
+1.33
+1.24
+0.22
+0.30
+8.38
+7.17
+1.33
+2.63
+0.22
+0.26
+OOD-plan
+62
+–
+24.1
+22.3
+3.02
+2.65
+0.35
+0.35
+24.1
+20.4
+3.02
+5.46
+0.35
+0.27
+(a) Same training data: rigs neither model was trained on
+ID-tree: “An object bends forward and then stands up.” (34 joints)
+Ours
+UniMate
+OOD-tree: “An object walks in place.” (49 joints)
+ID-tree: “An object spins on its hands while kicking its legs.” (52 joints)
+Ours
+UniMate
+ID-tree: “An object performs a backflip and lands.” (34 joints)
+(b) Ours: two held-out species Squares: root path, top view.
+“A female capybara transitions from walking to running while turning right.”
+“A female capybara transitions from walking to running while turning left.”
+“A female emu walks forward while turning right.”
+“A female emu walks forward while turning left.”
+Figure 2: Samples on unseen test skeletons, each drawn on the rig’s own mesh: five frames at equal times, light to dark. (a) The pair of
+Tab. 2, UniMate tuned on FIDkin, on four rigs neither model was trained on, ours above UniMate, over at most 60 frames, UniMate’s length.
+(b) The main model on two held-out game species, a capybara and an emu on their production meshes; the camera follows the animal, and
+squares show its root path from above. Drawing, more examples and mesh credits: Sec. J.
+FIDkin 1.15 against 2.17), and on new topologies FIDkin falls
+from 2.63 to 1.33. Fewer of TopX’s frames sink below the
+ground against either setting (0.24 against 0.33 and 0.28).
+Against the released weights, on the two held-out species
+whose rigs none of the three models was trained on, TopX
+reaches FIDdesc 1.19, against 3.32 for UniMate and 24.63 for
+AnyTop (Sec. H.1). Figure 2 shows samples; Sec. J adds
+examples. Table 3 reports TopX on every test bucket at full
+length, with KIDdesc 0.127 on the held-out game species and
+0.664 on Mixamo’s 65-joint tree.
+7
+
+
+Table 3: TopX on every test bucket at full length (up to 240 frames, five seeds per clip), real-clip values in parentheses (→: closer is better),
+KIDdesc next to its real–real value. ∗Fewer than 20 rigs. The one OOD-J<5 test clip enters only the last row.
+Bucket
+Rigs / clips
+KIDdesc ↓(real–real)
+Slip→(real)
+Pen.↓
+Float→(real)
+Speed→
+ID-clip
+93 / 172
+0.950 (0.455)
+0.309 (0.353)
+0.204
+0.110 (0.128)
+0.87
+ID-tree
+504 / 508
+0.145 (0.002)
+0.304 (0.349)
+0.172
+0.021 (0.039)
+0.90
+OOD-tree
+218 / 320
+1.74 (0.142)
+0.310 (0.366)
+0.200
+0.045 (0.078)
+0.77
+OOD-plan
+45 / 62
+10.9 (6.04)
+0.176 (0.280)
+0.251
+0.106 (0.164)
+0.81
+OOD-J>60 (Mixamo)
+172 / 350
+0.664 (0.874)
+0.311 (0.363)
+0.131
+0.024 (0.050)
+0.82
+OOD-J>60 (other)
+351 / 512
+0.240 (0.092)
+0.275 (0.333)
+0.162
+0.021 (0.029)
+0.77
+OOD-species∗
+6 / 635
+0.127 (0.124)
+0.226 (0.262)
+0.061
+0.011 (0.012)
+0.93
+OOD-new-species∗
+9 / 47
+91.5 (104)
+0.023 (0.222)
+0.240
+0.000 (0.323)
+0.19
+OOD-rig∗
+6 / 62
+1.08 (0.914)
+0.181 (0.196)
+0.290
+0.011 (0.017)
+0.94
+All buckets
+1,405 / 2,669
+0.324 (0.129)
+0.293 (0.345)
+0.174
+0.033 (0.055)
+0.83
+Table 4: Ablations, trained for half the main model’s steps, on the
+OOD test buckets the changed components are meant for: KIDdesc
+on unseen topologies (OOD-tree), rare body plans (OOD-plan), new
+species and Truebones rigs (OOD-rig), five seeds per clip, up to 240
+frames. Rest: median change of the output, in mean bone lengths,
+when a test rig’s rest convention is turned (Sec. I). Real: KIDdesc
+between two halves of the real clips. Half-widths: Sec. I.
+Arm
+OOD-
+tree
+OOD-
+plan
+New
+species
+OOD-
+rig
+Rest↓
+Real
+0.142
+6.04
+104
+0.914
+–
+Full recipe
+1.78
+11.1
+82.4
+1.01
+0.44
+Learned frame table
+1.88
+11.7
+84.4
+1.59
+–
+Learned joint table
+1.87
+11.5
+83.7
+1.12
+–
+Eigenvectors + SignNet
+1.83
+11.5
+83.6
+1.17
+–
+−augmentation
+1.95
+12.1
+91.8
+1.03
+0.89
+5.3
+Ablations
+The representation of Sec. 3.1 is what serving a rig from its
+file requires, and every arm shares it. Table 4 changes one
+part of the model at a time: the frame or the joint rotary
+encoding becomes a learned table, the heat-kernel coordi-
+nate becomes UniMate’s eigenvectors with a SignNet [31],
+or the augmentation (of skeletons and of rest conventions)
+is removed. These parts are added for skeletons unlike the
+training ones, so the table reads them where the benchmark
+tests that: unseen topologies, rare body plans, new species
+and Truebones rigs. On each of these the full recipe has the
+lowest KIDdesc of all arms (unseen topologies 1.78, against
+1.88 with the frame table, 1.87 with the joint table, 1.83 with
+eigenvectors and 1.95 without augmentation), and changing
+a test rig’s rest convention moves its output half as much as
+without augmentation (0.44 against 0.89 bone lengths).
+6
+Conclusion
+A text-to-motion model can serve a skeleton it has never
+seen, with no clip of it, when its motion is normalised by the
+rest pose and the skeleton’s size, the rest pose is read in the
+world frame under randomised conventions, and its attention
+is encoded for skeleton graphs of any topology. SkelShift
+measures this along five shift axes. Against UniMate trained
+on the same clips, TopX lowers each Fréchet distance when
+UniMate is tuned for the other, on rigs with no training clip
+and on novel motions. Captions are not held out, so SkelShift
+measures generalisation over skeletons, and text alignment is
+evaluated on the held-out game species.
+References
+[1] Kfir Aberman, Peizhuo Li, Dani Lischinski, Olga Sorkine-
+Hornung, Daniel Cohen-Or, and Baoquan Chen. Skeleton-
+aware networks for deep motion retargeting. ACM Transactions
+on Graphics, 39(4), 2020.
+[2] Parishad BehnamGhader, Vaibhav Adlakha, Marius Mos-
+bach, Dzmitry Bahdanau, Nicolas Chapados, and Siva Reddy.
+LLM2Vec: Large language models are secretly powerful text
+encoders. In COLM, 2024.
+[3] Mikołaj Bińkowski, Danica J. Sutherland, Michael Arbel, and
+Arthur Gretton. Demystifying MMD GANs. In ICLR, 2018.
+[4] Semih Cantürk, Renming Liu, Olivier Lapointe-Gagné, Vin-
+cent Létourneau, Guy Wolf, Dominique Beaini, and Ladislav
+Rampášek. Graph positional and structural encoder. In ICML,
+2024.
+[5] Keyi Chen, Mingze Sun, Zhenyu Liu, Zhangquan Chen, and
+Ruqi Huang.
+Topology-agnostic animal motion generation
+from text prompt. arXiv preprint arXiv:2512.10352, 2025.
+[6] Ling-Hao Chen, Yuhong Zhang, Zixin Yin, Zhiyang Dou,
+Xin Chen, Jingbo Wang, Taku Komura, and Lei Zhang. Mo-
+tion2Motion: Cross-topology motion transfer with sparse cor-
+respondence. In SIGGRAPH Asia Conference Papers, 2025.
+[7] Xin Chen, Biao Jiang, Wen Liu, Zilong Huang, Bin Fu, Tao
+Chen, and Gang Yu. Executing your commands via motion
+diffusion in latent space. In CVPR, 2023.
+[8] Mostafa Dehghani, Josip Djolonga, Basil Mustafa, Piotr
+Padlewski, Jonathan Heek, Justin Gilmer, Andreas Steiner,
+Mathilde Caron, Robert Geirhos, Ibrahim Alabdulmohsin,
+et al. Scaling vision transformers to 22 billion parameters.
+In ICML, 2023.
+8
+
+
+[9] Matt Deitke, Ruoshi Liu, Matthew Wallingford, Huong Ngo,
+Oscar Michel, Aditya Kusupati, Alan Fan, Christian Laforte,
+Vikram Voleti, Samir Yitzhak Gadre, Eli VanderBilt, Anirud-
+dha Kembhavi, Carl Vondrick, Georgia Gkioxari, Kiana
+Ehsani, Ludwig Schmidt, and Ali Farhadi.
+Objaverse-XL:
+A universe of 10M+ 3D objects. In NeurIPS Datasets and
+Benchmarks, 2023.
+[10] Vijay Prakash Dwivedi, Anh Tuan Luu, Thomas Laurent,
+Yoshua Bengio, and Xavier Bresson. Graph neural networks
+with learnable structural and positional representations.
+In
+ICLR, 2022.
+[11] Ke Fan, Shunlin Lu, Minyue Dai, Runyi Yu, Lixing Xiao,
+Zhiyang Dou, Junting Dong, Lizhuang Ma, and Jingbo Wang.
+Go to zero: Towards zero-shot motion generation with million-
+scale data. In ICCV, 2025.
+[12] Inbar Gat, Sigal Raab, Guy Tevet, Yuval Reshef, Amit H.
+Bermano, and Daniel Cohen-Or. AnyTop: Character anima-
+tion diffusion with any topology. In SIGGRAPH Conference
+Papers, 2025.
+[13] Kehong Gong, Zhengyu Wen, Weixia He, Mingxi Xu,
+Qi Wang, Ning Zhang, Zhengyu Li, Dongze Lian, Wei Zhao,
+Xiaoyu He, and Mingyuan Zhang. MoCapAnything: Uni-
+fied 3D motion capture for arbitrary skeletons from monocular
+videos. In CVPR, 2026.
+[14] Chuan Guo, Shihao Zou, Xinxin Zuo, Sen Wang, Wei Ji,
+Xingyu Li, and Li Cheng. Generating diverse and natural 3D
+human motions from text. In CVPR, 2022.
+[15] Chuan Guo, Yuxuan Mu, Muhammad Gohar Javed, Sen Wang,
+and Li Cheng. MoMask: Generative masked modeling of 3D
+human motions. In CVPR, 2024.
+[16] Jonathan Ho and Tim Salimans. Classifier-free diffusion guid-
+ance. arXiv preprint arXiv:2207.12598, 2022.
+[17] Seokhyeon Hong, Chaelin Kim, Serin Yoon, Junghyun Nam,
+Sihun Cha, and Junyong Noh. SALAD: Skeleton-aware latent
+diffusion for text-driven motion generation and editing.
+In
+CVPR, 2025.
+[18] Seokhyeon Hong, Chaelin Kim, Inseo Jang, Soojin Choi, and
+Junyong Noh. Skinned motion retargeting via artifact-driven
+kinematic prior refinement. ACM Transactions on Graphics
+(SIGGRAPH Asia), 2026.
+[19] Yinan Huang, William Lu, Joshua Robinson, Yu Yang, Muhan
+Zhang, Stefanie Jegelka, and Pan Li. On the stability of ex-
+pressive positional encodings for graphs. In ICLR, 2024.
+[20] Korrawe Karunratanakul, Konpat Preechakul, Supasorn Suwa-
+janakorn, and Siyu Tang. Guided motion diffusion for control-
+lable human motion synthesis. In ICCV, 2023.
+[21] Aliasghar Khani, Arianna Rampini, Evan Atherton, and Bruno
+Roy. UniMoGen: Universal motion generation. arXiv preprint
+arXiv:2505.21837, 2025.
+[22] Sunmin Lee, Taeho Kang, Jungnam Park, Jehee Lee, and Jung-
+dam Won. SAME: Skeleton-agnostic motion embedding for
+character animation. In SIGGRAPH Asia Conference Papers,
+2023.
+[23] Wonkwang Lee, Jongwon Jeong, Taehong Moon, Hyeon-Jong
+Kim, Jaehyeon Kim, Gunhee Kim, and Byeong-Uk Lee. How
+to move your dragon:
+Text-to-motion synthesis for large-
+vocabulary objects. In ICML, 2025.
+[24] Tianhong Li and Kaiming He. Back to basics: Let denoising
+generative models denoise. In CVPR, 2026.
+[25] Derek Lim, Joshua Robinson, Lingxiao Zhao, Tess Smidt,
+Suvrit Sra, Haggai Maron, and Stefanie Jegelka. Sign and basis
+invariant networks for spectral graph representation learning.
+In ICLR, 2023.
+[26] Jing Lin, Ailing Zeng, Shunlin Lu, Yuanhao Cai, Ruimao
+Zhang, Haoqian Wang, and Lei Zhang. Motion-X: A large-
+scale 3D expressive whole-body human motion dataset. In
+NeurIPS Datasets and Benchmarks, 2023.
+[27] Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian
+Nickel, and Matt Le. Flow matching for generative modeling.
+In ICLR, 2023.
+[28] Qingyuan Liu, Ke Lu, Kun Dong, Jian Xue, Zehai Niu, and
+Jinbao Wang. Text-to-any-skeleton motion generation without
+retargeting. In ICCV, 2025.
+[29] Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow straight
+and fast: Learning to generate and transfer data with rectified
+flow. In ICLR, 2023.
+[30] Pengyu Long, Weirui Wang, Qingcheng Zhao, Xiaoyang Guo,
+Xiaoyu Pan, Qixuan Zhang, Jiaqing Zhou, Tianlei Hu, Wei
+Yang, Lan Xu, and Jingyi Yu. ACT: A unified framework
+for rigging and animating characters with arbitrary topologies.
+ACM Transactions on Graphics, 45(4), 2026.
+[31] Linzhan Mou, Jiahui Lei, Zhiyang Dou, Chenyue Cai, Chaoyue
+Song, Adam Finkelstein, and Szymon Rusinkiewicz. UniMate:
+One unified model to animate diverse skeletons. arXiv preprint
+arXiv:2609.05415, 2026. SIGGRAPH Asia 2026.
+[32] William Peebles and Saining Xie. Scalable diffusion models
+with transformers. In ICCV, 2023.
+[33] Cheng-Feng Pu, Jia-Peng Zhang, Meng-Hao Guo, Yan-Pei
+Cao, and Shi-Min Hu. TopoCap: Learning topology-agnostic
+motion priors for monocular video-to-animation.
+In SIG-
+GRAPH Conference Papers, 2026. doi: 10.1145/3799902.
+3811159.
+[34] Ladislav Rampášek, Mikhail Galkin, Vijay Prakash Dwivedi,
+Anh Tuan Luu, Guy Wolf, and Dominique Beaini. Recipe for
+a general, powerful, scalable graph transformer. In NeurIPS,
+2022.
+[35] Isaac Reid, Arijit Sehanobish, Cederik Höfs, Bruno Mlodoze-
+niec, Leonhard Vulpius, Federico Barbero, Adrian Weller,
+Krzysztof Choromanski,
+Richard E. Turner,
+and Petar
+Veličković. Rotary position encodings for graphs. In ICML,
+2026.
+9
+
+
+[36] Davis Rempe, Mathis Petrovich, Ye Yuan, Haotian Zhang,
+Xue Bin Peng, Yifeng Jiang, Tingwu Wang, Umar Iqbal,
+David Minor, Michael de Ruyter, Jiefeng Li, Chen Tessler,
+Edy Lim, Eugene Jeong, Sam Wu, Ehsan Hassani, Michael
+Huang, Jin-Bey Yu, Chaeyeon Chung, Lina Song, Olivier
+Dionne, Jan Kautz, Simon Yuen, and Sanja Fidler. Kimodo:
+Scaling controllable human motion generation. arXiv preprint
+arXiv:2603.15546, 2026.
+[37] Javier Romero, Dimitrios Tzionas, and Michael J. Black. Em-
+bodied hands: Modeling and capturing hands and bodies to-
+gether. ACM Transactions on Graphics (Proc. SIGGRAPH
+Asia), 36(6):245:1–245:17, 2017.
+[38] Victor Sanh, Lysandre Debut, Julien Chaumond, and Thomas
+Wolf. DistilBERT, a distilled version of BERT: Smaller, faster,
+cheaper and lighter. arXiv preprint arXiv:1910.01108, 2019.
+[39] Li Siyao, Weijiang Yu, Tianpei Gu, Chunze Lin, Quan Wang,
+Chen Qian, Chen Change Loy, and Ziwei Liu. Bailando: 3D
+dance generation by actor-critic GPT with choreographic mem-
+ory. In CVPR, 2022.
+[40] Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo,
+and Yunfeng Liu. RoFormer: Enhanced transformer with ro-
+tary position embedding. Neurocomputing, 568:127063, 2024.
+[41] Jian Sun, Maks Ovsjanikov, and Leonidas Guibas. A concise
+and provably informative multi-scale signature based on heat
+diffusion. Computer Graphics Forum, 28(5):1383–1392, 2009.
+[42] Guy Tevet, Sigal Raab, Brian Gordon, Yonatan Shafir, Daniel
+Cohen-Or, and Amit H. Bermano. Human motion diffusion
+model. In ICLR, 2023.
+[43] Truebones Motions Animation Studios. Truebones FBX/BVH
+zoo: Over 75 animals with animations and textures. https:
+//truebones.gumroad.com/p/free-truebones-zoo-o
+ver-75-animals-and-animations, 2020.
+[44] Ruben Villegas, Jimei Yang, Duygu Ceylan, and Honglak Lee.
+Neural kinematic networks for unsupervised motion retarget-
+ting. In CVPR, 2018.
+[45] Xuan Wang, Kai Ruan, Xing Zhang, and Gaoang Wang. An-
+iMo: Species-aware model for text-driven animal motion gen-
+eration. In CVPR, 2025.
+[46] Xuan Wang, Kai Ruan, Liyang Qian, Zhizhi Guo, Chang Su,
+and Gaoang Wang.
+X-MoGen: Unified motion generation
+across humans and animals. In AAAI, 2026.
+[47] Zhangsihao Yang, Mingyuan Zhou, Mengyi Shan, Bingbing
+Wen, Ziwei Xuan, Mitch Hill, Junjie Bai, Guo-Jun Qi, and
+Yalin Wang.
+OmniMotionGPT: Animal motion generation
+with limited data. In CVPR, 2024.
+[48] He Zhang, Sebastian Starke, Taku Komura, and Jun Saito.
+Mode-adaptive neural networks for quadruped motion control.
+ACM Transactions on Graphics, 37(4), 2018.
+[49] Jianrong Zhang, Yangsong Zhang, Xiaodong Cun, Yong
+Zhang, Hongwei Zhao, Hongtao Lu, Xi Shen, and Ying Shan.
+Generating human motion from textual descriptions with dis-
+crete representations. In CVPR, 2023.
+[50] Kaizhong Zhang. A constrained edit distance between un-
+ordered labeled trees. Algorithmica, 15(3):205–222, 1996.
+[51] Mingyuan Zhang, Zhongang Cai, Liang Pan, Fangzhou Hong,
+Xinying Guo, Lei Yang, and Ziwei Liu. MotionDiffuse: Text-
+driven human motion generation with diffusion model. IEEE
+TPAMI, 2024.
+[52] Zongye Zhang, Yuzhuo Cui, Qingjie Liu, and Yunhong Wang.
+Semantic-aware motion encoding for topology-agnostic char-
+acter animation. In ICML, 2026.
+[53] Yi Zhou, Connelly Barnes, Jingwan Lu, Jimei Yang, and Hao
+Li.
+On the continuity of rotation representations in neural
+networks. In CVPR, 2019.
+10
+
+
+A
+Representation and codec
+Table 5: Channels per joint and frame. Channels 13–16 exist on the
+root row only. Positions, velocities and the ground track are in the
+skeleton’s units; 𝑠is the diagonal of the rest pose’s bounding box.
+Slice
+Content
+Rows
+0:3
+position: XZ from the smoothed root track, Y absolute all
+3:9
+rotation R𝑗Rrest⊤
+𝑗
+, continuous 6D
+all
+9:12
+world velocity (supervision only)
+all
+12
+contact: height ≤0.05 𝑠, speed ≤0.25 𝑠/s
+all
+13:15 smoothed root track XZ
+root
+15:17 heading (cos 𝜙, sin 𝜙)
+root
+Codec.
+A clip enters as a tree, a rest pose and per-frame
+local rotations and root translations. It is resampled to 30 fps
+(spherical interpolation of the local rotations, linear interpo-
+lation of the root), its global rotations and positions follow
+by FK, and it is shifted vertically so that its lowest joint over
+the whole clip touches 𝑦=0. The root’s horizontal track is
+smoothed by a fourth-order zero-phase Butterworth filter at
+1 Hz (a least-squares line for clips shorter than 90 frames) and
+stored from the clip’s first frame; positions store XZ relative
+to it and absolute height. Rotations are the global rotation
+composed with the inverse rest orientation, written as the first
+two matrix columns. The heading is the ground-plane direc-
+tion of a declared carrier joint’s forward axis and is marked
+invalid where its horizontal norm vanishes.
+The frame is
+right-handed with +𝑌up and the rest pose facing +𝑍. A data
+gate checks grounding, contact, root track, heading and the
+agreement of the positions with the FK of the rotations on
+every clip.
+Rest normalisation and validity.
+The rest frame xrest of
+Eq. (1) holds the rest positions relative to the root’s ground
+point, the identity rotation [1, 0, 0, 0, 1, 0], zero velocity,
+contact and track, and the heading (1, 0); the gains are
+𝑔= (3.868, 2.944, 3.321) for position, velocity and ground
+track, three constants fixed once on a calibration set of 148
+clips (118 Truebones, 30 HumanML3D) before SkelShift was
+drawn and shared by every rig. During training, a cell that is
+exactly constant for a rig (the contact flag of a joint that never
+touches the ground) is excluded from the loss and the input.
+Generation uses no per-rig channel-constancy statistics: ev-
+ery rig, seen or not, is served from its skeleton file with a
+structural mask.
+B
+Model details
+Per-joint features.
+The structural vector holds the unit rest
+offset to the parent in the parent’s frame, log(1 + ℓ𝑗/ ¯ℓ) of the
+bone length, depth/16, log(1 + 𝑝𝑗/ ¯ℓ)/4 of the path length to
+the root, the numberof children(clipped at4)/4 anda leafflag,
+with ¯ℓthe mean bone length. The world-frame rest descriptor
+holds u 𝑗= (Prest
+𝑗
+−Prest
+𝜋( 𝑗))/∥Prest
+𝑗
+−Prest
+𝜋( 𝑗) ∥(zero for the root)
+and c 𝑗= (Prest
+𝑗
+−[𝑃rest
+0,𝑥, 0, 𝑃rest
+0,𝑧])/ ¯ℓ, compressed radially as
+c ↦→c log(1 + ∥c∥)/∥c∥; it enters through a bias-free linear
+map added to the first layer of the structural MLP, whose
+last layer is zero-initialised. Descriptions are embedded by
+LLM2Vec (4096-d) and projected to 𝐷.
+Joint descriptions.
+Every joint receives a name-based de-
+scription (“Left Thigh joint.”) or a geometric description.
+On UniML3D the name is the cleaned name the corpus gives
+the joint; built on 90% of the UniML3D rigs, the lexicon
+below gives the corpus’s own description to 94.2% of the
+name-described joints of the other 10% (672 rigs). The other
+rigs, and a new one, are described as at deployment: a lexi-
+con from raw to cleaned names over all UniML3D skeletons
+gives the name (a Planet Zoo segment name first becomes
+the part it names, frontLegUpr the upper arm), and the side
+follows the rest pose (+𝑋is left beyond 0.02 𝑠), also over a
+name that says otherwise. A joint whose name has no entry
+or carries no anatomy (“Bone”, “Root”) is described from the
+rest pose and the tree instead: its side, the unbranched chain
+it lies on, its place along it and whether the chain ends in a
+tip or a branch, its rank among sibling chains from front to
+back, its height and depth relative to the root, and the rig’s
+body plan (“the first joint of a six-bone limb on the left side
+of a quadrupedal skeleton, below and behind the root”). The
+body plan is the corpus’s annotation for benchmark rigs and
+is given by the user for a new rig, or reads “a skeleton”.
+Serving a new rig.
+The model reads the tree, the rest pose
+and the joint names, with the up and forward axes of the file,
+which rotate the rig into the frame of Sec. A (+𝑌up, the
+rest pose facing +𝑍). When at least four joints outside the
+0.02 𝑠mid-line band carry a side in their names, a BVH rig
+whose names agree with its geometry on less than 80% of
+them is refused unless explicitly overridden, with the forward
+axis the names imply when they define one; for an npz rig the
+mismatch is a warning. The heading carrier enters only the
+encoding of real clips, as a training target; generation does
+not use it.
+Attention.
+The tree bias clips the hop distance at 8 and
+the hop counts to the lowest common ancestor at 15; padded
+joints receive −104. Queries and keys are RMS-normalised
+per head. The heat-kernel MLP maps the 8 scales through
+two hidden layers of 64 units (GELU) to 𝑑ℎ/2 = 32 angles,
+each applied to a channel pair in the rotate-half convention;
+the temporal encoding uses frequencies 700−2𝑖/𝑑ℎ.
+Invariance of the joint coordinate.
+Claim. For any rela-
+belling Π of the joints and any choice of eigenvectors, ˜h of
+Eq. (2) computed on the relabelled tree equals Π ˜h. Proof.
+Relabelling gives A′ = ΠAΠ⊤and D′ = ΠDΠ⊤, hence
+L′ = ΠLΠ⊤and 𝑒−𝜏L′ = Π𝑒−𝜏LΠ⊤, whose diagonal is
+11
+
+
+the permuted diagonal. For an eigenvalue 𝜆with orthonor-
+mal eigenvectors V𝜆∈R𝐽×𝑚, Í
+𝑘:𝜆𝑘=𝜆𝑣2
+𝑘𝑗= (V𝜆V⊤
+𝜆) 𝑗𝑗
+is a diagonal entry of the eigenspace’s projector, which
+is the same for every orthonormal basis V𝜆Q and every
+sign. So ℎ𝑗(𝜏) =  𝑒−𝜏L
+𝑗𝑗−𝑣2
+0 𝑗with the constant mode
+𝑣2
+0𝑗= 𝑑𝑗/Í
+𝑖𝑑𝑖depends on neither, and both terms permute
+with the joints; the mean over the joints is unchanged by a
+permutation. □Every other per-joint input is permuted with
+its joint, the bias 𝑏𝑖𝑗is a function of the pair, attention over
+joints and per-token layers are permutation-equivariant, and
+the root’s global channels travel with the root; so the net-
+work’s output for each joint is the same under any listing of
+the joints. All 𝐽−1 modes enter Eq. (2), so no truncation
+splits an eigenspace.
+C
+Objective and calibration
+Loss.
+The flow time is uniform, 𝜎min = 0.2, and the Huber
+knee is 𝛿= 10 on normalised residuals. The nine groups form
+six families with target shares of the objective: root trajectory
+(root position and ground track) 0.304, heading 0.012, body
+position 0.304, rotation (body and root) 0.304, velocity (body
+and root) 0.027 and contact 0.049. Each group’s energy is the
+mean squared normalised target over its valid cells, measured
+over one epoch of training draws (55,984 windows on 5,127
+rigs, batch 16, with the rest frame, crops and augmentation
+of training); the family weight is 𝛾𝑓= √︁𝑠𝑓/Í
+𝑔∈𝑓𝐸𝑔with
+the rotation family anchored at 10. This gives 6.13 for the
+root trajectory, 9.95 for body positions, 10 for rotations, 1.22
+for velocities, 4.59 for contact and 2.59 for heading. A run
+of 30 optimiser-free steps of the same model checks that
+each family’s share of ∥𝜕L/𝜕ˆx∥2 is within a factor 1.25 of its
+prediction. The auxiliary weights are 0.07 for FK consistency
+(ramped over the first 5k steps), 0.01 for world velocity, 0.01
+for foot lock and 1.0 for acceleration; none carries the time
+weight.
+D
+Training details
+Table 6 lists the settings of TopX. The four ablation arms
+change one setting each and, like the full-recipe control, train
+for 300 epochs with the decay over 300 epochs; each arm
+is recalibrated (Sec. C) on its own data and model, and the
+control uses the main model’s calibration.
+E
+Benchmark construction
+Cut.
+Held-out units are removed from training and vali-
+dation in every split of every corpus: 3,372 of the 8,610
+UniML3D clips (the benchmark units, the rigs outside 5–60
+joints and the clips that UniMate’s own preprocessing drops),
+15,960 of the 45,605 clips of the game additions (held-out
+species, rigs whose clips never travel, and clips without a
+Table 6: Settings of TopX.
+Width 𝐷, blocks 𝑁𝑏, heads
+512, 10, 8 (73.3M parameters)
+Frames
+1 rest frame + 𝐿=240 target frames
+Heat-kernel scales
+𝑡𝑖= 2𝑖−2, 𝑖= 0, . . . , 7
+Temporal rotary base
+700
+Caption dropout
+0.1
+Epochs, draws per epoch
+600, 55,984 (437 steps of 128; the last 48
+dropped)
+Optimiser
+AdamW, weight decay 0.01
+Learning rate
+3×10−4,
+4k warm-up,
+half-cosine to
+3×10−6
+Gradient clip; spike rejection
+1.0; skip a step above norm 200
+Precision, hardware
+bf16, 8 H200 GPUs
+Rig balance
+draw probability ∝𝑛1/2
+Skeleton augmentation
+𝑝=0.8, one of: insert a joint at 0.3–0.7 of a
+bone; remove 5–15% of the leaves (≤3);
+merge 10–30% of the single-child joints
+(≥1); scale every bone by up to ±10%
+Rest-convention augmentation
+𝑝=0.5, per-joint rotation ≤30◦
+Sampling
+50 Euler steps, guidance scale 2
+recommended caption) and 278 of the 986 Truebones clips
+(94 usable clips from the eight held-out rigs, plus 175 with-
+out source captions and nine whose source captions all begin
+with “Rest pose”).
+Buckets.
+OOD-tree takes 25% of the classes of isomorphic
+biped and quadruped trees that have at most three rigs, OOD-
+plan 40% of the tree classes of rare body plans; ID-clip holds
+out 25% of the clips of rigs with at least three (at most six
+per rig, at least one kept); ID-tree holds out 20% of the rigs
+of tree classes with at least four rigs (at least three kept per
+class). UniML3D test clips must move (mean joint speed of
+at least 0.04 rest diagonals per second) and last at least 20
+frames. A test clip whose rig and motion are duplicated in
+training is removed from training. Units are hashed one third
+to dev and two thirds to test, groups of geometric copies are
+kept on one side, and for the game species the species with
+the larger share of animations shared with other species goes
+to dev.
+Annotations.
+Tree distance is the constrained unordered
+tree edit distance [50] (unit insertion and deletion) to the
+nearest training tree. A tier records whether the tree is seen
+(T0), new but with the same set of local patterns as a training
+tree (T1, Weisfeiler–Lehman patterns of height 3), or new in
+its local patterns (T2, split at the median pattern distance);
+Tab. 7 gives the tiers per bucket. Reused motion is detected on
+UniML3D by fingerprints of the world directions of eight limb
+bones, aligned in heading and resampled to 32 frames (near-
+duplicate: mean cosine ≥0.98 and frame-difference cosine
+≥0.95), and on the game species by the same animation on
+another species, matched by action name and joint rotations.
+Over the benchmark, 502 clips are shorter than 30 frames and
+585 longer than 240 (scored on their first 240).
+12
+
+
+Table 7: Topology tiers per bucket (clips, dev and test).
+Bucket
+T0
+T1
+T2a
+T2b
+ID-clip, ID-tree
+1,005
+–
+–
+–
+OOD-tree
+–
+169
+145
+219
+OOD-plan
+–
+8
+32
+62
+OOD-J>60 (Mixamo)
+–
+505
+–
+–
+OOD-J>60 (other)
+–
+356
+120
+202
+OOD-J<5
+–
+1
+–
+1
+OOD-species
+306
+419
+449
+91
+OOD-new-species
+2
+–
+10
+36
+OOD-rig
+–
+–
+10
+84
+Captions.
+UniML3D clips carry their one generated sen-
+tence. Game species carry rule captions; 227 OOD-species
+clips (103 dev, 124 test) have no recommended caption and
+are generated from a draft rule caption:
+they enter the
+motion-quality metrics and stay out of the retrieval evalu-
+ation (Sec. K). The new-species clips carry draft rule cap-
+tions. Truebones clips carry species-named captions in the
+AniMo4D style.
+Release.
+The source assets carry their own licences.
+SkelShift is released as clip identifiers with the pinned
+UniML3D commit, the conversion and split scripts, and the
+metric code.
+F
+Metric definitions
+All statistics are computed on the played animation at 30 fps
+with +𝑌up and the ground at 𝑦=0; 𝑠is the rest diagonal of
+the rig.
+Kinetic features and FIDkin.
+UniMate computes its FID
+on kinematic features after [6, 39].
+Both release an
+extract_kinetic_features that returns three numbers
+per joint: the average horizontal and vertical kinetic energy
+and an average acceleration term, which in Motion2Motion’s
+release is the mean magnitude of a window-averaged second
+difference of the positions and in Bailando’s also follows the
+joint’s position.
+We run each release unchanged, with its
+default arguments, on world joint positions divided by 𝑠and
+taken relative to the first-frame root position. A vector of
+3𝐽numbers cannot be compared across skeletons, so each
+of the three numbers is pooled over the joints by its mean
+and population standard deviation: six numbers per sequence
+on every skeleton. Both sets are standardised by the mean
+and standard deviation of the real set and compared by the
+Fréchet distance. Motion2Motion’s release gives the FIDkin
+of Tab. 2, Bailando’s is reported next to it (Tab. 10). The dis-
+tance is computed per seed and averaged over the five seeds,
+for groups of at least 50 real clips.
+Kinematic descriptor, FIDdesc and KIDdesc.
+Per clip: root
+speed (mean, standard deviation, 90th percentile), root height
+range, absolute yaw rate (mean) and its standard deviation,
+root-relative joint speed (10th, 50th, 90th percentiles), ac-
+celeration (50th, 90th), jerk (50th), mean activity, contact
+fraction (codec rule), airborne fraction, dominant frequency
+of the activity signal, pose spread along three axes relative to
+the rest pose, net displacement, path length, mean root height,
+median lowest-joint height and mean vertical root speed: 24
+numbers. Scale-like features enter as log(𝑥+ 10−3); all are
+standardised by the training clips’ statistics and clipped at ±5.
+FIDdesc is the Fréchet distance between Gaussians fitted to the
+descriptors of the generated samples of a group and of its real
+clips, computed when the group has at least 50 real clips: per
+seed and averaged in the same-data comparison, over all seeds
+together in the comparison with released weights (Tab. 13)
+and on dev (Tab. 8). KIDdesc compares the clip distributions
+of a group per seed, with the kernel 𝑘(𝑥, 𝑦) = (𝑥⊤𝑦/24 + 1)3
+and the unbiased estimator averaged over 100 random subsets
+of min(50, ⌊𝑁/2⌋) clips per side, 𝑁the clips of the group; its
+real–real value is the KIDdesc between two halves of the real
+clips split by rig, averaged over ten splits.
+Skate, Slide and Cov.
+We follow UniMate’s evaluation of
+foot sliding [31]. A rig’s contact joints are the joints whose
+canonical name contains foot, toe, ball, paw, hoof or pastern
+and none of whose descendants does, i.e. the distal-most such
+joint of each limb chain. Canonical names come from Uni-
+Mate’s rule-based name cleaner, the one it applies to new as-
+sets; in the comparison with released weights, from its joint
+annotation where one exists for the rig. ℓis the height of the
+root above the plane through the lowest rest-pose joint. For a
+contact joint at frame 𝑡, ℎis its height and 𝑑its horizontal dis-
+placement since frame 𝑡−1, both in units of ℓ. A frame is near
+the ground when ℎ< 0.05 and skates when also 𝑑> 0.025.
+Per sequence, Skate is the share of near-ground frames that
+skate and Slide the mean of 100 𝑑(2 −2ℎ/0.05) over near-
+ground frames; both are averaged over the sequences, (clip,
+seed) pairs, in which a contact joint comes near the ground.
+Cov. is the share of contact-joint frames near the ground,
+pooled over the group. Rigs without a named contact joint,
+such as snakes, fish and most insects, and rigs with ℓ= 0 are
+left out of the three. UniMate measures Skate and Slide on
+20 biped and quadruped rigs; here every rig with a named
+contact joint enters.
+Ground contact and activity.
+Slip is the share of grounded
+joint-frames, over all joints, whose horizontal speed exceeds
+0.25 𝑠per second; a joint is grounded at frame 𝑡when its
+height is at most 0.05 𝑠at frames 𝑡and 𝑡+ 1, the codec’s
+contact thresholds. Pen. is the share of a clip’s frames whose
+lowest joint lies more than 0.005 𝑠below the ground. Float
+compares the median over frames of the lowest-joint height,
+in units of 𝑠, with the 95th percentile of the same quantity
+over a calibration sample of training clips of the clip’s body-
+plan group (biped, quadruped, other); clips whose caption
+contains one of the words fly, flies, flying, jump, jumps,
+13
+
+
+jumping, leap, leaps, hop, hops, swim, swims, swimming,
+glide, glides, soar, soars, hover or hovers are left out, both
+here and in that sample. Speed is the root-relative joint speed
+∥Δp∥fps/𝑠, averaged over frames and joints, summed over
+the clips of a group with rig-equal weights and divided by
+the same sum on the real clips. Pen. and Float are averaged
+within each rig and then over rigs, as is Slip; these statistics
+and KIDdesc are computed per seed and averaged over the five
+seeds.
+Self-tests.
+Before use, the statistics of our scorer passed
+a planted-defect test on the real clips: sinking a clip raises
+Pen. with the depth, lifting it raises the lowest-joint height
+by exactly the lift, time warps by ×0.5 and ×2 scale Speed
+accordingly, and white noise raises KIDdesc monotonically
+with its amplitude.
+Reproducibility.
+The five seeds are 7, 13, 23, 31 and 42.
+Generation is deterministic per (checkpoint, clip, seed, guid-
+ance scale): TopX draws every sample at batch 1 from noise
+seeded by a hash of the seed and the clip identifier, so the result
+does not depend on how the clips are split across GPUs or on
+the order in which they are processed. UniMate’s same-data
+test samples are solved in fixed groups of 64 cases, formed in
+clip order before the cases are split across GPUs (Sec. H).
+G
+Guidance scale
+For TopX’s own evaluation (Tabs. 3 and 4) and the comparison
+with released weights, the protocol fixes the guidance scale of
+each method on dev: the scale with the lowest mean KIDdesc
+among 1.5, 2 and 3 is taken, and 2 is preferred among the
+scales whose gap to it is within the larger of their 95% seed
+half-widths. For TopX at 50 steps (Tab. 8) this is 2 (KIDdesc
+0.142, against 0.149 at 1.5 and 0.176 at 3); the ablations, at
+20 steps, keep the choice made at that step count, also 2. For
+UniMate’s released weights (Sec. H.1), on the 528 dev clips of
+the game-library rigs at 60 frames, KIDdesc is 0.253, 0.302 and
+0.537 at 1.5, 2 and 3, so it samples at 1.5; its released default,
+3.0, is the worst of the three. AnyTop is unconditional and
+has no guidance. In the same-data comparison each method’s
+setting is chosen on dev as well (Sec. H).
+H
+Comparison with UniMate
+Training on the same clips.
+Both methods are trained on
+the 5,023 clips of the UniML3D training split, each through
+its own copy of the data. UniMate runs its official code and
+released configuration for 100k steps (192 samples per step,
+exponential moving average weights), with two local changes
+outside the model and the objective (a sampler initialisation
+for our PyTorch version and an abort on a non-finite loss); it
+reads its released features, which hold at most the first 200
+frames of a clip (463,252 frames in all), and draws a random
+60-frame window from them. TopX trains with the recipe of
+Sec. 3 for 240 epochs on the first min(𝑇, 240) frames of each
+clip (507,499 frames in all).
+Sampler settings.
+Each method’s guidance is selected at its
+stated sampler configuration on the 578 UniML3D dev clips
+that neither model trained on (five seeds, first min(60,𝑇)
+frames) by the lowest pooled FIDkin, and the test clips are
+scored at that guidance. UniMate keeps its released inference,
+an adaptive Dormand–Prince solver at its default tolerances
+(its paper describes a fixed-step Euler solver; the released
+code solves text-to-motion with Dormand–Prince), and its
+guidance is taken from 1.5, 2, 3, 4, 5, 7 and 10, the grid
+extended until its best value lay inside it: dev FIDkin 2.32,
+2.21, 1.96, 1.83, 1.72, 1.65 and 1.68, so it samples at 7.
+Tuned instead by the lowest dev FIDdesc (4.15, 3.92, 3.63,
+3.73, 4.10, 5.24 and 7.19 at the same scales), it samples at 3;
+Tab. 2 reports both and Tab. 12 gives additional metrics at 3.
+TopX samples with 200 Euler steps, 400 network evaluations
+against UniMate’s 414.6 at guidance 7 at batch 1 and 548.6
+in the groups of 64 solved on test (Tab. 9), at guidance 2, the
+lowest dev FIDkin at that step count (1.34; 400 steps reach
+1.29).
+Scoring.
+Every sequence is scored on its first min(60,𝑇)
+frames against the first min(60,𝑇) frames of the real clips.
+UniMate’s test cases are solved in fixed groups of 64, within
+which the adaptive step is shared; on 192 dev cases this at
+guidance 2 moves a joint from its one-case position by a
+median of 0.0014, a 95th percentile of 0.027 and at most
+0.31 of the rig’s mean bone length. A difference between the
+methods is read from a bootstrap over rigs (2,000 resamples,
+the clips and seeds of a rig together) on the paired difference,
+and called resolved when its 95% interval excludes zero; a
+group in which not every resample defines the difference is
+not read.
+FIDdesc’s real–real value is the mean, over 200
+random splits, of the distance between the two halves of the
+real clips. Tables 10 and 11 report selected metrics for every
+group with UniMate tuned on FIDkin; Tab. 12 reports selected
+metrics with UniMate tuned on FIDdesc.
+H.1
+Released weights
+UniMate.
+Released v2 weights (100k steps, CC BY-NC),
+trained on UniML3D at commit faaa817 on Truebones, Mix-
+amo and Objaverse skeletons of 5–70 joints with no held-out
+split; it samples at most 71 joints and 60 frames at 30 fps. Each
+benchmark rig is converted to its T-pose fields; UniML3D and
+Truebones rigs use its released joint annotations, game rigs
+its rule-based name cleaning and facing joints. Its topology
+conditioner and ODE sampler run on one case at a time (batch
+1) at guidance scale 1.5 (Sec. G; its released default is 3.0).
+Statistics for de-normalisation are chosen by domain before
+any scoring (its Objaverse statistics for UniML3D rigs, its
+14
+
+
+Table 8: TopX on all dev buckets (638 rigs, 1,563 clips, full length, five seeds per clip, 50 Euler steps) at three guidance scales. The real-clip
+row gives the real values and, under KIDdesc, the real–real value.
+FIDdesc ↓
+Skate↓
+Slide↓
+Cov.→
+Pen.↓
+Float→
+Speed→
+KIDdesc ↓
+Real clips
+–
+0.254
+1.71
+0.442
+0.000
+0.050
+1
+0.091
+𝑤=1.5
+1.88
+0.231
+1.60
+0.452
+0.179
+0.025
+0.78
+0.149
+𝑤=2
+1.71
+0.243
+1.74
+0.441
+0.170
+0.030
+0.84
+0.142
+𝑤=3
+1.79
+0.260
+2.02
+0.417
+0.172
+0.039
+0.95
+0.176
+Table 9: Network evaluations and seconds per sample on one H200
+NVL (50 dev clips, seed 7, batch 1; TopX: the model of Tab. 2, at the
+clip’s length). Under guidance every Euler step, and every function
+evaluation of UniMate’s solver, takes two network evaluations.
+Evaluations
+Seconds
+TopX, 20 steps
+40
+0.67
+TopX, 50 steps
+100
+1.63
+TopX, 100 steps
+200
+3.23
+TopX, 200 steps
+400
+6.43
+TopX, 400 steps
+800
+12.82
+UniMate, guidance 3
+366.4
+6.13
+UniMate, guidance 4
+382.5
+6.32
+UniMate, guidance 5
+398.3
+6.73
+UniMate, guidance 7
+414.6
+6.85
+Truebones statistics for animals).
+The FK of its rotations
+is mapped back to our frame by inverting its canonicalisa-
+tion; a round trip of real clips through the adapter is exact
+to 2.5 × 10−7 𝑠, and the adapter matches its official sampling
+script to 10−7.
+AnyTop.
+Released unified model, trained on 70 Truebones
+characters; it takes no caption. Each rig is exported to BVH
+with two rest frames and its benchmark clips of the same
+split, from which AnyTop’s own preprocessing computes the
+normalisation statistics; the four facing joints it needs are the
+mirrored limb roots of the rest pose. It samples with its 100-
+step sampler at the length of the real clip and exports a BVH
+through its official inverse kinematics, whose FK is scored.
+Coverage.
+Training membership is reconstructed per rig:
+for UniMate from the export lists, skip lists and joint counts
+released with its data, for AnyTop from its released condition
+file. On test, the rigs of 842 clips are unseen by all three
+methods; UniMate cannot sample 54 OOD-J>60 and 12 new-
+species test clips (more than 71 joints) nor the OOD-J<5 clip.
+All three methods were run on the 635 OOD-species clips
+and the 62 clips of the Truebones test rigs.
+Table 13: Released weights (test, first 60 frames, five seeds per
+clip). TopX is the main model, trained on four corpora. Top: the
+two held-out species, on rigs that none of the three methods was
+trained on; bottom: the Truebones test rigs, on which both baselines
+were trained. †Unconditional and transductive. Real clips give the
+reference values.
+Method
+FIDdesc ↓
+Skate↓
+Slide↓
+Cov.→
+Rigs unseen by all three: capybara and emu, 6 rigs, 635 clips
+Real clips
+–
+0.213
+1.03
+0.199
+AnyTop† [12]
+24.63
+0.759
+10.65
+0.358
+UniMate [31]
+3.32
+0.268
+1.59
+0.220
+TopX
+1.19
+0.208
+1.27
+0.234
+Trained on by both baselines: 6 Truebones rigs, 62 clips
+Real clips
+–
+0.208
+1.51
+0.434
+AnyTop†
+9.85
+0.271
+4.21
+0.398
+UniMate
+4.62
+0.221
+2.16
+0.412
+TopX
+3.05
+0.206
+1.69
+0.506
+Results.
+On the two held-out species, whose rigs none of the
+three methods was trained on, TopX reaches a lower FIDdesc
+(1.19) than UniMate (3.32) and AnyTop (24.63), and its con-
+tact joints skate and slide less (Skate 0.208, against 0.268 and
+0.759; real 0.213). On the Truebones test rigs, on which both
+baselines were trained, the order of FIDdesc is the same (3.05,
+4.62 and 9.85).
+I
+Ablations per bucket
+Table 14 gives the seed half-widths of Tab. 4. Skeleton aug-
+mentation is meant for unseen topologies and body plans,
+which these buckets test. We test rest-convention augmenta-
+tion directly on 398 OOD test clips on 196 rigs: each joint’s
+rest orientation of the test skeleton is turned by its own ran-
+dom rotation of at most 30◦(the training range), the world
+motion stays the same, and the model samples again with the
+same seed and caption. The median change of the generated
+joint positions is 0.44 mean bone lengths with the full recipe
+and 0.89 without augmentation, lower by 0.45 (95% bootstrap
+interval 0.41–0.50 over clips, 0.39–0.51 over rigs). For scale,
+sampling the same clip with another seed moves the output
+by 1.49 (1.36 without augmentation). An output that ignored
+the change would move 0.80 and 0.79 respectively. The full
+recipe moves less in each of the 7 OOD buckets with probe
+clips.
+15
+
+
+Table 10: Same-data comparison, Fréchet distances (test, first 60 frames, five seeds; mean over seeds). Ours: 200 Euler steps at guidance 2,
+at the clip’s length; UniMate: guidance 7. FIDkin on the Motion2Motion and the Bailando release of the kinetic features. Bold: lower than
+UniMate (our columns) or than Ours (UniMate’s column), the paired 95% interval over rigs excluding zero. R–R: real clips, half against half
+(groups of at least 100 clips).
+FIDdesc
+FIDkin, Motion2Motion
+FIDkin, Bailando
+Test clips
+Clips
+Ours
+UniMate
+R–R
+Ours
+UniMate
+Ours
+UniMate
+All
+1,062
+4.83
+6.06
+0.48
+2.00
+2.05
+1.85
+1.90
+ID-clip
+172
+7.18
+9.09
+2.83
+2.40
+2.49
+2.10
+2.14
+No training clip
+890
+4.58
+5.73
+0.55
+0.55
+0.48
+0.56
+0.44
+novel motion
+453
+9.63
+10.70
+1.13
+1.15
+0.89
+1.05
+0.77
+reused motion
+437
+0.65
+1.64
+0.60
+0.06
+0.24
+0.08
+0.27
+ID-tree
+508
+1.06
+2.72
+0.69
+0.04
+0.38
+0.06
+0.47
+OOD-tree
+320
+8.38
+9.02
+1.39
+1.33
+1.24
+1.18
+1.12
+OOD-plan
+62
+24.1
+22.3
+–
+3.02
+2.65
+2.32
+1.90
+Table 11: Same-data comparison, ground contact and activity (test, first 60 frames, five seeds; Ours and UniMate as in Tab. 10). Pen.: share
+of frames below the ground (real 0). Skate and Cov.: closer to the real value is better. Speed: joint speed relative to the real clips. Bold:
+lower Pen., or a smaller absolute difference from the real value for Skate and Cov., with the paired 95% interval over rigs excluding zero.
+Pen.↓
+Skate
+Cov.
+Speed
+Test clips
+Ours
+UniMate
+Ours
+UniMate
+Real
+Ours
+UniMate
+Real
+Ours
+UniMate
+All
+0.24
+0.33
+0.33
+0.35
+0.35
+0.60
+0.58
+0.64
+0.93
+1.08
+ID-clip
+0.25
+0.34
+0.34
+0.37
+0.33
+0.52
+0.51
+0.55
+0.98
+1.23
+No training clip
+0.24
+0.33
+0.33
+0.34
+0.35
+0.61
+0.59
+0.66
+0.92
+1.06
+novel motion
+0.27
+0.35
+0.26
+0.33
+0.30
+0.52
+0.47
+0.57
+0.90
+1.13
+reused motion
+0.23
+0.32
+0.39
+0.35
+0.39
+0.69
+0.70
+0.75
+0.94
+1.02
+ID-tree
+0.24
+0.34
+0.33
+0.33
+0.34
+0.70
+0.69
+0.74
+0.98
+1.08
+OOD-tree
+0.22
+0.30
+0.34
+0.39
+0.38
+0.50
+0.46
+0.57
+0.82
+1.04
+OOD-plan
+0.35
+0.35
+0.12
+0.23
+0.19
+0.13
+0.09
+0.21
+0.65
+0.81
+Table 12: Same-data comparison with UniMate tuned on dev FIDdesc (guidance 3; test, first 60 frames, five seeds; Ours as in Tab. 10). FIDkin:
+Motion2Motion (M2M) and Bailando (Bk.) releases of the kinetic features. Skate: closer to the real value is better; Speed: relative to the
+real clips (target 1). Bold: lower FIDdesc, FIDkin or Pen., or closer to the real value for Skate and Speed, the paired 95% interval over rigs
+excluding zero.
+FIDdesc ↓
+FIDkin M2M↓
+FIDkin Bk.↓
+Pen.↓
+Skate
+Speed
+Test clips
+Clips
+Ours
+Uni.
+Ours
+Uni.
+Ours
+Uni.
+Ours
+Uni.
+Ours
+Uni.
+Real
+Ours
+Uni.
+All
+1,062
+4.83
+4.32
+2.00
+2.52
+1.85
+2.18
+0.24
+0.28
+0.33
+0.24
+0.35
+0.93
+0.85
+ID-clip
+172
+7.18
+5.96
+2.40
+2.57
+2.10
+2.22
+0.25
+0.27
+0.34
+0.25
+0.33
+0.98
+0.93
+No training clip
+890
+4.58
+4.22
+0.55
+1.48
+0.56
+1.13
+0.24
+0.28
+0.33
+0.24
+0.35
+0.92
+0.83
+novel motion
+453
+9.63
+7.95
+1.15
+2.17
+1.05
+1.70
+0.27
+0.29
+0.26
+0.21
+0.30
+0.90
+0.83
+reused motion
+437
+0.65
+1.21
+0.06
+0.72
+0.08
+0.47
+0.23
+0.27
+0.39
+0.27
+0.39
+0.94
+0.83
+ID-tree
+508
+1.06
+1.56
+0.04
+0.53
+0.06
+0.34
+0.24
+0.29
+0.33
+0.24
+0.34
+0.98
+0.88
+OOD-tree
+320
+8.38
+7.17
+1.33
+2.63
+1.18
+2.13
+0.22
+0.26
+0.34
+0.25
+0.38
+0.82
+0.77
+OOD-plan
+62
+24.1
+20.4
+3.02
+5.46
+2.32
+3.70
+0.35
+0.27
+0.12
+0.07
+0.19
+0.65
+0.45
+J
+Qualitative figures
+Selection and drawing of Figs. 2, 3 and 4.
+The examples
+are selected among the test clips whose rig comes with a
+rigged mesh, under a public licence (Tab. 15) or from the
+game library, that its skeleton drives faithfully. Figure 2(a)
+and Fig. 4 show the samples of Tab. 2 (UniMate tuned on
+FIDkin, seed 7) over the first 60 frames, or the whole clip if
+shorter; Fig. 2(b) and Fig. 3 show the main model (50 steps,
+guidance 2, seed 7), Fig. 1 the main model with 20 steps
+at guidance 2 (seed 7). The generated joint rotations drive
+the asset’s own armature, and the mesh deforms by linear
+blend skinning with the asset’s own weights. All rows of a
+clip share one camera, one set of frames and one horizontal
+ground plane, placed at the height of the data’s ground at the
+rig’s origin and lowered by the depth to which the rig’s rest
+mesh reaches below its lowest joint. The Mixamo panel of
+Fig. 3 overlays five poses in one image and shows the root
+path on the floor.
+16
+
+
+Table 14: Table 4 with its uncertainty: KIDdesc as the mean over the five sampling seeds ± its 95% half-width over them. Columns: full
+recipe, learned frame table, learned joint table, eigenvectors + SignNet, without augmentation. ∗Fewer than 20 rigs.
+Bucket
+Rigs / clips
+Real–real
+Full
+Frame table
+Joint table
+Eigvec. + SignNet
+−aug.
+OOD-tree
+218 / 320
+0.142
+1.78 ±0.03
+1.88 ±0.03
+1.87 ±0.04
+1.83 ±0.03
+1.95 ±0.04
+OOD-plan
+45 / 62
+6.04
+11.1 ±0.2
+11.7 ±0.1
+11.5 ±0.3
+11.5 ±0.2
+12.1 ±0.2
+OOD-new-species∗
+9 / 47
+104
+82.4 ±0.8
+84.4 ±1.0
+83.7 ±0.7
+83.6 ±1.3
+91.8 ±1.8
+OOD-rig∗
+6 / 62
+0.914
+1.01 ±0.11
+1.59 ±0.04
+1.12 ±0.11
+1.17 ±0.15
+1.03 ±0.03
+OOD-tree: “An object crouches down and
+springs upward.”
+Real
+Ours
+OOD-plan: “An object swims in place.”
+Real
+Ours
+OOD-J>60 (other): “An object runs in place.”
+Real
+Ours
+OOD-J>60 (Mixamo): “An object dances in place with arms and legs moving.”
+Real
+Ours
+OOD-rig: “The stegosaurus loses consciousness and falls to the left”
+Real
+Ours
+Figure 3: One test clip from each of five OOD buckets, real and TopX (guidance 2, seed 7). Strips show the real clip above ours at equal
+times; the strobe panel shows the real clip on the left and overlays five poses spaced along the real clip’s root path. Headers give the bucket
+and the caption.
+Table 15: Meshes under public licences in Figs. 1, 2, 3 and 4; the
+human of Fig. 1 is SMPL+H [37]. †Title shortened.
+Mesh (author)
+Licence
+Figure
+Defeat Idle (vicente betoret ferrero)
+CC BY 4.0
+2(a)
+Lowpoly Dog Walk (timesen)
+CC BY 4.0
+2(a)
+Dey Flair Dancing (jdey123)
+CC BY 4.0
+2(a)
+Back Flip To Uppercut (1) (marcolinadesign)
+CC BY 4.0
+2(a)
+Low poly fox running animation (dragonsnap) CC BY 4.0
+3
+fario3 (masterdef)
+CC BY 4.0
+3
+Human Run Cycle (zhuqiann)
+CC BY 4.0
+3
+Project Artificial Intelligence (Headsketch)
+CC BY 4.0
+3
+Stego, Spider (Truebones)
+Truebones terms 1, 3
+Gangnam Style Dancing Rabbit† (antonmoek) CC BY 4.0
+4
+Looking Around (Artur Coelho)
+CC BY 4.0
+4
+Kooku† (ABCzezeze)
+CC BY 4.0
+4
+Fluid Guy (Jimmy Gunawan)
+CC BY 4.0
+4
+K
+Text–motion alignment
+Evaluator.
+Two towers map a caption and a motion to a
+shared 512-d space: a frozen DistilBERT [38] with a train-
+able head, and a graph–temporal motion encoder over world
+joint positions (height kept, horizontal positions relative to
+the smoothed root), velocities and the smoothed root’s dis-
+placement, with per-joint rest geometry and the tree as static
+input and no joint names; joint order is canonicalised, so a re-
+labelling leaves the embedding bit-identical. It is trained with
+a symmetric InfoNCE loss on 132,368 clips of our training
+split (6,949 held for selection), with FK-exact skeleton aug-
+mentation and species words masked in half of the captions.
+Validity on the training distribution.
+With captions de-
+duplicated within pools of 32 (chance 0.031) and species
+words masked, captions retrieve their real held-out clips with
+R@1 0.92 on AniMo4D animals and 0.93 on the game-
+library additions; shuffling frames removes 79% of the margin
+17
+
+
+ID-tree: “An object dances in place.” (28 joints)
+Ours
+UniMate
+ID-tree: “An object sways its legs and torso in place.” (34 joints)
+OOD-tree: “An object crouches and sways.” (43 joints)
+Ours
+UniMate
+ID-tree: “An object crouches and swings its arms.” (23 joints)
+Figure 4: Four more humanoid rigs with no training clip, drawn as in Fig. 2(a): TopX above UniMate.
+above chance; subdividing bones, deleting leaves and rescal-
+ing bones keep the embedding at a mean cosine of at least
+0.988. Two training seeds rank 16 conditions (the real clips,
+11 degradations and 4 nuisance transformations) with Kendall
+𝜏= 0.90. The evaluator is sensitive to jitter: white noise of
+0.005 𝑠lowers R@1 from 0.67 to 0.51.
+Held-out species.
+We measure text-to-motion R@1 within
+the rigs of the held-out game species, in pools of 8 captions
+of one rig (chance 0.125), over the 439 test clips on 6 rigs
+that carry a curated caption and 30–240 frames, at full length.
+A caption retrieves the motion that TopX generated for it at
+R@1 0.953 (mean of five seeds), against 0.929 for the real
+motions; with the captions shuffled among the clips the score
+falls to 0.120.
+Against UniMate.
+The same evaluator and pools score Uni-
+Mate’s released weights (guidance 1.5, chosen on dev; Sec. G)
+and the same-data pair of Tab. 2 with UniMate tuned on
+FIDkin, every system also on the first 60 frames, UniMate’s
+output length (Tab. 16). Retrieval always uses the curated
+captions; UniMate’s models and the same-data TopX gener-
+ate from those captions rewritten in UniMate’s training style
+(“An object . . . ”), the main model from the curated captions
+themselves. The retrained UniMate serves at most 61 joints,
+so the pair is compared on the 181 clips of the 3 emu rigs; the
+capybara rigs have 66.
+Table 16: Caption-to-motion R@1 within rigs of the held-out game
+species (pools of 8, chance 0.125): mean and 95% half-width over
+five seeds, and the R@1 with captions shuffled (Shuf.). All: 439
+clips on 6 rigs; emu: 181 clips on 3 rigs.
+All
+Emu
+R@1
+Shuf.
+R@1
+Shuf.
+Real clips, first 60 frames
+0.896
+–
+0.871
+–
+Real clips, full length
+0.929
+–
+0.933
+–
+TopX, generating 60 frames
+0.915±0.007 0.122 0.928±0.006 0.137
+TopX, clip length, first 60 frames
+0.932±0.007 0.113 0.922±0.016 0.127
+TopX, clip length, full
+0.953±0.004 0.120 0.954±0.013 0.137
+UniMate, released weights
+0.279±0.009 0.130 0.337±0.015 0.138
+Same data: TopX, 200 steps, 60 frames 0.255±0.008 0.118 0.317±0.019 0.142
+Same data: UniMate, guidance 7
+–
+–
+0.192±0.007 0.147
+18
