@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-29</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-30</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 12 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>10</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-29 23:28:14 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-30 22:52:44 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日速读5篇、精读0篇，聚焦人形机器人动作生成、扩散训练标度律与情感图像生成。</p>
-<p>最值得先看人形机器人“稀疏姿态驱动运动生成+全身控制”和扩散模型训练的信息论标度律，已列速读均为6.0分。</p>
-<p>普通读者可先选与应用最接近的一篇读摘要和实验设置，再决定是否深入复现。</p>
+<p>2026-10-30 精选 12 篇论文，其中 2 篇精读均获 9.0 分：StepControl 从足部接触计划生成长期人体运动，ETA-Motion 以稀疏关节学习实现高效、不依赖拓扑的运动扩散。最值得关注长期人体运动生成与高效运动扩散这两个方向，速读中的 WorldFlow 和流匹配引导也值得一读。普通读者可先读两篇精读，再速读速读列表前三篇，留意运动生成与视频预测的结合。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="StepControl: Long-Horizon Human Motion Generation from Foot-Contact Schedules">StepControl: Long-Horizon Human Motion Generation from Foot-Contact Schedules</span></li><li><span class="dpr-home-dashboard-paper-title" title="ETA-Motion: Efficient Topology-Agnostic Motion Diffusion via Sparse Joint Learning">ETA-Motion: Efficient Topology-Agnostic Motion Diffusion via Sparse Joint Learning</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">10 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SP-HLM: Sparse-Pose-Driven Motion Generation and Whole-Body Control for Humanoid Loco-Manipulation">SP-HLM: Sparse-Pose-Driven Motion Generation and Whole-Body Control for Humanoid Loco-Manipulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Information-Theoretic Scaling Laws for Generative Diffusion Training">Information-Theoretic Scaling Laws for Generative Diffusion Training</span></li><li><span class="dpr-home-dashboard-paper-title" title="Semantic-First: Temporal Scheduling in Flow Matching for Reliable Emotional Image Generation">Semantic-First: Temporal Scheduling in Flow Matching for Reliable Emotional Image Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Logical Guidance of Stochastic Interpolants">Logical Guidance of Stochastic Interpolants</span></li><li><span class="dpr-home-dashboard-paper-title" title="WorldFlow: Joint Video and 3D Motion Prediction via Large-Scale Pretraining">WorldFlow: Joint Video and 3D Motion Prediction via Large-Scale Pretraining</span></li><li><span class="dpr-home-dashboard-paper-title" title="Coupled Guidance for Flow Matching">Coupled Guidance for Flow Matching</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>5</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>10</strong></span></div>
 </section>
 </div>
 

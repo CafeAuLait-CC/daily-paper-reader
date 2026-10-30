@@ -1,0 +1,1825 @@
+StepControl: Long-Horizon Human Motion Generation
+from Foot-Contact Schedules
+Hojun Jang1
+Jinseok Bae1
+Donggeun Lim1
+Taesun Kim1
+Seungbin Jeong2
+Younghwan Lee1
+Yong Seok Kim1
+Young Min Kim1,2,3†
+1 Dept. of Electrical and Computer Engineering, Seoul National University
+2 Interdisciplinary Program in Artificial Intelligence, Seoul National University
+3 Institute of New Media and Communications, Seoul National University
+https://hojunjang17.github.io/StepControl
+Abstract
+Controllable human motion generation has largely focused
+on specifying what action should occur or where the body
+should move. We study a complementary question: can full-
+body motion be controlled by specifying only when each
+foot contacts the ground? We introduce StepControl, an
+autoregressive diffusion model conditioned on a future bi-
+nary left/right foot-contact schedule, without requiring tar-
+get root and body poses, or semantic prompts. StepCon-
+trol represents contact as explicit temporal events and in-
+jects them through dedicated cross-attention with classifier-
+free guidance. We further introduce a stochastic mixture
+noise schedule and warmup strategy for stable long-horizon
+autoregressive generation.
+Experiments show that Step-
+Control follows prescribed contact timing more accurately
+than adapting existing spatially guided motion generators
+to contact constraints. It maintains effective contact control
+over long continuous rollouts and responds to edited sched-
+ules such as cadence changes, stop-and-go pauses, limping
+gaits, and bilateral jumping. Our results show that mini-
+mal foot-contact schedules provide an effective and intuitive
+temporal interface for controllable motion generation.
+1. Introduction
+Recent advances in motion generation demonstrate im-
+proved diversity and fidelity, expressing rich semantics and
+styles of motion [8, 14, 25, 31, 39]. These methods largely
+learn from skeletal motion data and often focus on the hu-
+man motion itself without explicitly modeling interactions
+with the environment. However, many motions are strongly
+†Corresponding author
+Figure 1.
+StepControl generates full-body motion from foot-
+contact schedules without future foot positions or root trajectories.
+Beyond reproducing ordinary walking cadence, StepControl fol-
+lows atypical asymmetric schedules.
+structured by physical contacts with the surrounding world.
+Physics-based character animation explicitly models such
+interactions through dynamics and contact [21, 22, 28],
+but typically requires a physics simulator with task-specific
+control policies and objectives.
+We instead investigate
+whether contact timing itself can serve as a simple and intu-
+itive interface for conditioning a generative motion model.
+In this work, we propose to first define the core of the
+motion from the contact timing only, and use the power of
+a generative model to decide the global trajectory, speed,
+stride pattern, and expressive body dynamics. The contact
+information is sparse and simple, but can allow editing ca-
+dence, stop-and-go behavior, bilateral jumps, and asymmet-
+1
+arXiv:2610.38153v1  [cs.CV]  28 Oct 2026
+
+
+ric stepping patterns, without specifying body poses. In the
+real world, a possible source of contact information may
+be diverse multi-modal sensors, such as inertial, pressure,
+tactile sensors, or sound. The contact schedule naturally
+complements motion estimation when the visual informa-
+tion is not available due to occluding objects or when a hu-
+man moves out of the viewing frustum.
+Compared to semantic context or kinematic priors, the
+minimal input of binary contact information is extremely
+low-dimensional. Therefore, naively concatenating the in-
+put often results in ignoring the contact information [7, 8].
+Incorporating such information as post-processing is also
+not desirable, creating unnatural artifacts, such as foot pin-
+ning and stiff steps, that severely degrade the quality of mo-
+tion [18, 34, 40]. Sparse temporal events are also difficult to
+preserve under repeated autoregressive rollouts [38, 39], as
+small prediction errors can accumulate across rollout win-
+dows [2, 4] and eventually cause phase mismatches, pop-
+ping artifacts, or gait collapse.
+We introduce StepControl, an autoregressive motion dif-
+fusion model conditioned on a foot-contact schedule. A key
+challenge is that binary contact schedules are sparse and
+contain sharp transition events that can be easily overlooked
+by a motion denoiser. We therefore explicitly represent con-
+tact states, strike onsets, lift releases, and signed transitions
+as event-aware features, which condition a Transformer-
+based diffusion denoiser through dedicated cross-attention.
+For autoregressive synthesis, we adopt frame-wise diffu-
+sion levels [4, 15, 37], maintaining clean history together
+with progressively refined future states in a shared tempo-
+ral window. Since the corresponding future contact sched-
+ule is available within this window, the model can antici-
+pate upcoming contact transitions and adapt the preceding
+motion accordingly, rather than forcing a sudden kinematic
+response at the moment of contact. Progressive refinement
+further maintains smooth continuity as generated frames are
+committed back into the motion history.
+Our contributions are summarized as follows:
+• Contact-Timing Control: We introduce a motion gen-
+eration pipeline conditioned on a minimal foot-contact
+schedule, demonstrating that two binary channels can di-
+rect rich full-body locomotion without spatial trajectories
+or semantic prompts.
+• Event-Aware Contact Conditioning:
+We show that
+learning an event-aware conditional motion prior achieves
+superior contact adherence compared to separately en-
+forcing contact as spatial guidance.
+• Long-Horizon Controllability & Interactive Editing:
+We provide empirical evidence that effective temporal
+control persists over continuous 20 s autoregressive roll-
+out and responds causally to user-guided schedule edits.
+2. Related Works
+2.1. Autoregressive Motion Diffusion
+Diffusion models demonstrate their capability to generate
+diverse and complex human motions. Early methods gener-
+ate full-body motion directly in the motion space [29, 36],
+while later methods improve fidelity and efficiency through
+retrieval augmentation [35] or compact latent spaces [5, 6].
+Most of these methods generate fixed-length clips from text
+prompts or action labels. In contrast, we use frame-level
+foot contacts as a temporal control signal.
+Long-horizon motion generation extends beyond fixed-
+length synthesis by recurrently conditioning on previously
+generated motion.
+Several diffusion-based approaches
+adopt causal or autoregressive generation to produce contin-
+uous motion streams [27, 32, 38, 39]. Related works such
+as TEDi [37], Diffusion Forcing [4], and EgoForce [15] fur-
+ther use temporally varying diffusion levels to progressively
+refine motion over time. We adopt this progressive formula-
+tion for contact-conditioned generation, allowing upcoming
+foot-contact events to influence the preceding motion.
+2.2. Controllable Motion Generation
+Human motion can be controlled with semantic signals,
+such as text and action labels, or with spatial signals, such
+as root trajectories, keyframes, and joint paths. GMD [17]
+guides motion with a global trajectory, while OmniCon-
+trol [33] and PriorMDM [26] support spatial constraints on
+selected joints. Kimodo [25], DART [38], and ARDY [39]
+further support keyframe, trajectory, or goal-based control.
+In contrast to these spatial controls, a foot-contact schedule
+provides direct temporal control over locomotion by spec-
+ifying when each foot should be planted or lifted, without
+fixing its position or the future root trajectory.
+Temporal conditioning has also been explored in music-
+driven dance generation.
+Existing methods use acous-
+tic and rhythmic features to coordinate motion with mu-
+sic [1, 19, 30], and Beat-It [13] explicitly separates beat
+events from continuous music features. However, a mu-
+sical beat does not directly indicate a foot strike, identify
+the active foot, or specify the length of a stance phase. We
+use explicit left- and right-foot contact labels, which pro-
+vide direct control over foot-strike timing, stance duration,
+cadence, and pauses.
+2.3. Foot Contact in Motion Generation
+Foot contact has commonly been incorporated into kine-
+matic motion generation as an auxiliary cue for improving
+foot-ground consistency. Binary contact labels are included
+in motion representations [7], while training objectives pe-
+nalize foot velocity during predicted contact to reduce ar-
+tifacts such as foot skating and floating [24, 29, 30]. In-
+verse kinematics and other kinematic corrections are also
+2
+
+
+Contact-Aware 
+Motion Denoiser
+Foot-Contact 
+Schedule  C1:T
+L
+R
+Commit ̂x(0)
+t
+Commit ̂x(0)
+t+1
+ Window @    
+t
+ Window @ 
+   
+t + 1
+Commit & Slide
+Input Projection
+Diffusion Level Embedding
+Temporal Frame Embedding
+× L
+Self-Attention
+Cross-Attention
+Feed-Forward
+Event  
+Encoder
+Output Projection
+Predicted Clean Motion ̂X
+(0)
+[0, ⋯, 0 | 4, 9, ⋯, 99]
+[0, ⋯, 0 | 4, 9, ⋯, 99]
+[0, ⋯, 0 | 0, 4, ⋯, 94]
+Contact-Aware Motion Denoiser
+Et = [ct, ot, rt, Δct, mt]
+ct
+ot
+rt
+Δct
+Per-Frame 
+Diffusion Level
+Motion with Per-Frame Diffusion Levels
+2D Contact
+9D Event
+[0, ⋯, 0 | 4, 9, ⋯, 99]
+Append  
+ State
+k = 99
+Per-Frame DDIM Update ki →k′i
+Updated Noisy Motion State
+[0, ⋯, 0 | 0, 4, ⋯, 94]
+(b) Progressive Autoregressive Rollout
+(a) Contact-Aware Motion Denoiser
+Figure 2. Overview of StepControl. (a) Motion tokens with per-frame diffusion levels and frame embeddings attend to event condition
+tokens via dedicated per-layer cross-attention, predicting clean motion ˆX(0) for continuous long-horizon generation. (b) Within each
+sliding window, 2D foot-contact signals C are expanded into 9D event-aware representations E. Conditioned on E, the denoiser steps
+down noisy future latents via per-frame DDIM updates (ki →k′
+i), commits the earliest finalized frame ˆx(0)
+t
+to clean history, and appends
+a new terminal noise state (k = 99) as the window slides forward.
+applied after motion generation to enforce plausible foot
+placement [18, 20, 34, 40]. In these approaches, contact
+primarily serves to regularize or correct the generated mo-
+tion rather than to specify how the future motion should
+unfold. In contrast, StepControl treats a prescribed future
+foot-contact schedule as the conditioning signal that di-
+rectly drives motion generation.
+Foot-ground signals have also been used as obser-
+vations for full-body motion reconstruction.
+Jang et
+al. [16] combine footstep sounds with sparse inertial sen-
+sors; Step2Motion [23] reconstructs locomotion from pres-
+sure and inertial measurements of sensing insoles; and
+GRIP [12] combines plantar pressure with sparse body-
+mounted IMUs for physics-based motion reconstruction.
+Our setting differs in that we use only a binary left/right
+contact schedule, without continuous sensor measurement,
+to condition the generation of full-body motion.
+3. StepControl
+Given an observed motion prefix X(0)
+1:S and a binary
+left/right foot-contact schedule C1:T , our goal is to model
+the conditional distribution of the future motion X(0)
+S+1:T :
+  p_\th
+eta ( \ math
+bf { X}_{ S+1:T}^{(0)} \mid \mathbf {X}_{1:S}^{(0)}, \mathbf {C}_{1:T}), 
+(1)
+without requiring future 3D root trajectories,
+target
+keyframe poses, or high-level semantic prompts. We adopt
+the 263-dimensional motion representation proposed in Hu-
+manML3D [7], which jointly describes root movement,
+body pose, joint motion, and foot contact. Throughout, the
+denoiser operates on a sliding window of W = S + F
+frames, consisting of S clean history frames and F noisy
+future frames.
+We first describe how the binary foot-contact schedule is
+injected into the motion denoiser through dedicated cross-
+attention in Sec. 3.1. Then, we describe the training objec-
+tives used to preserve motion quality and foot-ground con-
+sistency in Sec. 3.2. Finally, in Sec. 3.3, we present the
+progressive autoregressive rollout and its deployment-aware
+noise schedule for long-horizon generation.
+3.1. Event-Aware Contact Conditioning
+StepControl represents the foot-contact schedule as a sep-
+arate sequence of event-aware condition tokens and injects
+3
+
+
+them into each Transformer layer through cross-attention,
+as illustrated in Fig. 2(a). A binary contact signal ct =
+[ct,left, ct,right] ∈{0, 1}2 specifies whether each foot is in
+stance (1) or swing (0). While the complete contact se-
+quence implicitly contains transition information, a raw
+contact state does not distinguish a newly occurring touch-
+down or lift-off from the interior of a stance or swing in-
+terval. The denoiser must therefore infer such event bound-
+aries from neighboring contact states. To expose these tem-
+porally localized transitions directly, we expand ct into a
+9-dimensional event-aware representation Et ∈R9:
+  \
+m
+ath bf {E} _t = \
+b
+ig [ \mathbf {c}_t, \; \mathbf {o}_t, \; \mathbf {r}_t, \; \Delta \mathbf {c}_t, \; m_t \big ], 
+(2)
+where:
+• ot = max(ct −ct−1, 0) ∈{0, 1}2 explicitly captures
+foot strike (onset) events,
+• rt = max(ct−1 −ct, 0) ∈{0, 1}2 captures foot lift (re-
+lease) events,
+• ∆ct = ct −ct−1 ∈{−1, 0, 1}2 encodes signed temporal
+state transitions,
+• mt ∈{0, 1} is a binary observation validity mask.
+Although the event channels are deterministically derived
+from the binary schedule, they make the timing and direc-
+tion of contact transitions directly available to the motion
+denoiser, rather than requiring them to be inferred implic-
+itly from neighboring contact states.
+Per-Layer Contact Cross-Attention
+Rather than early
+concatenation, we inject the contact schedule into the diffu-
+sion Transformer via dedicated cross-attention layers oper-
+ating on each local window of length W. Within a window,
+the local event-aware contact sequence E1:W ∈RW ×9 is
+linearly projected into contact condition tokens Z ∈RW ×d.
+In each Transformer layer l, local motion tokens H(l) ∈
+RW ×d perform multi-head cross-attention over Z:
+  \text {CrossA tt n }(\math
+bf {H
+}
+^{(
+l
+)}, \mathbf {Z}) = \text {softmax}\left (\frac {\mathbf {Q}_H \mathbf {K}_Z^\top }{\sqrt {d_k}}\right ) \mathbf {V}_Z, 
+(3)
+where QH = H(l)WQ, KZ = ZWK, and VZ = ZWV .
+This provides a direct, unhindered gradient pathway from
+contact timing to all levels of motion feature abstraction
+within the active generative window.
+Paired Classifier-Free Guidance
+To provide flexible
+control over contact adherence at inference time, we train
+the denoiser using classifier-free guidance (CFG) [11]. Fol-
+lowing paired-batch conditional training paradigms [9, 29],
+each batch sample is duplicated during training: one branch
+receives the local contact condition E1:W , while the paired
+branch receives a null condition E∅= 0 sharing identi-
+cal input motion noise. This coupled formulation elimi-
+nates gradient variance between conditional and uncondi-
+tional estimates and ensures balanced score extrapolation.
+Let ˆX(0)
+cond and ˆX(0)
+uncond denote the clean motion predictions
+conditioned on E1:W and E∅, respectively. At inference
+time, the final denoised estimate is steered with guidance
+scale s ≥1.0:
+  \ha
+t { \ mathb
+f {X}} _ { 1
+: W}^{(
+0)} = \hat
+ {\mat
+h
+bf {X}}_{\text {uncond}}^{(0)} + s \cdot \big ( \hat {\mathbf {X}}_{\text {cond}}^{(0)} - \hat {\mathbf {X}}_{\text {uncond}}^{(0)} \big ). 
+(4)
+3.2. Training Objectives
+The overall training objective combines future motion re-
+construction alongside geometric and auxiliary foot-ground
+supervision. Every constituent loss term is evaluated sym-
+metrically across both the conditional and null-conditioned
+CFG branches (L∗= Lcond
+∗
++ Luncond
+∗
+):
+  \mat h cal {L} = \ m athcal {L } _{\text {mse}} + \lambda _{\text {vel}}\mathcal {L}_{\text {stance}} + \lambda _{\text {h}}\mathcal {L}_{\text {height}} + \lambda _{\text {c}}\mathcal {L}_{\text {contact4}}. 
+(5)
+Motion Reconstruction Loss
+The observed clean motion
+prefix X(0)
+1:S is provided directly as clean historical context
+at noise level k = 0. The motion reconstruction loss Lmot
+serves as the primary diffusion training objective, supervis-
+ing the model’s clean motion prediction ˆX(0)
+S+1:W over the
+full standardized 263-dimensional feature space across all
+future frames (t ∈[S + 1, W]):
+  \m a thca l {L}
+_{\te x t {m
+se}} = \operatorname {MSE}(\hat {\mathbf {X}}_{S+1:W}^{(0)},\mathbf {X}_{S+1:W}^{(0)}). 
+(6)
+By supervising the complete feature vector directly, Lmse
+trains the denoiser to jointly model coupled full-body kine-
+matics, root velocities, and joint rotations without arbitrary
+dimensional weighting.
+Stance Foot Velocity Loss
+We penalize recovered 3D
+foot displacement when the target four-channel contact la-
+bel chml
+t,j indicates stance:
+  \math c
+a
+l { L}_{
+\te xt {stan c e}} = \
+f
+r
+ac {\su
+m _
+{t,j} c^{\text {hml}}_{t,j} \|\hat {\mathbf {J}}_{t+1,j}-\hat {\mathbf {J}}_{t,j}\|_2^2} {\sum _{t,j}c^{\text {hml}}_{t,j}}, 
+(7)
+where j ∈F indexes the left/right ankle and foot joints
+used by HumanML3D contact extraction.
+Foot Height Loss
+To preserve the vertical geometry of
+both stance and swing phases, we match recovered foot
+heights to the ground-truth motion over every future frame:
+  \math c
+a
+l {L}_{
+\
+text
+ 
+{he
+ight}} = \fra c {1}{|\mathcal {T}_{f}||\mathcal {F}|} \sum _{t\in \mathcal {T}_{f}}\sum _{j\in \mathcal {F}} \left (\hat {y}_{t,j}-y_{t,j}\right )^2. 
+(8)
+Auxiliary
+Contact
+Bit
+Loss
+Within
+the
+full
+263-
+dimensional motion vector x(0)
+t , the 4 binary contact chan-
+nels account for only ≈1.5% of the total MSE reconstruc-
+tion loss Lmse, causing their gradient updates to be heavily
+4
+
+
+diluted by continuous joint positions and 6D rotations. To
+prevent this dilution and enforce sharp discrete ground tran-
+sitions, we apply an explicit auxiliary reconstruction loss
+directly on the 4 contact channels:
+  \mathca l {L}_{\tex t {contact4}} = \operatorname {MSE}(\hat {\mathbf {c}}^{\text {hml}},\mathbf {c}^{\text {hml}}). 
+(9)
+3.3. Progressive Autoregressive Rollout
+StepControl generates long-horizon motion using a sliding
+window of W = 30 frames, consisting of S = 10 clean his-
+tory frames and F = 20 progressively refined future frames
+as shown in Fig. 2(b). Each frame is associated with its
+own diffusion level k ∈{0, . . . , 99}, where k = 0 denotes a
+clean state and larger values indicate increasing uncertainty.
+Progressive Noise Schedule
+During autoregressive roll-
+out, future frames are assigned increasing diffusion levels
+according to their temporal distance from the committed
+history. Specifically, we use the fixed rollout schedule
+  \ma t hbf { k}_ { \ m a thrm {roll}} = [4, 9, 14, \ldots , 99]. \label {eq:rollout_schedule} 
+(10)
+Thus, the nearest future frame is close to being finalized,
+whereas frames farther into the future remain increasingly
+noisy. Rather than independently regenerating an entire fu-
+ture segment at each autoregressive step, each future frame
+is progressively refined as it approaches the current time.
+Since every frame is generated while observing the contact
+schedule over a constant future horizon, the model can pre-
+pare for upcoming touchdowns and lift-offs at each step of
+the rollout. We compare this against chunk-wise rollout in
+the Supplementary Material.
+Mixture Noise Training
+The rollout schedule in Eq. (10)
+covers the noise configurations repeatedly encountered dur-
+ing steady generation. However, it does not cover all inter-
+mediate configurations traversed when the first future win-
+dow is initialized from Gaussian noise. To support both
+regimes, we train with a mixture of rollout-aligned and in-
+dependently sampled per-frame noise levels. For each train-
+ing window, the future noise-index vector is sampled as
+  \math b
+f
+ 
+{
+k}_{\m
+athr m {future}} = \b
+egin { c a s e s} \
+math bf {k}_{\ma thrm {roll}}, & \text {with probability } 0.70, \\[2mm] [k_{S+1},\ldots ,k_W], & \text {with probability } 0.30, \end {cases} \label {eq:mixture_noise} 
+(11)
+where, in the second case,
+  
+k_t \o
+v erset { \ m a t hrm {i.i.d.}}{\sim } \mathrm {Unif}\{0,\ldots ,99\}. 
+(12)
+The rollout-aligned samples specialize the denoiser for
+the structured noise configurations used repeatedly during
+steady autoregressive generation, while the IID samples
+broaden its support to the intermediate configurations en-
+countered during initialization.
+Initialization and Steady Rollout
+At the beginning of
+generation, only the clean motion prefix is available, and the
+future states have not yet been placed on kroll. We there-
+fore initialize all F future frames at the maximum noise
+level, k = 99, and progressively denoise them to their
+assigned rollout levels while keeping the observed history
+fixed. This multi-step warmup avoids committing the first
+generated frame directly from a fully noisy future window.
+The IID component of Eq. (11) exposes the denoiser during
+training to the intermediate noise configurations traversed
+by this initialization procedure.
+Once the progressive noise schedule has been initialized,
+StepControl enters steady autoregressive rollout. Given the
+current per-frame noisy window, the denoiser predicts a
+clean motion window ˆX0. A per-frame DDIM update then
+refines the future states according to
+  [ 4, 9,1 4 , \ l dot s ,99 ] \; \ l o n grightarrow \; [0,4,9,\ldots ,94]. \label {eq:rollout_ddim_update} 
+(13)
+The first future frame has now reached k = 0 and is com-
+mitted to the generated sequence. The motion and contact
+windows are then advanced by one frame, the committed
+prediction becomes part of the clean history, and a new
+Gaussian state
+  \ma
+thb f {x} ^{(99)}_{\mathrm {new}} \sim \mathcal {N}(\mathbf {0},\mathbf {I}) 
+(14)
+is appended at the end of the future window. After this shift,
+the future frames again follow kroll, and the same procedure
+is repeated.
+Consequently, each newly appended frame is refined
+over successive autoregressive steps as
+  \ma t hbf { x } ^ { ( 99)} \rightarrow \mathbf {x}^{(94)} \rightarrow \cdots \rightarrow \mathbf {x}^{(4)} \rightarrow \hat {\mathbf {x}}^{(0)}. \label {eq:progressive_refinement} 
+(15)
+A future frame therefore receives multiple refinement steps,
+each time conditioned on the latest committed motion his-
+tory and the corresponding foot-contact schedule. This re-
+peated refinement provides temporal look-ahead into up-
+coming contact events, allowing the model to adapt the
+preceding motion before the corresponding contact transi-
+tion occurs. Repeating this commit–slide–append proce-
+dure enables arbitrary-length, contact-conditioned autore-
+gressive motion generation.
+4. Experiments
+4.1. Experimental Setup
+Datasets and Training Recipe
+We train in two stages.
+First, the denoiser is pretrained on the large-scale Hu-
+manML3D dataset [7] (263-D representation, 22 joints at
+20 fps) to learn broad kinematic dynamics. Then, it is fine-
+tuned on LAFAN1 [10] motion capture sequences (Subjects
+1–3 for training, Subject 4 for validation), retargeted to the
+HumanML3D representation at 20 fps, to sharpen footstep
+timing and cadence control. All evaluations are conducted
+on the held-out LAFAN1 Subject 5 test sequences.
+5
+
+
+Table 1. Quantitative comparison on autoregressive motion generation across extended horizons. We evaluate contact synchronization
+and progressive rollout stability against autoregressive baselines (DART [38], ARDY [39]) across LAFAN1 [10] test sequences.
+Rollout Horizon
+Method
+Bal. Acc. (%) ↑
+Tr. F1 (%) ↑
+Slip (mm/f) ↓
+RA-LB (mm) ↓
+Mean Pen. (mm) ↓
+1-Second
+DART
+74.34
+15.26
+7.84
+109.97
+0.30
+ARDY
+69.37
+16.92
+20.69
+158.62
+0.47
+StepControl
+79.90
+36.15
+17.63
+144.25
+0.00
+StepControl (+Opt.)
+80.60
+33.59
+8.64
+144.25
+0.00
+5-Second
+DART
+69.25
+16.52
+3.28
+180.68
+0.31
+ARDY
+64.28
+10.29
+13.52
+185.86
+0.34
+StepControl
+79.38
+39.94
+15.54
+181.64
+0.00
+StepControl (+Opt.)
+80.17
+39.96
+8.23
+181.64
+0.00
+10-Second
+DART
+68.30
+15.53
+2.72
+208.15
+0.30
+ARDY
+67.07
+10.91
+12.34
+186.80
+0.28
+StepControl
+80.28
+40.07
+16.83
+194.70
+0.00
+StepControl (+Opt.)
+81.10
+39.84
+8.97
+194.70
+0.00
+20-Second
+DART
+69.15
+14.60
+2.41
+222.43
+0.16
+ARDY
+76.02
+15.98
+7.83
+187.54
+0.16
+StepControl
+82.39
+42.27
+14.62
+193.35
+0.00
+StepControl (+Opt.)
+83.04
+43.79
+7.75
+193.35
+0.00
+L
+R
+Input Contact
+Realized Contact
+Figure 3. 20 s Motion Generation Result of StepControl. Step-
+Control generates natural and consistent long-horizon motion from
+only foot-contact schedule.
+Evaluation Metrics
+To evaluate motion quality and tem-
+poral synchronization, we measure:
+• Balanced Contact Accuracy (%): The unweighted av-
+erage of stance recall and swing recall, computed from
+3D foot joint velocities and heights of decoded motions.
+• Contact Transition F1 (Tr. F1, %): While Balanced
+Accuracy is insensitive to temporal phase shifts, Tr. F1
+quantifies frame-exact synchronization. We identify On-
+set (0 →1, foot touchdown) and Release (1 →0, foot
+lift-off) events, compute the F1-score of each against the
+target schedule, and report Tr. F1 = 1
+2(F1onset +F1release).
+• Stance Foot Slip (mm/frame): Mean horizontal dis-
+placement of foot joints during frames where the target
+schedule specifies stance.
+• Floor Penetration (mm): Mean vertical distance of gen-
+erated foot joints below the physical reference floor level.
+• Root-Aligned Lower-Body MPJPE (mm): Mean per-
+joint position error over lower-body joints (hips, knees,
+ankles, and toes) after per-frame root translation and
+heading alignment, following [16].
+• Boundary Jerk (mm/frame3): Mean root-relative joint
+jerk at the observed-to-generated transition averaged over
+non-root joints.
+Baselines
+We compare StepControl against two autore-
+gressive motion generation baselines, DART [38] and
+ARDY [39]. We adapt their spatial conditioning to con-
+tact schedules using foot-height constraints, while provid-
+ing text prompts consistent with their training distributions.
+Implementation and conditioning details are provided in the
+Supplementary Material.
+4.2. Long-Horizon Motion Generation
+To evaluate whether temporal contact control survives re-
+peated autoregressive rollout, we generate continuous se-
+quences of increasing horizons (1 s, 5 s, 10 s, and 20 s) on
+the LAFAN1 [10] test sequences using the progressive roll-
+out of Sec. 3.3, and compare with the baselines under an
+identical evaluation protocol (Tab. 1). StepControl main-
+tains stable contact timing across 20-second continuous
+rollouts with zero floor penetration. At 20 s, raw StepCon-
+trol reaches 42.27% transition F1, compared with 14.60%
+for DART and 15.98% for ARDY, while retaining compa-
+rable lower-body error.
+6
+
+
+L
+R
+StepControl 
+(Ours)
+DART
+L
+R
+ARDY
+L
+R
+Input Contact
+Realized Contact
+Figure 4. Qualitative comparison on contact schedule editing (bilateral jump). StepControl better synchronizes simultaneous flight
+and landing phases, whereas DART [38] fails to coordinate flight and ARDY [39] exhibits noisy contact timing and unstable poses. ARDY
+is rendered with its native body model.
+Table 2. Quantitative evaluation of interactive contact schedul-
+ing (5 s horizon). We evaluate responsiveness to temporal ca-
+dence scaling, gait transitions, and atypical gait synthesis against
+DART [38] and ARDY [39] across LAFAN1 [10] test sequences.
+Modification
+Method
+Bal. Acc. ↑
+(%)
+Tr. F1 ↑
+(%)
+Slip ↓
+(mm/f)
+Cadence Scaling
+DART
+67.91
+9.13
+3.44
+ARDY
+77.41
+16.44
+6.19
+StepControl
+76.11
+33.57
+16.49
+Stop-and-Go
+DART
+69.49
+21.13
+2.80
+ARDY
+78.88
+16.81
+4.05
+StepControl
+82.18
+37.31
+11.77
+Limping Gait
+DART
+66.22
+6.56
+6.15
+ARDY
+71.96
+9.27
+7.47
+StepControl
+75.55
+31.25
+27.46
+Bilateral Jump
+DART
+66.12
+16.42
+6.89
+ARDY
+76.69
+12.80
+8.48
+StepControl
+78.06
+45.13
+15.72
+DART [38] and ARDY [39] obtain lower stance slip be-
+cause their test-time spatial guidance or post-processing ex-
+plicitly anchors stance feet. In contrast, StepControl gener-
+ates motion directly from the diffusion prior without post-
+hoc spatial correction, as shown in Fig. 3. We addition-
+ally report StepControl (+Opt.), which applies a simple
+planar stance-foot correction and improves 20-second slip
+from 14.62 to 7.75 mm/frame without changing body artic-
+ulation or root-aligned pose error.
+4.3. Motion Control by Contact Scheduling
+We evaluate whether StepControl follows edited schedules
+beyond the contact patterns commonly seen in training, us-
+ing four schedule modifications:
+• Cadence Scaling:
+Compressing (0.67×) or dilating
+(1.5×) future stride duration.
+• Stop-and-Go:
+Inserting a 2-second stationary pause
+amidst continuous walking.
+• Asymmetric Limping: Imposing unbalanced left/right
+7
+
+
+Table 3. Ablation studies on the LAFAN1 [10] test benchmark. We evaluate 5-second prefixes of the same 20-second evaluation
+segments used in the main benchmark.
+Ablation Configuration
+Bal. Acc. (%) ↑
+Tr. F1 (%) ↑
+Slip (mm/f) ↓
+RA-LB (mm) ↓
+Bo. Jerk (mm/f3) ↓
+(a) Contact Feature Representation
+Raw 2D Contact
+76.23
+21.79
+16.06
+182.54
+77.92
+Delta 5D Contact
+79.30
+23.79
+17.45
+175.75
+75.48
+Event 9D Contact (Ours)
+79.30
+39.58
+15.54
+181.64
+70.54
+(b) Training Dataset
+LAFAN1 Only
+80.99
+26.00
+21.02
+180.43
+83.34
+HumanML3D Only
+77.19
+38.08
+10.79
+187.62
+82.54
+HumanML3D+LAFAN1 (Ours)
+79.30
+39.58
+15.54
+181.64
+70.54
+(c) Noise Scheduling Strategy
+100% Progressive Schedule
+75.94
+37.30
+15.22
+210.89
+161.77
+100% IID Schedule
+73.91
+31.52
+21.68
+174.33
+69.80
+Mixture Schedule (7:3) (Ours)
+79.30
+39.58
+15.54
+181.64
+70.54
+stance durations (16 vs. 6 frames).
+• Bilateral Jumping: Alternating synchronized two-foot
+stance and flight phases.
+StepControl consistently responds to the edited sched-
+ules without retraining and outperforms both baselines in
+contact timing as shown in Tab. 2. For bilateral jumping,
+StepControl synchronizes flight and landing phases more
+faithfully than the baselines, as shown in Fig. 4.
+4.4. Ablation Studies
+In Tab. 3, we isolate each key design choice in StepCon-
+trol. Additional ablations and analyses, including a rollout
+strategy comparison and a breakdown by contact-transition
+rate, are in the Supplementary Material.
+Event-Aware Features
+In Tab. 3(a), we compare contact
+representations under identical training protocols. While
+raw 2D contact and signed transitions (Delta 5D) yield
+21.79% and 23.79% transition F1, explicitly separating on-
+set and release channels (Event 9D) raises transition F1 to
+39.58%. Event 9D also reduces stance slip and gives the
+lowest boundary jerk among the contact representations.
+Training Dataset
+In Tab. 3(b), we compare LAFAN1-
+only
+scratch
+training,
+zero-shot
+transfer
+from
+Hu-
+manML3D [7], and HumanML3D pretraining followed by
+LAFAN1 fine-tuning.
+Pretraining on HumanML3D im-
+proves contact timing over LAFAN1-only training, and
+fine-tuning on LAFAN1 further improves lower-body ac-
+curacy and boundary continuity over HumanML3D-only
+training. The two-stage recipe thus achieves the best transi-
+tion F1 and boundary jerk, and falls between the two single-
+dataset models on the remaining metrics.
+Noise Scheduling Strategy and Rollout Continuity
+A
+rigid deterministic progressive slope schedule achieves low
+stance slip but produces a pronounced discontinuity at the
+observed-to-generated boundary. IID schedule training re-
+duces this discontinuity but weakens contact transitions.
+Our mixture schedule training obtains the highest transition
+F1 while keeping the boundary jerk close to IID training.
+Rolling out the same model chunk by chunk instead of pro-
+gressively lowers transition F1 and increases boundary jerk
+(Supplementary Material).
+5. Conclusion
+We presented StepControl, an autoregressive diffusion
+framework that generates full-body motion from foot-
+contact schedules without predefined root trajectories or
+target poses. StepControl expands sparse binary contacts
+into event-aware features and injects them through dedi-
+cated cross-attention. Its mixture-noise training and pro-
+gressive rollout support continuous long-horizon generation
+from a short observed prefix. Our experiments show that the
+model follows prescribed and edited contact schedules over
+extended rollouts.
+StepControl jointly predicts root trajectories and foot
+joints within a single kinematic denoising process, without
+explicitly enforcing that stance feet remain stationary. As a
+result, its raw output exhibits more foot slip than methods
+using spatial optimization or foot-locking post-processing.
+A lightweight planar correction largely reduces this slip
+without changing body articulation, but remains a post-hoc
+rather than structural solution. Some residual foot slip and
+occasional foot floating are inherent limits of the kinematic
+formulation, and unseen contact patterns such as single-foot
+hopping remain challenging. Future work could integrate
+physical contact constraints or differentiable inverse kine-
+matics into diffusion sampling to reduce foot sliding with-
+out post-processing. Sparse temporal conditioning could
+extend beyond locomotion to broader interaction scenarios
+where visual observations are incomplete or unavailable.
+8
+
+
+Acknowledgement
+This work was partly supported by Institute of Informa-
+tion & Communications Technology Planning & Evalua-
+tion (IITP) grant funded by the Korea government(MSIT)
+[NO.RS-2021-II211343, Artificial Intelligence Graduate
+School Program (Seoul National Univ.)]
+and [RS-2025-
+25442338, AI star Fellowship Support Program(Seoul Na-
+tional Univ.)], and BK21 FOUR program of the Education
+and Research Program for Future ICT Pioneers, Seoul Na-
+tional University in 2026.
+References
+[1] Simon Alexanderson, Rajmund Nagy, Jonas Beskow, and
+Gustav Eje Henter. Listen, denoise, action! audio-driven mo-
+tion synthesis with diffusion models. ACM Trans. Graph., 42
+(4), 2023. 2
+[2] German Barquero, Nadine Bertsch, Manojkumar Marram-
+reddy, Carlos Chac´on, Filippo Arcadu, Ferran Rigual,
+Nicky Sijia He, Cristina Palmero, Sergio Escalera, Yuting
+Ye, and Robin Kips. From sparse signal to smooth motion:
+Real-time motion generation with rolling prediction models.
+In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition (CVPR), pages 1850–1860,
+2025. 2
+[3] Bones Studio. Ai datasets for machine learning and motion
+capture.
+https://bones.studio/ai-datasets,
+2026. 11
+[4] Boyuan Chen, Diego Mart´ı Mons´o, Yilun Du, Max Sim-
+chowitz, Russ Tedrake, and Vincent Sitzmann.
+Diffusion
+forcing: Next-token prediction meets full-sequence diffu-
+sion. In The Thirty-eighth Annual Conference on Neural In-
+formation Processing Systems (NeurIPS), 2024. 2
+[5] Xin Chen, Biao Jiang, Wen Liu, Zilong Huang, Bin Fu, Tao
+Chen, and Gang Yu. Executing your commands via motion
+diffusion in latent space. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition
+(CVPR), pages 18000–18010, 2023. 2
+[6] Wenxun Dai, Ling-Hao Chen, Jingbo Wang, Jinpeng Liu,
+Bo Dai, and Yansong Tang. MotionLCM: Real-time control-
+lable motion generation via latent consistency model. In Eu-
+ropean Conference on Computer Vision (ECCV), pages 390–
+408, 2024. 2
+[7] Chuan Guo, Shihao Zou, Xinxin Zuo, Sen Wang, Wei Ji,
+Xingyu Li, and Li Cheng. Generating diverse and natural 3D
+human motions from text. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition
+(CVPR), pages 5152–5161, 2022. 2, 3, 5, 8, 11
+[8] Chuan Guo, Inwoo Hwang, Jian Wang, and Bing Zhou.
+SnapMoGen: Human motion generation from expressive
+texts. In The Thirty-ninth Annual Conference on Neural In-
+formation Processing Systems (NeurIPS), 2025. 1, 2
+[9] Jian Han, Jinlai Liu, Yi Jiang, Bin Yan, Yuqi Zhang, Ze-
+huan Yuan, Bingyue Peng, and Xiaobing Liu. Infinity: Scal-
+ing bitwise autoregressive modeling for high-resolution im-
+age synthesis. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR), pages
+15733–15744, 2025. 4
+[10] F´elix G. Harvey, Mike Yurick, Derek Nowrouzezahrai, and
+Christopher Pal. Robust motion in-betweening. ACM Trans.
+Graph., 39(4):60, 2020. 5, 6, 7, 8
+[11] Jonathan Ho and Tim Salimans.
+Classifier-free diffusion
+guidance. In NeurIPS 2021 Workshop on Deep Generative
+Models and Downstream Applications, 2021. 4
+[12] Ryosuke Hori, Jyun-Ting Song, Zhengyi Luo, Jinkun Cao,
+Soyong Shin, Hideo Saito, and Kris Kitani. Ground reaction
+inertial poser: Physics-based human motion capture from
+sparse IMUs and insole pressure sensors. In Proceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), pages 28435–28445, 2026. 3
+[13] Zikai Huang, Xuemiao Xu, Cheng Xu, Huaidong Zhang,
+Chenxi Zheng, Jing Qin, and Shengfeng He. Beat-It: Beat-
+synchronized multi-condition 3D dance generation. In Euro-
+pean Conference on Computer Vision (ECCV), pages 273–
+290, 2024. 2
+[14] Inwoo Hwang,
+Hojun Jang,
+Bing Zhou,
+Jian Wang,
+Young Min Kim, and Chuan Guo. ScaleMoGen: Autore-
+gressive next-scale prediction for human motion generation.
+In European Conference on Computer Vision (ECCV), pages
+435–453, 2026. 1
+[15] Inwoo Hwang, Donggeun Lim, Hojun Jang, and Young Min
+Kim.
+EgoForce:
+Robust online egocentric motion
+reconstruction via diffusion forcing.
+arXiv preprint
+arXiv:2605.13041, 2026. 2
+[16] Hojun Jang, Jinseok Bae, and Young Min Kim. Audio-aided
+character control for inertial measurement tracking. In Euro-
+graphics 2025 - Short Papers, 2025. 3, 6
+[17] Korrawe Karunratanakul, Konpat Preechakul, Supasorn
+Suwajanakorn, and Siyu Tang.
+Guided motion diffusion
+for controllable human motion synthesis. In Proceedings of
+the IEEE/CVF International Conference on Computer Vision
+(ICCV), pages 2151–2162, 2023. 2
+[18] Lucas Kovar, John Schreiner, and Michael Gleicher. Foot-
+skate cleanup for motion capture editing.
+In Proceedings
+of the 2002 ACM SIGGRAPH/Eurographics Symposium on
+Computer Animation, pages 97–104, 2002. 2, 3
+[19] Ruilong Li, Shan Yang, David A. Ross, and Angjoo
+Kanazawa. AI Choreographer: Music conditioned 3D dance
+generation with AIST++. In Proceedings of the IEEE/CVF
+International Conference on Computer Vision (ICCV), pages
+13401–13412, 2021. 2
+[20] Lucas Mourot, Ludovic Hoyet, Franc¸ois Le Clerc, and Pierre
+Hellier. UnderPressure: Deep learning for foot contact detec-
+tion, ground reaction force estimation and footskate cleanup.
+Computer Graphics Forum, 41(8):195–206, 2022. 3
+[21] Xue Bin Peng, Pieter Abbeel, Sergey Levine, and Michiel
+van de Panne. DeepMimic: example-guided deep reinforce-
+ment learning of physics-based character skills. ACM Trans.
+Graph., 37(4), 2018. 1
+[22] Xue Bin Peng, Ze Ma, Pieter Abbeel, Sergey Levine, and
+Angjoo Kanazawa. AMP: Adversarial motion priors for styl-
+ized physics-based character control. ACM Trans. Graph., 40
+(4), 2021. 1
+9
+
+
+[23] Jose Luis Ponton, Eduardo Alvarado, Lin Geng Foo,
+Nuria Pelechano, Carlos Andujar, and Marc Habermann.
+Step2Motion:
+Locomotion reconstruction from pressure
+sensing insoles.
+Computer Graphics Forum, 45(2), 2026.
+3
+[24] Davis Rempe, Tolga Birdal, Aaron Hertzmann, Jimei Yang,
+Srinath Sridhar, and Leonidas J. Guibas. HuMoR: 3D human
+motion model for robust pose estimation. In Proceedings of
+the IEEE/CVF International Conference on Computer Vision
+(ICCV), 2021. 2
+[25] Davis Rempe, Mathis Petrovich, Ye Yuan, Haotian Zhang,
+Xue Bin Peng, Yifeng Jiang, Tingwu Wang, Umar Iqbal,
+David Minor, Michael de Ruyter, Jiefeng Li, Chen Tessler,
+Edy Lim, Eugene Jeong, Sam Wu, Ehsan Hassani, Michael
+Huang, Jin-Bey Yu, Chaeyeon Chung, Lina Song, Olivier
+Dionne, Jan Kautz, Simon Yuen, and Sanja Fidler.
+Ki-
+modo: Scaling controllable human motion generation. arXiv
+preprint arXiv:2603.15546, 2026. 1, 2
+[26] Yoni Shafir, Guy Tevet, Roy Kapon, and Amit Haim
+Bermano.
+Human motion diffusion as a generative prior.
+In The Twelfth International Conference on Learning Rep-
+resentations (ICLR), 2024. 2
+[27] Yi Shi, Jingbo Wang, Xuekun Jiang, Bingkun Lin, Bo Dai,
+and Xue Bin Peng. Interactive character control with auto-
+regressive motion diffusion models. ACM Trans. Graph., 43
+(4), 2024. 2
+[28] Chen Tessler, Yunrong Guo, Ofir Nabati, Gal Chechik, and
+Xue Bin Peng. MaskedMimic: Unified physics-based char-
+acter control through masked motion inpainting. ACM Trans.
+Graph., 43(6), 2024. 1
+[29] Guy Tevet, Sigal Raab, Brian Gordon, Yoni Shafir, Daniel
+Cohen-Or, and Amit Haim Bermano. Human motion dif-
+fusion model. In The Eleventh International Conference on
+Learning Representations (ICLR), 2023. 2, 4
+[30] Jonathan Tseng, Rodrigo Castellon, and Karen Liu. EDGE:
+Editable dance generation from music. In Proceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), pages 448–458, 2023. 2
+[31] Linjun Wu, Xiangjun Tang, Jingyuan Cong, He Wang, Bo
+Hu, Xu Gong, Songnan Li, Yuchen Liao, Yiqian Wu, Chen
+Liu, and Xiaogang Jin.
+Semantically consistent text-to-
+motion with unsupervised styles. In ACM SIGGRAPH 2025
+Conference Papers, 2025. 1
+[32] Lixing Xiao, Shunlin Lu, Huaijin Pi, Ke Fan, Liang Pan,
+Yueer Zhou, Ziyong Feng, Xiaowei Zhou, Sida Peng, and
+Jingbo Wang. MotionStreamer: Streaming motion genera-
+tion via diffusion-based autoregressive model in causal latent
+space. In Proceedings of the IEEE/CVF International Con-
+ference on Computer Vision (ICCV), pages 10086–10096,
+2025. 2
+[33] Yiming Xie, Varun Jampani, Lei Zhong, Deqing Sun, and
+Huaizu Jiang. OmniControl: Control any joint at any time
+for human motion generation. In The Twelfth International
+Conference on Learning Representations (ICLR), 2024. 2
+[34] Dongseok Yang, Doyeon Kim, and Sung-Hee Lee. LoBSTr:
+Real-time lower-body pose prediction from sparse upper-
+body tracking signals.
+Computer Graphics Forum, 40(2):
+265–275, 2021. 2, 3
+[35] Mingyuan Zhang, Xinying Guo, Liang Pan, Zhongang Cai,
+Fangzhou Hong, Huirong Li, Lei Yang, and Ziwei Liu. Re-
+MoDiffuse: Retrieval-augmented motion diffusion model. In
+Proceedings of the IEEE/CVF International Conference on
+Computer Vision (ICCV), pages 364–373, 2023. 2
+[36] Mingyuan Zhang, Zhongang Cai, Liang Pan, Fangzhou
+Hong, Xinying Guo, Lei Yang, and Ziwei Liu. MotionDif-
+fuse: Text-driven human motion generation with diffusion
+model. IEEE Trans. Pattern Anal. Mach. Intell., 46(6):4115–
+4128, 2024. 2
+[37] Zihan Zhang, Richard Liu, Rana Hanocka, and Kfir Aber-
+man. TEDi: Temporally-entangled diffusion for long-term
+motion synthesis. In ACM SIGGRAPH 2024 Conference Pa-
+pers, pages 1–11, 2024. 2
+[38] Kaifeng Zhao, Gen Li, and Siyu Tang.
+DartControl: A
+diffusion-based autoregressive motion model for real-time
+text-driven motion control. In The Thirteenth International
+Conference on Learning Representations (ICLR), 2025. 2, 6,
+7, 11, 12
+[39] Kaifeng Zhao, Mathis Petrovich, Haotian Zhang, Tingwu
+Wang, Siyu Tang, and Davis Rempe. ARDY: Autoregres-
+sive diffusion with hybrid representation for interactive hu-
+man motion generation. ACM Trans. Graph., 45(4), 2026. 1,
+2, 6, 7, 11, 12
+[40] Yuliang Zou, Jimei Yang, Duygu Ceylan, Jianming Zhang,
+Federico Perazzi, and Jia-Bin Huang. Reducing footskate
+in human motion reconstruction with ground contact con-
+straints. In Proceedings of the IEEE/CVF Winter Conference
+on Applications of Computer Vision (WACV), pages 459–
+468, 2020. 2, 3
+10
+
+
+Appendix
+In this supplementary document, we provide comprehen-
+sive technical details and additional empirical analyses to
+support the main paper:
+• Section A: Detailed implementation, contact-adaptation
+protocols, and contact determination criteria for autore-
+gressive baselines (DART [38] and ARDY [39]).
+• Section B: Computational runtime and throughput com-
+parison across methods for 20-second continuous roll-
+outs.
+• Section C: Extended ablation studies on loss formula-
+tions and classifier-free guidance scales.
+• Section
+D:
+Formulation
+and
+algorithm
+for
+the
+lightweight unconstrained planar stance-foot correc-
+tion (StepControl +Opt.).
+• Section E: Detailed network architecture, training hyper-
+parameters, and computational resources.
+• Section F: Mathematical definitions and evaluation pro-
+tocols for all quantitative metrics.
+A. Baseline Implementation Details
+Because existing autoregressive motion models are funda-
+mentally designed for text or 3D spatial keyframe condi-
+tioning rather than sparse temporal contact schedules, we
+establish standardized adaptation protocols that allow both
+baselines to utilize their native architectures while condi-
+tioning on target contact schedules.
+A.1. DART Baseline Adaptation
+Architecture and Pipeline
+DART [38] generates con-
+tinuous human motion using autoregressive latent motion
+primitives modeled by a Motion Variational Autoencoder
+(MVAE) operating at 20 fps. Each primitive encompasses
+H = 2 history frames and F = 8 future frames (a 10-frame
+local temporal horizon). Generation proceeds by sequen-
+tially predicting latent primitive distributions conditioned
+on clean past history and natural language prompts.
+Contact Conditioning via Test-Time Spatial Guidance
+Since DART lacks a dedicated temporal contact condition-
+ing interface, we adapt it to follow target contact schedules
+through test-time gradient-based spatial guidance:
+1. Matched Text Conditioning: DART requires semantic
+text guidance during sampling. For each test sequence
+and editing mode, we supply matched text prompts con-
+sistent with its training distribution (e.g., “a person is
+walking forward” for natural rollouts, “a person is mov-
+ing with a fast cadence” for fast editing, and “a person
+is repeatedly jumping with both feet” for bilateral jump-
+ing).
+2. Initial-Noise Contact Optimization: At each autore-
+gressive step, we optimize the diffusion initial noise for
+50 iterations using the Adam optimizer (lr = 0.05),
+jointly over up to four primitives, and commit only the
+first primitive. The optimization objective enforces foot-
+ground contact constraints on decoded joints:
+  \b e gin {align ed} \m a thcal {L} _{\text { o pt}} = & \; w_
+{ \text {st } }\mathca l {L}_{\text {stance\_height}} + w_{\text {sw}}\mathcal {L}_{\text {swing\_clearance}} + w_{\text {vel}}\mathcal {L}_{\text {stance\_vel}} \\ & + w_{\text {fl}}\mathcal {L}_{\text {floor}} + w_{\text {jk}}\mathcal {L}_{\text {jerk}} + w_{\text {pr}}\mathcal {L}_{\text {prior}}, \end {aligned} 
+(16)
+where:
+• Lstance height penalizes deviations of the ankle joints
+from the stance height target during scheduled stance
+intervals (wst = 15.0). The target is the calibrated
+stance ankle height, i.e., the median ankle height of
+each foot over the contact frames of the seed history,
+with 0.06 m as fallback.
+• Lswing clearance penalizes ankle heights below the cali-
+brated stance ankle height plus 0.12 m during sched-
+uled flight intervals (wsw = 7.5).
+• Lstance vel penalizes horizontal displacement of stance
+feet (wvel = 10.0).
+• Lfloor penalizes ankle and toe joint heights below the
+calibrated floor target minus 0.02 m (wfl = 5.0).
+• Ljerk is a jerk smoothness term (wjk = 1.0) and Lprior
+is a noise prior term (wpr = 0.1).
+3. Prefix Alignment: Global trajectory positions and root
+yaw headings are aligned to the shared initial 10-frame
+seed history (Error = 0.00 mm), ensuring an identical
+evaluation starting frame.
+A.2. ARDY Baseline Adaptation
+Architecture and Topology
+ARDY [39] is an autoregres-
+sive motion diffusion model with spatial inpainting capa-
+bilities. It operates natively on the 27-joint CORESKELE-
+TON27 topology [3], which expands the 22-joint Hu-
+manML3D skeleton [7] by incorporating four discrete
+spinal segments and dedicated hand/wrist end-effectors.
+Conditioning and Inpainting Recipe
+We deploy the
+official pretrained ARDY-CORE-RP-20FPS-HORIZON40
+checkpoint without retraining. It generates 40-frame sliding
+windows with a crop history length of 160 frames:
+1. Skeleton Retargeting and Prefix Conditioning: We
+retarget the 22-joint HumanML3D seed history to the
+27-joint CORESKELETON27 layout. The first 8 frames
+of the 10-frame seed are given as ARDY’s native mo-
+tion history, and the last two seed frames are imposed
+as position-only soft conditioning, with wrist, hand, and
+thumb joints excluded from the soft constraints.
+2. Future Contact Inpainting:
+Target contact sched-
+ules are converted into foot-height targets and im-
+posed through ARDY’s native joint-position condition-
+ing. During scheduled stance intervals, the ankle and
+toe heights are constrained to 0.06 m and 0.00 m in
+11
+
+
+Table A1. Inference runtime and generation throughput com-
+parison for 20-second (400-frame) rollouts on a single NVIDIA
+RTX 4090 GPU. StepControl achieves real-time throughput (>
+130 fps) via direct single-pass generation.
+Method
+Per-Frame
+20 s Rollout
+Throughput
+DART [38] (50-step Opt.)
+≈2267 ms
+≈907 s
+0.44 fps
+ARDY [39] (10-step Diff.)
+≈75.0 ms
+≈30.0 s
+13.3 fps
+StepControl (Ours)
+7.5 ms
+2.9 s
+133.3 fps
+the inpainting mask, and during each swing phase
+0.08 sin2(π phase) m is added to the stance height.
+3. Sampling and Post-Processing:
+We sample mo-
+tions
+using
+10
+denoising
+steps
+with
+text
+guid-
+ance
+weight
+2.0
+and
+spatial
+constraint
+guidance
+weight 0.9.
+Decoded motions are post-processed
+with
+ARDY’s
+official
+motion-correction
+procedure
+(post process motion), which uses the contact
+predicted internally by ARDY.
+4. Evaluation in the Native CORE Space: Generated
+motion and retargeted ground truth remain in the na-
+tive 27-joint CORESKELETON27 representation. Con-
+tact timing, stance slip, and floor penetration are mea-
+sured directly from ARDY’s native foot joints.
+Only
+for RA-LB MPJPE, we select the 22 semantically corre-
+sponding joints from both CORE trajectories and apply
+the same translation-and-heading alignment used for the
+other methods.
+A.3. Unified Physical Contact Decision Criteria
+To ensure completely fair and unbiased comparison across
+all evaluated models (StepControl, DART, ARDY, and
+Ground Truth), we do not rely on model-internal predicted
+contact flags or arbitrary heuristic flags. Instead, we extract
+realized contact states directly from decoded 3D kinematic
+joint trajectories using a kinematic decision rule, where v
+denotes the per-frame displacement of a joint:
+ \begin {
+a
+ligned
+} \hat { c}
+_{t,\t e xt {f oot}} = \
+m athbb {I } \Big ( & \mi n (v_ {
+t
+,\text {ankle}}^2, v_{t,\text {toe}}^2) < 0.002\,\text {m}^2/\text {frame}^2 \\ & \wedge y_{t,\text {ankle}} \le 0.14\,\text {m} \;\wedge \; y_{t,\text {toe}} \le 0.08\,\text {m} \Big ). \end {aligned} 
+(17)
+This rule requires both (i) low per-frame foot displacement
+(∥v∥< 0.0447 m/frame, about 0.89 m/s at 20 fps) and (ii)
+geometric proximity to the ground plane for both heel and
+toe joints.
+B.
+Inference
+Runtime
+and
+Generation
+Throughput
+In Table A1, we report the computational efficiency and
+latency of each method for generating a 20-second (400-
+frame at 20 fps) continuous motion rollout on a single
+NVIDIA RTX 4090 GPU:
+• DART [38]: Requires 50 optimizer iterations per primi-
+tive (F = 8 frames), i.e., 2,500 iterations for a 20-second
+sequence, each involving diffusion sampling and decod-
+ing of multiple primitives. This test-time optimization
+takes ≈15.1 minutes per 20-second sequence (0.44 fps).
+• ARDY [39]: Evaluates 10 diffusion denoising steps with
+text and inpainting guidance over 40-frame sliding win-
+dows, taking ≈30.0 seconds (13.3 fps).
+• StepControl (Ours): Generates each future frame in
+a single feed-forward pass via progressive DDIM re-
+finement (1 step per frame shift), achieving 7.5 ms per
+frame and 133.3 fps throughput (6.7× faster than real-
+time playback).
+• StepControl (+Opt.): The unconstrained planar root cor-
+rection executes in < 1 ms in a single linear pass (O(T)),
+preserving identical real-time throughput.
+C. Additional Ablation Studies
+C.1. Ablation on Training Loss Formulations
+In Table A2, we evaluate the necessity of each constituent
+term in the multi-task training objective:
+  \beg i n {aligne d } \mathcal 
+{ L} = {} & \mathcal {L}_{\text {mse}} + \lambda _{\text {p}}\mathcal {L}_{\text {prefix}} + \lambda _{\text {vel}}\mathcal {L}_{\text {stance}} \\ & + \lambda _{\text {h}}\mathcal {L}_{\text {height}} + \lambda _{\text {c}}\mathcal {L}_{\text {contact4}}. \end {aligned} 
+(18)
+• Motion-Only Supervision (Lmse): Training with only
+the standardized feature MSE (future and prefix frames,
+without the geometric and contact losses) substantially
+degrades contact timing (Tr. F1 = 21.60%), increases
+stance slip to 22.40 mm/f, and raises lower-body error to
+204.35 mm.
+• Role of Stance Velocity Loss (Lstance): Omitting Lstance
+increases stance foot slip from 15.54 to 19.93 mm/f and
+reduces transition F1 from 39.58% to 32.27%.
+• Role of Foot Height Loss (Lheight):
+Removing ex-
+plicit foot-height supervision reduces transition F1 from
+39.58% to 33.30%, although it does not degrade the root-
+aligned pose or slip metrics in this evaluation.
+• Role of 4D Contact MSE Loss (Lcontact4): Removing
+auxiliary contact reconstruction lowers transition F1 from
+39.58% to 34.21%, showing that the discrete contact
+channels provide complementary timing supervision.
+• Boundary Smoothness: Boundary jerk varies only from
+70.28 to 71.45 mm/f3 across loss variants. Removing in-
+dividual geometric losses has a limited effect on boundary
+jerk in this evaluation.
+C.2. Ablation on Classifier-Free Guidance Scale
+Table A3 investigates the effect of the classifier-free guid-
+ance scale s during sampling:
+• At s = 0.0 (unconditional generation), the model ignores
+the contact schedule entirely, resulting in near-random
+12
+
+
+Table A2. Ablation on loss formulations (LAFAN1 test benchmark). All variants use the same mixture noise schedule, pretraining
+initialization, fine-tuning protocol, evaluation segments, and random seed.
+Loss Formulation
+Bal. Acc. (%) ↑
+Tr. F1 (%) ↑
+Slip (mm/f) ↓
+RA-LB (mm) ↓
+Bo. Jerk (mm/f3) ↓
+Only Motion Reconstruction Loss (Lmse)
+73.87
+21.60
+22.40
+204.35
+71.45
+w/o Stance Velocity Loss (Lstance)
+76.84
+32.27
+19.93
+201.03
+70.94
+w/o Foot Height Loss (Lheight)
+78.02
+33.30
+15.39
+180.55
+70.68
+w/o 4D Contact MSE Loss (Lcontact4)
+79.03
+34.21
+15.80
+181.17
+70.28
+Full Multi-Task Loss (StepControl)
+79.30
+39.58
+15.54
+181.64
+70.54
+Table A3. Ablation on classifier-free guidance (CFG) scale s (LAFAN1 test benchmark). Increasing s enhances temporal contact
+adherence and transition precision.
+CFG Guidance Scale
+Bal. Acc. (%) ↑
+Tr. F1 (%) ↑
+Slip (mm/f) ↓
+RA-LB (mm) ↓
+Bo. Jerk (mm/f3) ↓
+s = 0.0 (Unconditional Baseline)
+52.08
+3.90
+38.36
+208.98
+69.12
+s = 1.0 (Standard Conditional Prior)
+74.67
+24.52
+16.91
+183.16
+69.49
+s = 2.0 (Default StepControl)
+79.30
+39.58
+15.54
+181.64
+70.54
+contact synchronization (Tr. F1 = 3.90%, Bal. Acc =
+52.08%) and high foot slip (38.36 mm/f).
+• At s = 1.0 (standard conditional sampling), the model
+begins to follow the target schedule (Tr. F1 = 24.52%,
+Bal. Acc = 74.67%).
+• Increasing guidance to s = 2.0 (our default setting) fur-
+ther strengthens contact adherence to Tr. F1 = 39.58%
+and Bal. Acc = 79.30%, while reducing stance foot slip
+from 16.91 to 15.54 mm/f and lowering lower-body kine-
+matic error to 181.64 mm.
+C.3. Rollout Strategy Comparison
+We compare progressive rollout with chunk-wise autore-
+gressive rollout, which generates 20 future frames at once
+from 10 history frames and uses the last 10 of the gener-
+ated frames as the history for the next chunk. Both use
+the same mixture-trained model, history and future lengths,
+CFG scale, and LAFAN1 test sequences, without post-
+processing.
+Progressive rollout outperforms chunk-wise
+rollout across all metrics (Table A4), and the same trend
+holds for transition F1 at the 20-second horizon.
+C.4. Analysis by Contact-Transition Rate
+The 20-second rollouts are split into non-overlapping 5-
+second windows and grouped by the number of contact tran-
+sitions per second. Events are pooled within each group,
+and onset and release F1 are averaged. Event 9D contact
+conditioning yields higher transition F1 than the raw 2D
+contact input in every rate group, and remains ahead of both
+spatially guided baselines (Table A5).
+D. Unconstrained Planar Stance Foot Correc-
+tion (StepControl +Opt.)
+In the main paper,
+we report both raw generations
+(StepControl) and an optional post-processed variant
+(StepControl +Opt.). Here, we formally describe the pla-
+nar stance-foot correction algorithm.
+Motivation and Core Principle
+Unlike prior works that
+rely on heavy test-time gradient descent or inverse kinemat-
+ics (IK) solvers that can distort natural knee flexion and limb
+articulation, our correction operates purely at the level of
+the global horizontal root trajectory (x-z ground plane). It
+directly cancels residual stance-phase horizontal foot drift
+without altering joint angles, vertical foot clearances, or lo-
+cal body poses.
+Formulation and Algorithm
+Let ˆJ1:T
+∈
+RT ×22×3
+denote the synthesized 3D joint positions and c1:T
+∈
+{0, 1}T ×2 denote the prescribed left/right foot contact
+schedule. At each frame t ∈[S + 1, T]:
+1. Persistent Stance Identification: We identify active
+feet in persistent stance across consecutive frames:
+  \ ma t hca l { A}_t = \ { f \ i n \{\text {L}, \text {R}\} \mid c_{t-1, f} = 1 \wedge c_{t, f} = 1 \}. 
+(19)
+2. Horizontal Stance Displacement: For each active foot
+f ∈At, we measure the horizontal displacement be-
+tween successive frames across its constituent ankle and
+toe joints Ff:
+  \D
+elt a \m ath
+bf {p} _{t, f}^{xz} = \arg \min _{\mathbf {d} \in \mathcal {D}_{t, f}} \|\mathbf {d}\|_2, 
+(20)
+where Dt,f = {ˆJxz
+t,j −ˆJxz
+t−1,j | j ∈Ff}.
+13
+
+
+Table A4. Rollout strategy comparison on the LAFAN1 test benchmark.
+Inference
+Bal. Acc. (%) ↑
+Tr. F1 (%) ↑
+Slip (mm/f) ↓
+RA-LB (mm) ↓
+Bo. Jerk (mm/f3) ↓
+Chunk AR
+76.32
+30.75
+19.96
+203.63
+75.59
+Progressive (Ours)
+79.30
+39.58
+15.54
+181.64
+70.54
+Table A5. Transition F1 (%) by contact-transition rate.
+Low
+Mid
+High
+Transition rate (events/s)
+1.2–3.2
+3.4–4.0
+4.4–8.0
+Windows
+20
+16
+16
+Target events
+253
+300
+460
+DART
+17.82
+15.93
+16.88
+ARDY
+13.42
+16.64
+18.54
+Raw 2D Contact
+26.55
+33.34
+25.65
+Delta 5D Contact
+24.73
+33.85
+35.07
+Event 9D Contact (Ours)
+37.56
+48.86
+41.46
+3. Accumulated Planar Root Offset: The cumulative hor-
+izontal correction rcorr
+t
+∈R2 is updated recursively:
+  \ma
+t
+h
+b
+f {r}
+_t^ {
+\
+text
+ 
+{cor r}} 
+= \b
+eg in { ca
+ses} 
+\mat
+hbf {r}_{t-1}^{\text {corr}} - \frac {1}{|\mathcal {A}_t|} \sum _{f \in \mathcal {A}_t} \Delta \mathbf {p}_{t, f}^{xz}, & \text {if } \mathcal {A}_t \neq \emptyset , \\ \mathbf {r}_{t-1}^{\text {corr}}, & \text {otherwise}. \end {cases} 
+(21)
+4. Global Translation Update: The computed offset is ap-
+plied uniformly to all joint coordinates along the ground
+plane:
+  \h
+at { \mat
+hbf {J}}_
+{
+t
+, j }^{ x z } \leftarrow \hat {\mathbf {J}}_{t, j}^{xz} + \mathbf {r}_t^{\text {corr}}, \quad \forall j \in \{1, \dots , 22\}. 
+(22)
+E. Network Architecture and Training Details
+Transformer Architecture
+The contact-aware motion
+denoiser is built upon a spatio-temporal Transformer archi-
+tecture:
+• Window Size: W = 30 frames (1.5 s at 20 fps), divided
+into S = 10 history frames (0.5 s) and F = 20 future
+frames (1.0 s).
+• Transformer Layers: 8 transformer encoder layers.
+• Hidden Dimension: d = 512, with feed-forward inner
+dimension dff = 2048 and dropout 0.1.
+• Attention Heads: 8 multi-head self-attention heads with
+head dimension dk = 64.
+• Cross-Attention Blocks:
+Per-layer multi-head cross-
+attention over contact tokens produced from the 9D event-
+aware features by a two-layer MLP with SiLU (E1:W →
+Z ∈RW ×512, 9 →512 →512).
+• Activation and Normalization: GELU activations in the
+feed-forward layers with pre-layer normalization (Pre-
+LN); the contact embedding MLP uses SiLU.
+Diffusion Hyperparameters and Noise Schedule
+• Total Diffusion Steps: K = 100 discrete noise levels
+(k ∈{0, . . . , 99}).
+• Variance Schedule: Cosine variance schedule with offset
+0.008 and maximum β of 0.999.
+• Progressive Rollout Slope: kroll = [4, 9, 14, . . . , 99]
+across future frames t ∈[S + 1, W] with stride ∆k = 5.
+• Training Noise Distribution: Stochastic mixture sam-
+pling with 70% probability assigned to the structured
+slope kroll and 30% to uniform IID noise kt ∼U{0, 99}
+in both training stages.
+Optimization and Training Setup
+• Optimizer: AdamW with β1 = 0.9, β2 = 0.999, and
+weight decay 0.01. Gradient clipping is 1.0 and the EMA
+decay is 0.999.
+• Learning Rate: 10−4 for HumanML3D pretraining and
+5 × 10−5 for LAFAN1 fine-tuning. Fine-tuning is ini-
+tialized from the pretrained EMA weights with a newly
+initialized optimizer.
+• Batch Size and Schedule: Batch size 128 for 20 epochs
+in each stage (3,660 updates for pretraining and 5,000 for
+fine-tuning), with training seed 2026.
+• Loss Weights: λvel = 20, λh = 20, and λc = 0.1, and
+λp = 0.1. Conditional and unconditional branches are
+weighted equally.
+F. Evaluation Metric Definitions
+Let Jt ∈R22×3 and ˆJt ∈R22×3 denote ground-truth and
+generated 3D joint positions at frame t, respectively. Let
+ct = [ct,L, ct,R] ∈{0, 1}2 denote the target binary contact
+schedule and ˆct ∈{0, 1}2 denote the realized foot-contact
+state extracted from generated foot kinematics using the
+kinematic contact rule in Section A.3. Joint positions are
+measured in meters; the factor 103 converts distance-based
+metrics to the reporting units given in the paragraph head-
+ings below.
+Balanced Contact Accuracy
+Balanced Contact Accu-
+racy is the unweighted mean of stance recall (Recstance)
+and swing recall (Recswing) across all evaluated frames t ∈
+14
+
+
+[S + 1, T]:
+  \b egin {ali
+g
+ne
+d } \te x t {B a l.
+ 
+A cc.} = 
+\
+f
+r ac {1 0 0 \ %} { 2}
+\
+B igg ( &
+ 
+\frac {\sum _{t} \mathbb {I}(\hat {c}_t = 1 \wedge c_t = 1)}{\sum _t \mathbb {I}(c_t = 1)} \\ & + \frac {\sum _{t} \mathbb {I}(\hat {c}_t = 0 \wedge c_t = 0)}{\sum _t \mathbb {I}(c_t = 0)} \Bigg ). \end {aligned} 
+(23)
+Contact Transition F1 (Tr. F1)
+Discrete onset (0 →1)
+and release (1 →0) transition events are extracted via tem-
+poral difference:
+  \begin {ali g n e d} e _ {t,
+\text {ons e t}} & = \mat h bb {I}(c_t = 1 \wedge c_{t-1} = 0), \\ e_{t,\text {release}} &= \mathbb {I}(c_t = 0 \wedge c_{t-1} = 1). \end {aligned} 
+(24)
+Precision, recall, and harmonic mean F1-scores (F1onset and
+F1release) are computed against the target schedule events
+with a tolerance window of 0 frames. The reported tran-
+sition F1 is:
+  \ te x t
+ {Tr. F1} = \frac {1 } {2}\left ( \text {F1}_{\text {onset}} + \text {F1}_{\text {release}} \right ) \times 100\%. 
+(25)
+Stance Foot Slip (mm/frame)
+Measures the mean 3D
+displacement of a foot between consecutive frames in which
+the foot is in stance in both frames.
+For each foot, the
+smaller of the ankle and toe displacements is used:
+  \t e xt 
+{
+S
+l
+ip} = 10^3 \frac {\ s um _{f}
+\
+s um _
+{t \in \mathcal {S}_f} \min _{j \in \mathcal {F}_f} \|\hat {\mathbf {J}}_{t+1,j} - \hat {\mathbf {J}}_{t,j}\|_2}{\sum _{f} |\mathcal {S}_f|}, 
+(26)
+where Sf = {t ∈[S + 1, T −1] | ct,f = 1 ∧ct+1,f = 1}
+and Ff denotes the ankle and toe joints of foot f. Slip is
+pooled over all valid foot-frames within a sequence, and the
+reported value is the mean over sequences.
+Floor Penetration (mm)
+Quantifies vertical violations
+below the floor ground plane (y = 0):
+  \t e
+xt 
+{P e n.} =
+ 
+\
+frac 
+{
+10^
+3}{(T- S)|\mathcal {F}|} \sum _{t=S+1}^T \sum _{j \in \mathcal {F}} \max (0, -\hat {y}_{t,j}). 
+(27)
+Root-Aligned
+Lower-Body
+MPJPE
+(RA-LB,
+mm)
+Evaluates lower-limb pose tracking independently of
+accumulated global translation and yaw drift:
+  \te x
+t {
+RA - LB} =
+ 
+\
+frac 
+{
+10^
+3}{(T-S)|\math c al {L}|} \sum _{t=S+1}^T \sum _{j \in \mathcal {L}} \|\mathcal {T}_{\text {align}}(\hat {\mathbf {J}}_{t,j}) - \mathbf {J}_{t,j}\|_2, 
+(28)
+where L indexes the lower-body joints (pelvis, hips, knees,
+ankles, toes) and Talign aligns the generated pose to the
+ground-truth root position along all three axes and facing
+heading angle at each frame.
+Boundary
+Jerk
+(mm/frame3)
+Quantifies
+physical
+smoothness and absence of popping shocks at the observed
+prefix to generated motion transition (t = S →S + 1):
+  \ begi n {a
+li
+gn
+e
+d} 
+\text {Bo. Jerk} = \frac {
+1 0^3}{2 1 } \sum _ { j=2}^{22
+} 
+\big \| & (\hat {\mathbf {p}}_{S+1,j} - 2\hat {\mathbf {p}}_{S,j} + \hat {\mathbf {p}}_{S-1,j}) \\ & - (\hat {\mathbf {p}}_{S,j} - 2\hat {\mathbf {p}}_{S-1,j} + \hat {\mathbf {p}}_{S-2,j}) \big \|_2, \end {aligned} 
+(29)
+where ˆpt,j = ˆJt,j −ˆJt,1 denotes root-relative joint posi-
+tions.
+15
