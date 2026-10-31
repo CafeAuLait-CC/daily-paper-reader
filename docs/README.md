@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-30</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-31</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 12 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 3 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>10</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-30 22:52:44 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-31 22:39:18 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-30 精选 12 篇论文，其中 2 篇精读均获 9.0 分：StepControl 从足部接触计划生成长期人体运动，ETA-Motion 以稀疏关节学习实现高效、不依赖拓扑的运动扩散。最值得关注长期人体运动生成与高效运动扩散这两个方向，速读中的 WorldFlow 和流匹配引导也值得一读。普通读者可先读两篇精读，再速读速读列表前三篇，留意运动生成与视频预测的结合。</p>
+<p>今天速读了 3 篇论文，都是 6.0 分，聚焦表征学习与机器人策略中的流匹配方法。最值得看的方向，一是复合子空间流匹配做表征学习，二是把世界模型中的物理先验与安全流匹配策略用于具身操作。普通读者可先读 PRIME W0，了解世界模型如何为具身操作提供物理先验，再对照另外两篇理解流匹配的用法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="StepControl: Long-Horizon Human Motion Generation from Foot-Contact Schedules">StepControl: Long-Horizon Human Motion Generation from Foot-Contact Schedules</span></li><li><span class="dpr-home-dashboard-paper-title" title="ETA-Motion: Efficient Topology-Agnostic Motion Diffusion via Sparse Joint Learning">ETA-Motion: Efficient Topology-Agnostic Motion Diffusion via Sparse Joint Learning</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>2</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">10 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Logical Guidance of Stochastic Interpolants">Logical Guidance of Stochastic Interpolants</span></li><li><span class="dpr-home-dashboard-paper-title" title="WorldFlow: Joint Video and 3D Motion Prediction via Large-Scale Pretraining">WorldFlow: Joint Video and 3D Motion Prediction via Large-Scale Pretraining</span></li><li><span class="dpr-home-dashboard-paper-title" title="Coupled Guidance for Flow Matching">Coupled Guidance for Flow Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Representation Learning via Composite Subspace Flow Matching">Representation Learning via Composite Subspace Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="PRIME W0: Physical Priors from World Models for Embodied Manipulation">PRIME W0: Physical Priors from World Models for Embodied Manipulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Safe Flow Matching Robot Policies from Binary Feasibility Oracles">Learning Safe Flow Matching Robot Policies from Binary Feasibility Oracles</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>10</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>3</strong></span></div>
 </section>
 </div>
 
