@@ -1,0 +1,1108 @@
+DuoFlow: Towards Synchronized Speech and Motion Generation with
+Fine-Grained Control
+Jun Dong1
+Ronghui Li1
+Zhongyuan Hu1
+Zhao Yunqi1
+Lijie Guo1
+Ruizhang Xu1
+Di Kang2
+Linchao Bao2
+Xiu Li1
+1Tsinghua University
+2Tencent
+Figure 1. Our MotionSpeech dataset provides approximately 125 hours of synchronized speech and full-body motion, annotated with
+coarse- and fine-grained motion descriptions, transcripts, and comprehensive voice descriptions. DuoFlow enables controllable joint
+speech–motion generation from text conditions. Modifying any modality description can guide generation: speech content (blue), coarse
+overall motion intent (green), fine-grained temporal motion (yellow), and vocal expression style (purple).
+Abstract
+An embodied speaker’s expressiveness depends not only on
+what is said, but also on how the voice sounds and how the
+body moves. However, existing joint speech–motion gener-
+ation models are largely driven implicitly by transcript se-
+mantics or intermediate speech representations, offering lit-
+tle explicit control over motion hierarchy, body parts, or vo-
+cal style. To bridge this gap, we construct MotionSpeech, a
+structured benchmark for controllable joint speech–motion
+generation that includes transcripts, voice-style descrip-
+tions, and motion conditions at two hierarchical levels.
+Building on this benchmark, we propose DuoFlow, a dual-
+stream latent flow transformer that jointly denoises speech
+and motion under a shared noise level and a unified
+second-based temporal coordinate. Modality-specific resid-
+ual connectors inject structured conditions into the cor-
+responding streams, layer-wise bidirectional cross-modal
+attention coordinates their generation, and a monotonic
+phoneme pathway combines normalized progress anchors
+with CTC supervision to strengthen speech temporal mod-
+eling. DuoFlow provides a unified interface for fine-grained
+motion and vocal-style control and demonstrates the ability
+to synthesize high-quality, synchronized, and instruction-
+consistent speech–motion sequences. Project page.
+1
+arXiv:2611.21530v2  [cs.CV]  17 Nov 2026
+
+
+1. Introduction
+An embodied speaker communicates through speech and
+movement at the same time: an utterance may be accom-
+panied by a rhythmic beat, an illustrative hand gesture, or a
+subtle postural shift [31, 40]. In many applications the ver-
+bal content is fixed in advance, as in a script, a voice-over, or
+an avatar’s dialogue. The central question then shifts from
+what is said to how it is delivered: how the utterance should
+sound, and how the body should move as it is spoken.
+Because conversational gesture varies considerably across
+speakers and contexts [15, 50], a single plausible realiza-
+tion is insufficient when a particular delivery is intended,
+and user intent can be difficult to reconcile with fine-grained
+motion and timbre. In practice, users can readily express an
+overall gestural intent but cannot be expected to enumerate
+the temporally ordered actions of individual body parts. A
+useful control interface should therefore cover hierarchical
+levels of granularity, expanding concise high-level guidance
+into detailed, coherent motion while also following fine-
+grained instructions when they are available.
+Existing systems generally lack such an interface be-
+cause control remains fragmented across two largely sepa-
+rate paradigms. On the speech side, instruction-following
+text-to-speech can follow vocal instructions but does not
+synthesize body motion [11]. On the motion side, prompt-
+based full-body control, caption-guided gestures, and joint-
+level spatial constraints have substantially advanced motion
+controllability [4, 12, 41], but still use speech that has al-
+ready been produced as the conditioning input. Cascading a
+speech generator with a motion generator combines the two
+outputs but retains a one-way interface: the motion stage
+receives completed audio, so a motion instruction supplied
+at that stage cannot shape the speech upstream. Early and
+recent joint speech–gesture studies have demonstrated the
+feasibility of joint generation [3, 18, 19, 36, 37, 45]; joint
+speech–face generation [27, 30] and dialogue systems sup-
+porting discrete body-action directives [53] provide related
+precedents.
+However, these interfaces still do not allow
+users to control both motion and vocal expression through
+instructions.
+Turning joint generation into controllable generation
+raises three challenges. First, supervision for such an in-
+terface does not yet exist. Existing co-speech corpora pro-
+vide audio, transcripts, motion, and in some cases seman-
+tic or emotion labels [31, 33], while caption-guided motion
+work adds textual gesture supervision [12]; however, none
+aligns the same speech–motion target with hierarchical mo-
+tion descriptions and a voice description. Second, semantic
+condition guidance is complex: speech and motion differ in
+temporal resolution, so their conditions must be injected ac-
+curately, and the model must bridge the gap between coarse
+user intent and fine-grained motion control. Third, evalu-
+ation remains incomplete: existing work [26, 33, 39] does
+not directly evaluate whether jointly generated speech and
+motion follow their respective voice and motion instruc-
+tions, motivating a unified benchmark for quality evalua-
+tion.
+To this end, we construct MotionSpeech and propose
+DuoFlow (Figure 1). MotionSpeech builds on existing pub-
+lic datasets [1, 33] and refines four high-quality annota-
+tion channels: a coarse motion description (L1), a fine-
+grained description of body-part actions and their tempo-
+ral order (L2), a voice description (AUDCAP), and a tran-
+script. On this basis, we propose DuoFlow, a dual-stream
+latent flow transformer. The model denoises motion and
+audio latents in parallel under a shared noise level and a
+unified time coordinate measured in seconds. Bidirectional
+cross-modal attention in every block allows the two streams
+to exchange information, while modality-specific residual
+connectors adapt the structured condition for each stream.
+A dedicated monotonic phoneme-alignment pathway adds
+a normalized progress anchor to the phoneme context and
+uses phoneme-CTC supervision to make intermediate audio
+states follow the transcript order without forced phoneme
+boundaries. Progressive audio-only pretraining followed by
+joint speech–motion training gives the model strong gener-
+alization capability.
+Our contributions are threefold.
+(i) We present Mo-
+tionSpeech, a four-channel structured benchmark for fine-
+grained controllable joint generation, comprising 34,950
+clips (approximately 125.2 hours).
+(ii) We propose
+DuoFlow, the first joint speech–motion generation frame-
+work to support hierarchical motion and voice-condition
+control. (iii) We establish a unified evaluation protocol for
+generation quality, cross-modal synchronization, and text–
+motion consistency. Experiments show that DuoFlow is the
+only one with a native unified interface that simultaneously
+supports end-to-end joint generation, fine-grained motion
+control, and free-form vocal-style control, while maintain-
+ing strong motion quality, speech–motion coordination, and
+instruction consistency.
+2. Related Work
+2.1. Co-speech motion generation.
+Given speech, co-speech models synthesize body move-
+ment: early cross-modal translation [15], trimodal text–
+audio–speaker conditioning with the FGD metric [50], and
+large annotated corpora with semantic baselines [31, 33].
+Architectures advanced from regression to diffusion, state-
+space, and flow models [33, 35, 47]. Recent systems add
+caption- or example-level semantics [12, 34, 43, 54]. How-
+ever, these methods all treat speech as a conditioning input
+and do not support joint speech–motion generation.
+2
+
+
+2.2. Joint speech–motion generation.
+Match-TTSG [37] pioneered joint flow synthesis of speech
+and upper-body gesture in one process; FastTalker [19]
+reaches real-time joint generation by reusing speech fea-
+tures; Gelina [18] unifies the two modalities with inter-
+leaved discrete tokens and style cloning; Motion-Omni [36]
+emits full-body motion natively from dialogue hidden states
+with an open evaluation protocol; RapVerse [6] targets vo-
+cals and whole-body dance; ViBES [53] lets a dialogue
+agent accept discrete body-action directives; DyaPlex [38]
+targets streaming duplex conversation. Adjacent joint mod-
+els cover faces, audio-video, or agent stacks [5, 9, 10, 22,
+24, 27, 52]. Connectionist temporal classification (CTC)
+marginalizes monotonic paths between frame sequences
+and unsegmented label sequences [17]; we use it only as an
+auxiliary training signal on latent audio states, rather than
+as an autoregressive decoder or an inference-time forced
+aligner.
+These systems establish that joint generation is
+possible and increasingly efficient, but their interfaces ei-
+ther expose no user-facing motion semantics at all (Match-
+TTSG, FastTalker, Gelina, Motion-Omni) or trigger dis-
+crete behaviors instead of span- and part-level instructions
+(ViBES).
+2.3. Controllable multimodal generation.
+On the speech side, CosyVoice 2 [11] provides stream-
+ing zero-shot cloning and instruction-following speech, and
+MGM-Omni [44] stabilizes long-horizon personalized tim-
+bre; both control a single modality.
+LTX-2 [20] gener-
+ates synchronized audio-video with a two-stream DiT and
+modality-CFG, and unified music–motion models [48, 51]
+align rhythmic latents across modalities; pixel-space audio-
+video and music-driven synchronization, however, do not
+provide semantically structured 3D motion amenable to
+part- and span-level instructions. Streaming systems opti-
+mize latency rather than controllability [23, 55]. DuoFlow
+follows this line of research by adopting joint latent flow
+generation as its mechanism and constructing a unified con-
+trol interface.
+3. The MotionSpeech Benchmark
+3.1. Data and Hierarchical Annotations
+MotionSpeech couples full-body conversational motion
+with multi-scale hierarchical spoken-language annotations.
+It selects and integrates samples from two complemen-
+tary sources of natural talking–gesturing behavior:
+(i)
+BEAT2 [33], a studio-capture corpus pairing SMPL-X
+body motion with expressive English speech, and (ii) Seam-
+less Interaction [1], an improvised conversational corpus
+of spontaneous multi-speaker dialogues with rich prosodic
+variation.
+Each segment is annotated with a four-channel structured
+Figure 2.
+MotionSpeech data and annotation construction.
+Each source segment pairs an SMPL-X motion sequence with its
+speech waveform and transcript. The annotation pipeline adds hi-
+erarchical motion descriptions and a voice description, followed
+by manual verification and correction.
+caption: (1) L1 coarse motion, describing overall body dy-
+namics and gestures; (2) L2 fine-grained motion, describ-
+ing temporally ordered body-part actions and directions; (3)
+the re-recognized transcript; and (4) AUDCAP voice, de-
+scribing timbre and delivery style. The four tagged channels
+can be parsed independently.
+3.2. Dataset Construction
+MotionSpeech is constructed in three steps.
+(i) Segmentation and pairing. Both source corpora are
+cut into uniform 387-frame windows with paired SMPL-X
+motion sequences and waveforms. Motion is represented as
+387 × 333 features (global translation plus 55 joints in 6D
+rotation), and audio is resampled to 16 kHz mono.
+(ii) Hierarchical caption annotation. For every segment,
+GLM-5.3-Flash watches the rendered motion and writes (a)
+an L1 summary of coarse posture and gesture style and
+(b) an L2 sequential, body-part-level description. Qwen3-
+Omni-30B-A3B-Instruct analyzes the speech waveform to
+produce the AUDCAP voice description, while the spoken
+content is retained as the re-recognized transcript channel.
+Human annotators then inspect every four-channel record
+against the source motion and audio and correct inaccurate,
+incomplete, or malformed descriptions.
+(iii) Tokenization and latent precomputation.
+Before
+training, phoneme sequences are produced by a grapheme-
+to-phoneme tokenizer; motion and speech are encoded into
+latents by the motion VAE (Section 4.2) and the Audi-
+oLDM2 VAE [32], respectively; text conditions are encoded
+3
+
+
+Table 1. Public co-speech motion dataset comparison. Mot.
+cap. and Voice cap. denote natural-language motion and voice
+descriptions, respectively. Partial specifically refers to Seamless’s
+3P-V visual-behavior descriptions released for an annotated sub-
+set; – indicates unavailable data.
+Dataset
+Motion representation
+Hrs. Spk. Tr. Mot. Voice
+Trinity [13]
+3D body + hands
+4.00
+1 ✓
+–
+–
+Talking With Hands [28] 3D body + hands
+50.00
+50 –
+–
+–
+TED Gesture [50]
+3D upper body
+97.00 1,766 ✓
+–
+–
+PATS [2]
+2D keypoints
+251.00
+25 ✓
+–
+–
+BEAT [31]
+BVH + ARKit
+76.00
+30 ✓
+–
+–
+SHOW [49]
+SMPL-X + face
+26.90
+4 –
+–
+–
+BEAT2 [33]
+SMPL-X + FLAME
+60.00
+30 ✓
+–
+–
+Seamless [1]
+SMPL-H + face
+4,065.00 4,284 ✓Partial
+–
+TED4C-L [16]
+3D upper body (9 joints)
+106.45
+764 ✓
+–
+–
+MotionSpeech (ours)
+SMPL-X (55 joints)
+125.20
+30+ ✓
+✓
+✓
+by the Gemma text encoder and mapped by a feature-fusion
+module into trainable joint-condition features.
+3.3. Statistics
+Table 1 compares MotionSpeech with representative co-
+speech motion datasets spanning studio motion capture, in-
+the-wild video reconstruction, group interaction, and sit-
+uated conversation.
+Among the listed corpora, Motion-
+Speech is the only one with paired natural-language mo-
+tion captions and voice captions for every training window;
+Seamless Interaction provides visual-behavior descriptions
+for only a subset and does not annotate vocal timbre or de-
+livery in natural language. The released benchmark con-
+tains 34,950 segments (≈125.2 hours), including 17,907
+BEAT2 clips and 17,043 Seamless Interaction clips.
+4. DuoFlow
+4.1. Task and Model Overview
+For each segment, MotionSpeech provides a transcript s, a
+voice description cvoice, and paired motion descriptions cL1
+and cL2. The model receives exactly one motion descrip-
+tion at a time. Letting ℓ∈{L1, L2} denote the selected
+granularity, its structured condition is cℓ=
+ cℓ, s, cvoice
+.
+Conditioned on cℓ, DuoFlow learns the joint distribution of
+a speech waveform ya and a synchronized full-body motion
+sequence ym. Frozen modality encoders map paired speech
+and motion to continuous latents za
+0 and zm
+0 . A coupled
+transformer estimates both latent trajectories in one denois-
+ing process, after which the corresponding frozen decoders
+recover the waveform and motion. Keeping two streams
+allows each modality to retain its own representation and
+temporal resolution, while coupling them throughout gen-
+eration coordinates delivery decisions before either output
+is finalized.
+4.2. Motion VAE
+We adapt the MotionStreamer causal codec [46] to en-
+code full-body motion into continuous latents. Each 30-Hz
+SMPL-X frame contains root translation and 55 joint ro-
+tations in 6D, yielding 333 features. After normalization,
+independent body, left-hand, and right-hand VAE branches
+encode the corresponding channel groups into 128, 64, and
+64 latent channels. Causal convolutions compress time by
+a factor of three; concatenating the branches gives a 256-
+dimensional, 10-Hz motion sequence. The codec is trained
+with calibrated reconstruction and KL losses, with extra em-
+phasis on root translation and rotation. We freeze it during
+flow training, use posterior samples as motion targets, and
+decode the generated latents back into SMPL-X motion.
+4.3. Structured Input Conditions
+The shared semantic condition cℓcombines the selected
+motion description, transcript, and voice description (AU-
+DCAP). The transcript also provides a separate phoneme
+condition for the audio stream. Together, these conditions
+specify what to say, how the voice should sound, and how
+the body should move.
+Hierarchical motion conditions. Each annotated segment
+i is expanded into two training instances,
+ ci,L1, ym
+i , ya
+i
+
+and
+ ci,L2, ym
+i , ya
+i
+
+. The L1 instance asks the model to re-
+cover detailed motion from a concise global intent, whereas
+the L2 instance exposes temporally ordered body-part ac-
+tions as a direct fine-grained control interface.
+Both in-
+stances share the same speech–motion target.
+Textual condition composition. For either motion level,
+we serialize the selected L1 or L2 motion descrip-
+tion, followed by the transcript and AUDCAP. A frozen
+text encoder [14] extracts three complementary repre-
+sentations: the token-embedding output Hemb, the first
+Transformer-layer output Hfirst, and the final-layer out-
+put Hlast.
+These representations preserve the level dis-
+tinction and lexical details while providing contextualized
+semantics, and are fused by a learned projection as H =
+P
+ [Hemb; Hfirst; Hlast]
+
+.
+Modality-specific condition adapters.
+The shared rep-
+resentation is adapted independently for motion and au-
+dio. For r ∈{m, a}, a modality-specific connector pro-
+duces Hr = LN(H + Cr(H)). The residual path retains
+token-level distinctions from the text encoder, while Cr
+learns how the same motion, transcript, and voice condi-
+tions should be interpreted by each stream. Both streams
+attend to their adapted semantic condition throughout the
+transformer.
+Phoneme conditioning and progress. To efficiently pre-
+serve pronunciation, we convert transcript s into N valid
+phoneme IDs, encode them with a frozen VITS text en-
+coder [25], and project the features to the audio-stream
+width. Because the encoder has no utterance-level position
+4
+
+
+Figure 3. Overview of DuoFlow. The selected motion instruction, transcript, and voice description form a shared semantic condition
+for two coupled latent streams. A frozen phoneme encoder supplies a separate audio condition. Its normalized phoneme-progress anchor
+preserves token order, and phoneme-CTC heads supervise the audio states at multiple depths during training only. Each dual-stream block
+combines self-attention, condition cross-attention, phoneme cross-attention, and bidirectional speech–motion exchange. Frozen decoders
+reconstruct the denoised latents as a waveform and a motion sequence.
+signal, we add a normalized progress anchor to strengthen
+order awareness in the cross-attention context. For valid
+phoneme j, let pj = (j + 1)/N and define
+γ(pj) =
+
+sin θjk; cos θjk
+32
+k=1,
+θjk = 2πpj 29(k−1)/31.
+(1)
+A learned projection A maps this 64-dimensional code
+to the audio width, giving the anchored phoneme context
+ep
+j = Ppep
+j + Aγ(pj).
+Padding positions remain zero.
+We initialize A to zero and add the anchor to the phoneme
+keys and values consumed by every audio block. The rela-
+tive progress pj preserves phoneme order without assuming
+equal phoneme durations.
+4.4. Coupled Speech–Motion Flow Transformer
+Native-rate dual streams.
+The motion and audio la-
+tents are projected into two separate Transformer streams.
+Within each block, each stream first models its own tem-
+poral context and reads its modality-adapted text condi-
+tion. The streams then exchange information bidirection-
+ally through audio-to-motion and motion-to-audio cross-
+attention, with timestep-conditioned gates regulating the in-
+teraction strength throughout denoising.
+A common temporal coordinate.
+For the 10-Hz mo-
+tion latent sequence, token i corresponds to the interval
+[i/fm, (i + 1)/fm), where fm = 10 Hz. For audio, the
+patchifier maps each latent index back to a waveform-time
+interval according to the sampling rate, mel-spectrogram
+hop, temporal downsampling of the audio VAE, and causal
+offset, forming a nominal 25-Hz latent clock. Given the dif-
+ferent native token rates of speech and motion, we use the
+midpoint of each interval to construct temporal rotary po-
+sitional embeddings for within-modality self-attention and
+bidirectional cross-modal attention.
+For the same paired
+motion and audio sample, we also share the flow time σ,
+placing the two streams at the same denoising stage. The
+shared clock, shared noise level, and bidirectional attention
+together enable the model to learn synchronization from
+paired data.
+4.5. Joint Flow and Phoneme-Alignment Objectives
+For each modality r ∈{m, a}, let zr
+0 be a clean latent and
+ϵr ∼N(0, I) independent Gaussian noise. Using one σ ∈
+(0, 1) for the paired streams, we form the linear probability
+path
+zr
+σ = (1 −σ)zr
+0 + σϵr,
+ur = ϵr −zr
+0.
+(2)
+Writing Zσ = (zm
+σ , za
+σ), the coupled transformer predicts a
+modality-specific velocity field vr
+θ from the joint noisy state
+and the selected condition cℓ. It is trained with
+Lflow =
+X
+r∈{m,a}
+λr E
+h
+∥vr
+θ(Zσ, cℓ, σ) −ur∥2
+2
+i
+.
+(3)
+The flow objective learns unimodal fidelity and cross-modal
+coordination, but it does not explicitly require the inter-
+mediate audio sequence to follow transcript order.
+Let
+B = {0, . . . , 7} denote the supervised audio blocks and ha,b
+t
+the audio hidden state after block b. Each block-specific
+linear head produces logits over the 183 phoneme symbols
+5
+
+
+plus one dedicated blank, and CTC [17] marginalizes their
+monotonic alignments to the target sequence ϕ(s):
+ℓb
+t = W b
+CTCha,b
+t
++ bb
+CTC,
+LCTC = 1
+|B|
+X
+b∈B
+CTC
+ logsoftmax(ℓb
+1:T ), ϕ(s)
+
+,
+Ltotal = Lflow + λCTCLCTC.
+(4)
+We remove padded phoneme IDs from the targets and
+derive input lengths from the valid audio-latent mask.
+The CTC head is used only during training, whereas the
+learned progress anchor always remains in the phoneme-
+conditioning path.
+Training regimes. The model adopts a progressive two-
+stage training regime. Stage 1 disables the motion stream
+and cross-modal interaction, and trains the speech and pro-
+nunciation pathways on speech-only data using audio flow
+matching and phoneme-CTC supervision. Stage 2 activates
+both streams and their bidirectional interaction, optimizing
+both flow-matching losses and the phoneme-CTC regular-
+izer on the expanded MotionSpeech conditioning instances.
+To preserve the speech branch’s generalization ability, we
+sample 10% of Stage 2 training batches from the Stage 1
+speech-pretraining dataset.
+Inference. Given a transcript, a voice description, and one
+L1 or L2 motion instruction, we form cℓand encode it with
+the text encoder to obtain the semantic condition. The tran-
+script is also converted into a phoneme sequence through
+grapheme-to-phoneme (G2P) conversion and encoded by
+the frozen phoneme encoder to provide the audio stream’s
+phoneme context. For a target duration, we set the latent
+lengths at the native motion and audio rates and initialize
+both streams with independent Gaussian noise. The cou-
+pled transformer jointly updates the two latent sequences
+over a shared noise schedule from σ = 1 to 0 using 30 Eu-
+ler steps with classifier-free guidance. Finally, the frozen
+motion decoder reconstructs 30-Hz SMPL-X motion, while
+the frozen audio VAE decoder and vocoder reconstruct a
+16-kHz waveform matched to the target duration.
+The
+phoneme-progress anchor remains active during inference;
+the auxiliary CTC heads are removed.
+5. Experiments
+5.1. Setup
+Data.
+MotionSpeech contains 34,950 12.9-second seg-
+ments (approximately 125.2 hours),
+including 17,907
+BEAT2 clips and 17,043 Seamless Interaction clips. The
+fixed split contains 27,957 training, 3,501 validation, and
+3,492 test segments.
+Baselines.
+CosyVoice 2 [11] followed by MambaT-
+alk [47] forms the cascade baseline.
+Match-TTSG [37]
+jointly synthesizes speech and gesture through mono-
+tonic phoneme alignment and conditional flow matching.
+Motion-Omni [36] is an end-to-end spoken-dialogue model
+that jointly outputs speech and full-body motion.
+Metrics. We use seven headline metrics. For speech,
+WER is computed with Whisper large-v3-turbo [42], while
+SpkSim is the cosine similarity between WavLM-base-plus-
+SV [7] embeddings of generated and reference speech and
+serves as a proxy for reference-speaker timbre similarity.
+For motion, Fréchet Gesture Distance (FGD) uses the of-
+ficial EMAGE/PantoMatrix AESKConv features [33], and
+foot skating is the percentage of contact frames whose hori-
+zontal foot speed exceeds 0.10 m/s. BC Gap is the absolute
+mean-BC difference between generated and reference mo-
+tions, both paired with reference speech. L1 and L2 Global
+PairAcc use the same frozen CLaM-H text–motion evalua-
+tor [8, 29].
+Implementation details. DuoFlow uses eight coupled
+Transformer blocks for both motion and audio, with width
+1,024, 32 attention heads, and head dimension 32 in each
+stream. Frozen modality codecs provide 256-channel mo-
+tion and 128-channel audio latents. A frozen Gemma-3 en-
+coder [14] supplies multi-level text features through cross-
+attention, while residual connectors adapt them to the two
+streams. A frozen AudioLDM2 phoneme encoder [32], the
+progress anchor, and auxiliary CTC heads at all eight au-
+dio blocks provide pronunciation and temporal supervision.
+Stage 1 trains the audio stream on the Emilia [21] subset
+for 100,000 steps, and Stage 2 jointly trains both streams
+on MotionSpeech for 200,000 steps. Both stages use eight
+A100 GPUs, 8-bit AdamW, a per-GPU batch size of 4,
+2,000 warm-up steps, and cosine scheduling. The Stage 1
+learning rate is 2×10−4; Stage 2 uses 2×10−4 for the motion
+branch and 1×10−5 for the audio branch. Inference uses 30
+Euler steps.
+5.2. Generation Quality, Control, and Efficiency
+We compare speech and motion quality, instruction compat-
+ibility, and speech–motion alignment across systems (Ta-
+ble 2), and report generation latency in Table 3. Figure 4
+complements these metrics with qualitative examples under
+coarse L1 and fine-grained L2 motion instructions. Speech
+quality. Table 2 shows that DuoFlow achieves the low-
+est WER (4.71%) and highest SpkSim (0.94) among the
+reported systems. The CosyVoice 2–MambaTalk cascade,
+built on CosyVoice 2’s pretrained speech-synthesis model,
+maintains good WER and preserves speaker similarity when
+using a reference audio for timbre. The lightweight Match-
+TTSG does not generalize its speech capability. Although
+Motion-Omni, for which no loadable weights are available,
+uses the same two-stage training strategy as DuoFlow, an
+inefficient learning pathway leads to the performance gap,
+while DuoFlow’s phoneme pathway provides a stronger
+representation for the speech branch.
+Motion
+quality
+and
+instruction
+compatibility.
+6
+
+
+Figure 4. Qualitative comparison under hierarchical motion control. The upper block shows generated waveforms, time-aligned
+transcript words, and sampled motion frames under the same coarse L1 motion instruction. The lower block shows the results after
+changing the motion description to a fine-grained, temporally ordered L2 instruction. Red words in the time-aligned transcripts mark
+mismatches with the input text.
+Figure 5. Single-condition intervention comparison. In the L1 (green) and L2 (orange) panels, paired motion rows show results before
+(top) and after (bottom) editing the instruction. Gray strikethroughs and red text mark deleted and added prompt content, respectively.
+Each intervention keeps the transcript and the other conditions fixed.
+DuoFlow obtains the lowest FGD (0.75) and foot-
+skating
+rate
+(29.61%),
+alongside
+L1/L2
+PairAcc
+of
+87.43%/90.40%. The structured condition supplies either a
+global or a detailed motion description to both streams, and
+the observed scores are consistent with generated motion
+matching both levels of description.
+For MambaTalk,
+7
+
+
+Table 2.
+Speech–motion generation quality, alignment, and
+controllability. WER, Skate, and PairAcc are percentages. Spk,
+BC, L1, and L2 abbreviate SpkSim, BC Gap, L1 PairAcc, and L2
+PairAcc, respectively. Best and second-best results are shown in
+bold and underlined, respectively.
+System
+WER↓Spk↑FGD↓Skate↓BC↓
+L1↑
+L2↑
+CosyVoice2+Mamba.
+6.12 0.80
+2.61
+46.78 0.23 53.42 53.63
+Match-TTSG
+36.35 0.75
+5.14
+84.01 0.06 56.38 60.38
+Motion-Omni
+74.98 0.56
+1.32
+66.57 0.34 61.37 62.68
+DuoFlow (Ours)
+4.71 0.94
+0.75
+29.61 0.14 87.43 90.40
+Table 3. Inference speed. Tresp is mean time to generate one
+12.9-s speech–motion clip at batch size one; RTF is Tresp/12.9;
+Slowdown is relative to the fastest reported system.
+Model
+Tresp (s)↓
+RTF↓
+Slowdown↓
+CosyVoice2 + MambaTalk
+2.82
+0.22
+8.07×
+Match-TTSG
+0.35
+0.03
+1.00×
+Motion-Omni
+5.03
+0.39
+14.39×
+DuoFlow (ours)
+1.33
+0.10
+3.80×
+which does not accept L1/L2, the scores measure com-
+patibility rather than instruction following. Match-TTSG
+remains limited by model capacity.
+Speech–motion alignment.
+DuoFlow combines cou-
+pled streams, a shared temporal coordinate, and a joint
+flow objective, and achieves a BC Gap of 0.14, indicat-
+ing strong generation consistency. Match-TTSG achieves
+the lowest BC Gap (0.06), effectively capturing speech–
+motion rhythm; however, its weaker spatial, physical, and
+instruction-level motion fidelity shows that beat alignment
+does not equal natural motion trajectories or good semantic
+matching.
+Inference efficiency. With 30 inference sampling steps,
+the DuoFlow dual-stream generation paradigm synthesizes
+a 12.9-s clip in 1.3298 s on average (P95 1.5052 s; RTF
+0.1031). Its end-to-end architecture is substantially faster
+than the reported cascade and Motion-Omni times (Table 3).
+Joint latent generation incurs considerable overhead.
+Single-condition interventions.
+Figure 5 compares
+the systems under separate edits to L1, L2, or AUDCAP
+while keeping the transcript and the other conditions fixed.
+DuoFlow is the only generative model that responds well to
+these control changes.
+5.3. Ablation Studies
+Phoneme conditioning.
+Table 4 isolates changes to the
+Stage 1 phoneme path. Adding the phoneme branch reduces
+WER from 9.45% to 6.02%, suggesting that an explicit pro-
+nunciation representation complements the shared semantic
+text condition. Adding the progress anchor together with
+Table 4. Stage-1 audio-path ablation. WER is evaluated on Mo-
+tionSpeech after Stage 1 training.
+Configuration
+Phoneme Anchor CTC WER↓
+Text condition only
+–
+–
+–
+9.45
++ phoneme branch
+✓
+–
+–
+6.02
++ CTC and anchor
+✓
+✓
+✓
+5.29
+Table 5. Training-schedule ablation. Single-stage joint training
+versus cascaded training, with audio pretraining followed by joint
+training.
+Strategy
+WER↓SpkSim↑FGD↓BC Gap↓L1 PairAcc↑L2 PairAcc↑
+Single-stage joint
+38.76
+0.82
+0.98
+0.18
+80.24
+83.17
+Cascaded training
+4.71
+0.94
+0.75
+0.14
+87.43
+90.40
+multi-depth CTC further reduces WER to 5.29%. The an-
+chor supplies relative phoneme order, while CTC encour-
+ages a monotonic transcript-compatible path in intermedi-
+ate audio states.
+Training schedule. Compared with single-stage joint
+training, audio pretraining followed by joint training re-
+duces WER from 38.76% to 4.71% and improves SpkSim
+from 0.82 to 0.94 (Table 5). The same schedule improves
+FGD, BC Gap, and both PairAcc scores. This result indi-
+cates that learning an effective speech prior before modality
+coupling is necessary and is consistent with preserving mo-
+tion quality and description compatibility during joint train-
+ing.
+6. Conclusion
+We presented MotionSpeech, a four-channel benchmark
+that aligns a transcript and vocal-style description with
+coarse- and fine-grained motion intents, together with
+DuoFlow, a dual-stream latent flow framework for control-
+lable joint speech–motion generation. The framework co-
+ordinates native-rate speech and motion latents through a
+shared noise level, a common second-based temporal co-
+ordinate, modality-specific residual connectors, and layer-
+wise bidirectional interaction. It strengthens speech tem-
+poral awareness through a monotonic phoneme-alignment
+pathway that combines a learned normalized progress an-
+chor with training-only CTC supervision. The results show
+that an end-to-end model can produce intelligible speech,
+realistic and synchronized full-body motion, consistency
+with both levels of motion instruction, and controllable vo-
+cal delivery. This work establishes a unified interface for
+multimodal motion and speech control, while improving
+physical contact fidelity and extending the framework to
+streaming generation remain future directions.
+8
+
+
+LLM Usage Statement
+ChatGPT and OpenAI Codex were used to assist with lan-
+guage editing, manuscript revision, code development, and
+debugging.
+GLM-5.3-Flash was used to generate initial
+L1/L2 motion descriptions from rendered motion videos,
+and Qwen3-Omni-30B-A3B-Instruct was used to generate
+initial AUDCAP descriptions from speech waveforms, as
+described in Section 3.2. The authors remain responsible
+for all submitted text, code, annotations, figures, and scien-
+tific claims.
+References
+[1] Vasu
+Agrawal,
+Akinniyi
+Akinyemi,
+Kathryn
+Alvero,
+Morteza Behrooz, Julia Buffalini, Fabio Maria Carlucci,
+et al. Seamless interaction: Dyadic audiovisual motion mod-
+eling and large-scale dataset, 2025. arXiv:2506.22554. 2, 3,
+4
+[2] Chaitanya Ahuja, Dong Won Lee, Yukiko I. Nakano, and
+Louis-Philippe Morency. Style transfer for co-speech gesture
+animation: A multi-speaker conditional-mixture approach.
+In European Conference on Computer Vision (ECCV), pages
+248–265, 2020. 4
+[3] Simon Alexanderson, Éva Székely, Gustav Eje Henter,
+Taras Kucherenko, and Jonas Beskow.
+Generating co-
+herent spontaneous speech and gesture from text, 2021.
+arXiv:2101.05684. 2
+[4] Bohong Chen, Yumeng Li, Yao-Xiang Ding, Tianjia Shao,
+and Kun Zhou.
+Enabling synergistic full-body con-
+trol in prompt-based co-speech motion generation, 2024.
+arXiv:2410.00464. 2
+[5] Junming Chen, Yunfei Liu, Jianan Wang, et al. DiffSHEG: A
+diffusion-based approach for real-time speech-driven holistic
+3d expression and gesture generation. In IEEE/CVF Confer-
+ence on Computer Vision and Pattern Recognition (CVPR),
+2024. 3
+[6] Jiaben Chen, Xin Yan, Yihang Chen, et al. Rapverse: Coher-
+ent vocals and whole-body motions generations from text.
+In IEEE/CVF International Conference on Computer Vision
+(ICCV), 2025. 3
+[7] Sanyuan Chen, Chengyi Wang, Zhengyang Chen, et al.
+WavLM: Large-scale self-supervised pre-training for full
+stack speech processing. IEEE Journal of Selected Topics
+in Signal Processing, 16(6):1505–1518, 2022. 6
+[8] Xiaodong Chen, Kunlang He, Wu Liu, Xinchen Liu, Zheng-
+Jun Zha, and Tao Mei. CLaM: An open-source library for
+performance evaluation of text-driven human motion gener-
+ation. In Proceedings of the 32nd ACM International Con-
+ference on Multimedia, 2024. 6
+[9] Shihao Cheng, Jiaxu Zhang, Quanyue Song, et al. Unison:
+Harmonizing motion, speech, and sound for human-centric
+audio-video generation, 2026. arXiv:2605.08729. 3
+[10] Xiang Deng, Feng Gao, Yong Zhang, et al. U-Mind: A uni-
+fied framework for real-time multimodal interaction with au-
+diovisual generation. In IEEE/CVF Conference on Computer
+Vision and Pattern Recognition (CVPR), 2026. 3
+[11] Zhihao Du, Yuxuan Wang, Qian Chen, et al.
+Cosyvoice
+2: Scalable streaming speech synthesis with large language
+models, 2024. arXiv:2412.10117. 2, 3, 6
+[12] Fengyi Fang, Sicheng Yang, and Wenming Yang.
+Co-
+ordSpeaker: Exploiting gesture captioning for coordinated
+caption-empowered co-speech gesture generation, 2025.
+arXiv:2511.22863. 2
+[13] Ylva Ferstl and Rachel McDonnell. Investigating the use of
+recurrent motion modelling for speech gesture generation. In
+Proceedings of the 18th International Conference on Intelli-
+gent Virtual Agents, pages 93–98, 2018. 4
+[14] Gemma Team, Aishwarya Kamath, Johan Ferret, Shreya
+Pathak, Nino Vieillard, Ramona Merhej, et al. Gemma 3
+Technical Report, 2025. arXiv:2503.19786. 4, 6
+[15] Shiry Ginosar, Amir Bar, Gefen Kohavi, et al.
+Learning
+individual styles of conversational gesture.
+In IEEE/CVF
+Conference on Computer Vision and Pattern Recognition
+(CVPR), 2019. 2
+[16] Ariel Gjaci,
+Antonio Sgorbissa,
+and Vittorio Murino.
+SICAGE: Speaker-independent culture-aware gesture gener-
+ation using TED4C-L dataset, 2026. arXiv:2606.30001. 4
+[17] Alex Graves, Santiago Fernández, Faustino Gomez, and Jür-
+gen Schmidhuber.
+Connectionist temporal classification:
+Labelling unsegmented sequence data with recurrent neural
+networks. In Proceedings of the 23rd International Confer-
+ence on Machine Learning, pages 369–376, 2006. 3, 6
+[18] Téo Guichoux, Théodor Lemerle, Shivam Mehta, Jonas
+Beskow, et al.
+Gelina: Unified speech and gesture syn-
+thesis via interleaved token prediction.
+In IEEE Interna-
+tional Conference on Acoustics, Speech and Signal Process-
+ing (ICASSP), pages 16122–16126, 2026. 2, 3
+[19] Zixin Guo and Jian Zhang. Fasttalker: Jointly generating
+speech and conversational gestures from text. In European
+Conference on Computer Vision (ECCV) Workshops, 2024.
+2, 3
+[20] Yoav HaCohen, Benny Brazowski, Nisan Chiprut, et al.
+LTX-2: Efficient joint audio-visual foundation model, 2026.
+arXiv:2601.03233. 3
+[21] Haorui He, Zengqiang Shang, Chaoren Wang, Xuyuan Li,
+Yicheng Gu, Hua Hua, Liwei Liu, Chen Yang, Jiaqi Li,
+Peiyang Shi, Yuancheng Wang, Kai Chen, Pengyuan Zhang,
+and Zhizheng Wu. Emilia: An extensive, multilingual, and
+diverse speech dataset for large-scale speech generation. In
+IEEE Spoken Language Technology Workshop (SLT), pages
+885–890, 2024. 6
+[22] Youngjoon Jang, Ji-Hoon Kim, Junseok Ahn, et al. Faces
+that speak: Jointly synthesising talking face and speech from
+text. In IEEE/CVF Conference on Computer Vision and Pat-
+tern Recognition (CVPR), 2024. 3
+[23] Kaiyang Ji, Bingsheng Qian, Binghuan Wu, et al. DiscoForc-
+ing: A unified framework for real-time audio-driven charac-
+ter control with diffusion forcing. In International Confer-
+ence on Machine Learning (ICML), 2026. 3
+[24] Jianping Jiang, Weiye Xiao, Zhengyu Lin, et al.
+SO-
+LAMI: Social vision-language-action modeling for immer-
+sive interaction with 3d autonomous characters, 2024.
+arXiv:2412.00174. 3
+9
+
+
+[25] Jaehyeon Kim, Jungil Kong, and Juhee Son.
+Conditional
+variational autoencoder with adversarial learning for end-to-
+end text-to-speech. In International Conference on Machine
+Learning (ICML), 2021. 4
+[26] Taras Kucherenko,
+Rajmund Nagy,
+Youngwoo Yoon,
+Jieyeon Woo, Teodor Nikolov, Mihail Tsakov, and Gus-
+tav Eje Henter.
+The GENEA challenge 2023:
+A large
+scale evaluation of gesture generation models in monadic
+and dyadic settings, 2023. arXiv:2308.12646. 2
+[27] Mingi Kwon, Joonghyuk Shin, Jaeseok Jeong, Jaesik Park,
+and Youngjung Uh. Jam-flow: Joint audio-motion synthesis
+with flow matching. In European Conference on Computer
+Vision (ECCV), pages 353–371. Springer, 2026. 2, 3
+[28] Gilwoo Lee, Zhiwei Deng, Shugao Ma, Takaaki Shiratori,
+Siddhartha S. Srinivasa, and Yaser Sheikh.
+Talking with
+hands 16.2m: A large-scale dataset of synchronized body-
+finger motion and audio for conversational motion analysis
+and synthesis.
+In IEEE/CVF International Conference on
+Computer Vision (ICCV), pages 763–772, 2019. 4
+[29] Alicia Li, Xiaodong Chen, Bohao Liang, Qian Bao, and Wu
+Liu.
+M-Adaptor: Text-driven whole-body human motion
+generation.
+In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR) Work-
+shops, pages 2629–2638, 2025. 6
+[30] Habin Lim, Jae-Ho Lee, Hah Min Lew, Ji-Su Kang, and
+Gyeong-Moon Park.
+FacePlex: Full-duplex joint speech-
+facial motion generation for conversational avatars, 2026.
+arXiv:2606.30145v1. 2
+[31] Haiyang Liu, Zihao Zhu, Naoya Iwamoto, et al. BEAT: A
+large-scale semantic and emotional multi-modal dataset for
+conversational gestures synthesis. In European Conference
+on Computer Vision (ECCV), 2022. 2, 4
+[32] Haohe Liu, Yi Yuan, Xubo Liu, Xinhao Mei, Qiuqiang Kong,
+Qiao Tian, Yuping Wang, Wenwu Wang, Yuxuan Wang, and
+Mark D. Plumbley.
+AudioLDM 2: Learning holistic au-
+dio generation with self-supervised pretraining. IEEE/ACM
+Transactions on Audio, Speech, and Language Processing,
+32:2871–2883, 2024. 3, 6
+[33] Haiyang Liu, Zihao Zhu, Giorgio Becherini, et al. EMAGE:
+Towards unified holistic co-speech gesture generation via
+expressive masked audio gesture modeling. In IEEE/CVF
+Conference on Computer Vision and Pattern Recognition
+(CVPR), 2024. 2, 3, 4, 6
+[34] Lanmiao Liu, Esam Ghaleb, Aslı Özyürek, et al.
+Sem-
+ConFlow: Semantic grounding of holistic co-speech ges-
+ture generation with contrastive flow-matching,
+2026.
+arXiv:2603.26553. 2
+[35] Pinxin Liu, Luchuan Song, Junhua Huang, Haiyang Liu,
+et al. GestureLSM: Latent shortcut based co-speech gesture
+generation with spatial-temporal modeling. In IEEE/CVF In-
+ternational Conference on Computer Vision (ICCV), 2025. 2
+[36] Chengqian Ma, Wei Tao, Haoyu Zhang, and Yiwen Guo.
+Motion-omni: End-to-end joint speech and full-body motion
+for spoken dialogue, 2026. arXiv:2609.04250. 2, 3, 6
+[37] Shivam Mehta, Ruibo Tu, Simon Alexanderson, Jonas
+Beskow, Éva Székely, and Gustav Eje Henter. Unified speech
+and gesture synthesis using flow matching (match-ttsg). In
+IEEE International Conference on Acoustics, Speech and
+Signal Processing (ICASSP), 2024. 2, 3, 6
+[38] Koki Nagano, Hongyu Liu, Seonwook Park, et al. DyaPlex:
+Full-duplex speech-motion model for dyadic interaction,
+2026. arXiv:2606.03874. 3
+[39] Rajmund Nagy, Silvia Arellano García, Hendric Voss, Mi-
+hail Tsakov, Taras Kucherenko, Youngwoo Yoon, and Gus-
+tav Eje Henter. The GENEA challenge 2026: A large-scale
+disentangled evaluation of speech-driven gesture generation
+on the seamless interaction dataset, 2026. arXiv:2608.10839.
+2
+[40] Simbarashe Nyatsanga, Taras Kucherenko, Chaitanya Ahuja,
+et al. A comprehensive review of data-driven co-speech ges-
+ture generation. Computer Graphics Forum (Eurographics
+2023), 42(2), 2023. 2
+[41] Ekkasit Pinyoanuntapong, Ajinkya Deogade, Paul Streli,
+Wenjing Zhang, Joanna Materzynska, Pu Wang, Vittorio
+Ferrari, and Jie Shen. InteractGesture: Progressive chunk
+guidance for continuous streaming co-speech gesture con-
+trol, 2026. arXiv:2608.25734. 2
+[42] Alec Radford, Jong Wook Kim, Tao Xu, Greg Brockman,
+Christine McLeavey, and Ilya Sutskever.
+Robust speech
+recognition via large-scale weak supervision. In Proceedings
+of the 40th International Conference on Machine Learning,
+pages 28492–28518. PMLR, 2023. 6
+[43] Adi Rosenthal, Tomer Koren, Nadav Shaked, et al. SiGna-
+ture: Explicit motion diffusion for stylized semantic gesture,
+2026. arXiv:2606.15889. 2
+[44] Chengyao Wang, Zhisheng Zhong, Bohao Peng, et al.
+Mgm-omni: Scaling omni llms to personalized long-horizon
+speech, 2025. arXiv:2509.25131. 3
+[45] Siyang Wang, Simon Alexanderson, Joakim Gustafson,
+Jonas Beskow,
+Gustav Eje Henter,
+and Éva Székely.
+Integrated
+speech
+and
+gesture
+synthesis,
+2021.
+arXiv:2108.11436. 2
+[46] Lixing Xiao, Shunlin Lu, Huaijin Pi, Ke Fan, Liang Pan,
+Yueer Zhou, Ziyong Feng, Xiaowei Zhou, Sida Peng, and
+Jingbo Wang. Motionstreamer: Streaming motion genera-
+tion via diffusion-based autoregressive model in causal latent
+space. In Proceedings of the IEEE/CVF International Con-
+ference on Computer Vision (ICCV), pages 10086–10096,
+2025. 4
+[47] Zunnan Xu, Yukang Lin, Haonan Han, Sicheng Yang, et al.
+Mambatalk: Efficient holistic gesture synthesis with selec-
+tive state space models. In Advances in Neural Information
+Processing Systems (NeurIPS), 2024. 2, 6
+[48] Han Yang, Kun Su, Yutong Zhang, et al. Unimumo: Unified
+text, music and motion generation. In Proceedings of the
+AAAI Conference on Artificial Intelligence, 2025. 3
+[49] Hongwei Yi, Hualin Liang, Yifei Liu, Qiong Cao, Yandong
+Wen, Timo Bolkart, Dacheng Tao, and Michael J. Black.
+Generating holistic 3d human motion from speech. In Pro-
+ceedings of the IEEE/CVF Conference on Computer Vision
+and Pattern Recognition, pages 469–480, 2023. 4
+[50] Youngwoo Yoon, Bok Cha, Joo-Haeng Lee, et al. Speech
+gesture generation from the trimodal context of text, audio,
+and speaker identity. ACM Transactions on Graphics (SIG-
+GRAPH Asia 2020), 39(6), 2020. 2, 4
+10
+
+
+[51] Fuming You, Minghui Fang, Li Tang, Rongjie Huang, et al.
+Momu-diffusion: On learning long-term motion-music syn-
+chronization and correspondence. In Advances in Neural In-
+formation Processing Systems (NeurIPS), 2024. 3
+[52] Haoyu Zhang, Zhipeng Li, Yiwen Guo, and Tianshu Yu. Ex-
+Omni: Enabling 3d facial animation generation for omni-
+modal large language models, 2026. arXiv:2602.07106. 3
+[53] Juze Zhang, Changan Chen, Xin Chen, et al.
+ViBES: A
+conversational agent with behaviorally-intelligent 3d virtual
+body.
+In IEEE/CVF Conference on Computer Vision and
+Pattern Recognition (CVPR), 2026. 2, 3
+[54] Junchuan Zhao, Qifan Liang, and Ye Wang.
+Person-
+aGest:
+Personalized co-speech gesture generation with
+semantic-guided hierarchical motion representation, 2026.
+arXiv:2605.07252. 2
+[55] Lunjie Zhu, Xingtong Ge, Fangyu Lin, et al.
+Omni-
+LiveAvatar: Minute-level real-time streaming joint audio-
+video avatar generation, 2026. arXiv:2608.13602. 3
+11
