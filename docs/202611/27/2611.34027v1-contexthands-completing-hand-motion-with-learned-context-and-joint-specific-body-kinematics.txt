@@ -1,0 +1,991 @@
+ContextHands: Completing Hand Motion
+with Learned Context and Joint-Specific Body Kinematics
+Taewoo Kim
+Seunghun Koh
+Hyosup Shin
+Sungho Jo†
+Korea Advanced Institute of Science and Technology (KAIST)
+† Corresponding author
+Figure 1. ContextHands completes hand motion from observed body motion and text descriptions assigned to individual hands and time
+intervals. Our method combines context learned from these inputs with joint-specific body kinematics to generate detailed hand articulation
+while preserving the body motion.
+Abstract
+Detailed hand motion contributes to the realism and ex-
+pressiveness of generated human motion. Completing these
+details from body motion and language requires connecting
+the context of an action to the articulation of the hands. We
+introduce ContextHands, which completes hand motion from
+an observed body sequence and text descriptions assigned to
+hands and time intervals. Our approach learns probabilistic
+hand features from the descriptions and body motion, using
+auxiliary hand prediction to connect these features to hand
+articulation. A body encoder preserves joint and body-part
+features across multiple temporal scales, allowing each hand
+joint to query these features for joint-specific body informa-
+tion. The diffusion generator combines this joint-specific
+body information with the learned hand context. Both en-
+coders and the generator are trained jointly, so the final
+generation objective also shapes the context features. Ex-
+periments on the OakInk2 dataset show that ContextHands
+generates more accurate hand motion and achieves lower
+Fr´echet Hand Distance than existing hand-motion and gen-
+eral human-motion generation methods adapted to the task.
+In qualitative examples of grasping and tool use, Contex-
+tHands more closely reproduces the detailed hand poses
+in the reference motion. We will release our code and pre-
+trained models to support further research.
+1. Introduction
+Detailed hand motion is important for expressive and real-
+istic human animation. Hands convey intent through ges-
+1
+This work has been submitted to the IEEE for possible publication.
+Copyright may be transferred without notice, after which this version may no longer be accessible.
+arXiv:2611.34027v1  [cs.CV]  25 Nov 2026
+
+
+tures and play a central role in everyday object manipulation
+[21, 33, 49]. When a character points, holds a handle, or
+uses a tool, wrist orientation and finger configuration help
+specify how the action is performed. Convincing animation
+therefore requires hand poses appropriate to the action, to-
+gether with natural changes in articulation over time [28, 49].
+Hand-motion completion generates these hand details to
+accompany an already available body sequence.
+Motion-generation datasets and representations often pro-
+vide limited hand detail [49]. Hand-focused research ad-
+dresses this gap with dedicated data, language annotations,
+and generative models [48, 49]. Body-conditioned methods
+exploit correlations between body and hand motion [21, 28],
+but the observed body does not uniquely determine the hands:
+similar arm movements can accompany different finger con-
+figurations, and the two hands may move differently [28].
+Language provides complementary information about ac-
+tions, body-part configurations, and spatial relations [8, 48].
+Together, body motion and language provide context for the
+hand motion that accompanies an action.
+This context can differ between hands and change over
+time: one hand may remain open while the other closes and
+later opens again. Descriptions therefore need not apply
+to both hands throughout a clip. OakInk2 [42] provides
+descriptions of manipulation events with hand-specific tem-
+poral annotations. We use these existing descriptions and
+their hand–time assignments as inputs for completion from
+body motion. The central challenge is to translate the context
+of each hand into detailed articulation while retaining access
+to the body cues relevant to individual joints.
+BOTH2Hands [48] learns separate body-to-hand and text-
+to-hand generators, then blends their predictions. Prior-First,
+Condition-Second [33] learns semantic adapters on a frozen
+body–hand prior with structured attention. These approaches
+combine the outputs of separately trained generators or adapt
+an existing motion prior. ContextHands learns body-and-text
+features for hand completion through two complementary
+objectives: hand prediction links the features to articulation,
+while joint training with the generator shapes them for the
+final completion task. A Hand Context Encoder learns these
+features from the assigned descriptions and body motion. We
+model the features probabilistically because body motion and
+language still permit different hand articulations [24, 34].
+At each frame, the context feature is shared across the
+joints of a hand. To let individual wrist and finger joints also
+draw on different body cues, we retain a separate path for
+joint-specific body conditioning. The Joint-Query Kinematic
+Encoder preserves joint and anatomical-part features across
+multiple temporal scales; each hand joint queries them for its
+own condition. A single Hand Diffusion Generator combines
+these conditions with the shared hand context to generate
+rotations while keeping the observed body motion, including
+wrist positions, fixed.
+We evaluate ContextHands on OakInk2 and examine both
+conditioning paths and joint versus staged training through
+ablations. Our contributions are:
+• A Hand Context Encoder learns probabilistic hand fea-
+tures from body motion and text, guided by auxiliary hand
+prediction and joint training with the generator.
+• A Joint-Query Kinematic Encoder provides each wrist
+and finger joint with body conditions drawn from joint,
+anatomical-part, and temporal-scale features, complement-
+ing the context shared within each hand.
+• On OakInk2, ContextHands achieves the lowest joint-
+position and wrist-rotation errors and the lowest FHD
+among five existing methods adapted to the same comple-
+tion task.
+2. Related Work
+Hand motion generation.
+Body-conditioned methods ex-
+ploit the relationship between body movement and hand
+articulation. Body2Hands [21] predicts conversational ges-
+tures from upper-body motion, while BHD [28] uses sepa-
+rate hand branches and spatial and temporal memories to
+model body–hand relationships. Language provides addi-
+tional cues, but methods differ in how they combine these
+conditions. BOTH2Hands [48] first trains body- and text-
+conditioned generators separately, then blends their pre-
+dictions through cross-attention.
+Prior-First, Condition-
+Second [33] instead learns semantic adapters on a frozen
+autoregressive body–hand prior with kinematic-chain atten-
+tion. Its kinematic attention uses queries derived from noisy
+hand states. Our hand-joint queries are computed from the
+observed body motion before denoising, while the body-and-
+text context is learned jointly with the generator. Among ded-
+icated text-to-hand models, HandMDM [3] uses descriptions
+derived from sign-language data, whereas CLUTCH [37]
+learns a hand-motion tokenizer and language model from
+in-the-wild motion–text pairs. HandX [49] distinguishes
+left-hand, right-hand, and inter-hand descriptions and also
+supports wrist-trajectory constraints. These methods com-
+plement joint body, hand, and facial motion generation from
+speech [18, 40] or text [20]. Our task instead keeps the
+observed body motion fixed.
+Motion representations and generation.
+Motion genera-
+tion from text uses diffusion models [5, 36, 44, 46] as well
+as autoregressive or masked prediction of discrete motion
+tokens [10, 14, 27, 43]. A related question is how learned rep-
+resentations connect language to motion. TEMOS [24] links
+text and motion latent distributions through a shared motion
+decoder, whereas MotionCLIP [35] aligns a motion autoen-
+coder with the CLIP embedding space [29]. TMR [25] com-
+bines motion reconstruction with contrastive text–motion
+alignment to learn representations; MoLingo [11] uses frame-
+level language supervision to learn motion representations.
+2
+
+
+Hand-specific supervision can also guide text-driven gen-
+eration: TSHaMo [6] transfers guidance from a teacher with
+auxiliary hand inputs during training to a student that uses
+only text at inference. We instead supervise posterior context
+features with auxiliary hand prediction. A shared decoder
+also produces the prior features that condition our generator
+at inference.
+Controllable motion and interaction synthesis.
+Control
+beyond a sequence-level description can specify where or
+when motion occurs. Spatial constraints guide diffusion in
+GMD [15] and OmniControl [39], while FineMoGen [45]
+uses spatiotemporal descriptions. KinMo [47] structures
+language–motion alignment around global actions, kine-
+matic groups, and their interactions. Complementary work
+composes motion across time or body parts [1, 2, 26]. In-
+teraction synthesis models relationships between the two
+hands or between hands and objects. InterHandGen [16]
+and HandDiffuse [17] model two-hand interactions. Text-
+conditioned object interaction includes full-body synthesis
+in IMoS [9] as well as hand-focused generation. For the
+latter, DiffH2O [7] separates grasping from subsequent ma-
+nipulation, while Text2HOI [4] predicts contact from text
+and object geometry before generating motion. OakInk2’s
+Task-aware Motion Fulfillment (TaMF) baseline [42] pairs
+task descriptions with hand-specific interaction segments and
+generates hand motion from object trajectories and geometry.
+ContextHands instead completes hand motion from body
+motion and provided descriptions, without object geometry
+at inference or explicit contact modeling.
+3. Method
+3.1. Task definition
+Given body motion B over T frames and descriptions T ,
+we generate wrist and finger rotations while keeping the
+body motion, including wrist positions, fixed. Assignments
+A specify the hand and time interval for each description.
+These inputs are available during training and inference;
+target hand motion is available only during training.
+Following Prior-First [33], we separate the given body
+kinematics from the rotations to be generated. We model
+p(H | B, T , A), where H ∈RT ×2×16×6 contains one wrist
+and 15 finger-joint rotations per hand in continuous 6D
+form [50]. These are local rotations relative to each joint’s
+parent in SMPL-X [23]; wrist rotations are relative to the
+forearm. We mask wrist-rotation features and exclude finger
+rotations from the body inputs. Forward kinematics com-
+bines the generated rotations with the given body motion to
+obtain hand geometry.
+3.2. Method overview
+ContextHands combines context shared within each hand
+with body cues specific to its individual joints (Fig. 2). The
+Hand Context Encoder (HCE) learns framewise features
+Ut,h ∈R96 for hand h, guided by auxiliary hand prediction.
+The Joint-Query Kinematic Encoder (JQKE) reads body
+information separately for each wrist and finger joint to
+obtain C(B). A single Hand Diffusion Generator uses both
+conditions to complete the hand motion.
+Let c = c(B, T , A) denote the encoded text–body con-
+text. The generative process is
+z ∼pϕ(z | c),
+U = Dη(c, z),
+H ∼pθ(H | C(B), U).
+(1)
+Here, pϕ, Dη, and pθ are the conditional prior, feature de-
+coder, and diffusion generator. The two paths have separate
+body encoders and are trained jointly with the generator.
+3.3. Hand Context Encoder
+To follow descriptions assigned to different hands and inter-
+vals, the Hand Context Encoder maintains a feature for each
+hand and frame. A Transformer body encoder [38] produces
+framewise features for each hand, while a trainable attention
+layer aggregates token features from a frozen DistilBERT
+encoder [32]. The assignments A place each description
+feature at its corresponding hand and frames, with zero text
+features where descriptions are absent. Adding the body and
+text features gives context c (Fig. 2).
+Body motion and descriptions do not uniquely determine
+hand articulation. To represent variation compatible with
+these conditions, we adopt a conditional variational formula-
+tion [34]. Learned queries pool c across hands and time to
+predict means and variances for each hand, defining a Gaus-
+sian conditional prior pϕ(z | c) with diagonal covariance.
+One sample zh is shared across that hand’s frames. The
+feature decoder adds a projection of zh to c and applies at-
+tention across hands and time to produce U. The latent thus
+represents variation at the sequence level, while c supplies
+framewise body and text information.
+During training, an approximate posterior qψ(z | c, H)
+is additionally conditioned on the target hand motion H to
+guide latent learning. Prior and posterior samples, zp and zq,
+pass separately through the same feature decoder:
+U p = Dη(c, zp),
+U q = Dη(c, zq).
+(2)
+The features U p and U q condition separate passes through
+the same generator with the same noisy hand input, diffu-
+sion step, and C(B). The generator thus learns from both
+posterior features conditioned on the target hand motion and
+the prior features available at inference.
+3
+
+
+Figure 2. Overview of ContextHands. From body motion and assigned text descriptions, the Hand Context Encoder produces contextual
+features U shared within each hand. The Joint-Query Kinematic Encoder provides joint-specific body conditions C(B). The Hand Diffusion
+Generator combines both conditions to generate wrist and finger rotations. Prior and posterior features are processed in separate passes
+during training; inference uses the prior.
+Auxiliary hand prediction gives the context features a
+direct hand-motion learning target. We fit a separate princi-
+pal component analysis (PCA) basis to each hand’s training
+rotations and keep it fixed. A shared linear head predicts
+16 standardized coefficients per hand and frame from U q,
+with mean squared error against the projected target rota-
+tions. This supervision trains the shared feature decoder
+through U q; the same decoder produces U p for inference.
+Generation losses train both the prior and posterior paths,
+while KL regularization couples their latent distributions.
+The generator uses the features directly, not the predicted
+PCA coefficients, and uses only U p at inference.
+3.4. Joint-Query Kinematic Encoder
+To provide body cues for individual wrist and finger joints,
+JQKE retains joint features alongside anatomical-part and
+temporal-scale summaries. Each target joint can thereby
+access both individual body joints and broader body structure
+and motion.
+Spatial attention exchanges information among body
+joints within each frame, with learned biases for anatom-
+ical relationships. To capture motion over different time
+ranges, three temporal branches use short-range convolution,
+dilated convolutions, and sequence-wide attention. Each
+retains a feature for every joint and frame. Their gated com-
+bination is projected and added to the spatial features to form
+Ft.
+Alongside these joint features, learned pooling of Ft
+within anatomical groups gives part summaries Pt. Scale
+summaries St are obtained by averaging the output of each
+temporal branch over body joints at each frame and project-
+ing the result. For each t ∈{1, . . . , T}, the bank is
+Et = [ eFt; ePt; eSt] ∈R30×256,
+(3)
+containing 22 joint features, five part summaries, and three
+scale summaries. Every token retains its frame index: the
+scale summaries pool body joints within a frame, after tem-
+poral processing. Tildes denote the addition of learned type
+embeddings.
+Each hand-joint query combines its joint and side identity
+with same-side wrist and arm features and a whole-body
+summary. These initial queries Q(0)
+t
+read the full bank, in-
+4
+
+
+cluding the opposite side, through residual cross-attention:
+Ct = fCA(Q(0)
+t , Et) ∈R32×256.
+(4)
+Row j of Ct conditions target joint j. Collecting these
+conditions over all T frames gives C(B) ∈RT ×32×256. The
+queries and bank depend only on B, so C(B) is computed
+once before diffusion sampling.
+3.5. Hand Diffusion Generator
+The generator combines the two conditions while retaining
+a token for each wrist and finger joint. Hand rotations are
+standardized with training-set statistics and corrupted by
+noise, then projected into tokens with joint, side, and frame
+embeddings. Before the first block, a projection of Ut,h is
+added to all 16 joint tokens of hand h at frame t, providing
+them with the same hand context.
+Each denoiser block incorporates Ct,j and the diffusion-
+step embedding through a residual MLP, then applies tempo-
+ral and within-hand self-attention followed by a feed-forward
+update. Joint-specific heads predict the clean rotations ˆH0.
+Supervision includes geometric losses computed through
+forward kinematics, as in MDM [36].
+We use a 100-step cosine noise schedule [22]. At infer-
+ence, DDPM [13] starts from Gaussian noise independent
+of the HCE latent and generates rotations over 100 reverse
+steps, with U and C(B) fixed throughout.
+3.6. Training
+Following the hybrid training formulation of Sohn et al. [34],
+we supervise both prior- and posterior-conditioned predic-
+tions with the following objective:
+L = αLp
+hand + (1 −α)Lq
+hand
++ λrecLcoef + βDKL(qψ∥pϕ).
+(5)
+Superscripts p and q denote prior- and posterior-conditioned
+predictions. Both hand losses compare local rotations us-
+ing 6D reconstruction and geodesic errors, and supervise
+positions obtained through forward kinematics, rotational
+increments, and temporal changes in those increments. The
+auxiliary loss supervises posterior-pass PCA coefficients.
+The KL term, averaged over latent coordinates, regularizes
+the posterior toward the conditional prior. The weights λrec
+and β control auxiliary supervision and KL regularization.
+Only the prior is available at inference, so we use a prior-
+conditioned reference loss to adapt the balance α between
+the two hand losses. This loss uses sampled diffusion steps
+on training recordings excluded from the current batch. We
+follow the virtual-update approach of Ren et al. [31], adapt-
+ing a global loss weight rather than per-example weights. To
+estimate a finite-difference gradient for α, we take one vir-
+tual update at each of two perturbed weights, both from the
+same saved state. We restore the model and optimizer states
+before applying the updated weight to the actual training
+step.
+4. Experimental Setup
+Dataset.
+We use OakInk2 [42], which pairs body–hand
+motion with descriptions assigned to specific hands and time
+intervals. We split the official training partition into 308
+training recordings (3,842 clips) and 70 validation record-
+ings (728 clips), and use the official test partition of 157
+recordings (1,709 clips). Recordings are disjoint across
+splits. We process the motion at 30 FPS and divide each
+recording into clips of at most 150 frames. All methods
+receive the complete body sequence and available text anno-
+tations. We retain frames and clips without text annotations;
+descriptions cover 51.69% of valid test hand–frame pairs.
+Baselines.
+We compare with MDM [36], MLD [5], T2M-
+GPT [43], BOTH2Hands [48], and the diffusion variant of
+HandX [49]. We adapt their released implementations to
+generate wrist and finger rotations from the same body mo-
+tion, descriptions, and explicit hand–time assignments. Our
+adaptations address the task’s inputs, outputs, and validity
+masks, retaining each method’s core architecture, pretrained
+text encoder, and original training and sampling procedures
+wherever compatible. HandX uses T5-base [30], while the
+other baselines use CLIP [29]. All motion networks are
+trained from scratch on the same OakInk2 training split.
+Adapted methods are marked with *.
+Prior-First [33] is not included in our OakInk2 compar-
+ison because its training code was unavailable when we
+conducted the experiments.
+Implementation details.
+All methods use a 24-hour train-
+ing budget on a single RTX 4090. We train ContextHands
+using AdamW [19] and retain method-specific training pro-
+cedures for the baselines. Following the validation-FID
+selection used by T2M-GPT [43], we select each final-stage
+generator checkpoint by the lowest validation FHD within
+this budget. All test metrics use the same selected checkpoint
+and fixed inference settings.
+Evaluation metrics.
+We generate sixteen sequences per
+test input (K = 16) from each selected checkpoint. We
+report minimum and average mean per-joint position error
+(MinMPJPE and AvgMPJPE) over 42 hand points, includ-
+ing the two given wrist positions, in millimeters. MinMPJPE
+uses the complete sequence with the lowest error for each
+clip (best of K), whereas AvgMPJPE averages errors over all
+K generations. Hand positions are obtained by combining
+generated rotations with the given body motion through for-
+ward kinematics, without rotation or scale alignment. Both
+5
+
+
+Table 1. Comparison with motion generation baselines on OakInk2. All methods generate hand motion from body motion, text, and
+explicit hand–time assignments, with K = 16 generations per input. We report approximate 95% confidence intervals across repeated
+generations at fixed checkpoints. MinMPJPE and MModality use all sixteen generations jointly and are point estimates. Color highlights
+distinguish the best (red) and second-best (blue) scores. Diversity (→) is ranked by proximity to the ground-truth value. * denotes baselines
+adapted to our task.
+Method
+MinMPJPE↓
+(mm)
+AvgMPJPE↓
+(mm)
+Wrist rotation
+error↓(◦)
+FHD↓
+Diversity→
+MModality↑
+Ground truth
+—
+—
+—
+0
+9.397
+—
+MDM*
+31.002
+33.094±0.025
+18.26±0.01
+0.532±0.008
+9.724±0.003
+0.683
+T2M-GPT*
+30.525
+35.450±0.049
+19.65±0.03
+0.872±0.007
+9.159±0.007
+1.607
+MLD*
+25.725
+34.051±0.057
+18.98±0.04
+1.226±0.131
+9.608±0.018
+2.403
+BOTH2Hands*
+29.913
+39.817±0.112
+22.52±0.06
+3.189±0.061
+8.939±0.017
+2.337
+HandX*
+29.239
+34.578±0.045
+19.11±0.03
+0.805±0.008
+9.315±0.007
+1.663
+ContextHands
+22.809
+30.711±0.092
+16.93±0.04
+0.276±0.042
+9.043±0.023
+2.498
+metrics weight recordings equally. Motivated by the wrist–
+forearm evaluation in Prior-First [33], we also report wrist
+rotation error as the mean SO(3) geodesic distance between
+predicted and reference orientations, in degrees [50].
+We measure distributional similarity with Fr´echet Hand
+Distance (FHD) [28], which compares generated and refer-
+ence feature distributions using the Fr´echet Inception Dis-
+tance (FID) formulation [12]. We extract features from a
+frozen hand-motion encoder adapted from a gesture autoen-
+coder [41], trained and selected using only recordings from
+the generator’s training split. In the same feature space, Di-
+versity measures pairwise distances across test-set motion
+windows, with GT diversity as a reference. Multimodality
+(MModality) measures variation among completions of the
+same input through pairwise feature distances [5, 43]. All
+three feature-based metrics use the same set of 64-frame
+windows.
+Table 1 reports means with approximate 95% confidence
+intervals across generation repeats at fixed checkpoints.
+MinMPJPE and Multimodality jointly use all sixteen genera-
+tions and are reported as point estimates. The supplementary
+material provides implementation and adaptation details,
+metric definitions, and confidence intervals from paired boot-
+strap resampling of recordings.
+5. Results
+5.1. Quantitative comparison
+ContextHands more closely reproduces the reference hand
+poses, both in the best-matching completion and on average
+across samples (Table 1). For the same body motion and
+text, it produces more varied hand motions than MDM and
+variation similar to that of MLD. It also achieves the lowest
+wrist rotation error and FHD among the evaluated methods.
+The supplementary material also examines an alternative
+Table 2. Ablation study of ContextHands. All variants use the
+same denoising backbone. Hand generation remains stochastic
+even with Deterministic HCE. Best values are bold.
+Variant
+MinMPJPE↓
+(mm)
+AvgMPJPE↓
+(mm)
+FHD↓
+ContextHands (full)
+22.809
+30.711
+0.276
+Learning hand context
+w/o HCE (direct text)
+26.360
+39.176
+1.508
+w/o auxiliary hand loss
+25.930
+38.545
+1.295
+w/o body input to HCE
+23.140
+32.781
+0.475
+Deterministic HCE
+25.577
+37.092
+1.127
+Providing body conditions
+Within-hand shared
+body conditioning
+22.785
+30.818
+0.367
+w/o summary-token access
+in JQKE
+23.266
+32.663
+0.554
+adaptation that includes hand and time assignments in the
+captions, allowing the baselines to receive this information
+through their existing text inputs.
+With the sampling settings used for Table 1, Contex-
+tHands generates a 150-frame sequence in 2.83 seconds
+on an RTX 4090, excluding frozen text encoding. It is faster
+than MDM, BOTH2Hands, and HandX, while MLD and
+T2M-GPT are faster.
+5.2. Ablation studies
+Hand Context Encoder.
+Learning context through hand
+prediction helps the generator use the text and body inputs
+(Table 2). With JQKE retained in both variants, HCE pro-
+duces more accurate hand motion than direct cross-attention
+6
+
+
+GT-like
+Too open
+GT-like
+Not open
+Wrong finger
+Wrong finger
+Loose
+grasp
+Too open
+With object (L)
+With object (R)
+With object (R)
+With object (R)
+Not maintained
+Ambiguous
+Loose
+grasp
+Loose
+grasp
+Ambiguous
+Figure 3. Qualitative comparison on OakInk2: (a) grasping a box lid, (b) cutting an apple, (c) placing a plate on a scale, and (d) stirring
+with a rod. Each example uses the same test clip, generation seed, and frame indices across methods. The three hand poses are ordered in
+time from top to bottom; L/R denote the left and right hands. To facilitate comparison of finger articulation, hands are aligned to the GT
+wrist position and orientation, with shared cameras and scale. Translucent GT overlays show differences in finger poses. Boxes and labels
+highlight selected details; the annotations are not exhaustive. Object views illustrate grasp shapes using the same alignment and rendering
+procedure for GT and all methods.
+to text features. Removing the auxiliary hand loss weakens
+this advantage.
+The benefit also depends on providing body motion to
+HCE: removing it reduces performance even though JQKE
+still supplies body conditions. Body motion is thus useful
+both for learning hand context and for providing kinematic
+cues to the generator.
+The variational training formulation further improves
+hand-motion accuracy over its deterministic counterpart, al-
+though both variants retain diffusion sampling. Compared
+with equal weighting, adaptive loss weighting better matches
+the reference motion distribution and produces a closer
+match to the reference among sixteen samples, although the
+average position error is higher (see supplementary material).
+7
+
+
+Table 3. Comparison of joint and staged training. Both staged
+variants start from the same body-only checkpoint with equal addi-
+tional training budgets. They update either the text input module
+alone or the motion model as well. Best values are bold.
+Training strategy
+MinMPJPE↓
+(mm)
+AvgMPJPE↓
+(mm)
+FHD↓
+Joint (ContextHands)
+22.809
+30.711
+0.276
+Body-only, then
+text module only
+25.331
+37.340
+0.991
+Body-only, then
+full fine-tuning
+24.697
+35.859
+0.697
+Joint-Query Kinematic Encoder.
+The part and temporal-
+scale summaries complement the joint features in JQKE
+(Table 2). Preventing the hand-joint queries from attending
+to these summaries reduces position accuracy and increases
+FHD. We also test whether the body conditions need to
+remain joint-specific by averaging them within each hand
+before conditioning the generator. This leaves position ac-
+curacy nearly unchanged but increases FHD, supporting
+separate body conditions for the wrist and finger joints.
+Training strategy.
+We compare joint training with two
+staged strategies that introduce text after body-only pretrain-
+ing (Table 3). Both start from the same body-only check-
+point: one trains only the text input module, while the other
+also fine-tunes the motion model. Full fine-tuning improves
+upon text-module-only adaptation. For our architecture and
+evaluated training schedules, however, joint training pro-
+duces more accurate hand motion with lower FHD than
+either staged strategy.
+Text conditioning at inference.
+The descriptions help
+guide hand articulation beyond what the body sequence
+alone provides. With the trained model and body motion
+fixed, both removing and shuffling descriptions reduce agree-
+ment with the reference hand motion (see supplementary
+material). Shuffling preserves the hand–time assignments,
+so the benefit depends on the description content, rather than
+only on which hands and intervals are annotated.
+5.3. Qualitative comparison
+We compare ContextHands with existing methods in Fig. 3.
+Our method generates hand poses that closely resemble the
+reference and better captures the articulation of individual
+fingers. For example, it reproduces the extended index finger
+with the neighboring fingers bent in both lid grasping (a) and
+cutting (b). MLD also captures the index extension in (a),
+but does not maintain it across the displayed frames, while
+MDM extends a different finger from the reference in (c).
+In the object views, ContextHands more closely matches
+the reference finger configuration around the knife handle
+in (b) and the rod in (d). The more open configurations
+of MLD in (b) and BOTH2Hands in (d) leave larger visible
+gaps around the displayed objects. These wrist-aligned views
+compare finger configuration; wrist-orientation accuracy is
+evaluated separately in Table 1.
+6. Discussion and Limitations
+Body motion helps form the context of a hand action and
+guides individual joint rotations. The HCE body-input abla-
+tion supports this role: removing its body input makes the
+generated hands less accurate even when JQKE still pro-
+vides body conditions to the generator. Under the evaluated
+schedules, jointly training both encoders and the generator
+from the start also outperforms introducing text after body-
+only pretraining. These findings support learning context for
+the completion task, while leaving open which body cues
+account for the gains across different hand actions.
+ContextHands requires a complete body sequence and
+supplied hand–time assignments; its use of future frames
+limits it to offline completion. Our evaluation focuses on
+detailed hand motion during bimanual object manipulation
+in OakInk2, using the dataset’s annotated descriptions. Eval-
+uating other activities and freely written descriptions would
+help assess its broader applicability, while user studies could
+complement the quantitative results by assessing motion
+naturalness and agreement with the input descriptions.
+ContextHands does not explicitly model object geometry
+or hand–object contact. Incorporating visual observations
+and contact constraints is a promising direction for extending
+ContextHands to object-aware hand motion generation.
+7. Conclusion
+We introduced ContextHands, a jointly trained model for
+completing hand motion from body motion and descrip-
+tions assigned to hands and time intervals. The model com-
+bines hand context learned from body motion and text with
+joint-specific kinematic conditions in a single diffusion gen-
+erator. Experiments on OakInk2, which captures detailed
+hand motion during bimanual object manipulation, show
+more accurate hand motion than the evaluated methods. The
+FHD results further suggest that the generated motions better
+match the distribution of real hand motion, while qualitative
+comparisons illustrate finer finger articulation.
+8
+
+
+Version Note
+This preprint contains the main paper. Supplementary mate-
+rial referenced in the text is not included in this version.
+Figure credits. The reference motions and object poses in
+our figures are adapted from OakInk2 [42]. The OakInk2-
+derived material in these figures is shared under CC BY-
+SA 4.0. We rendered the body and hands using SMPL-X
+Body [23] (CC BY 4.0), courtesy of the Max Planck Institute
+for Intelligent Systems. We adjusted materials, lighting,
+camera views, alignment, and layout.
+LLM Usage Statement
+We used ChatGPT and OpenAI Codex to assist with
+code development and debugging, manuscript revision
+for clarity and readability, and the preparation of draft
+visualizations. These tools also assisted with automating
+and monitoring pre-specified experiments.
+The authors
+developed the core research ideas and methodology,
+designed the experiments, and interpreted the results.
+All AI-assisted text, code, and figures were manually
+reviewed and revised as needed by the authors, who take
+full responsibility for the accuracy and integrity of this work.
+References
+[1] Nikos Athanasiou, Mathis Petrovich, Michael J. Black, and
+G¨ul Varol. TEACH: Temporal action composition for 3D
+humans. In International Conference on 3D Vision, pages
+414–423, 2022. 3
+[2] Nikos Athanasiou, Mathis Petrovich, Michael J. Black, and
+G¨ul Varol. SINC: Spatial composition of 3D human motions
+for simultaneous action generation. In Proceedings of the
+IEEE/CVF International Conference on Computer Vision,
+pages 9984–9995, 2023. 3
+[3] L´eore Bensabath, Mathis Petrovich, and G¨ul Varol. Text-
+driven 3D hand motion generation from sign language data.
+In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, pages 23095–23105, 2026. 2
+[4] Junuk Cha, Jihyeon Kim, Jae Shin Yoon, and Seungryul Baek.
+Text2HOI: Text-guided 3D motion generation for hand-object
+interaction. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition, pages 1577–1585,
+2024. 3
+[5] Xin Chen, Biao Jiang, Wen Liu, Zilong Huang, Bin Fu, Tao
+Chen, and Gang Yu. Executing your commands via motion
+diffusion in latent space. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition,
+pages 18000–18010, 2023. 2, 5, 6
+[6] Ching-Lam Cheng, Bin Zhu, and Shengfeng He. Teacher-
+student diffusion model for text-driven 3D hand motion gener-
+ation. In IEEE International Conference on Acoustics, Speech
+and Signal Processing, pages 11972–11976, 2026. 3
+[7] Sammy Christen, Shreyas Hampali, Fadime Sener, Edoardo
+Remelli, Tomas Hodan, Eric Sauser, Shugao Ma, and Bugra
+Tekin. DiffH2O: Diffusion-based synthesis of hand-object
+interactions from textual descriptions. In SIGGRAPH Asia
+2024 Conference Papers, pages 1–11, 2024. 3
+[8] Ginger Delmas, Philippe Weinzaepfel, Thomas Lucas,
+Francesc Moreno-Noguer, and Gr´egory Rogez. PoseScript:
+3D human poses from natural language. In European Confer-
+ence on Computer Vision, pages 346–362, 2022. 2
+[9] Anindita Ghosh, Rishabh Dabral, Vladislav Golyanik, Chris-
+tian Theobalt, and Philipp Slusallek. IMoS: Intent-driven
+full-body motion synthesis for human-object interactions.
+Computer Graphics Forum, 42(2):1–12, 2023. 3
+[10] Chuan Guo, Yuxuan Mu, Muhammad Gohar Javed, Sen Wang,
+and Li Cheng. MoMask: Generative masked modeling of 3D
+human motions. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition, pages 1900–
+1910, 2024. 2
+[11] Yannan He, Garvita Tiwari, Xiaohan Zhang, Pankaj Bora,
+Tolga Birdal, Jan Eric Lenssen, and Gerard Pons-Moll.
+MoLingo: Motion–language alignment for text-to-human
+motion generation. In Proceedings of the IEEE/CVF Con-
+ference on Computer Vision and Pattern Recognition, pages
+38387–38398, 2026. 2
+[12] Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bern-
+hard Nessler, and Sepp Hochreiter. GANs trained by a two
+time-scale update rule converge to a local Nash equilibrium.
+In Advances in Neural Information Processing Systems, 2017.
+6
+[13] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffu-
+sion probabilistic models. In Advances in Neural Information
+Processing Systems, pages 6840–6851, 2020. 5
+[14] Biao Jiang, Xin Chen, Wen Liu, Jingyi Yu, Gang Yu, and Tao
+Chen. MotionGPT: Human motion as a foreign language. In
+Advances in Neural Information Processing Systems, pages
+20067–20079, 2023. 2
+[15] Korrawe Karunratanakul, Konpat Preechakul, Supasorn Suwa-
+janakorn, and Siyu Tang. Guided motion diffusion for con-
+trollable human motion synthesis. In Proceedings of the
+IEEE/CVF International Conference on Computer Vision,
+pages 2151–2162, 2023. 3
+[16] Jihyun Lee, Shunsuke Saito, Giljoo Nam, Minhyuk Sung,
+and Tae-Kyun Kim. InterHandGen: Two-hand interaction
+generation via cascaded reverse diffusion. In Proceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, pages 527–537, 2024. 3
+[17] Pei Lin. HandDiffuse: Generative controllers for two-hand
+interactions via diffusion models. Proceedings of the AAAI
+Conference on Artificial Intelligence, 39(5):5280–5288, 2025.
+3
+[18] Haiyang Liu, Zihao Zhu, Giorgio Becherini, Yichen Peng,
+Mingyang Su, You Zhou, Xuefei Zhe, Naoya Iwamoto, Bo
+Zheng, and Michael J. Black. EMAGE: Towards unified
+holistic co-speech gesture generation via expressive masked
+audio gesture modeling. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition,
+pages 1144–1154, 2024. 2
+[19] Ilya Loshchilov and Frank Hutter. Decoupled weight de-
+cay regularization. In International Conference on Learning
+Representations, 2019. 5
+9
+
+
+[20] Shunlin Lu, Ling-Hao Chen, Ailing Zeng, Jing Lin, Ruimao
+Zhang, Lei Zhang, and Heung-Yeung Shum.
+Human-
+TOMATO: Text-aligned whole-body motion generation. In
+Proceedings of the 41st International Conference on Machine
+Learning, pages 32939–32977. PMLR, 2024. 2
+[21] Evonne Ng, Shiry Ginosar, Trevor Darrell, and Hanbyul Joo.
+Body2Hands: Learning to infer 3D hands from conversational
+gesture body dynamics. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition,
+pages 11865–11874, 2021. 2
+[22] Alexander Quinn Nichol and Prafulla Dhariwal. Improved
+denoising diffusion probabilistic models. In Proceedings
+of the 38th International Conference on Machine Learning,
+pages 8162–8171. PMLR, 2021. 5
+[23] Georgios Pavlakos, Vasileios Choutas, Nima Ghorbani, Timo
+Bolkart, Ahmed A. A. Osman, Dimitrios Tzionas, and
+Michael J. Black.
+Expressive body capture: 3D hands,
+face, and body from a single image.
+In Proceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, pages 10975–10985, 2019. 3, 9
+[24] Mathis Petrovich, Michael J. Black, and G¨ul Varol. TEMOS:
+Generating diverse human motions from textual descriptions.
+In European Conference on Computer Vision, pages 480–497,
+2022. 2
+[25] Mathis Petrovich, Michael J. Black, and G¨ul Varol. TMR:
+Text-to-motion retrieval using contrastive 3D human motion
+synthesis. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision, pages 9488–9497, 2023. 2
+[26] Mathis Petrovich, Or Litany, Umar Iqbal, Michael J. Black,
+G¨ul Varol, Xue Bin Peng, and Davis Rempe. Multi-track
+timeline control for text-driven 3D human motion generation.
+In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition Workshops, pages 1911–1921,
+2024. 3
+[27] Ekkasit Pinyoanuntapong, Pu Wang, Minwoo Lee, and Chen
+Chen. MMM: Generative masked motion model. In Proceed-
+ings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition, pages 1546–1555, 2024. 2
+[28] Xingqun Qi, Chen Liu, Muyi Sun, Lincheng Li, Changjie Fan,
+and Xin Yu. Diverse 3D hand gesture prediction from body
+dynamics by bilateral hand disentanglement. In Proceedings
+of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, pages 4616–4626, 2023. 2, 6
+[29] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya
+Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry,
+Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen
+Krueger, and Ilya Sutskever. Learning transferable visual
+models from natural language supervision. In Proceedings
+of the 38th International Conference on Machine Learning,
+pages 8748–8763. PMLR, 2021. 2, 5
+[30] Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee,
+Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and
+Peter J. Liu. Exploring the limits of transfer learning with a
+unified text-to-text transformer. Journal of Machine Learning
+Research, 21(140):1–67, 2020. 5
+[31] Mengye Ren, Wenyuan Zeng, Bin Yang, and Raquel Urtasun.
+Learning to reweight examples for robust deep learning. In
+Proceedings of the 35th International Conference on Machine
+Learning, pages 4334–4343. PMLR, 2018. 5
+[32] Victor Sanh, Lysandre Debut, Julien Chaumond, and Thomas
+Wolf. DistilBERT, a distilled version of BERT: smaller, faster,
+cheaper and lighter. arXiv preprint arXiv:1910.01108, 2019.
+3
+[33] Mingyi Shi, Xuelin Chen, and Taku Komura. Prior-first,
+condition-second: Scalable and controllable hand motion
+completion. Computer Graphics Forum, 45(8), 2026. 2, 3, 5,
+6
+[34] Kihyuk Sohn, Xinchen Yan, and Honglak Lee. Learning
+structured output representation using deep conditional gener-
+ative models. In Advances in Neural Information Processing
+Systems, 2015. 2, 3, 5
+[35] Guy Tevet, Brian Gordon, Amir Hertz, Amit H. Bermano,
+and Daniel Cohen-Or. MotionCLIP: Exposing human mo-
+tion generation to CLIP space. In European Conference on
+Computer Vision, pages 358–374, 2022. 2
+[36] Guy Tevet, Sigal Raab, Brian Gordon, Yonatan Shafir, Daniel
+Cohen-Or, and Amit H. Bermano. Human motion diffusion
+model. In International Conference on Learning Representa-
+tions, 2023. 2, 5
+[37] Balamurugan Thambiraja, Omid Taheri, Radek Danecek,
+Giorgio Becherini, Gerard Pons-Moll, and Justus Thies.
+CLUTCH: Contextualized language model for unlocking text-
+conditioned hand motion modelling in the wild. In Interna-
+tional Conference on Learning Representations, 2026. 2
+[38] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszko-
+reit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia
+Polosukhin. Attention is all you need. In Advances in Neural
+Information Processing Systems, 2017. 3
+[39] Yiming Xie, Varun Jampani, Lei Zhong, Deqing Sun, and
+Huaizu Jiang. OmniControl: Control any joint at any time
+for human motion generation. In International Conference
+on Learning Representations, 2024. 3
+[40] Hongwei Yi, Hualin Liang, Yifei Liu, Qiong Cao, Yandong
+Wen, Timo Bolkart, Dacheng Tao, and Michael J. Black.
+Generating holistic 3D human motion from speech. In Pro-
+ceedings of the IEEE/CVF Conference on Computer Vision
+and Pattern Recognition, pages 469–480, 2023. 2
+[41] Youngwoo Yoon, Bok Cha, Joo-Haeng Lee, Minsu Jang,
+Jaeyeon Lee, Jaehong Kim, and Geehyuk Lee. Speech ges-
+ture generation from the trimodal context of text, audio, and
+speaker identity. ACM Transactions on Graphics, 39(6):1–16,
+2020. Article 222. 6
+[42] Xinyu Zhan, Lixin Yang, Yifei Zhao, Kangrui Mao, Hanlin
+Xu, Zenan Lin, Kailin Li, and Cewu Lu. OAKINK2: A
+dataset of bimanual hands-object manipulation in complex
+task completion. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition, pages 445–456,
+2024. 2, 3, 5, 9
+[43] Jianrong Zhang, Yangsong Zhang, Xiaodong Cun, Yong
+Zhang, Hongwei Zhao, Hongtao Lu, Xi Shen, and Ying Shan.
+Generating human motion from textual descriptions with dis-
+crete representations. In Proceedings of the IEEE/CVF Con-
+ference on Computer Vision and Pattern Recognition, pages
+14730–14740, 2023. 2, 5, 6
+10
+
+
+[44] Mingyuan Zhang, Xinying Guo, Liang Pan, Zhongang Cai,
+Fangzhou Hong, Huirong Li, Lei Yang, and Ziwei Liu. Re-
+MoDiffuse: Retrieval-augmented motion diffusion model. In
+Proceedings of the IEEE/CVF International Conference on
+Computer Vision, pages 364–373, 2023. 2
+[45] Mingyuan Zhang, Huirong Li, Zhongang Cai, Jiawei Ren,
+Lei Yang, and Ziwei Liu. FineMoGen: Fine-grained spatio-
+temporal motion generation and editing.
+In Advances in
+Neural Information Processing Systems, pages 13981–13992,
+2023. 3
+[46] Mingyuan Zhang, Zhongang Cai, Liang Pan, Fangzhou Hong,
+Xinying Guo, Lei Yang, and Ziwei Liu. MotionDiffuse: Text-
+driven human motion generation with diffusion model. IEEE
+Transactions on Pattern Analysis and Machine Intelligence,
+46(6):4115–4128, 2024. 2
+[47] Pengfei Zhang, Pinxin Liu, Pablo Garrido, Hyeongwoo Kim,
+and Bindita Chaudhuri. KinMo: Kinematic-aware human
+motion understanding and generation. In Proceedings of the
+IEEE/CVF International Conference on Computer Vision,
+pages 11187–11197, 2025. 3
+[48] Wenqian Zhang, Molin Huang, Yuxuan Zhou, Juze Zhang,
+Jingyi Yu, Jingya Wang, and Lan Xu. BOTH2Hands: Infer-
+ring 3D hands from both text prompts and body dynamics.
+In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, pages 2393–2404, 2024. 2, 5
+[49] Zimu Zhang, Yucheng Zhang, Xiyan Xu, Ziyin Wang, Sirui
+Xu, Kai Zhou, Bing Zhou, Chuan Guo, Jian Wang, Yu-Xiong
+Wang, and Liang-Yan Gui. HandX: Scaling bimanual motion
+and interaction generation. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition,
+pages 2274–2284, 2026. 2, 5
+[50] Yi Zhou, Connelly Barnes, Jingwan Lu, Jimei Yang, and Hao
+Li. On the continuity of rotation representations in neural
+networks. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition, pages 5745–5753,
+2019. 3, 6
+11

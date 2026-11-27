@@ -1,0 +1,2695 @@
+AGLR: Attribute-Guided Latent Refinement for Fine-Grained Humanoid Motion
+Generation and Editing
+Shuai Yuan1
+Yuwei Gui1,2
+Mingshuang Luo2
+Zhuo Li2
+Siyuan Meng3
+Wenhao Cui3†
+RuiBing Hou2
+Bingpeng Ma1†
+1University of the Chinese Academy of Sciences
+2Institute of Computing Technology, Chinese Academy of Sciences
+3Noetix Robotics
+†Corresponding authors
+Project Page: https://syuan8889.github.io/AGLR-project
+Arm
+Up
+Arm
+Up + Out
+Leg
+Front
+Torso
+Front tilt
+Trajectory
+Path + yaw
+Arm + leg + torso
+Base
+Controlled
+Composition
+$$t = 1s$$
+$$t = 1s$$
+\(t\) (s)
+0.1
+0.4
+0.7
+0
+0.5
+1
+1.5
+2
+\(a_{\mathrm{out}}\) 
+Base
+Controlled
+≈ 9 ms / 500 Frame
+Arm up · Leg out · Torso forward
+Both arm up · Both Leg out · Torso forward
+Figure 1. Fine-grained, fast, composable, and temporally adaptive humanoid motion generation. Our method enables intuitive control
+over individual limbs along three spatial axes, torso orientation, and root trajectories. These controls can be freely combined and varied over
+time, enabling diverse, precise, and localized motion refinements within a single motion instance.
+Abstract
+Humanoid motion generation must accommodate evolving
+task requirements, where localized adjustments should sat-
+isfy new geometric constraints without disrupting desired
+motion details.
+However, language-based control lacks
+geometric precision, while joint-level constraints require
+explicit spatial targets. Local geometric constraints are
+also underdetermined, complicating target satisfaction and
+source preservation. We present AGLR (Attribute-Guided
+Latent Refinement), a unified framework for fine-grained
+humanoid motion generation and editing through source-
+anchored refinement. A compact geometric interface sup-
+ports composable, time-varying control of limb extents,
+torso orientation, and root trajectories. Given a gener-
+ated or encoded base latent, an Attribute Residual Adapter
+predicts a single-pass correction, with dual-level supervi-
+sion enforcing target matching and selective preservation
+across attributes and motion coordinates. On HumanML3D-
+G1, AGLR achieves the highest controllable-generation and
+preservation-constrained editing success rates among eval-
+uated methods. Editing take only 9.1 ms for a cached 500-
+frame motion, without additional sampling or test-time opti-
+mization. Zero-shot evaluation on BONES-SEED-G1 further
+demonstrates transfer without fine-tuning.
+1
+arXiv:2611.34519v1  [cs.RO]  25 Nov 2026
+
+
+1. Introduction
+Humanoid robots operating in dynamic environments must
+adapt their motions to changing task requirements. Recent
+methods generate diverse whole-body motions from natural
+language instructions [6, 16, 19, 40, 47, 48], providing ref-
+erences for motion tracking policies. Many tasks, however,
+require only localized modifications to an existing reference.
+For example, a humanoid may need to raise one arm while
+walking or adjust its torso orientation while maintaining its
+natural gait. Such tasks call for fine-grained motion editing
+that modifies selected geometric properties while preserving
+the rest of the reference motion.
+The first challenge lies in specifying geometric edits
+with both precision and compositionality. While semantic
+control can describe high-level actions for individual body
+parts [34, 52], it offers limited direct control over the mag-
+nitude and timing of a geometric change, such as precisely
+how far an arm should extend forward at each phase of a
+step. Conversely, kinematic control specifies spatial targets
+through joint positions [17, 35, 49], full-body poses [7, 41],
+or task-space trajectories [23, 38, 45]. Depending on the edit,
+these inputs often demand burdensome kinematic details be-
+yond what the task naturally specifies. This gap motivates a
+part-level geometric interface that supports numerical, time-
+varying targets and enables seamless composition of edits
+across different body parts.
+The second challenge is to satisfy these targets efficiently
+while faithfully preserving the details of the source motion.
+Multiple whole-body trajectories can satisfy the same set
+of geometric targets; for instance, prescribing the forward
+extent of one arm during walking leaves the gait and the
+movement of the opposite arm underdetermined. Existing
+source-conditioned editors [2, 11, 29] leverage a reference
+trajectory to guide the transformation, where unselected at-
+tributes and motion coordinates are preserved. However,
+diffusion-based editors [2, 22, 42] often require iterative
+sampling, whereas optimization-based methods [24, 30] rely
+on repeated gradient updates, significantly increasing in-
+ference latency. These limitations highlight the need for
+a framework that directly predicts motion corrections in a
+single forward pass, while providing robust supervision for
+both target satisfaction and source preservation.
+In this work, we introduce Attribute-Guided Latent
+Refinement (AGLR), a framework for fine-grained geo-
+metric adaptation of generated or existing humanoid robot
+reference motions. AGLR specifies edits through the Whole-
+body Geometric Attribute Representation (WGAR), a 21-
+dimensional per-frame descriptor capturing directional limb
+extents, torso orientation, and root motion. A channel-wise
+mask dictates which attributes to edit, allowing time-varying
+targets to be combined across body parts. To preserve source
+motion details left underdetermined by the selected targets,
+AGLR refines the source trajectory within a robot-native
+latent space learned from dynamics-grounded motions. An
+Attribute Residual Adapter (ARA) predicts an additive
+correction to the source latent in a single forward pass. The
+training objective encourages the edited motion to satisfy the
+selected targets while preserving unselected attributes and
+motion coordinates. Finally, a downstream motion tracking
+policy can use the refined trajectory as a reference to execute
+the motion on a physical humanoid robot.
+We evaluate AGLR on HumanML3D-G1 for controllable
+generation and preservation-constrained editing. AGLR
+achieves state-of-the-art success rates among compared
+methods, reaching 80.34% for controllable generation and
+76.81% and 77.28% for editing under attribute and joint
+preservation constraints, respectively. Furthermore, latent
+refinement and decoding take merely 9.1 ms for a 500-frame
+motion. Zero-shot evaluations on BONES-SEED-G1 demon-
+strate robust cross-dataset transfer without fine-tuning. Fi-
+nally, real-world experiments on a Unitree G1 humanoid val-
+idate that AGLR can selectively and reliably modify whole-
+body motions during physical execution.
+2. Related Work
+Human and Humanoid Motion Generation. Existing
+human text-to-motion generation typically relies on vari-
+ational models [32], diffusion processes in motion or la-
+tent spaces [5, 25, 44, 53], and discrete motion tokens [10,
+20, 51]. Extending this paradigm to humanoid robots re-
+quires representing motions in the robot’s configuration
+space. HARMON [21] transfers generated human motions
+via kinematic retargeting, whereas these works [19, 40, 48]
+directly generate robot-space motion references. Humanoid-
+X [31] and SCHUR [47] use video-derived motions to ex-
+pand training data, while OMG [16] broadens the condition-
+ing interface with multimodal inputs. Building upon robot-
+space motion generation, AGLR employs a text-conditioned
+latent flow model to generate a base motion for subsequent
+geometric refinement.
+Fine-Grained Motion Control. Prior work enables body-
+part control through part-aware representations [15], simul-
+taneous part-level actions [1, 26], spatial and temporal com-
+position [34, 52], and part-specific instructions [4]. Lan-
+guage describes the intended actions, while spatial control
+interfaces provide numerical targets for trajectories [23, 45],
+poses or motion regions [7, 41], and selected joint posi-
+tions [17, 35, 49]. Some works [38, 54] combine language
+with pose and path constraints. These interfaces offer precise
+control over specified locations, but controlling a limb’s over-
+all directional extent still requires translating that goal into
+point-level targets. Our geometric interface instead exposes
+directional limb extents, torso orientation, and root motion
+as compact, directly controllable attributes. Attributes can
+be selected, combined across body parts, and varied over
+time without specifying complete joint trajectories.
+2
+
+
+Motion Editing. Motion editing adapts a source motion
+to new spatial or semantic constraints while preserving its
+characteristics.
+MotionFix [2] and SimMotionEdit [29]
+learn instruction-guided edits, MotionLab [11] unifies mo-
+tion generation and editing, and SALAD [13] uses attention
+for fine-grained semantic control. TRACE [22] preserves
+source coordinates through reference projection, while Uni-
+MoFlow [14] refines source latents using conditioned ve-
+locity differences. Other methods [24, 30, 45] iteratively
+optimize motion latents or diffusion noise via repeated gradi-
+ent updates, which add inference cost. MotionCLIP [43] and
+MoDi [36] support direct latent editing, but their semantic
+controls offer limited support for precise geometric targets.
+3. Method
+Problem Formulation. We investigate fine-grained geomet-
+ric adaptation of humanoid whole-body motions. Given a
+base motion Xb, target attribute sequence A ∈RT ×K, and
+a binary channel mask M ∈{0, 1}K, our goal is to gen-
+erate an adapted motion ˆX that satisfies the selected target
+attributes while preserving unselected attributes and other
+motion details. Here, T counts valid frames and K denotes
+the number of attribute channels. Formally, the adaptation
+process is expressed as ˆX = H(Xb, A, M), where H de-
+notes the geometric adaptation function.
+Overview. To achieve this task, we propose AGLR, a uni-
+fied framework for fine-grained geometric adaptation of hu-
+manoid whole-body motions. As illustrated in Fig. 2, AGLR
+operates across three stages.
+Stage 1: Robot-native Motion Prior Learning. We first
+train a robot-native variational autoencoder (VAE) on physi-
+cally plausible motions to learn a compact latent represen-
+tation tailored to the robot’s kinematic structure. Building
+upon this representation, we further learn a latent flow prior
+to capture the underlying distribution of robot motions.
+Stage 2: Efficient Base Motion Generation. To reduce
+the cost of base motion generation, we distill the pretrained
+latent flow model into a few-step generator, enabling efficient
+sampling while retaining the learned motion prior.
+Stage 3: Attribute-guided Latent Refinement. To facil-
+itate fine-grained geometric adaptation, we introduce two
+components: Whole-body Geometric Attribute Representa-
+tion (WGAR) and Attribute Residual Adapter (ARA). Specifi-
+cally, WGAR provides an interpretable and compositional
+interface for specifying geometric targets across different
+body parts, while ARA performs attribute-conditioned re-
+finement in the robot-native latent space. By introducing
+target-specific geometric adjustments in the latent space,
+ARA aims to satisfy the specified attributes while preserving
+non-target motion details.
+During inference, AGLR first obtains an initial motion
+latent either from the distilled generator or by encoding an
+existing motion with the pretrained VAE encoder. Given
+(A, M), ARA then refines the initial latent to produce an
+attribute-consistent representation, which is subsequently
+decoded by the VAE to obtain the adapted motion ˆX.
+3.1. Whole-body Geometric Attributes
+Robot Motion Representation. We represent humanoid
+robot motions using trajectories generated by a privileged
+tracking policy in simulation [28]. Similar to ECHO [19], we
+adopt RPR39 as per-frame motion representation, denoted as
+xt ∈R39. It consists of 29 joint angles, two heading-local
+horizontal root displacement increments, one root height,
+one yaw increment, and a 6D heading-local root rotation
+representation. Given this representation, we reconstruct the
+root trajectory from the displacement and yaw increments,
+and subsequently apply forward kinematics to recover the
+3D positions pt,j ∈R3 and orientations Rt,j ∈SO(3) of
+each body element j at frame t.
+Limb Attributes. We describe each arm and leg using three
+directional attributes: Front, Out, and Up, defined in the torso
+or pelvis coordinate frame. For limb k, let pt,ak, pt,mk, and
+pt,ek denote the positions of its anchor, middle joint, and
+endpoint. We use the average position of the middle joint
+and endpoint to characterize the overall limb configuration:
+at,k = 1
+ℓk
+SkQ⊤
+t,k
+pt,mk + pt,ek
+2
+−pt,ak
+
+(1)
+Here, Qt,k denotes the neutral-aligned torso orientation for
+arms or pelvis orientation for legs, and ℓk is the limb-length
+normalization factor. The local axes correspond to forward,
+outward, and upward directions. To unify lateral semantics
+across both sides, we set Sk = diag(1, 1, 1) for left limbs
+and diag(1, −1, 1) for right limbs, ensuring that positive
+lateral values consistently indicate outward extension.
+Torso Attributes. We represent pelvis-relative torso orienta-
+tion using three attributes: Forward Tilt, Rightward Tilt, and
+Heading. Given the global pelvis and torso orientations, we
+compute the relative rotation as Rt,rel = R⊤
+t,pelvisRt,torso,
+with up and forward axes ut = Rt,relez and vt = Rt,relex.
+Here, ez and ex are unit coordinate vectors. Using α(y, x) =
+atan2(y, x), the torso attributes are defined as:
+at,torso = [α(ut,x, ut,z), α(−ut,y, ut,z), α(vt,y, vt,x)]⊤
+(2)
+The three components represent forward tilt, rightward tilt,
+and heading relative to the pelvis, respectively, making them
+invariant to global heading changes.
+Root Attributes. We represent root motion relative to its
+initial heading. Let pt and Rt denote the global root position
+and orientation, and p0 and H0 the initial position and yaw
+rotation. The initial-heading coordinates are given by ˜pt =
+H⊤
+0 (pt −p0) and ˜Rt = H⊤
+0 Rt. We therefore define
+at,root = [˜pt,x, ˜pt,y, pt,z, rpy( ˜Rt)⊤]⊤
+(3)
+where rpy(·) returns the roll, pitch, and yaw angles. This cap-
+tures horizontal displacement and orientation in the initial-
+3
+
+
+Latent Flow
+Model
+🔥
+Enc.❄️
+GT Motion
+\(\mathbf{X}_\mathrm{GT}\)
+Text \(c\)
+\(\mathcal L_{\mathrm{FM}}=\mathbb E\|v_\theta-(\epsilon-z_0)\|^2\)
+Conv. 1D
+Self Attention
+FeedForward
+Self Attention
+FeedForward
+Conv. 1D
+Encoder \(E\)
+Decoder \(D\)
+Latent
+\(z\)
+Stage 3: Attribute-guided Latent Refinement
+Physical Plausible
+✅
+Rollout motion
+Stage 1: Robot-native Motion Prior Learning
+VAE
+Few-step
+Student \(G_{\phi}\)
+Noise \(\epsilon\)
+text \( c \)
+🔥
+Stage 2:  Efficient Base Motion Generation
+Retargeted Reference motion
+Penetration Floating
+Imbalance
+❌
+Privileged
+Tracking Policy
+\(T \rightarrow \frac{T}{4} \)
+Downsampling
+Upsampling
+\(\frac{T}{4} \rightarrow T \)
+Latent Flow
+Model
+❄️
+"A person is
+walking forward."
+Few-step
+Student \(G_{\phi}\)
+Latent \(z_b\)
+$$\mathcal{R}_{\psi}$$
+Dec.
+$$\Delta z $$
+$$ \hat z $$
+🔥
+❄️
+❄️
+Query
+Controlled Motion \(\hat {\mathbf{X}}\)
+\(z_b\)
+Attribute \(A \) Mask \(M\)
+Source Motion
+\(\mathbf{X}_b\)
+Enc.
+❄️
+Downstream
+Motion Tracking
+Shared Attribute-guided
+Refinement
+Controllable Generation
+Motion Editing
+\(\mathbf{a}_{\mathrm{LA}}\)
+\(\mathbf{a}_{\mathrm{RL}}\)
+Pelvis Frame
+\(\mathbf{a}_{\mathrm{LL}}
+\(y\)
+\(z\)
+\(\odot\,x\)
+\(y\)
+\(z\)
+\(\odot\,x\)
+\(\mathbf{a}_{\mathrm{RA}}\
+Torso Frame
+\(\mathbf{a}_{\mathrm{TR}}\)
+\(\mathbf{a}_{\text{root}}\)
+Cross Attention
+Self Attention
+FeedForward
+\(\Delta z\)
+Enc.
+\(\times N \) 
+Attribute \(A\)
+Mask \(M\)
+Projection
+Ground Truth
+Identity
+Edit
+Figure 2. AGLR framework overview. AGLR learns a robot-native motion prior from policy rollouts and distills it into a few-step generator.
+The Attribute Residual Adapter (Rψ) refines generated or source motion latents in a single pass to meet selected geometric targets while
+preserving unedited motion details.
+heading frame while preserving absolute root height.
+To obtain a unified representation, we concatenate the
+limb, torso, and root attributes at each frame:
+at
+=
+
+a⊤
+t,1, . . . , a⊤
+t,Kl, a⊤
+t,torso, a⊤
+t,root
+⊤, where Kl denotes the
+number of limb attribute groups. Stacking the per-frame
+vectors yields the attribute sequence A = [a1, . . . , aT ]⊤∈
+RT ×K, K denotes the total number of attribute channels.
+3.2. Attribute Residual Adapter
+Latent Residual Refinement. The required geometric ad-
+justments depend on the underlying whole-body configu-
+ration. To account for this dependency, we introduce the
+Attribute Residual Adapter (ARA) to perform attribute-
+conditioned latent refinement in the shared robot-native la-
+tent space. Let zb denote the base latent, either produced by
+the generator or obtained by encoding a source motion. ARA
+takes zb, the target attributes A, and the selection mask M
+as inputs to predict a latent residual:
+ˆX = D (zb + Rψ(zb, A, M)) ,
+Rψ(zb, A, M) = Wout (T (P(zb), Φ(M ⊙A, M))) .
+(4)
+Here, Rψ represents the ARA parameterized by ψ.
+P
+projects the base latent into motion tokens, while Φ encodes
+the masked target attributes and selection mask into condi-
+tioning tokens. The Transformer T employs self-attention
+to capture motion context and cross-attention to incorporate
+attribute conditions. Finally, Wout maps the output features
+to the latent residual, which is added to the base latent and
+decoded by the pretrained VAE decoder D. Rather than re-
+generating the entire motion, this residual refinement enables
+targeted geometric adaptation while preserving the original
+motion context and non-target details.
+Attribute-level Supervision. We enforce geometric con-
+sistency directly in the attribute space, supervising target
+satisfaction and preservation. Specifically, given the re-
+fined attributes ˆA = WGAR(ˆX), base attributes Ab =
+WGAR(Xb), target attribute sequence A, and selection
+mask M, we encourage selected attributes to match their
+targets while preserving unselected attributes relative to the
+base motion. The resulting loss is defined as:
+Lattr
+
+ˆX, Xb, A, M
+
+= ⟨e(ˆA, A)⟩S + ⟨e(ˆA, Ab)⟩¯
+S, (5)
+where S and ¯S denote the selected and unselected attribute
+channels indicated by M, respectively. The operator ⟨·⟩
+independently averages each term over valid frames. The
+channel-wise error e is tailored to different attribute types,
+employing normalized positional errors, periodic angular
+errors, and rotation-aware errors for root orientation. Details
+are provided in the supplement.
+Motion-level Supervision. Although attribute-level con-
+straints preserve the geometric properties encapsulated by
+WGAR, they are insufficient to fully govern joint configu-
+rations and motion details. We therefore introduce an addi-
+tional preservation constraint directly on the original motion
+representation, formulated as
+Lcoord(ˆX, Xb, M) =
+1
+T|J |
+T
+X
+t=1
+X
+j∈J
+(ˆxt,j −xb,t,j)2, (6)
+4
+
+
+where ˆx and xb denote the refined and base motion coor-
+dinates respectively, and J = Jprot(M) is the protected
+coordinate set. The protected coordinate set is determined
+by the selected geometric attributes, allowing coordinates
+associated with targeted modifications to change while con-
+straining the remaining to preserve the original motion.
+3.3. Training Strategy
+To achieve fine-grained geometric adaptation while preserv-
+ing non-target motion details, we train ARA using three
+complementary objectives: paired-target supervision, iden-
+tity supervision, and selective editing. These objectives
+respectively enable target adaptation, identity preservation,
+and selective geometric modification.
+During training, Xb = D(zb) denotes the decoded base
+used for preservation supervision. For source-motion editing,
+Xb denotes the original input motion, encoded as zb =
+E(Xb). For each task τ ∈{GT, ID, Edit}, ARA takes
+(zb, Aτ, Mτ) as input, where Aτ and Mτ denote the target
+attribute sequence and selection mask, respectively. The
+refined latent and motion are obtained as:
+ˆzτ = zb + Rψ(zb, Aτ, Mτ),
+ˆXτ = D(ˆzτ), τ ∈{GT, ID, Edit}.
+(7)
+We define the latent reconstruction loss as Lz(ˆz, z) =
+∥ˆz −z∥2. To discourage physically implausible joint config-
+urations, we apply a joint-limit penalty to all tasks:
+Lq(ˆX) = 1
+T
+X
+t,j
+ [ˆqt,j −qmax
+j
+]2
++ + [qmin
+j
+−ˆqt,j]2
++
+
+, (8)
+where ˆqt,j denotes the predicted joint angle, qmin
+j
+and qmax
+j
+are its corresponding limits, and [u]+ = max(u, 0).
+Paired-target and Identity Supervision. We first intro-
+duce two complementary supervision settings that share
+the same loss formulation but differ in target construc-
+tion: i) For paired-target supervision, we construct train-
+ing pairs consisting of a base motion and its corresponding
+ground-truth target XGT. We extract the target attributes
+as AGT = WGAR(XGT) and set MGT = 1 to super-
+vise all attribute channels. The target motion is encoded as
+zGT = E(XGT) for latent-level supervision. ii) For iden-
+tity supervision, we replace the ground-truth target with the
+base motion, setting AID = Ab and zID = zb, while ran-
+domly sampling an attribute mask MID. This encourages
+ARA to preserve the original motion under different attribute-
+selection patterns. Both settings are optimized by enforcing
+latent reconstruction, geometric attribute consistency, and
+joint-limit compliance:
+Lτ = Lz(ˆzτ, zτ) + Lattr(ˆXτ, Xb, Aτ, Mτ)
++ λqLq(ˆXτ),
+τ ∈{GT, ID},
+(9)
+Selective Editing. To enable fine-grained geometric adap-
+tation, we construct synthetic targets AEdit by modifying
+selected attributes of the base motion while preserving un-
+selected ones induced by MEdit . Unlike the previous two
+tasks, no paired edited motion or corresponding target latent
+is available, so we omit latent reconstruction and directly
+supervise geometric adaptation and motion preservation:
+LEdit = Lattr(ˆXEdit, Xb, AEdit, MEdit)
++ Lcoord(ˆXEdit, Xb, MEdit) + λqLq(ˆXEdit).
+(10)
+Here, attribute-level supervision enforces the target geome-
+try, while coordinate-level supervision preserves non-target
+motion details.
+We combine the three training objectives using a weighted
+sum: L = λGTLGT + λIDLID + λEditLEdit. During train-
+ing, only ARA parameters ψ are optimized, while the VAE,
+distilled generator, and WGAR mapping remain frozen.
+3.4. Efficient Generation and Deployment
+Latent Flow Prior and Distillation. We employ a text-
+conditioned latent flow model to generate base motion la-
+tents. To accelerate inference, we distill the pretrained flow
+model into a four-step student using DMD2 [50]. The dis-
+tilled generator is frozen and provides base motion proposals
+for ARA, ensuring consistency between training and infer-
+ence distributions. Details of the VAE, latent flow model,
+and distillation procedure are provided in the supplement.
+Latent Refinement and Cached Editing. Given a base
+latent zb, obtained either from the distilled generator or
+by encoding an existing motion, ARA performs attribute-
+guided refinement according to the target attributes A and
+selection mask M (Eq. 4). This process requires only one
+ARA forward pass and one VAE decoding pass, without
+additional flow sampling. Moreover, the base latent can be
+cached and reused for successive edits.
+Robot Deployment and Motion Tracking. For deploy-
+ment, given a source motion Xb, we obtain its base latent
+through the pretrained VAE encoder, i.e., zb = E(Xb), and
+refine it using the same attribute-guided process. The re-
+sulting motion ˆX serves as a reference for a downstream
+tracking policy, which generates control actions to execute
+the edited motion on the robot. This decouples geometric
+adaptation from closed-loop motion execution, allowing the
+same tracking policy to handle different geometric edits.
+4. Experiments
+We evaluate AGLR across three core tasks: text-to-motion
+generation, fine-grained controllable generation, and source-
+conditioned motion editing. Complete training, evaluation,
+baseline adaptation details for controllable generation and
+motion editing are provided in the supplement, alongside ex-
+tended editing comparisons, ablation studies, and additional
+hardware demonstrations.
+5
+
+
+Method
+Ref.
+FID↓R@1↑R@2↑R@3↑
+MD↓
+Div.
+Lat.↓
+TextOp [48]
+arXiv’26 0.1267
+42.95
+59.96
+69.85 1.1506 1.3155 1592.4
+ECHO [19]
+arXiv’26 0.0437
+54.91
+72.38
+79.67 1.1131 1.3294
+229.4
+MDM [44]
+ICLR’23 0.1068
+46.93
+64.16
+73.10 1.1404 1.3199
+315.5
+MoMask [10]
+CVPR’24 0.0448
+49.01
+65.06
+72.25 1.1294 1.3425
+180.4
+MotionHiFlow [27] CVPR’26 0.0590
+58.46
+74.32
+82.14 1.0865 1.3284
+297.4
+AGLR (50 steps)
+—
+0.0154
+62.07
+77.54
+84.54 1.0752 1.3222 1206.3
+AGLR (4 steps)
+—
+0.0184
+59.96
+75.69
+83.07 1.0865 1.3222
+55.2
+Table 1. Text-to-humanoid motion generation. Text-only evaluation on
+the HumanML3D-G1 test split. R@K is reported in % and latency in ms.
+4.1. Experimental Setup
+We use HumanML3D-G1 as the primary benchmark. To as-
+sess cross-dataset generalization, we evaluate models trained
+on HumanML3D-G1 in zero-shot on BONES-SEED-G1.
+HumanML3D-G1. We construct HumanML3D-G1 by retar-
+geting HumanML3D [9] motions to Unitree G1 and tracking
+them in simulation with a pretrained privileged policy [28]
+to mitigate retargeting artifacts. After filtering rollouts with
+large tracking errors, we preserve the original splits, retain-
+ing 19,728 training and 3,766 test samples. Motions use
+RPR39 at 50 Hz, with normalization statistics computed
+using the training split.
+BONES-SEED-G1.
+We use the official G1-retargeted
+motions from BONES-SEED [3] and track them in sim-
+ulation using the same pretrained privileged policy as for
+HumanML3D-G1. For zero-shot evaluation, we randomly
+sample 1,000 resulting rollouts from each of the content and
+repetition test splits, yielding 2,000 evaluation motions.
+4.2. Text-to-Motion Generation
+Baselines. We compare AGLR with G1-native methods
+(ECHO [19] and TextOp [48]) and methods adapted to G1
+(MDM [44], MoMask [10], and MotionHiFlow [27]). All
+methods use the same motion representation, dataset split,
+and evaluation protocol. To evaluate our generator in isola-
+tion, we use text as the sole input to both the 50-step teacher
+and the four-step student and bypass ARA in both cases.
+Metrics. We report R-Precision (R@1, R@2, and R@3)
+with 32 retrieval candidates, Fr´echet Inception Distance
+(FID), Matching Distance (MD), and Diversity (Div.). We
+compute all four metrics using the same frozen G1-specific
+TMR [33] evaluator. End-to-end inference latency (Lat.) is
+measured in milliseconds and includes text encoding, sam-
+pling, decoding, and pose conversion.
+Quantitative comparisons. In Table 1, the 50-step teacher
+achieves the lowest FID and MD and the highest R-Precision
+at all three cutoffs. Distillation reduces end-to-end latency
+from 1,206.3 to 55.2 ms, a 21.85× speedup. The four-step
+student outperforms all external baselines on FID and R-
+Precision and matches the best baseline (MotionHiFlow [27])
+on MD metric. We use the four-step student to generate base
+motions for subsequent experiments.
+4.3. Fine-Grained Controllable Generation
+Task. We evaluate on the HumanML3D-G1 test split using
+AGT = WGAR(XGT), with M selecting a single attribute,
+multiple attributes within or across body parts, or all chan-
+nels. (AGT, M) guide ARA and condition the baselines.
+All methods share text prompts and motion lengths.
+Baselines and adaptation. We compare with six repre-
+sentative controllable motion generation baselines, Om-
+niControl [49], MotionLCM [8], MaskControl [35], TL-
+Control [45], SFControl [17], and ProjFlow [46], on
+HumanML3D-G1 using the RPR39 representation. We re-
+train each baseline on HumanML3D-G1 using RPR39 and
+adapt it to accept the same (AGT, M) as AGLR.
+Method
+Ref.
+TAE↓ASR↑
+FID↓R@1↑R@2↑R@3↑
+MD↓
+Div.
+Lat.↓
+OmniControl [49] ICLR’24 0.8695 17.20 0.1258 42.74 58.92 67.95 1.1600 1.3150
+3132.79
+TLControl [45]
+ECCV’24 0.5871 29.79 0.1431 25.11 34.13 39.69 1.2552 1.3085
+723.87
+MotionLCM [8]
+ECCV’24 0.3629 40.17 0.0773 44.15 60.18 68.72 1.1253 1.2783
+85.95
+MaskControl [35] ICCV’25 0.6374 25.66 0.0303 49.95 66.05 74.52 1.1237 1.3343
+4558.55
+SFControl [17]
+ICCV’25 0.3100 41.34 0.4884 21.79 31.14 37.53 1.2733 1.1501
+1859.52
+ProjFlow [46]
+CVPR’26 0.1192 73.66 0.0776 45.94 61.81 69.87 1.1550 1.3369 13638.80
+AGLR (ours)
+—
+0.0740 80.34 0.0225 56.04 71.07 78.21 1.1101 1.3244
+90.09
+Table 2. Fine-grained controllable generation. All methods share identi-
+cal text prompts, motion lengths, masks, and ground-truth-derived attribute
+targets. ASR and R@K are reported in %, and latency is reported in ms.
+Metrics. Target Attribute Error (TAE) measures the root
+mean squared error over selected attribute channels after
+normalization using training-set statistics. Attribute Success
+Rate (ASR) calculates the percentage of frames in which
+all selected attributes simultaneously fall within their target
+tolerances: 0.05 for limb extents, 0.05 m for positions, and
+5◦for angles. We compute both metrics per sample and
+average them across the test set. We use the same TMR-
+based metrics as in text-to-motion generation to evaluate
+motion quality and measure end-to-end latency from input
+processing to controlled motion output.
+Quantitative comparisons. As shown in Table 2, Mo-
+tionLCM [8] is slightly faster than AGLR (85.95 vs. 90.09
+ms). MaskControl [35] achieves a competitive FID. AGLR
+achieves the highest ASR and R-Precision and the low-
+est TAE, FID, and MD, combining more accurate attribute
+control with higher motion distribution fidelity and better
+text–motion alignment.
+Qualitative comparisons. Figure 3 showcases qualitative
+examples spanning individual limb control, cross-part com-
+position, root trajectory control, and all-attribute condition-
+ing. Across all settings, AGLR generates motions that re-
+main consistent with the specified target attributes.
+4.4. Source-Conditioned Motion Editing
+Task. All methods receive the same source motions Xb, at-
+tribute mask, and target attribute values for each request. We
+construct targets by randomly modifying selected attributes
+of WGAR(Xb) and use Xb as the reference for measuring
+preservation. Each test sample is assigned one fixed request
+6
+
+
+(a) Left leg · Out
+“the person took a large side step to the left.”
+(b) Left arm · Up + Out
+“a person wave his left hand.”
+(c) Root trajectory
+“a person walks in a circle clockwise.”
+(d) Both arms · Up + Out
+“a person waves both arms over their head.”
+(e) All 21 attributes
+“a person performs three jumping jacks.”
+GT motion
+AGLR
+(Ours)
+ProjFlow
+MaskControl
+Figure 3. Fine-grained controllable generation. Columns show five distinct control requests specified above the motions, and rows
+compare Ground Truth (GT), AGLR, ProjFlow [46], and MaskControl [35] using identical text prompts and ground-truth-derived targets.
+Highlighted regions denote the actively controlled body parts.
+(a) Left arm Out +0.2
+(b) Left arm Out + Up
++0.2 each
+(c) Left arm Out + right leg Out
++0.2 each
+(d) Left arm Up: time-varying ±0.2
+(e) Left arm Up + right leg Out +0.2
+Torso front +0.2
+Source
+motion
+AGLR
+(Ours)
+OmniME
+RG-DNO
+Figure 4. Selective editing. Columns specify the requested attribute changes. Rows show the source and outputs of AGLR, OmniME [42],
+and RG-DNO [30]. Highlighted regions indicate selected parts. Limb offsets are normalized extents. Torso offsets are in radians.
+from one of four categories: single-attribute, within-part,
+cross-part, and time-varying editing.
+Baselines and adaptation. We compare against five rep-
+resentative motion editing baselines: TRACE [22], Omn-
+iME [42], DNO [24], RG-DNO [30], and ScaleMoGen [18].
+We adapt the baselines to RPR39 and the WGAR-based
+editing interface and retrain them on HumanML3D-G1.
+Metrics. We use TAE to measure target adherence, and re-
+port Non-target Attribute Drift (NAD) and Non-target Joint
+Drift (NJD) for source preservation. NAD measures nor-
+malized deviation from the source over unselected attributes,
+and NJD measures joint-space RMSE relative to the source
+over unedited body parts. We also report two preservation-
+constrained attribute success rates, ASRa
+c and ASRj
+c:
+ASRk
+c(τ) = 1
+N
+N
+X
+i=1
+ASRi 1[dk
+i ≤τ],
+k ∈{a, j}, (11)
+where ASRi is the frame-level success rate for request i, and
+da
+i = NADi and dj
+i = NJDi are the corresponding drift
+measures. A request contributes its ASR only when its drift
+falls within the threshold (τ). We evaluate attribute and joint
+preservation independently across their respective threshold
+ranges. Latency includes source processing, refinement,
+decoding, and pose conversion.
+Quantitative comparisons. As shown in Table 3, AGLR
+achieves the highest preservation-constrained success rates
+under both attribute and joint constraints (76.81% and
+Method
+Ref.
+TAE↓NAD↓NJD↓ASRa
+c ↑ASRj
+c ↑
+Lat.↓
+TRACE [22]
+arXiv’26
+0.2220 0.0557
+0.000
+63.80
+65.64
+1009.22
+OmniME [42]
+CVPR’26 0.2412 0.1226
+1.383
+61.51
+64.32
+969.72
+ScaleMoGen [18] ECCV’26 0.8137 0.3867
+7.989
+10.05
+6.58
+275.41
+DNO [24]
+CVPR’24 0.1514 0.5958 12.172
+10.89
+1.92
+69721.37
+RG-DNO [30]
+CVPR’26 0.1008 1.2234 29.847
+0.78
+0.00 531482.50
+AGLR (ours)
+—
+0.1431 0.0584
+0.681
+76.81
+77.28
+13.15
+Table 3. Fine-grained source-conditioned motion editing. All methods
+share identical source motions and attribute requests. ASRa
+c and ASRj
+c
+denote success rates under separate NAD ≤0.30 and NJD ≤3◦constraints,
+respectively, reported in %, NJD in degrees, and latency in ms.
+77.28%) and has the lowest latency. TRACE [22] uses refer-
+ence projection to preserve protected joints exactly, yielding
+zero NJD and the lowest NAD. RG-DNO [30] achieves
+lower TAE than AGLR but incurs substantially greater non-
+target drift. AGLR is approximately 40,000× faster than
+RG-DNO [30] and 5,300× faster than DNO [24] , highlight-
+ing the latency advantage of single-pass latent refinement
+over test-time optimization.
+Refinement efficiency. With a cached source latent, ARA
+and decoding produce a 500-frame motion in 9.1 ms on an
+RTX 4090D at batch size one, measured to GPU output. The
+13.15 ms end-to-end latency in Table 3 also includes source
+processing and output conversion.
+Qualitative comparisons. Figure 4 shows single-part, com-
+positional, and time-varying edits. OmniME [42] introduces
+additional pose changes in some compositional edits, and
+RG-DNO [30] shows larger deviations from the source, con-
+7
+
+
+Generation
+Editing
+No-edit
+Variant
+TAE↓ASR↑TAE↓NAD↓NJD↓ASRa
+c ↑ASRj
+c ↑
+ID↓
+AGLR (Full)
+0.0740 80.34 0.1431 0.0584
+0.681
+76.81
+77.28
+0.578
+w/o base latent
+0.7647 21.81 0.5122 0.1434
+2.270
+24.05
+19.00
+1.848
+w/o GT superv.
+0.2716 50.40 0.2516 0.0820
+0.911
+55.96
+56.03
+0.669
+w/o ID superv.
+0.0762 79.76 0.1494 0.0595
+0.687
+76.26
+76.78
+3.236
+w/o Edit superv.
+0.6895 30.93 0.9832 0.0676
+0.723
+10.99
+11.01
+0.644
+w/o attr. preserv.
+0.0842 78.42 0.1457 0.1587
+0.876
+69.37
+74.71
+0.663
+w/o coord. preserv. 0.0799 76.83 0.1530 0.0773
+3.601
+72.59
+34.64
+0.634
+w/o both preserv.
+0.0588 85.55 0.1342 0.6637 17.425
+7.79
+6.01
+0.635
+Full latent pred.
+0.1393 70.67 0.1848 0.0982
+1.209
+72.00
+72.47
+1.198
+Table 4.
+Ablation studies on controllable generation and source-
+conditioned editing. ASRa
+c and ASRj
+c denote success rates under separate
+NAD ≤0.30 and NJD ≤3◦constraints, respectively. ID measures no-edit
+joint RMSE. Joint errors are reported in degrees.
+sistent with the measured NAD and NJD. Our AGLR modi-
+fies the selected limb and torso attributes while largely pre-
+serving motion in unedited body parts.
+4.5. Ablation Studies
+We evaluate each ablation on attribute-conditioned genera-
+tion and source-conditioned editing, using 3,766 requests per
+task. To evaluate no-edit consistency, we pass 256 ground-
+truth motions to each variant without requesting any edits.
+We report the joint-space RMSE between input and output
+motions as the ID metric.
+Base conditioning and residual prediction. In Table 4,
+removing base-latent conditioning reduces generation ASR
+from 80.34% to 21.81% and editing ASRa
+c from 76.81% to
+24.05%. Direct prediction of the refined latent also lowers
+performance on both tasks. These results support condi-
+tioning the refinement on the base latent and predicting an
+additive residual.
+Training supervision. Removing GT supervision reduces
+generation ASR from 80.34% to 50.40% and editing ASRa
+c
+from 76.81% to 55.96%. Removing Edit supervision causes
+larger drops, to 30.93% and 10.99%, respectively. Removing
+ID supervision increases no-edit joint RMSE from 0.578◦
+to 3.236◦, while generation ASR and editing ASRa
+c each
+decrease by less than one percentage point. These results
+indicate that GT and Edit supervision contribute to target
+adherence, while ID supervision primarily helps preserve
+the input motion when no edit is requested.
+Complementary preservation losses. Removing the at-
+tribute preservation loss increases NAD from 0.0584 to
+0.1587, while removing the coordinate preservation loss in-
+creases NJD from 0.681◦to 3.601◦. Removing both losses
+raises generation ASR from 80.34% to 85.55%, and sharply
+reduces editing success under both preservation constraints.
+Editing ASRa
+c falls from 76.81% to 7.79%, and editing
+ASRj
+c falls from 77.28% to 6.01%. These results show
+that both losses help the model meet editing targets while
+preserving unedited attributes and joint motion.
+Method
+Ref.
+TAE↓ASR↑
+FID↓R@1↑R@2↑R@3↑
+MD↓
+Div.
+OmniControl [49] ICLR’24
+0.8052 15.97 0.3168
+30.24
+46.07
+55.75 1.1623 1.2868
+TLControl [45]
+ECCV’24 0.8648 16.08 0.6316
+11.34
+17.19
+23.44 1.3002 1.0768
+MotionLCM [8]
+ECCV’24 0.4551 31.18 0.3604
+42.59
+57.51
+66.48 1.0757 1.2118
+MaskControl [35] ICCV’25 0.7688 17.50 0.2669
+39.72
+54.79
+62.90 1.1023 1.2990
+SFControl [17]
+ICCV’25 0.2933 44.47 0.6186
+24.14
+30.80
+36.49 1.2285 1.0613
+ProjFlow [46]
+CVPR’26 0.1003 74.50 0.2708
+41.03
+55.49
+64.62 1.1007 1.2850
+AGLR (ours)
+—
+0.0947 75.61 0.2312
+47.98
+62.55
+70.51 1.0126 1.2664
+Table 5. Zero-shot fine-grained controllable generation on BONES-
+SEED-G1. Models trained on HumanML3D-G1 are evaluated on 2,000
+motions using text and selected GT attributes, without fine-tuning.
+(b) Left arm: up +0.3
+(c) Left arm: up +0.3, out +0.3
+(d) Left arm: up +0.3; torso: left lean +0.3
+(a) Original motion
+Figure 5. Tracking of edited motions. Robot poses are shown at
+0.5, 1.5, 3.0, 4.5, and 5.5 s, darker poses indicating later frames.
+4.6. Zero-Shot Transfer
+We evaluate attribute-conditioned generation and source-
+conditioned editing on BONES-SEED-G1 using the
+HumanML3D-G1-trained weights of all compared methods,
+without fine-tuning. To assess generation quality, we use
+a frozen TMR evaluator pretrained on the BONES-SEED-
+G1 training split. As shown in Table 5 and Table 6, AGLR
+achieves the lowest generation TAE, the highest generation
+ASR, and the highest editing success rates under both at-
+tribute and joint preservation constraints. These results show
+that AGLR transfers fine-grained geometric control and se-
+lective motion editing across datasets without fine-tuning.
+Method
+Ref.
+TAE↓
+NAD↓
+NJD↓
+ASRa
+c ↑
+ASRj
+c↑
+TRACE [22]
+arXiv’26
+0.2370
+0.0560
+0.000
+61.75
+62.32
+OmniME [42]
+CVPR’26
+0.2430
+0.1255
+1.664
+61.85
+62.65
+ScaleMoGen [18]
+ECCV’26
+0.9673
+0.4686
+10.007
+7.72
+2.59
+DNO [24]
+CVPR’24
+0.1742
+0.6588
+14.205
+6.78
+0.00
+RG-DNO [30]
+CVPR’26
+0.1144
+1.2847
+30.362
+0.00
+0.00
+AGLR (ours)
+—
+0.1663
+0.0726
+1.106
+74.28
+74.35
+Table 6. Zero-shot source-conditioned motion editing on BONES-SEED-
+G1. Models trained on HumanML3D-G1 edit the same 2,000 GT source
+motions without fine-tuning. ASRa
+c and ASRj
+c use separate NAD ≤0.30
+and NJD ≤3◦constraints, respectively.
+4.7. Tracking and Visualization
+We use the edited motions as references for a tracking policy.
+Fig. 5 compares the original motion with three edited execu-
+tions at five time points. The robot raises its left arm in Fig.
+5(b), raises and extends it outward in Fig. 5(c), and combines
+the arm raise with a leftward torso lean in Fig. 5(d). Across
+three edits, the right arm follows a similar pattern to the
+original, and the lower-body poses remain visually similar
+at the sampled time points. These examples illustrate that
+the robot can execute attribute edits while largely preserving
+the motion of unedited body parts. Additional real-world
+demonstrations are provided in the supplement.
+8
+
+
+5. Conclusion
+We presented AGLR, a unified framework for fine-grained
+humanoid motion generation and editing that enables compo-
+sitional, time-varying control over limb extents, torso orien-
+tation, and root trajectories. The Attribute Residual Adapter
+refines a generated or encoded motion latent in a single pass.
+Attribute- and motion-level supervision jointly guide the
+model to match target attributes while preserving unselected
+attributes and untargeted motion coordinates. Experiments
+show that AGLR compares favorably with adapted baselines
+in control accuracy and motion preservation, supports effi-
+cient editing, and transfers across motion sources without
+fine-tuning. Limitations are discussed in the supplement.
+References
+[1] Nikos Athanasiou, Mathis Petrovich, Michael J. Black, and
+G¨ul Varol. SINC: Spatial Composition of 3D Human Mo-
+tions for Simultaneous Action Generation. In Proceedings of
+the IEEE/CVF International Conference on Computer Vision
+(ICCV), pages 9984–9995, 2023. 2
+[2] Nikos Athanasiou,
+Alp´ar Ceske,
+Markos Diomataris,
+Michael J. Black, and G¨ul Varol. MotionFix: Text-Driven 3D
+Human Motion Editing. In SIGGRAPH Asia 2024 Conference
+Proceedings, 2024. 2, 3
+[3] Bones Studio. BONES-SEED: Skeletal everyday embodiment
+dataset.
+https://huggingface.co/datasets/
+bones-studio/seed. 6
+[4] Bin Cao, Sipeng Zheng, Ye Wang, Lujie Xia, Qianshan Wei,
+Qin Jin, Jing Liu, and Zongqing Lu. MotionCtrl: A Real-time
+Controllable Vision-Language-Motion Model. In Proceed-
+ings of the IEEE/CVF International Conference on Computer
+Vision (ICCV), pages 12253–12262, 2025. 2
+[5] Xin Chen, Biao Jiang, Wen Liu, Zilong Huang, Bin Fu, Tao
+Chen, and Gang Yu. Executing Your Commands via Motion
+Diffusion in Latent Space. In CVPR 2023, 2023. 2
+[6] Hanbyel Cho, Sang-Hun Kim, Jeonguk Kang, and Donghan
+Koo. SafeFlow: Real-Time Text-Driven Humanoid Whole-
+Body Control via Physics-Guided Rectified Flow and Selec-
+tive Safety Gating. arXiv preprint arXiv:2603.23983, 2026.
+2
+[7] Setareh Cohan, Guy Tevet, Daniele Reda, Xue Bin Peng, and
+Michiel van de Panne. Flexible Motion In-betweening with
+Diffusion Models. In ACM SIGGRAPH Conference Papers,
+2024. 2
+[8] Wenxun Dai, Ling-Hao Chen, Jingbo Wang, Jinpeng Liu, Bo
+Dai, and Yansong Tang. MotionLCM: Real-time Controllable
+Motion Generation via Latent Consistency Model. In ECCV
+2024, 2024. 6, 8, 19
+[9] Chuan Guo, Shihao Zou, Xinxin Zuo, Sen Wang, Wei Ji,
+Xingyu Li, and Li Cheng. Generating Diverse and Natural
+3D Human Motions From Text. In CVPR 2022, 2022. 6
+[10] Chuan Guo, Yuxuan Mu, Muhammad Gohar Javed, Sen Wang,
+and Li Cheng. MoMask: Generative Masked Modeling of 3D
+Human Motions. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR), pages
+1900–1910, 2024. 2, 6, 19
+[11] Ziyan Guo, Zeyu Hu, De Wen Soh, and Na Zhao. Motion-
+Lab: Unified Human Motion Generation and Editing via the
+Motion-Condition-Motion Paradigm. In ICCV 2025, 2025. 2,
+3
+[12] Dan Hendrycks and Kevin Gimpel. Gaussian error linear
+units (gelus). arXiv preprint arXiv:1606.08415, 2016. 14, 16
+[13] Seokhyeon Hong, Chaelin Kim, Serin Yoon, Junghyun Nam,
+Sihun Cha, and Junyong Noh. SALAD: Skeleton-aware La-
+tent Diffusion for Text-driven Motion Generation and Editing.
+In CVPR 2025, 2025. 3
+[14] Yilei Hua, Beibei Jing, Ce Zheng, Hanyu Zhou, Yawei Luo,
+and Wei Yang. UniMoFlow: Grounding Instruction-Driven
+3D Human Motion Editing in Generation. arXiv preprint
+arXiv:2608.09143, 2026. 3
+[15] Chuxuan Huang, Zhanxiang Cao, Tianyue Zhan, Haoyang Li,
+Yang Zhang, Liyun Yan, Chenlin Ming, Keqi Zhu, Yizhi Chen,
+Shengcheng Fu, Zihao Zhou, Xinyi Peng, Kaixuan Zhang,
+Boyang Xing, Jiawei Bao, Yang Yang, and Yue Gao. PartiGen:
+Part-Aware Representations for Language-Conditioned Hu-
+manoid Motion Generation. arXiv preprint arXiv:2610.13373,
+2026. 2
+[16] Siqiao Huang, Kun-Ying Lee, Dongming Qiao, Guanqi He,
+Zhenyu Wang, Yitang Li, Shaoting Zhu, and Hang Zhao.
+OMG: Omni-Modal Motion Generation for Generalist Hu-
+manoid Control. arXiv preprint arXiv:2606.10340, 2026.
+2
+[17] Inwoo Hwang, Jinseok Bae, Donggeun Lim, and Young Min
+Kim. Motion Synthesis with Sparse and Flexible Keyjoint
+Control. In ICCV 2025, 2025. 2, 6, 8, 20
+[18] Inwoo Hwang, Hojun Jang, Bing Zhou, Jian Wang,
+Young Min Kim, and Chuan Guo. ScaleMoGen: Autoregres-
+sive Next-Scale Prediction for Human Motion Generation. In
+European Conference on Computer Vision (ECCV), 2026. 7,
+8, 21
+[19] Haozhe Jia, Jianfei Song, Yuan Zhang, Honglei Jin,
+Youcheng Fan, Wenshuo Chen, Wei Zhang, and Yutao Yue.
+ECHO: Edge-Cloud Humanoid Orchestration for Language-
+to-Motion Control. arXiv preprint arXiv:2603.16188, 2026.
+2, 3, 6, 19
+[20] Biao Jiang, Xin Chen, Wen Liu, Jingyi Yu, Gang Yu, and Tao
+Chen. MotionGPT: Human Motion as a Foreign Language. In
+Advances in Neural Information Processing Systems, pages
+20067–20079, 2023. 2
+[21] Zhenyu Jiang, Yuqi Xie, Jinhan Li, Ye Yuan, Yifeng Zhu, and
+Yuke Zhu. Harmon: Whole-Body Motion Generation of Hu-
+manoid Robots from Language Descriptions. In Proceedings
+of the 8th Conference on Robot Learning, 2025. 2
+[22] Zejian Kang, Yifu Luo, Boyang Shen, Jingxuan Li, Zekai
+Chen, Zekun Shi, Yongxue Xu, Zhenyu Hou, Bingqian Wu,
+Shaolei Zhang, Wentao Yang, and Xiangru Huang. TRACE:
+Typed Reference-Aware Conversational Editing for Hu-
+manoid Motion Diffusion. arXiv preprint arXiv:2610.21515,
+2026. 2, 3, 7, 8, 20, 21
+[23] Korrawe Karunratanakul, Konpat Preechakul, Supasorn Suwa-
+janakorn, and Siyu Tang. Guided Motion Diffusion for Con-
+trollable Human Motion Synthesis. In Proceedings of the
+IEEE/CVF International Conference on Computer Vision
+(ICCV), pages 2151–2162, 2023. 2
+9
+
+
+[24] Korrawe Karunratanakul, Konpat Preechakul, Emre Aksan,
+Thabo Beeler, Supasorn Suwajanakorn, and Siyu Tang. Op-
+timizing Diffusion Noise Can Serve As Universal Motion
+Priors. In Proceedings of the IEEE/CVF Conference on Com-
+puter Vision and Pattern Recognition (CVPR), pages 1334–
+1345, 2024. 2, 3, 7, 8, 21
+[25] Jihoon Kim, Jiseob Kim, and Sungjoon Choi. FLAME: Free-
+Form Language-Based Motion Synthesis & Editing. In Pro-
+ceedings of the AAAI Conference on Artificial Intelligence,
+pages 8255–8263, 2023. 2
+[26] Chuqiao Li, Xianghui Xie, Yong Cao, Andreas Geiger, and
+Gerard Pons-Moll. FrankenMotion: Part-level Human Mo-
+tion Generation and Composition. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), pages 16420–16431, 2026. 2
+[27] Heng Li, Xiaotong Lin, Ling-An Zeng, Yulei Kang, Shuai
+Li, and Jian-Fang Hu. MotionHiFlow: Text-to-motion via
+hierarchical flow matching. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition,
+pages 9352–9363, 2026. 6, 19
+[28] Yuhan Li, Peiyuan Zhi, Yunshen Wang, Tengyu Liu, Sixu
+Yan, Wenyu Liu, Xinggang Wang, Baoxiong Jia, and Siyuan
+Huang. Omnitrack: General motion tracking via physics-
+consistent reference. arXiv preprint arXiv:2602.23832, 2026.
+3, 6
+[29] Zhengyuan Li, Kai Cheng, Anindita Ghosh, Uttaran Bhat-
+tacharya, Liangyan Gui, and Aniket Bera. SimMotionEdit:
+Text-Based Human Motion Editing with Motion Similarity
+Prediction. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR), pages
+27827–27837, 2025. 2, 3
+[30] Hanchao Liu, Fang-Lue Zhang, Shining Zhang, Tai-Jiang
+Mu, and Shi-Min Hu. Towards Highly-Constrained Human
+Motion Generation with Retrieval-Guided Diffusion Noise
+Optimization. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR), 2026.
+2, 3, 7, 8, 21
+[31] Jiageng Mao, Siheng Zhao, Siqi Song, Chuye Hong, Tian-
+heng Shi, Junjie Ye, Mingtong Zhang, Haoran Geng, Jiten-
+dra Malik, Vitor Guizilini, and Yue Wang. Universal Hu-
+manoid Robot Pose Learning from Internet Human Videos. In
+2025 IEEE-RAS 24th International Conference on Humanoid
+Robots (Humanoids), pages 1–8, 2025. 2
+[32] Mathis Petrovich, Michael J. Black, and G¨ul Varol. TEMOS:
+Generating Diverse Human Motions from Textual Descrip-
+tions. In European Conference on Computer Vision (ECCV),
+2022. 2
+[33] Mathis Petrovich, Michael J. Black, and G¨ul Varol. Tmr:
+Text-to-motion retrieval using contrastive 3d human motion
+synthesis. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision, pages 9488–9497, 2023. 6
+[34] Mathis Petrovich, Or Litany, Umar Iqbal, Michael J. Black,
+Gul Varol, Xue Bin Peng, and Davis Rempe. Multi-Track
+Timeline Control for Text-Driven 3D Human Motion Gen-
+eration. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition (CVPR) Workshops,
+pages 1911–1921, 2024. 2
+[35] Ekkasit Pinyoanuntapong, Muhammad Saleem, Korrawe
+Karunratanakul, Pu Wang, Hongfei Xue, Chen Chen, Chuan
+Guo, Junli Cao, Jian Ren, and Sergey Tulyakov. MaskControl:
+Spatio-Temporal Control for Masked Motion Synthesis. In
+Proceedings of the IEEE/CVF International Conference on
+Computer Vision (ICCV), pages 9955–9965, 2025. 2, 6, 7, 8,
+20
+[36] Sigal Raab, Inbal Leibovitch, Peizhuo Li, Kfir Aberman, Olga
+Sorkine-Hornung, and Daniel Cohen-Or. MoDi: Uncondi-
+tional Motion Synthesis from Diverse Data. In Proceedings
+of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), pages 13873–13883, 2023. 3
+[37] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya
+Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry,
+Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen
+Krueger, and Ilya Sutskever. Learning transferable visual
+models from natural language supervision. In International
+Conference on Machine Learning, pages 8748–8763. PMLR,
+2021. 15
+[38] Davis Rempe, Mathis Petrovich, Ye Yuan, Haotian Zhang,
+Xue Bin Peng, Yifeng Jiang, Tingwu Wang, Umar Iqbal,
+David Minor, Michael de Ruyter, Jiefeng Li, Chen Tessler,
+Edy Lim, Eugene Jeong, Sam Wu, Ehsan Hassani, Michael
+Huang, Jin-Bey Yu, Chaeyeon Chung, Lina Song, Olivier
+Dionne, Jan Kautz, Simon Yuen, and Sanja Fidler. Kimodo:
+Scaling Controllable Human Motion Generation.
+arXiv
+preprint arXiv:2603.15546, 2026. 2
+[39] RoboParty Lab Team. MimicLite: Efficient and Effective
+General Humanoid Motion Tracking. Technical report, 2026.
+12
+[40] Agon Serifi, Ruben Grandia, Espen Knoop, Markus Gross,
+and Moritz B¨acher. Robot Motion Diffusion Model: Motion
+Generation for Robotic Characters. In SIGGRAPH Asia 2024
+Conference Papers, 2024. 2
+[41] Yoni Shafir, Guy Tevet, Roy Kapon, and Amit Haim Bermano.
+Human Motion Diffusion as a Generative Prior. In The Twelfth
+International Conference on Learning Representations, 2024.
+2
+[42] Zhenwu Shi, Jingyu Gong, Peiwei Wang, Xingzan Wang,
+Tianwen Qian, Wenxi Li, Yuan Fang, Jiao Xie, Lizhuang
+Ma, and Shaohui Lin. Omni-Supervised Motion Editing:
+Balancing Change and Invariance through Positive-Negative
+Learning. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition (CVPR), 2026. 2,
+7, 8, 20, 21
+[43] Guy Tevet, Brian Gordon, Amir Hertz, Amit H. Bermano,
+and Daniel Cohen-Or. MotionCLIP: Exposing Human Mo-
+tion Generation to CLIP Space. In European Conference on
+Computer Vision (ECCV), pages 358–374, 2022. 3
+[44] Guy Tevet, Sigal Raab, Brian Gordon, Yoni Shafir, Daniel
+Cohen-or, and Amit Haim Bermano. Human Motion Diffu-
+sion Model. In ICLR 2023, 2023. 2, 6, 19
+[45] Weilin Wan, Zhiyang Dou, Taku Komura, Wenping Wang, Di-
+nesh Jayaraman, and Lingjie Liu. TLControl: Trajectory and
+Language Control for Human Motion Synthesis. In European
+Conference on Computer Vision, 2024. 2, 3, 6, 8, 20
+[46] Akihisa Watanabe, Qing Yu, Edgar Simo-Serra, and Kent Fu-
+jiwara. ProjFlow: Projection Sampling with Flow Matching
+10
+
+
+for Zero-Shot Exact Spatial Motion Control. In Proceedings
+of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), 2026. 6, 7, 8, 20
+[47] Yuxi Wei, Zirui Wang, Kangning Yin, Yue Hu, Jingbo Wang,
+and Siheng Chen. Unveiling the Impact of Data and Model
+Scaling on High-Level Control for Humanoid Robots. arXiv
+preprint arXiv:2511.09241, 2025. 2
+[48] Weiji Xie, Jiakun Zheng, Jinrui Han, Jiyuan Shi, Weinan
+Zhang, Chenjia Bai, and Xuelong Li. TextOp: Real-time
+Interactive Text-Driven Humanoid Robot Motion Generation
+and Control. arXiv preprint, 2026. 2, 6, 19
+[49] Yiming Xie, Varun Jampani, Lei Zhong, Deqing Sun, and
+Huaizu Jiang. OmniControl: Control Any Joint at Any Time
+for Human Motion Generation. In ICLR 2024, 2024. 2, 6, 8,
+20
+[50] Tianwei Yin, Micha¨el Gharbi, Taesung Park, Richard Zhang,
+Eli Shechtman, Fredo Durand, and William T. Freeman. Im-
+proved distribution matching distillation for fast image synthe-
+sis. In Advances in Neural Information Processing Systems,
+2024. 5, 15
+[51] Jianrong Zhang, Yangsong Zhang, Xiaodong Cun, Yong
+Zhang, Hongwei Zhao, Hongtao Lu, Xi Shen, and Ying Shan.
+Generating Human Motion From Textual Descriptions With
+Discrete Representations. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition
+(CVPR), pages 14730–14740, 2023. 2
+[52] Mingyuan Zhang, Huirong Li, Zhongang Cai, Jiawei Ren,
+Lei Yang, and Ziwei Liu. FineMoGen: Fine-Grained Spatio-
+Temporal Motion Generation and Editing. In NeurIPS 2023,
+2023. 2
+[53] Mingyuan Zhang, Zhongang Cai, Liang Pan, Fangzhou Hong,
+Xinying Guo, Lei Yang, and Ziwei Liu. MotionDiffuse: Text-
+Driven Human Motion Generation With Diffusion Model.
+IEEE Transactions on Pattern Analysis and Machine Intelli-
+gence, 46(6):4115–4128, 2024. 2
+[54] Kaifeng Zhao, Mathis Petrovich, Haotian Zhang, Tingwu
+Wang, Siyu Tang, and Davis Rempe. ARDY: Autoregressive
+Diffusion with Hybrid Representation for Interactive Human
+Motion Generation. ACM Transactions on Graphics, 2026. 2
+11
+
+
+AGLR: Attribute-Guided Latent Refinement for Fine-Grained Humanoid Motion
+Generation and Editing
+Supplementary Material
+This supplementary material provides additional results
+and implementation details for AGLR. Section A presents
+real-world motion editing and tracking demonstrations on
+the Unitree G1 humanoid robot. Section B provides im-
+plementation details and a local controllability analysis of
+WGAR. Sections C–E describe the architectures and training
+procedures of the motion VAE, motion generator, and ARA,
+respectively. Section F analyzes sensitivity to preservation
+thresholds, and Section G details the editing latency measure-
+ment protocol. Section H describes baseline adaptations and
+training settings. Finally, Section I discusses limitations. Ad-
+ditional videos of robot execution and an interactive editing
+demonstration are available on our project page.
+A. Real-World Motion Editing and Tracking
+We demonstrate attribute-guided motion editing on a phys-
+ical Unitree G1 humanoid robot. Figures S3–S10 show di-
+rectional limb adjustments, simultaneous control of multiple
+body parts, editing with time-varying targets, and modifi-
+cations to root trajectories and heading. Each figure com-
+pares execution of the base reference motion with execu-
+tions of its edited variants.
+From Geometric Requests to Robot Execution. Given a
+base motion Xb, we encode it into a latent representation
+zb = E(Xb) and provide ARA with the selected attribute
+targets over time. For an offset-based request, we define the
+target as At,k = Ab,t,k + δk(t), where Ab = WGAR(Xb)
+and δk(t) denotes the requested offset for attribute k at time
+t. Each request jointly specifies all active targets. Repeated
+requests for the same base motion reuse the cached latent rep-
+resentation zb. The resulting edited reference is executed on
+the physical robot using the PPO-based tracking policy from
+MimicLite [39], conditioned on the robot’s current state.
+Results. Figures S3–S10 illustrate editing results using three
+base motions: Base 0 for limb, torso, and time-varying at-
+tribute editing; Base 1 for root trajectory editing; and Base 2
+for turning while marching. Limb offsets are dimensionless,
+while torso offsets are expressed in radians. Arm and leg
+directions are defined in the torso and pelvis frames, respec-
+tively, with positive Out pointing away from the body on
+both sides. Root yaw editing activates all three root-rotation
+channels, and the 180◦and 360◦turning requests specify
+full heading trajectories over time. These qualitative results
+demonstrate that the edited references can be executed on the
+physical robot to produce the requested geometric changes
+while preserving the overall structure of the base motions.
+Table S1. Channel ordering of the Whole-body Geometric At-
+tributes Representation (WGAR). Channel indices start from zero.
+Channels
+Attributes
+0–2
+Left arm: Front, Out, Up
+3–5
+Left leg: Front, Out, Up
+6–8
+Right arm: Front, Out, Up
+9–11
+Right leg: Front, Out, Up
+12–14
+Torso: Forward Tilt, Rightward Tilt, Heading
+15–16
+Root horizontal displacement in the initial-heading
+frame
+17
+Absolute root height
+18–20
+Root roll, pitch, and yaw in the initial-heading
+frame
+Table S2. Links used to compute limb attributes. Each link name is
+prefixed with left or right .
+Limb
+Anchor
+Middle joint
+Endpoint
+Arm
+shoulder pitch link
+elbow link
+wrist yaw link
+Leg
+hip pitch link
+knee link
+ankle roll link
+B. Implementation Details of WGAR
+B.1. Geometric Attribute Details
+We provide additional implementation details for WGAR,
+introduced in Section 3.1 of the main paper. Table S1 summa-
+rizes the channel ordering, link selection, neutral alignment,
+and limb-length normalization. Limb attributes are dimen-
+sionless, positional attributes are expressed in metres, and
+angular attributes are expressed in radians. As defined in
+the main paper, limb attributes are computed in the torso or
+pelvis frame, torso attributes in the pelvis frame, and root
+displacement and orientation in the initial-heading frame.
+Limb Link Selection. Table S2 lists the anchor, middle, and
+endpoint links for each limb k, indexed by ak, mk, and ek,
+respectively. For each arm, these correspond to the shoul-
+der, elbow, and wrist links; for each leg, they correspond
+to the hip, knee, and ankle links. Each link name uses the
+corresponding left or right prefix. For limb k, their
+positions, pt,ak, pt,mk, and pt,ek, are obtained through for-
+ward kinematics and used to compute the limb attributes.
+Neutral Alignment and Limb-Length Normalization. Let
+qt denote the joint configuration at frame t. For each limb
+k, let bk denote its reference body link: torso link for
+arms and pelvis for legs. We denote the global orientation
+of this link at frame t by Rt,bk, and its orientation in the
+rest pose by R0
+bk. The neutral-aligned orientation used in
+12
+
+
+Eq. (1) of the main paper is then defined as:
+Qt,k = Rt,bk
+ R0
+bk
+⊤.
+(S1)
+Here, R0
+bk is computed by forward kinematics (FK) with
+zero joint angles and an identity root orientation. This align-
+ment removes the link’s rest-pose rotational offset, yield-
+ing an identity orientation in the rest pose while preserving
+subsequent global rotations.
+For limb-length normalization, let p0
+ak, p0
+mk, and p0
+ek
+denote the rest-pose positions of the anchor, middle, and
+endpoint links, respectively. We define the normalization
+factor as the sum of the two segment lengths:
+ℓk =
+p0
+mk −p0
+ak
+
+2 +
+p0
+ek −p0
+mk
+
+2 .
+(S2)
+The reference rotations R0
+bk and limb lengths ℓk are com-
+puted once from the same rest pose and held fixed across
+all motions.
+Orientation Conventions.
+The operator rpy(·) in Eq.
+(3) of the main paper returns roll, pitch, and yaw angles
+under the ZYX Euler-angle convention, such that R =
+Rz(yaw)Ry(pitch)Rx(roll). Angular trajectories are tem-
+porally unwrapped to maintain continuity across angle wrap
+boundaries, allowing heading targets to represent turns be-
+yond a single revolution.
+B.2. Editable Motion Variables and Preservation
+Table S3 lists the motion variables in raw-space represen-
+tation (RPR39) that can be modified for each selected at-
+tribute. The same selection applies to all frames in the se-
+quence. When multiple attributes are selected, a motion
+variable is editable if it belongs to the editable set of any
+selected attribute. Selecting root orientation also allows
+root displacement to change, since displacement increments
+are expressed in a heading-local frame and therefore de-
+pend on the root heading.
+We encourage preservation at both the motion-coordinate
+and attribute levels. The coordinate-preservation objective
+encourages all motion variables outside the editable set to
+remain close to the base motion, with differences measured
+in standardized RPR39 space. The attribute-preservation
+objective encourages unselected attributes to retain their
+base values, including those that depend on editable mo-
+tion variables. For example, selecting an arm’s Up attribute
+allows the corresponding arm joints to change while en-
+couraging its Front and Out attributes to remain unchanged.
+Attribute preservation compares the edited and base motions
+in WGAR space, with each attribute computed in its corre-
+sponding reference frame as defined above.
+B.3. Local Controllability of Limb Attributes
+Limb attributes depend on the same joint angles and are
+therefore coupled: raising an arm may also change its for-
+ward and outward extent. However, adjusting several joints
+Table S3. Mapping from selected attributes to editable motion-
+space variables. Left/right limb selections affect only the corre-
+sponding limb.
+Selected attributes
+Editable motion-space variables
+Any arm attribute
+Shoulder, elbow, and wrist joint angles of
+the corresponding arm
+Any leg attribute
+Hip, knee, and ankle joint angles of the
+corresponding leg
+Any torso attribute
+Waist joint angles
+Root horizontal dis-
+placement
+Two heading-local horizontal displace-
+ment increments
+Root orientation
+Two heading-local horizontal displace-
+ment increments, yaw increment, and 6D
+heading-local rotation representation
+Root height
+Root height
+together can sometimes compensate for these accompanying
+changes. We examine when it is locally possible to increase
+Up while keeping Front and Out unchanged.
+The limb attribute vector in Eq. (1) of the main paper
+contains three directional components:
+at,k = [Frontt,k, Outt,k, Upt,k]⊤.
+(S3)
+For clarity, we omit the frame index t below. With the
+anchor position and reference body frame held fixed, we
+write ak = fk(qk), where qk ∈Rnk contains the editable
+joint angles. A first-order Taylor expansion around the cur-
+rent configuration gives:
+∆ak = fk(qk + ∆qk) −fk(qk)
+= Jk∆qk + O(∥∆qk∥2
+2),
+(S4)
+where Jk = ∂fk/∂qk ∈R3×nk is the attribute Jacobian. Its
+three rows describe how joint adjustments affect Front, Out,
+and Up, respectively. For sufficiently small joint changes, the
+higher-order term can be neglected, giving ∆ak ≈Jk∆qk.
+To increase Up by δ while preserving Front and Out, we
+seek a joint adjustment satisfying:
+Jk∆qk = ∆atarget
+k
+=
+
+
+0
+0
+δ
+
+.
+(S5)
+If Jk has full row rank, all three attribute directions are
+independently controllable in this local linear approxima-
+tion.
+One solution is:
+∆qk = J†
+k∆atarget
+k
+,
+(S6)
+where † denotes the Moore–Penrose pseudoinverse. Under
+this rank condition, JkJ†
+k = I3, so the update produces
+exactly the target change in the linearized model. In other
+words, coordinated joint adjustments can cancel changes in
+Front and Out while increasing Up.
+For the nonlinear attribute mapping, a single such up-
+date may leave small higher-order deviations. Nevertheless,
+13
+
+
+assuming the mapping is smooth, sufficiently small target
+attribute changes are locally achievable when the current
+configuration lies strictly within the joint limits and the
+Jacobian has full row rank.
+C. Motion VAE Architecture and Training
+C.1. VAE Architecture
+The motion VAE uses a temporal encoder–decoder archi-
+tecture with approximately 15.5M parameters. The encoder
+and decoder contain three and two Transformer blocks, re-
+spectively, operating at the compressed temporal resolution.
+Each block uses pre-layer normalization, eight-head self-
+attention, and a residual feed-forward network with hidden
+dimensions 384 →1536 →384 and GELU activation [12].
+Separate residual temporal-convolution blocks accompany
+the downsampling and upsampling stages. The encoder
+downsamples the motion sequence in two stages, reducing
+its length by a factor of four, and maps the resulting fea-
+tures to 64-dimensional latent tokens. Thus, a 500-frame
+motion sequence is encoded as 125 latent tokens. The de-
+coder reconstructs the motion from these tokens through two
+temporal upsampling stages, restoring the original sequence
+length and motion feature dimension.
+C.2. Posterior and Deterministic Encoding
+Let X ∈RT ×dx denote a motion sequence with T valid
+frames and feature dimension dx = 39. Before encoding,
+we standardize each feature using fixed training-set statistics:
+x = Nx(X). The encoder maps x to the mean µϕ(x) and
+log variance log σ2
+ϕ(x) of a diagonal Gaussian posterior.
+Both outputs have shape L × dz, where L = ⌈T/4⌉is the
+latent sequence length and dz = 64 is the dimension of
+each latent token. During VAE training, we sample a latent
+representation using the reparameterization trick and decode
+it to reconstruct the standardized motion:
+qϕ(h | x) = N
+ µϕ(x), diag
+ σ2
+ϕ(x)
+
+,
+h = µϕ(x) + σϕ(x) ⊙η,
+ηi,j
+i.i.d.
+∼N(0, 1),
+ˆx = Draw(h),
+(S7)
+Here, h ∈RL×dz, ⊙denotes element-wise multiplication,
+and Draw outputs motion features in standardized space. The
+Gaussian posterior is defined over the flattened latent entries,
+with a separate variance for each entry.
+For flow training and ARA, we use the posterior mean
+instead of sampling, so that each motion sequence has a
+deterministic encoding. We further standardize these latent
+representations using fixed training-set statistics, denoted by
+Nz. The encoder mapping used in the main paper is therefore
+E(X) = Nz
+ µϕ(Nx(X))
+
+,
+(S8)
+To decode a standardized latent representation z, we first
+undo latent standardization, apply the VAE decoder, and
+then undo motion standardization:
+D(z) = N −1
+x
+ Draw
+ N −1
+z
+(z)
+
+.
+(S9)
+Thus, E maps motion sequences to standardized latent rep-
+resentations, while D reconstructs motion variables in their
+original units.
+C.3. Reconstruction and Regularization Objectives
+We train the VAE to reconstruct both standardized RPR39
+features and Cartesian body positions computed through
+FK. We also supervise temporal differences to preserve mo-
+tion dynamics and regularize the latent posterior toward a
+standard Gaussian. The overall objective is:
+LVAE = Lrec + λvelLvel + λaccLacc
++ λFKLFK + βLKL,
+(S10)
+where Lrec measures motion-feature reconstruction error,
+Lvel and Lacc measure errors in first- and second-order
+temporal differences, LFK measures body-position recon-
+struction error, and LKL regularizes the posterior. We set
+λvel = 0.5, λacc = 0.25, and λFK = 1. The KL weight β is
+gradually increased to 10−4 over the first 20 epochs.
+Motion Feature Reconstruction. Let x and ˆx denote the
+standardized target and reconstructed motion sequences, re-
+spectively. We supervise the motion features and their first-
+and second-order temporal differences using:
+(∆0x)t = xt,
+(∆1x)t = xt+1 −xt,
+(∆2x)t = xt+2 −2xt+1 + xt.
+(S11)
+These three quantities describe the feature values, their
+frame-to-frame changes, and how those changes vary over
+time. For each order o ∈{0, 1, 2}, we define:
+Lo =
+1
+|Vo|
+X
+(t,j)∈Vo
+ρ((∆oˆx)t,j −(∆ox)t,j) ,
+(S12)
+where j indexes motion features, Vo contains the valid frame-
+feature entries for order o, and ρ denotes the smooth L1
+penalty. The reconstruction and temporal losses are
+Lrec = L0,
+Lvel = L1,
+Lacc = L2.
+(S13)
+FK Position Reconstruction. To supervise body geometry,
+we first convert the reconstructed features back to their orig-
+inal units: ˆX = N −1
+x (ˆx). We then apply FK to the target
+and reconstructed motions to obtain body positions:
+pt,b = FK(X)t,b,
+ˆpt,b = FK( ˆX)t,b,
+(S14)
+where pt,b and ˆpt,b denote the target and reconstructed posi-
+tions of body b at frame t, measured in metres. The po-
+sition reconstruction loss is:
+LFK =
+1
+3T|B|
+T
+X
+t=1
+X
+b∈B
+3
+X
+d=1
+ρ(ˆpt,b,d −pt,b,d) ,
+(S15)
+14
+
+
+where T is the number of valid frames, d indexes the three
+Cartesian coordinates, and B includes the free-root body
+and the bodies associated with articulated joints in the G1
+kinematic model.
+Posterior Regularization. We use the KL divergence to en-
+courage the diagonal Gaussian posterior to remain close
+to a standard Gaussian:
+LKL = −
+1
+2|Vz|
+X
+(i,j)∈Vz
+ 1 + log σ2
+i,j −µ2
+i,j −σ2
+i,j
+
+,
+(S16)
+where µi,j and σi,j are the posterior mean and standard
+deviation for latent token i and feature j, and Vz contains
+valid latent-token/feature entries.
+C.4. Training Details
+We train the VAE on the HumanML3D-G1 training split for
+800 epochs, using motion sequences of up to 500 frames.
+The global batch size is 2,048. We use the AdamW optimizer
+with a target learning rate of 10−4, betas (0.9, 0.99), and
+zero weight decay. The learning rate increases to 10−4 over
+the first five epochs and then follows a cosine decay schedule
+to 10−6. Gradients are clipped at a norm of 1.
+D. Generator Architecture and Training
+D.1. Teacher Motion Generator
+The motion generator is a text-conditioned latent flow model
+that operates in the latent space of the frozen motion VAE.
+Given a noisy motion latent zτ, flow time τ, text condi-
+tion c, and motion duration T, the model predicts a latent
+velocity with the same shape as the input, L × dz. Dur-
+ing generation, this velocity field progressively transforms
+Gaussian noise into a motion latent, which is then decoded
+using the frozen VAE decoder.
+Generator Architecture. The generator uses a Transformer
+backbone with 12 blocks, a hidden dimension of 768, and
+12 attention heads. An input MLP projects the noisy latent
+tokens into the hidden feature space, while learned positional
+embeddings encode their temporal positions. Each Trans-
+former block contains bidirectional self-attention, cross-
+attention to the conditioning tokens, and a feed-forward
+network with an expansion ratio of four and GELU acti-
+vation. Flow time modulates the hidden features through
+adaptive layer normalization. After the Transformer blocks,
+a time-conditioned output head maps the hidden features
+to latent velocities.
+Conditioning Mechanisms. Text features are extracted us-
+ing a frozen CLIP ViT-B/32 [37] encoder and projected to the
+Transformer hidden dimension through a trainable two-layer
+MLP. Motion duration is encoded through a sinusoidal em-
+bedding followed by an MLP to produce a single duration to-
+ken. We concatenate the text tokens and duration token along
+the token dimension to form the cross-attention context:
+Cflow = Concat (Ctext, clen) ,
+(S17)
+Flow time is embedded separately and used for adaptive
+layer normalization. Padding masks exclude invalid motion
+and text tokens from attention.
+Flow Training Objective. With the VAE frozen, we encode
+each training motion as a standardized clean latent zGT =
+E(XGT). We construct a linear interpolation between the
+clean latent and Gaussian noise:
+zτ = (1 −τ)zGT + τϵ,
+ϵ ∼N(0, I).
+(S18)
+Here, τ = 0 corresponds to the clean motion latent and τ = 1
+to noise. We sample τ ∼Beta(1.5, 1), assigning greater
+probability to the noisier portion of the path. The flow model
+is trained to predict the velocity along this path using
+LFM = E
+
+1
+|V|
+X
+(ℓ,h)∈V
+
+[vθ(zτ, τ, c, T)]ℓ,h −[ϵ −zGT]ℓ,h
+2
+
+.
+where V contains the valid latent entries, with ℓindexing
+tokens and h indexing features. The expectation is over
+training motion–text pairs, temporal crops, Gaussian noise,
+and flow time.
+Teacher sampling. At inference, we start from Gaussian
+noise z1 ∼N(0, I) and integrate the learned velocity field
+backward from τ = 1 to τ = 0 using 50 Euler steps of equal
+size. At each step, classifier-free guidance combines the
+text-conditioned and empty-text velocity predictions:
+vc = vθ(zτk, τk, c, T),
+v∅= vθ(zτk, τk, ∅, T),
+vcfg = v∅+ scfg(vc −v∅),
+zτk+1 = zτk + (τk+1 −τk)vcfg,
+(S19)
+where τk = 1 −k/50 for k = 0, . . . , 50, and the guidance
+scale is set to scfg = 3. Both predictions retain the same dura-
+tion condition T; only the text condition differs. Each Euler
+step requires two velocity predictions, giving 100 velocity-
+network evaluations per generated sequence. Finally, the
+frozen VAE decoder maps z0 back to motion through D.
+D.2. Few-Step Distillation
+We adopt DMD2 [50] to distill the flow teacher into a four-
+step motion generator using distribution-matching and ad-
+versarial objectives.
+Both the student and the auxiliary
+fake-distribution network use the teacher’s architecture and
+are initialized from its exponential moving average (EMA)
+weights. The teacher, CLIP encoder, and text projector re-
+main frozen throughout distillation.
+Distillation Setup. Our flow model predicts latent velocities,
+whereas the distribution-matching objective uses clean-latent
+15
+
+
+estimates. Under the linear interpolation path, we convert
+a velocity prediction v at flow time τ into a clean-latent
+estimate as ˜z = zτ −τv. We use the estimates from the
+teacher and auxiliary network to construct the distribution-
+matching objective. For adversarial training, we attach a
+discriminator head to the auxiliary network. Its final-block
+features are averaged over valid tokens, then passed through
+LayerNorm and a 768→256→1 MLP with SiLU activation
+to produce a scalar discriminator output.
+Four-step sampler.
+Starting from Gaussian noise
+z(0) ∼N(0, I), the student generates a motion latent
+in four stages using the time schedule (τ0, τ1, τ2, τ3) =
+(1, 0.75, 0.5, 0.25). At each stage k, the student predicts
+a velocity and converts it into a clean-latent estimate:
+y(k) = z(k) −τkvS(z(k), τk, c, T), k = 0, . . . , 3,
+(S20)
+where vS denotes the student velocity network. For the first
+three stages, we add fresh Gaussian noise to this estimate
+to construct the input at the next time level:
+z(k+1) = (1 −τk+1)y(k) + τk+1ϵk,
+ϵk ∼N(0, I),
+(S21)
+with noise sampled independently at each stage. The fourth-
+stage estimate, y(3), is the final motion latent and is not
+re-noised.
+Teacher guidance is incorporated during distillation, so
+student sampling requires no additional empty-text predic-
+tions. Generating each sequence therefore requires only four
+student-network evaluations. For attribute-controlled gener-
+ation, ARA edits the resulting latent before VAE decoding.
+For text-only generation, the latent is decoded directly.
+D.3. Training Details
+Teacher Training. We train the latent flow teacher for
+80,000 iterations while keeping the VAE frozen. We use
+AdamW with betas (0.9, 0.99) and zero weight decay, and
+clip the gradient norm at 1. The learning rate increases to
+10−4 over the first 1,000 updates and remains constant there-
+after. The global batch size is 128 across four GPUs, with
+32 samples per GPU. For evaluation, we use exponential
+moving average (EMA) weights with a decay of 0.9999.
+Distillation Training. We train the student for 10,000 up-
+dates, performing five auxiliary-network updates for each stu-
+dent update. The flow times used to evaluate the distribution-
+matching objective are sampled uniformly from [0.02, 0.98].
+We set the weight of the student’s adversarial loss to 0.03
+and that of the auxiliary network’s discriminator loss to 1.
+Both the student and auxiliary network use AdamW with
+betas (0.9, 0.99) and zero weight decay. Their learning rates
+increase to 10−5 over the first 100 updates, and their gra-
+dient norms are clipped at 1. The global batch size is 128
+across four GPUs, with 32 samples per GPU. We maintain
+student EMA weights with a decay of 0.999. For each stu-
+dent update, we uniformly select one of the four sampling
+stages for backpropagation. The preceding stages generate
+its input without gradient tracking, so gradients propagate
+only through the selected stage.
+E. ARA Implementation and Training
+E.1. ARA Architecture and Optimization
+ARA Architecture. ARA predicts a latent residual from the
+base motion latent and the requested attribute controls. It first
+encodes these inputs into motion tokens and control tokens,
+respectively. A Transformer then updates the motion tokens
+through cross-attention to the control tokens. The updated
+motion tokens are mapped to a residual, which is added to
+the base latent before decoding with the frozen VAE decoder.
+The attribute encoder takes a 44-dimensional vector at
+each frame, consisting of 21 masked standardized target
+values, 21 selection-mask entries, a normalized frame index
+t/(T −1), and a duration feature (T −1)/500. The selection
+mask is shared across frames. Three temporal convolutional
+layers with channel dimensions 44 →256 →256 →768
+and GELU activations [12] produce token embeddings. Two
+stride-2 layers reduce the temporal resolution by a factor of
+four to match the motion latent sequence. Invalid temporal
+positions are masked at each resolution.
+The base latent is projected to 768-dimensional motion to-
+kens, to which learned positional embeddings and a duration
+embedding are added. These motion tokens pass through
+eight Transformer blocks, each containing 12-head self-
+attention, cross-attention, and a two-layer feed-forward net-
+work. Self-attention captures temporal relationships among
+motion tokens, while cross-attention uses motion tokens
+as queries and control tokens as keys and values to incor-
+porate the requested edits.
+Finally, layer normalization and an output projection map
+the updated motion tokens to a residual with the same shape
+as the base latent. The output projection is initialized to zero,
+so ARA initially leaves the base latent unchanged.
+Attribute Error Definitions. We define the channel-wise
+error function e used in Eq. (5) of the main paper. Chan-
+nel indices are zero-based and follow the ordering in Ta-
+ble S1. At each valid frame, let ˆa, a ∈R21 denote the
+attributes of the edited motion and their reference values,
+respectively. For selected channels, the reference is the
+requested target; for unselected channels, it is the corre-
+sponding base-motion attribute.
+To account for differences in attribute scale, we normal-
+ize errors using σj = max(sA,j, 0.05), where sA,j is the
+training-set standard deviation of channel j.
+For limb attributes, root horizontal displacement, and
+16
+
+
+root height, we use normalized squared errors:
+ej(ˆa, a) = (ˆaj −aj)2
+σ2
+j
+,
+j ∈{0, . . . , 11, 15, 16, 17}.
+(S22)
+For torso attributes, we account for angular periodicity using
+the shortest signed angular difference:
+dj = atan2(sin(ˆaj −aj), cos(ˆaj −aj)) ,
+ej(ˆa, a) = d2
+j
+σ2
+j
+, j ∈{12, 13, 14}.
+(S23)
+We treat root orientation as a group: selecting any of its
+roll, pitch, or yaw channels selects all three. We compare
+their rotation matrices following:
+R(a) = Rz(a20)Ry(a19)Rx(a18),
+erot(ˆa, a) = ∥R(ˆa) −R(a)∥2
+F
+2 P20
+r=18 σ2r
+,
+(S24)
+We assign this group error to each of the three root-
+orientation channels:
+ej(ˆa, a) = erot(ˆa, a),
+j ∈{18, 19, 20}.
+(S25)
+These channel-wise errors form the error vector e(ˆa, a) used
+for masked averaging in Eq. (5).
+Training Details. After completing 10,000 student distilla-
+tion updates, we freeze the motion generator and train ARA
+for 40,000 updates. The VAE remains frozen throughout
+ARA training. The training proposal set contains two sam-
+pled proposals for each of the 9,974 source motions in the
+HumanML3D training split. Selection masks and target per-
+turbations are resampled during training. We set the branch
+weights to λGT = 0.5, λID = 0.25, and λEdit = 0.25, and
+set λq = 0.1. We optimize ARA using AdamW with a batch
+size of 1,536 and weight decay of 10−4. The learning rate in-
+creases to 2×10−4 over the first 250 updates, then follows a
+cosine decay schedule to 4 × 10−5, or 20% of its peak value.
+E.2. Sampling Selection Masks and Edit Targets
+We construct selection masks and target attribute sequences
+separately for the three training objectives introduced in
+Section 3.3 of the main paper: paired-target supervision
+(GT), identity supervision (ID), and selective editing (Edit).
+Paired-Target Supervision (GT). For paired-target supervi-
+sion, we use the attributes of the paired ground-truth motion
+as targets and select all 21 channels:
+AGT = WGAR(XGT),
+MGT = 1.
+(S26)
+Identity Supervision (ID). For identity supervision, the
+targets equal the base-motion attributes, AID = Ab. We
+vary the selection mask to train ARA to preserve the base
+motion under different attribute-selection patterns.
+Table S4. Mask-sampling distribution for identity supervision and
+selective editing.
+Mask construction
+Probability
+Single anchor channel
+0.25
+Complete anchor group
+0.25
+Multiple complete groups
+0.10
+Sparse channels across groups
+0.10
+Arbitrary channel subset
+0.10
+All channels
+0.20
+We sample each mask in three steps. First, we orga-
+nize the 21 channels into eight groups: left arm, left leg,
+right arm, right leg, torso, root horizontal displacement, root
+height, and root orientation. We then uniformly sample
+one of the 21 channels as the anchor channel; the group
+containing it is the anchor group.
+Second, we sample one of the following six mask con-
+structions using the probabilities in Table S4. Every con-
+struction includes the anchor channel.
+• Single anchor channel: select only the anchor channel.
+• Complete anchor group: select all channels in the anchor
+group.
+• Multiple complete groups: select the entire anchor group,
+then independently select each remaining group with prob-
+ability 0.5, including all channels in each selected group.
+• Sparse channels across groups: include the anchor group
+and one uniformly sampled different group, then indepen-
+dently include each remaining group with probability 0.5.
+Select exactly one channel from each included group, us-
+ing the anchor channel for the anchor group and uniformly
+sampling a channel from every other included group.
+• Arbitrary channel subset: uniformly sample a subset size
+from 2 to 20, then select that many channels, always in-
+cluding the anchor.
+• All channels: select all 21 channels.
+Finally, we enforce the root-orientation grouping rule: if
+any roll, pitch, or yaw channel is selected, all three are in-
+cluded in the final mask. This final expansion applies to
+every mask construction.
+Selective Editing (Edit). For selective editing, we sample
+MEdit using the same procedure as for identity supervision.
+Since paired edited motions are unavailable, we construct
+targets by transforming the base-motion attributes:
+Ab = WGAR(Xb),
+AEdit = (1 −MEdit) ⊙Ab + MEdit ⊙P(Ab).
+(S27)
+where P applies randomly sampled temporal and attribute-
+value transformations, and ⊙denotes element-wise multipli-
+cation. The channel mask is shared across frames: selected
+channels receive transformed targets, while unselected chan-
+nels retain their base values.
+17
+
+
+• Temporal transformations. We modify the timing of at-
+tribute trajectories to create targets in which the same vari-
+ation occurs earlier, later, faster, or slower, while keeping
+the sequence duration unchanged. Temporal shifting and
+scaling are enabled independently, each with probability
+0.35. The temporal shift is sampled from [−0.15, 0.15]
+times the sequence duration, and the temporal scale is
+sampled from [0.8, 1.25] around the sequence midpoint.
+We obtain the transformed values through linear interpo-
+lation. Sampling outside the sequence boundaries returns
+the nearest endpoint value.
+• Attribute-value transformations. We also modify attribute
+values to vary the requested geometry. For each limb or
+torso channel, we independently apply two transforma-
+tions, each with probability 0.35: scaling deviations from
+the channel’s temporal mean by a factor sampled from
+[0.75, 1.25], and adding a constant offset sampled from
+[−0.2, 0.2]. Limb offsets are dimensionless, while torso
+offsets are expressed in radians.
+The two root horizontal displacement channels share a
+scale sampled from [0.8, 1.2]. We subtract their respective
+initial values so that both displacement trajectories start at
+zero. Root height receives a constant offset sampled from
+[−0.1, 0.1] metres with probability 0.35. Root roll and
+pitch independently receive constant offsets sampled from
+[−0.15, 0.15] radians, each with probability 0.35. After
+temporal transformation, we shift the yaw trajectory so
+that its initial value matches that of the base motion. All
+values within the specified ranges are sampled uniformly.
+• Additional anchor perturbation. With probability 0.5, we
+further perturb the anchor channel to strengthen the edit
+request. The perturbation magnitude is sampled uniformly
+from [0.04, 0.20], with positive and negative signs chosen
+with equal probability. For root horizontal displacement
+and yaw, the offset increases linearly from zero at the first
+frame to the sampled signed value at the last frame. For
+all other channels, the offset is constant throughout the
+sequence. Each offset is expressed in the corresponding
+channel’s native units.
+We resample masks and transformations during training
+and exclude padded frames from supervision. The result-
+ing targets serve as soft optimization objectives rather than
+hard constraints.
+F. Sensitivity to Preservation Thresholds
+In the main paper, we evaluate motion editing in terms of
+both target adherence and source preservation. Non-target
+Attribute Drift (NAD) measures the normalized deviation
+of unselected attributes from the source motion, while Non-
+target Joint Drift (NJD) measures joint-space RMSE over
+unedited body parts. Lower values indicate better perfor-
+mance for all three metrics.
+We report the Attribute Success Rate (ASR) using
+AGLR
+TRACE
+OmniME
+ScaleMoGen
+DNO
+RG-DNO
+0
+40
+80
+ASR (%)
+0.10
+0.20
+0.30
+0.40
+0.50
+(a) NAD threshold
+0
+40
+80
+ASR (%)
+1°
+2°
+3°
+4°
+5°
+(b) NJD threshold
+Figure S1. Editing success under different preservation thresh-
+olds. Attribute Success Rate (ASR) is computed from the same
+predictions while varying the NAD threshold (left) or NJD thresh-
+old (right).
+preservation thresholds of NAD ≤0.30 and NJD ≤3◦.
+To examine how these choices affect ASR, we vary the NAD
+threshold from 0.10 to 0.50 and the NJD threshold from
+1◦to 5◦in separate sweeps. Smaller thresholds impose
+stricter preservation requirements. We reuse the same predic-
+tions and metric definitions as in the main paper, changing
+only the threshold being examined. We compare AGLR
+with other motion editors and analyze the contributions of
+its training components.
+F.1. Comparison with Motion Editors
+Figure S1 shows that AGLR achieves the highest ASR
+throughout both threshold ranges. TRACE’s ASR remains
+nearly constant as the NJD threshold varies, consistent
+with its explicit projection of protected joints back to their
+source configurations. Its lower ASR suggests that pre-
+serving these joints alone is insufficient when the edited
+motion does not closely match the requested targets. Om-
+niME benefits most when the strictest preservation thresh-
+olds are relaxed, suggesting that some of its edits achieve
+the requested changes but also alter unselected attributes or
+unedited joints. DNO improves as the NAD threshold is
+relaxed, yet its ASR remains low across the NJD thresholds.
+RG-DNO and ScaleMoGen also achieve lower ASR than
+AGLR throughout the evaluated ranges. Overall, AGLR
+maintains its advantage under both strict and more permis-
+sive preservation requirements.
+F.2. Effect of Training Components
+Figure S2 shows that conditioning on the base motion and
+predicting a latent residual both improve ASR across the two
+threshold sweeps. The two preservation objectives provide
+complementary benefits: attribute preservation is particu-
+larly important when unselected attributes must remain close
+to their source values, while coordinate preservation is par-
+ticularly important when unedited joints must remain close
+to their source configurations. Removing both objectives
+substantially reduces success, even under more permissive
+thresholds. ID supervision has a smaller effect on these
+18
+
+
+AGLR
+w/o base
+w/o ID
+w/o both preserv.
+Full latent
+w/o coord. preserv.
+w/o attr. preserv.
+w/o GT
+w/o Edit
+0
+20
+40
+60
+80
+ASRc (%)
+0.10
+0.20
+0.30
+0.40
+0.50
+(a) NAD threshold
+0
+20
+40
+60
+80
+ASRc (%)
+1°
+2°
+3°
+4°
+5°
+(b) NJD threshold
+Figure S2. Contributions of training components under differ-
+ent preservation requirements. Attribute preservation is particu-
+larly beneficial at strict NAD thresholds, while coordinate preserva-
+tion is particularly beneficial at strict NJD thresholds.
+curves, consistent with its primary role in maintaining no-
+edit consistency, as discussed in the main paper.
+G. Editing Latency Measurement
+We measure cached-refinement latency as the time required
+for ARA refinement and VAE decoding, starting from a
+cached base latent corresponding to a 500-frame motion.
+Measurements are performed on an NVIDIA GeForce RTX
+4090D GPU with a batch size of one. We use three fixed
+validation motions. For each motion, we run ten warmup
+requests followed by 30 timed requests, synchronizing the
+GPU at the timing boundaries. Timing ends when the de-
+coded RPR39 output is available on the GPU. Across the 90
+timed requests, the mean latency is 9.103 ms, reported as 9.1
+ms in Section 4.4 of the main paper. The end-to-end editing
+latency is 13.15 ms and additionally includes source-motion
+processing and output conversion.
+H. Baseline Adaptation and Training
+H.1. Text-to-Motion Baselines
+MDM. We adapt MDM [44] to RPR39 by modifying its
+input and output layers to process 39-dimensional robot
+motion features, while retaining its original diffusion de-
+noising objective. We train the model for 80,000 updates
+with a global batch size of 128.
+ECHO. For ECHO [19], we replace its native motion rep-
+resentation with RPR39 while retaining its temporal U-Net
+architecture and clean-motion prediction objective. Train-
+ing uses a 1,000-step diffusion process with a linear noise
+schedule. The reconstruction loss is the mean squared er-
+ror over valid frames and motion features, averaged within
+each sequence and then across the batch. We train ECHO
+for 50,000 updates with a global batch size of 128, using
+AdamW with an initial learning rate of 2 × 10−4 and weight
+decay of 10−2. Gradient norms are clipped at 1, and EMA
+weights are used for evaluation.
+MoMask. We adapt MoMask [10] to RPR39 by first training
+a residual vector-quantized motion tokenizer, then training
+its masked and residual token predictors using the original
+cross-entropy objectives. The tokenizer uses a Smooth-ℓ1
+motion reconstruction loss, a commitment loss with weight
+0.02, and an auxiliary G1 FK position reconstruction loss
+with weight 0.5. We train the tokenizer for 80,000 updates
+with a global batch size of 256, and each token predictor for
+60,000 updates with a global batch size of 64. All models use
+AdamW with a learning rate of 2 × 10−4, betas (0.9, 0.99),
+and 2,000 warmup updates. Weight decay is zero for the
+tokenizer and 10−5 for the token predictors. The resulting
+robot-motion tokenizer and token predictors also provide
+the initialization for MaskControl.
+TextOp. We adapt TextOp [48] to robot motion while re-
+taining its history-conditioned motion VAE and autoregres-
+sive latent diffusion model. At each rollout step, the model
+conditions on two history frames and predicts eight future
+frames. For text-only generation, it starts from a fixed G1
+neutral pose and uses generated motion as history for sub-
+sequent steps. We train the VAE for 40,000 updates using
+Adam, followed by 60,000 diffusion-model updates using
+AdamW. Both stages use a global batch size of 1,024 and
+a learning rate of 10−4.
+MotionHiFlow. We adapt MotionHiFlow [27] to robot mo-
+tion while retaining its motion VAE and text-conditioned
+latent flow model. The VAE compresses the temporal res-
+olution by a factor of four, and the flow model uses 20
+sampling steps at inference. We train the VAE for 40,000
+updates with a global batch size of 256, followed by 50,000
+flow-model updates with a global batch size of 64. Both
+stages use AdamW with a learning rate of 2×10−4 and zero
+weight decay. For evaluation, we use the EMA weights
+of the flow model.
+H.2. Fine-Grained Controllable Generation
+MotionLCM. We adapt MotionLCM [8] using a pretrained
+robot-motion VAE and latent consistency prior. Only the at-
+tribute encoder and a ControlNet branch copied from the de-
+noiser are trained; the pretrained components remain frozen.
+The controller encodes masked attribute targets and selec-
+tion masks, then injects control features into the denoiser.
+Training combines clean-latent MSE with Smooth-ℓ1 error
+between decoded WGAR attributes and targets, normalized
+by training attribute scales and averaged over selected chan-
+nels and valid frames. Angular differences are wrapped
+to [−π, π]. Gradients pass through the frozen decoder to
+train the controller.
+We train for 10,000 updates with a global batch size
+of 192, using AdamW with a learning rate of 10−4 and
+zero weight decay. The learning rate uses a 1,000-update
+warmup followed by cosine decay. Gradient norms are
+19
+
+
+clipped at 1, and text conditioning is dropped with prob-
+ability 0.1. Inference uses four consistency steps followed
+by one decoding pass.
+OmniControl. We initialize OmniControl [49] from the
+robot-adapted MDM and jointly fine-tune its backbone and
+control branch. Analytic guidance differentiates WGAR
+target errors through G1 forward kinematics, using training-
+scale normalization and wrapped angular differences on se-
+lected channels and valid frames. The denoising loss is
+RPR39 MSE against the clean training motion over valid
+frames.
+During training, guidance uses 20 updates per diffusion
+level and 100 at the final level. We fine-tune for 10,000
+updates with a global batch size of 192, using AdamW with
+a learning rate of 10−5 and zero weight decay. In the main
+comparison, inference uses 50 diffusion steps with one guid-
+ance update at every step, including the final step.
+MaskControl. We adapt MaskControl [35] using the pre-
+trained MoMask tokenizer and token model. A control Trans-
+former copied from the token model injects control features
+through zero-initialized projections. Its 63-dimensional in-
+put contains 21 masked attribute targets, 21 target–current
+attribute differences, and 21 selection-mask entries.
+Training weights token cross-entropy and the attribute-
+control loss equally. The cross-entropy term supervises
+ground-truth motion tokens at valid positions. The attribute
+term averages absolute WGAR target errors over selected
+channels and valid frames, after training-scale normalization
+and wrapping angular differences to [−π, π]. To backprop-
+agate this error, we decode probability-weighted token em-
+beddings through the frozen tokenizer. We train for 15,000
+updates with a global batch size of 896, using AdamW with
+a learning rate of 2 × 10−4 and weight decay of 10−5.
+Inference uses 18 token-unmasking steps. At the des-
+ignated refinement stage, we perform five updates to the
+token logits to reduce attribute error, keeping model weights
+fixed. These updates use AdamW with a learning rate of
+0.06, betas (0.5, 0.9), and weight decay of 10−6.
+SFControl.
+SFControl [17] uses two temporal U-Nets
+with adaptive group normalization. The first completes 21-
+channel attribute trajectories from sparse conditions. The
+second takes these completed trajectories as conditions and
+predicts a 60-channel state comprising 21 attributes and 39
+motion coordinates. Both stages use clean-state MSE. The
+second also minimizes squared WGAR target errors com-
+puted from the predicted motion, normalized by training at-
+tribute scales and averaged over selected channels and valid
+frames, with wrapped angular differences. This loss weight
+increases to 1 over the first 1,000 updates. We train each
+stage for 20,000 updates, with global batch sizes of 1,536
+and 320, respectively. Both use AdamW with a learning rate
+of 10−4, weight decay of 0.01, gradient-norm clipping at
+1, and EMA decay of 0.9999. Inference uses 50 diffusion
+steps per stage with a guidance scale of 2.5.
+TLControl. TLControl [45] first trains a robot-motion VQ-
+VAE with six body-part groups: root, torso, left/right arms,
+and left/right legs. A Transformer then predicts motion
+tokens from masked attribute trajectories and text. The tok-
+enizer minimizes RPR39 reconstruction MSE plus a commit-
+ment loss weighted by 10−3. The Transformer minimizes
+token cross-entropy plus decoded-motion MSE weighted by
+10−3, with the tokenizer frozen. Each stage is trained for
+40,000 updates, with global batch sizes of 128 for the tok-
+enizer and 64 for the Transformer. Both use AdamW with a
+learning rate of 2×10−4, betas (0.9, 0.99), and weight decay
+of 0.01. Attribute conditions are dropped with probability
+0.1 to include text-only training examples.
+At inference, the highest-probability tokens initialize the
+latent representation, which is then optimized continuously.
+We use at most five L-BFGS iterations with strong-Wolfe
+line search, a learning rate of 0.1, and a history size of 200.
+The optimization objective is 1,000 times the sum of the
+Smooth-ℓ1 error on training-scale-normalized WGAR dif-
+ferences, averaged over selected channels and valid frames
+with angular differences wrapped to [−π, π] and the G1 foot-
+skid loss. Additional evaluations required by line search
+are not counted as iterations.
+ProjFlow. ProjFlow [46] uses an RPR39 flow prior trained
+along the interpolation path Xτ = (1 −τ)ϵ + τXGT. It
+predicts the target velocity XGT −ϵ using MSE over valid
+entries. We train the prior for 50,000 updates with a global
+batch size of 192, using AdamW with a learning rate of
+2 × 10−4 and weight decay of 0.01.
+Because WGAR depends on nonlinear FK, we numeri-
+cally project the predicted clean motion toward the requested
+attributes. Each projection computes the selected-attribute
+error gradient, rescales it using the G1 chain-based kinematic
+metric, and estimates attribute changes along the resulting
+direction. A line search then tests four progressively smaller
+step sizes. Inference uses 50 flow steps with a guidance
+scale of 3, two projection iterations at each non-final step,
+and eight at the final step. We retain the method’s endpoint
+recomposition and noise-mixing procedure.
+H.3. Source-Conditioned Motion Editing
+Training Pairs for Supervised Editors.
+We construct
+source–target pairs for TRACE [22] and OmniME [42] by
+numerically editing training motions to match WGAR re-
+quests. The solver optimizes a correction in standardized
+motion space using 120 Adam steps with a learning rate
+of 0.025. Its objective combines selected-attribute error,
+unselected-attribute error, correction magnitude, and second-
+difference smoothness, weighted by 1, 0.15, 0.01, and 0.02,
+respectively. Projection restores protected coordinates from
+20
+
+
+the source and enforces joint limits. Requests use constant,
+tapered, or sign-changing offsets, with identity requests sam-
+pled with probability 0.25. We retain all identity pairs and
+edited pairs whose normalized selected-attribute RMSE is
+at most 0.15. This produces 31,264 training pairs and 256
+separately generated validation pairs.
+TRACE. TRACE [22] retains source-conditioned denoising,
+edit-scope conditioning, event supervision, and projection of
+protected coordinates. The request encoder receives masked
+targets, target–source differences, and masks. Its motion
+network is initialized from scratch, with frozen Qwen3-
+Embedding-4B text features. The loss combines edited-
+coordinate MSE, first-difference MSE, selected-attribute
+squared error, and event classification with weights 1, 0.2,
+0.5, and 0.05. Attribute error is computed from WGAR
+after restoring protected coordinates, using training-scale
+normalization, wrapped angular differences, and averaging
+over selected channels and valid frames. Binary and categor-
+ical event losses use valid temporal tokens. Training uses
+AdamW at 10−4, a 10,000-update cap, global batch 2,048,
+and EMA decay 0.99. Inference uses 50 DDIM steps and
+guidance scale 1.5. Protected coordinates are restored at
+every step and exactly copied in the output.
+OmniME. OmniME [42] retains source-conditioned diffu-
+sion and adds a framewise 63-channel request encoder to
+its source tokens. Numerical requests also generate deter-
+ministic edit instructions encoded by frozen CLIP ViT-L/14.
+The eight-layer denoiser has width 512, eight heads, and a
+four-layer condition encoder. Training uses
+LOmniME = Lrec + Lretro + 0.05Lcls
++ 0.2Lpres + 0.01Ltrip.
+(S28)
+Lrec equally averages reconstruction MSE over five RPR39
+groups: horizontal increments, height, yaw increment, 6D ro-
+tation, and joints. Lretro averages three intermediate predic-
+tions’ motion MSE. Lcls classifies three bins of FK-derived
+source–target similarity. Lpres sums squared errors against
+the edited training target over 39 features and averages valid
+request-conditioned frames. Ltrip uses semantic triplets
+with margin 0.2. Training drops both source and request
+for 10% of samples and retains only the source for another
+10%. AdamW uses 10−4, weight decay 0.01, 500 warmup
+updates, gradient clipping at 1, and EMA decay 0.99, with
+global batch 256 and a 31,000-update cap. Inference uses
+50 DDIM steps with source and request guidance scales
+of 2, without output projection.
+ScaleMoGen. ScaleMoGen [18] replaces human skeleton
+pooling with G1 joint groups while retaining multiscale bi-
+nary quantization and coarse-to-fine token prediction. Its
+robot tokenizer combines smooth-ℓ1 reconstruction, veloc-
+ity ℓ1, local-FK ℓ1, and commitment loss with weights 1,
+0.5, 0.5, and 0.02. The predictor uses binary cross-entropy
+over valid multiscale tokens, with masked attributes and
+masks encoded as temporal condition tokens alongside text.
+The tokenizer uses 12,000 updates with a global batch size
+of 32, and the predictor uses 24,000 updates with a global
+batch size of 24. AdamW uses 2 × 10−4 and weight decay
+0.01. Editing extracts source tokens and their confidence
+scores, then applies the original confidence-difference sam-
+pling rule only to the requested body groups. The editing
+threshold is 0.1 and guidance scale is 3. The edited tokens
+are decoded directly into motion.
+DNO. DNO [24] freezes the RPR39 MDM and optimizes
+sampling noise. Source editing begins with 50 DDIM steps
+and 500 noise-fitting updates against valid-frame source-
+motion MSE. Editing uses 300 updates to minimize abso-
+lute WGAR target errors, normalized by training attribute
+scales and averaged over selected channels and valid frames,
+with wrapped angular differences. Each differentiable sam-
+pling pass uses ten DDIM steps. The objective includes the
+original multiscale noise-decorrelation penalty with weight
+1,000. Editing also penalizes the noise distance from the
+fitted source with weight 0.002, while source fitting omits
+this distance term. Adam uses learning rate 0.05, a 50-update
+warmup, cosine decay, and per-sample gradient normaliza-
+tion. Noise penalties use valid sequence lengths, and the
+output is not projected onto protected source coordinates.
+RG-DNO. RG-DNO [30] uses the RPR39 MDM with 50-
+step sampling and an attribute-based training-motion re-
+trieval index. After 500 source-fitting updates, it performs
+100 target-optimization updates on the source noise, re-
+trieves a reference using selected attributes at 64 sampled
+frames, and fits and adapts that reference for 100 updates
+each. It evaluates 255 eight-segment noise-mixture candi-
+dates using attribute, jitter, noise-regularity, and foot-skating
+rewards. The selected mixture receives 100 soft-mask up-
+dates followed by 400 final noise updates. Initial stages
+use learning rate 0.05 and final refinement uses 0.02. Re-
+trieval uses training motions of sufficient valid length. The
+final optimized noise produces the edited motion through
+the diffusion sampler.
+I. Limitations
+AGLR is trained and evaluated on motion sequences of up to
+500 frames at 50 Hz, or approximately 10 seconds. Editing
+minute-long motions has not yet been evaluated. Because
+the adapter processes the entire target sequence at once,
+its cached single-pass refinement does not directly support
+streaming edits. Extending the method to longer motions
+will require longer temporal context or a windowed editing
+strategy that preserves continuity across window boundaries.
+21
+
+
+Single-attribute control for limb
+Base 0 | Base motion
+Edit 1 | Right arm up +0.3
+Edit 2 | Right arm up -0.3
+Figure S3. Right-arm Up control produces opposite vertical adjustments. The base execution is compared with +0.3 and −0.3 offsets
+to the right-arm Up attribute. Offsets are dimensionless changes in normalized limb extent.
+22
+
+
+Single-attribute control for limb
+Base 0 | Base motion
+Edit 3 | Right arm out +0.3
+Edit 4 | Right arm out -0.3
+Figure S4. Right-arm Out control adjusts lateral extension. Relative to Base 0, offsets of +0.3 and −0.3 request outward and inward
+changes, respectively.
+23
+
+
+Single-attribute control for limb
+Base 0 | Base motion
+Edit 5 | Right arm front +0.3
+Edit 6 | Right arm front -0.3
+Figure S5. Right-arm Front control changes forward extension. The edited executions use Front offsets of +0.3 and −0.3 relative to
+Base 0.
+24
+
+
+Single-attribute control for limb
+Base 0 | Base motion
+Edit 7 | Left leg out +0.2
+Edit 8 | Left arm up +0.3
+Figure S6. Single-attribute edits control left-leg and left-arm geometry. From top to bottom: Base 0, left-leg Out +0.2, and left-arm Up
++0.3. The edits independently increase pelvis-relative lateral leg extent and torso-relative arm height. Offsets are dimensionless WGAR
+changes. Snapshots progress from left to right.
+25
+
+
+Combined-attribute control for limb and torso
+Base 0 | Base motion
+Edit 1 | Right arm up +0.3 + torso left +0.2
+Edit 2 | Both arms +0.3
+Figure S7. A single request can combine controls across body parts. The first edit combines right-arm Up +0.3 and torso-left 0.2. The
+second increases Up by 0.3 on both arms (labeled “Both arms +0.3”). Limb offsets and torso-angle adjustments use dimensionless units
+and radians, respectively.
+Time-varying control for limb
+Base 0 | Base motion
+Edit 1 | Left arm out +0.2 then -0.2
+Figure S8. A time-varying request reverses the direction of a limb edit. Left-arm Out is first increased by 0.2 and then decreased by 0.2
+relative to Base 0. The sequence illustrates temporal control within one selected attribute channel.
+26
+
+
+Root trajectory
+Base 1 | Base motion
+Edit 1.01 | Change root trajectory to turn left
+Edit 1.02 | Change root trajectory to turn left while right arm up +0.3
+Figure S9. Root trajectory edits compose with local limb control. Base 1 is compared with a left-turn request and a left-turn request
+combined with right-arm Up +0.3. Each labeled example is displayed as two rows of successive execution snapshots.
+27
+
+
+Time varying control for root orientation
+Base 2 | Base motion: march
+Edit 2.01 | March + 180 deg turn
+Edit 2.02 | March + 360 deg turn
+Figure S10. Time-varying heading targets produce turns during marching. The base marching execution is compared with 180◦and
+360◦turn requests. Successive poses show the progression of each turn.
+28

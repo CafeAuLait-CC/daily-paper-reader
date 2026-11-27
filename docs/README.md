@@ -4,24 +4,24 @@
     <a class="dpr-home-notice-tutorial" href="#/tutorial/README">使用教程 <span aria-hidden="true">›</span></a>
   </div>
   <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-10-05">10.05</time>
+    <time class="dpr-home-notice-date" datetime="2026-11-25">11.25</time>
     <div>
-      <strong class="dpr-home-notice-entry-title">medRxiv 自动更新已恢复</strong>
-      <span class="dpr-home-notice-entry-summary">修复超长摘要导致的向量生成失败，维护任务现会限制单条 embedding 文本长度并分片写入。受影响范围已重新同步，公开读取、关键词检索与语义检索均已验证。</span>
+      <strong class="dpr-home-notice-entry-title">侧边栏新增后台任务实时进度显示</strong>
+      <span class="dpr-home-notice-entry-summary">触发专题研究、每日论文或会议检索后，侧边栏底部将通过公共 Supabase 实时显示当前步骤与逐篇生成进度（如 18/50），刷新页面、跨设备或游客模式均可查看，完成后支持一键刷新列表；无任务时自动隐藏。</span>
     </div>
   </div>
   <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-09-16">09.16</time>
+    <time class="dpr-home-notice-date" datetime="2026-11-25">11.25</time>
     <div>
-      <strong class="dpr-home-notice-entry-title">日报跨日重复推荐已修复</strong>
-      <span class="dpr-home-notice-entry-summary">历史推荐现按原始召回标签与 arXiv 论文标识去重，暂停词条不再参与评分；同一专题次日不会重复推荐相同论文。已有历史页面保留，不自动删除。</span>
+      <strong class="dpr-home-notice-entry-title">90天/365天专题回溯与大礼包重构为标准流水线</strong>
+      <span class="dpr-home-notice-entry-summary">全面复用标准召回、逐条重排、精排与并发文档生成，补齐论文图表提取；默认精选最多 50 篇（≥8分精读、6–8分速读）一次全部生成完，不再出现英文空壳页，并移除巨型状态 JSON 与侧栏双轨索引（旧历史大礼包仍兼容可读）。</span>
     </div>
   </div>
   <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-09-09">09.09</time>
+    <time class="dpr-home-notice-date" datetime="2026-11-25">11.25</time>
     <div>
-      <strong class="dpr-home-notice-entry-title">90天/365天 arXiv 专题回溯</strong>
-      <span class="dpr-home-notice-entry-summary">支持分片召回、断点评审与分页查看，核心论文与待复核结果分开展示。DeepSeek 费用按实际用量计算，不下载全量 PDF。</span>
+      <strong class="dpr-home-notice-entry-title">阅读页、侧边栏与后台管理界面视觉升级</strong>
+      <span class="dpr-home-notice-entry-summary">阅读页与侧边栏切换为极简炭黑×浅雾蓝护眼配色，日历升级为圆角卡片并补齐完整暗色模式；后台三页签统一布局、新增全宽「新增研究方向」入口，并优化反馈弹窗交互与次日一次性轻提醒。</span>
     </div>
   </div>
   <div class="dpr-home-site-stats" data-dpr-site-stats hidden aria-live="polite">
@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-11-25</span>
+      <span class="dpr-home-dashboard-kicker">2026-11-27</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-11-25 03:35:34 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-11-27 02:28:06 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-11-25 日报从 8 篇论文中精读 4 篇，重点聚焦人—物运动合成与闭环动作生成。最值得看的是 CoRelate 与 CHORD 这两项 8.0 分工作，它们分别解决交互关系协调和闭环分解问题。普通读者可以先浏览这两篇精读，再顺带了解 DuoFlow 的语音—动作同步控制。</p>
+<p>今日筛出 7 篇文本到动作生成论文，其中精读 1 篇、速读 6 篇；精读文《Back to Raw Motion》获 8.0 分，主打无潜变量的扩散 Transformer 与精确条件生成。</p>
+<p>最值得关注两个方向：一是用无潜变量扩散 Transformer 做精确条件控制，二是用跨尺度记忆（MMotion）与连续深度建模（MotionODE）改进自回归动作生成。</p>
+<p>普通读者建议先读那篇 8.0 分的精读文，弄懂“去掉潜变量”的动机，再快速浏览 MMotion 和 MotionODE，对比两者对生成质量的取舍。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="CoRelate: Coordinated Human-Object Motion Synthesis through Interaction Relations">CoRelate: Coordinated Human-Object Motion Synthesis through Interaction Relations</span></li><li><span class="dpr-home-dashboard-paper-title" title="CHORD: Closed-loop Human-Object Rectified-flow Decomposition">CHORD: Closed-loop Human-Object Rectified-flow Decomposition</span></li><li><span class="dpr-home-dashboard-paper-title" title="Ego-HMB: Human Motion Bridging from Egocentric Images via A Motion Bridge Diffusion Model">Ego-HMB: Human Motion Bridging from Egocentric Images via A Motion Bridge Diffusion Model</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Back to Raw Motion: Latent-Free Diffusion Transformers for Text-to-Motion and Exact Conditional Generation">Back to Raw Motion: Latent-Free Diffusion Transformers for Text-to-Motion and Exact Conditional Generation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DuoFlow: Towards Synchronized Speech and Motion Generation with Fine-Grained Control">DuoFlow: Towards Synchronized Speech and Motion Generation with Fine-Grained Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="PIAE: Physics-Informed Continuous Autoencoding for Compact 3D Human Motion">PIAE: Physics-Informed Continuous Autoencoding for Compact 3D Human Motion</span></li><li><span class="dpr-home-dashboard-paper-title" title="MetricHand: Geometry-Aware Flow Matching for 4D Hand Reconstruction in Metric World Space">MetricHand: Geometry-Aware Flow Matching for 4D Hand Reconstruction in Metric World Space</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MMotion: Collaborative Cross-Scale Memory for Text-to-Motion Generation">MMotion: Collaborative Cross-Scale Memory for Text-to-Motion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="MotionODE: Enhancing Autoregressive Text-to-Motion Generation with Continuous-Depth Modeling">MotionODE: Enhancing Autoregressive Text-to-Motion Generation with Continuous-Depth Modeling</span></li><li><span class="dpr-home-dashboard-paper-title" title="ContextHands: Completing Hand Motion with Learned Context and Joint-Specific Body Kinematics">ContextHands: Completing Hand Motion with Learned Context and Joint-Specific Body Kinematics</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
 </section>
 </div>
 
