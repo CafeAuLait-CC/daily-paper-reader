@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-11-27</span>
+      <span class="dpr-home-dashboard-kicker">2026-11-28</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-11-27 02:28:06 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-11-28 02:40:52 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日筛出 7 篇文本到动作生成论文，其中精读 1 篇、速读 6 篇；精读文《Back to Raw Motion》获 8.0 分，主打无潜变量的扩散 Transformer 与精确条件生成。</p>
-<p>最值得关注两个方向：一是用无潜变量扩散 Transformer 做精确条件控制，二是用跨尺度记忆（MMotion）与连续深度建模（MotionODE）改进自回归动作生成。</p>
-<p>普通读者建议先读那篇 8.0 分的精读文，弄懂“去掉潜变量”的动机，再快速浏览 MMotion 和 MotionODE，对比两者对生成质量的取舍。</p>
+<p>今日仅筛出1篇速读、0篇精读，焦点落在《Sub-Riemannian flow matching》。</p>
+<p>唯一可看方向是 sub-Riemannian 几何与 flow matching 的结合，但6.0分属中等，适合先扫摘要判断是否契合兴趣。</p>
+<p>普通读者可先补一点 flow matching 与 sub-Riemannian 的基础概念，再决定是否投入精读。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Back to Raw Motion: Latent-Free Diffusion Transformers for Text-to-Motion and Exact Conditional Generation">Back to Raw Motion: Latent-Free Diffusion Transformers for Text-to-Motion and Exact Conditional Generation</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MMotion: Collaborative Cross-Scale Memory for Text-to-Motion Generation">MMotion: Collaborative Cross-Scale Memory for Text-to-Motion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="MotionODE: Enhancing Autoregressive Text-to-Motion Generation with Continuous-Depth Modeling">MotionODE: Enhancing Autoregressive Text-to-Motion Generation with Continuous-Depth Modeling</span></li><li><span class="dpr-home-dashboard-paper-title" title="ContextHands: Completing Hand Motion with Learned Context and Joint-Specific Body Kinematics">ContextHands: Completing Hand Motion with Learned Context and Joint-Specific Body Kinematics</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Sub-Riemannian flow matching">Sub-Riemannian flow matching</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">dmg <strong>1</strong></span></div>
 </section>
 </div>
 
